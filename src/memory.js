@@ -108,14 +108,88 @@ class Memory {
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
                     windowNo: 1, nextMessageSeq: seq, epoch: 0, ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+      if (this.engramManager && this.data && this.data.engrams) {
+        this.engramManager.restoreFromSnapshot(this.data.engrams);
+      }
     } catch { /* 首次运行 */ }
   }
 
   save(immediate = false) {
+    if (this.engramManager && this.data) {
+      this.data.engrams = this.engramManager.exportSnapshot(this.data.windowNo);
+    }
     this.writer.markDirty();
     if (immediate) {
       this.writer.flush();
     }
+  }
+
+  /**
+   * 关联线索重新激活 (Contextual Reactivation)
+   * 检查用户输入是否包含休眠记忆 (DORMANT) 的特征关键词/语义片段；
+   * 若命中，则唤醒该记忆痕迹，重置未召回跨度，使其脱离 DORMANT 态并重新进入 Prompt。
+   * 零 API 成本，纯本地关键词关联。
+   */
+  reactivateByContext(userText, currentWindow) {
+    if (!this.engramManager || !userText || typeof userText !== 'string') return [];
+    const text = userText.trim();
+    if (text.length < 2) return [];
+
+    const dormantTraces = this.engramManager.getDormantTraces();
+    if (!dormantTraces || dormantTraces.length === 0) return [];
+
+    const reactivated = [];
+    const winMap = new Map();
+    for (const w of this.data.windows) {
+      if (w && typeof w.no === 'number') winMap.set(w.no, w.text || '');
+    }
+
+    for (const trace of dormantTraces) {
+      const winNo = trace.sourceWindowNo || trace.createdWindow;
+      const winText = winMap.get(winNo);
+      if (!winText) continue;
+
+      const cleanText = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ');
+      const words = cleanText.split(/\s+/).filter(w => w.length >= 2);
+
+      let matched = false;
+      const lowerWin = winText.toLowerCase();
+
+      for (const w of words) {
+        if (w.length >= 3 && lowerWin.includes(w)) {
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) {
+        let matchCount = 0;
+        for (const w of words) {
+          if (lowerWin.includes(w)) matchCount++;
+        }
+        if (matchCount >= 2) matched = true;
+      }
+
+      if (!matched && text.length >= 4) {
+        for (let i = 0; i <= text.length - 4; i++) {
+          const sub = text.slice(i, i + 4).toLowerCase();
+          if (lowerWin.includes(sub)) {
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (matched) {
+        const res = this.engramManager.reactivate(trace.traceId, currentWindow || this.data.windowNo);
+        if (res) reactivated.push(res);
+      }
+    }
+
+    if (reactivated.length > 0) {
+      this.save();
+    }
+    return reactivated;
   }
 
   flush() {

@@ -147,5 +147,67 @@ function check(name, cond, extra) {
   );
 }
 
+// -------------------------------------------------------------
+// 6. 冷启动持久化闭环 (Memory 跨重启 engram 状态落盘与加载恢复)
+// -------------------------------------------------------------
+{
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const { Memory } = require('../src/memory');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-memory-dynamics-persist-'));
+  const mem1 = new Memory(tmpDir, { memoryDynamics: true });
+
+  // 写入窗口 1 小结
+  mem1.data.windows.push({
+    no: 1,
+    turns: 100,
+    at: Date.now() - 3600000,
+    text: '夏天在海边漫步，为初澜捡了一枚白色的海螺贝壳。'
+  });
+  mem1.engramManager.registerTrace({
+    traceId: 'tr-w1',
+    sourceWindowNo: 1,
+    createdWindow: 1,
+    salienceBonus: 0.0
+  });
+
+  // 衰减至窗口 10，使其进入 DORMANT
+  mem1.engramManager.decayAll(10);
+  mem1.save(true);
+
+  // 模拟冷启动重新实例化 Memory
+  const mem2 = new Memory(tmpDir, { memoryDynamics: true });
+
+  check('冷启动后 EngramTraceManager 成功从 memory.json 恢复痕迹',
+    mem2.engramManager && mem2.engramManager.traces.size === 1
+  );
+  check('冷启动后休眠痕迹依旧保持 DORMANT',
+    mem2.engramManager.getTrace('tr-w1').tier === 'DORMANT'
+  );
+  check('冷启动后休眠窗口在 systemText 中保持隔离排除',
+    !mem2.systemText().includes('白色的海螺贝壳')
+  );
+
+  // -------------------------------------------------------------
+  // 7. 关联线索重新激活与 Prompt 上下文召回 (Contextual Reactivation)
+  // -------------------------------------------------------------
+  // 用户提及关键线索：“海螺贝壳”
+  const reactivated = mem2.reactivateByContext('初澜，你还收着那枚海螺贝壳吗？', 11);
+
+  check('关联线索匹配成功触发重新激活',
+    Array.isArray(reactivated) && reactivated.length === 1 && reactivated[0].traceId === 'tr-w1'
+  );
+  check('重新激活后脱离 DORMANT 态',
+    mem2.engramManager.getTrace('tr-w1').tier !== 'DORMANT'
+  );
+  check('重新激活后该窗口小结重新出现在 systemText 中',
+    mem2.systemText().includes('白色的海螺贝壳')
+  );
+
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

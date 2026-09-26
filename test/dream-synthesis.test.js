@@ -121,6 +121,38 @@ function check(name, cond, extra) {
     JSON.stringify(state.data.values) === JSON.stringify(initialValues)
   );
 
+  // -------------------------------------------------------------
+  // 6. 归档写入与完整性服务认证闭环 (P0 核心修复验证)
+  // -------------------------------------------------------------
+  const { ExperiencesArchive } = require('../src/experiences-archive');
+  const { normalizeArchiveRecord } = require('../src/experience-schema');
+  const { ArchiveIntegrityService, validateArchiveRecord, INTEGRITY_STATUS } = require('../src/archive-integrity');
+  const fs = require('fs');
+  const path = require('path');
+
+  const testArchiveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-test-dream-arc-'));
+  const testArchive = new ExperiencesArchive(testArchiveDir);
+  const appendOk = testArchive.append(dreamRecord);
+  check('梦境记录成功通过 append 写入归档底座', appendOk === true);
+
+  const archiveRecords = testArchive.readAll();
+  const loadedDream = archiveRecords.find(r => r.recordType === 'subject_dream');
+  check('从归档底座成功读回梦境记录', !!loadedDream);
+  check('梦境记录 payload 包含完整 dreamId 与 epistemicStatus',
+    Boolean(loadedDream && loadedDream.payload &&
+    typeof loadedDream.payload.dreamId === 'string' &&
+    loadedDream.payload.epistemicStatus === MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT)
+  );
+
+  const normDream = normalizeArchiveRecord(loadedDream);
+  const vReport = validateArchiveRecord(normDream);
+  check('归档中的梦境记录符合 Canonical Schema 校验', vReport.valid === true, vReport.reason);
+
+  const intReport = ArchiveIntegrityService.checkRecords([loadedDream]);
+  check('完整性分析服务判定梦境记录为 CERTIFIED (无破坏/无降级)', intReport.integrity === INTEGRITY_STATUS.CERTIFIED);
+
+  try { fs.rmSync(testArchiveDir, { recursive: true, force: true }); } catch {}
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();

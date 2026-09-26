@@ -128,6 +128,9 @@ class Brain {
       memoryDynamics: cfg.experimentModules?.memoryDynamics
     });
     this.dreamHistory = [];
+    this._restoreDreamHistory();
+    this._restoreEngramSnapshotFromArchive();
+
     this.statsPath = path.join(userDataDir, 'stats.json');
     this.statsWriter = new DeferredWriter(() => writeJsonAtomic(this.statsPath, this.stats), { delayMs: 3000 });
     this.stats = this.loadStats();
@@ -147,6 +150,57 @@ class Brain {
     this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
     this.telemetrySeq = 0;
     this.pendingCacheBreakReason = null;
+  }
+
+  /**
+   * 从归档底座冷启动恢复历史梦境记录 (保证跨重启后窗口间隔与24h频次门禁不失效)
+   */
+  _restoreDreamHistory() {
+    this.dreamHistory = [];
+    if (!this.experiencesArchive) return;
+    try {
+      const records = this.experiencesArchive.readAll();
+      for (const r of records) {
+        if (!r) continue;
+        const type = r.recordType || r.type;
+        if (type === 'subject_dream') {
+          const p = (r.payload && typeof r.payload === 'object') ? r.payload : {};
+          this.dreamHistory.push({
+            dreamId: p.dreamId || r.dreamId || r.recordId,
+            windowNo: (typeof r.windowNo === 'number') ? r.windowNo : (typeof p.windowNo === 'number' ? p.windowNo : 0),
+            timestamp: typeof r.timestamp === 'number' ? r.timestamp : (typeof p.generatedAt === 'number' ? p.generatedAt : (r.createdAt || 0)),
+            generatedAt: typeof p.generatedAt === 'number' ? p.generatedAt : (typeof r.timestamp === 'number' ? r.timestamp : 0),
+            epistemicStatus: p.epistemicStatus || r.epistemicStatus
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Brain] 恢复历史梦境记录失败:', e.message);
+    }
+  }
+
+  /**
+   * 从经历归档冷启动恢复最新的记忆动力学快照 (若 memory.json 缺损或初次启动)
+   */
+  _restoreEngramSnapshotFromArchive() {
+    if (!this.memory || !this.memory.engramManager || !this.experiencesArchive) return;
+    if (this.memory.engramManager.traces.size > 0) return;
+    try {
+      const records = this.experiencesArchive.readAll();
+      let latestSnapshot = null;
+      for (const r of records) {
+        if (!r) continue;
+        const type = r.recordType || r.type;
+        if (type === 'memory_dynamics_snapshot' && r.payload && r.payload.snapshot) {
+          latestSnapshot = r.payload.snapshot;
+        }
+      }
+      if (latestSnapshot) {
+        this.memory.engramManager.restoreFromSnapshot(latestSnapshot);
+      }
+    } catch (e) {
+      console.warn('[Brain] 从经历归档恢复记忆动力学快照失败:', e.message);
+    }
   }
 
   setWardrobe(nameOrBlock) {
@@ -345,6 +399,11 @@ class Brain {
     let sleepIntent = false, snap = null;
     if (tr && !proactive) sleepIntent = tr.recordUserInput(userText);
     if (tr) snap = tr.snapshot();
+
+    // v0.9.7: 关联线索触发休眠记忆重新激活 (Contextual Reactivation)
+    if (this.memory && this.memory.engramManager && !proactive) {
+      this.memory.reactivateByContext(userText, this.memory.data.windowNo);
+    }
 
     const envText = snap ? snap.promptText : '';
     const currentSelf = this.currentSelfContext();
@@ -892,12 +951,25 @@ class Brain {
         const dreamEnabled = this.cfg.experimentModules?.sleepConsolidation === true;
         if (dreamEnabled && this.experiencesArchive) {
           try {
-            const { evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
+            const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
+            
+            // 真实唤醒度轨迹计算 (基于本窗口真实消息节奏与情绪证据)
+            const arousalTrajectory = computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || []);
+
+            // 新异度计算 (基于窗口综合提取的新事实/新经历数量)
+            const newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +
+                                 (Array.isArray(syn.subjectExperiences) ? syn.subjectExperiences.length : 0);
+            const noveltyScore = Number(Math.min(1.0, newFactCount * 0.25).toFixed(2));
+            const now = (snap && typeof snap.at === 'number') ? snap.at : Date.now();
+
             const gateResult = evaluateDreamGate({
               windowNo: snap.windowNo,
+              arousalTrajectory,
+              noveltyScore,
               stateHistory: this.subjectState ? this.subjectState.data.history : [],
               verifiedEvidence: verifiedEvidence || [],
-              dreamHistory: this.dreamHistory || []
+              dreamHistory: this.dreamHistory || [],
+              now
             });
 
             if (gateResult && gateResult.allowDream) {
@@ -909,7 +981,10 @@ class Brain {
                 dayResidues: residues,
                 gateMetrics: gateResult.metrics,
                 gateThresholds: gateResult.thresholds
-              }, this.cfg.dreamConfig || {});
+              }, {
+                ...(this.cfg.dreamConfig || {}),
+                now
+              });
 
               if (dreamRecord) {
                 if (!Array.isArray(this.dreamHistory)) this.dreamHistory = [];

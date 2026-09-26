@@ -30,7 +30,7 @@ const DEFAULT_DREAM_CONFIG = Object.freeze({
   // 第一道：本地认知门禁阈值
   emotionalVarianceThreshold: 15.0,  // Arousal 轨迹方差门槛
   arousalSpikeThreshold: 25.0,       // 单次 Arousal 突变幅度门槛
-  noveltyThreshold: 10.0,            // 新异实体出现度门槛
+  noveltyThreshold: 0.8,             // 新异度门槛 (0.0 ~ 1.0)
   cognitiveConflictThreshold: 0.75,  // 认知方向冲突门槛 (同一特质正负撕裂)
 
   // 第二道：成本与频次门禁
@@ -45,17 +45,83 @@ function sha256(text) {
 }
 
 /**
+ * 依据当前窗口内的真实交互事件与证据计算 Arousal 轨迹 (0 API 调用，纯本地确定性算法)
+ * 划分为 5 个连续分段观察点，结合消息密度、交互频次与证据情绪极性与强度映射神经唤醒度。
+ */
+function computeWindowArousalTrajectory(activeItems = [], verifiedEvidence = [], segments = []) {
+  const segmentCount = 5;
+  const trajectory = [];
+  const items = Array.isArray(activeItems) ? activeItems : [];
+  const evidences = Array.isArray(verifiedEvidence) ? verifiedEvidence : [];
+
+  const chunkSize = Math.max(1, Math.ceil(items.length / segmentCount));
+
+  for (let sIdx = 0; sIdx < segmentCount; sIdx++) {
+    let segmentArousal = 50; // 基准唤醒度 50
+    const chunk = items.slice(sIdx * chunkSize, (sIdx + 1) * chunkSize);
+    const chunkMsgIds = new Set(chunk.map(m => m.messageId).filter(Boolean));
+
+    // 1. 消息间隔与时间密度影响 (短时间内连续密集互动增加唤醒度)
+    if (chunk.length >= 2) {
+      let rapidInteractions = 0;
+      for (let i = 1; i < chunk.length; i++) {
+        const tDiff = (chunk[i].t || 0) - (chunk[i - 1].t || 0);
+        if (tDiff > 0 && tDiff < 10000) {
+          rapidInteractions++;
+        }
+      }
+      segmentArousal += Math.min(15, rapidInteractions * 3);
+    }
+
+    // 2. 属于该分段的证据情绪影响
+    const chunkEvidences = evidences.filter(e => chunkMsgIds.has(e.messageId));
+    for (const ev of chunkEvidences) {
+      const str = typeof ev.strength === 'number' ? ev.strength : 0.5;
+      const dir = typeof ev.direction === 'number' ? ev.direction : 1;
+      if (ev.trait === 'vitality' || ev.trait === 'attachment_need' || ev.trait === 'social_initiative') {
+        segmentArousal += Math.round(dir * str * 20);
+      } else if (ev.trait === 'quiet_preference' && dir > 0) {
+        segmentArousal -= Math.round(str * 15);
+      }
+    }
+
+    trajectory.push(Math.max(10, Math.min(95, segmentArousal)));
+  }
+
+  return trajectory;
+}
+
+/**
  * 纯函数：第一道与第二道梦境门禁综合评估 (0 API 调用)
  */
 function evaluateDreamGate(opts = {}) {
   const cfg = { ...DEFAULT_DREAM_CONFIG, ...(opts.config || {}) };
   const windowNo = opts.windowNo || 1;
-  const stateHistory = Array.isArray(opts.stateHistory) ? opts.stateHistory : [];
   const verifiedEvidence = Array.isArray(opts.verifiedEvidence) ? opts.verifiedEvidence : [];
   const dreamHistory = Array.isArray(opts.dreamHistory) ? opts.dreamHistory : [];
 
-  // 1. 条件 A：情绪 / Arousal 波动计算
-  const arousalValues = stateHistory.map(s => (s && typeof s.arousal === 'number') ? s.arousal : 50);
+  // 1. 条件 A：情绪 / Arousal 波动计算 (优先使用真实注入的 arousalTrajectory，兼容 stateHistory)
+  let arousalValues = [];
+  if (Array.isArray(opts.arousalTrajectory) && opts.arousalTrajectory.length > 0) {
+    arousalValues = opts.arousalTrajectory.map(v => typeof v === 'number' ? v : 50);
+  } else if (Array.isArray(opts.stateHistory) && opts.stateHistory.length > 0) {
+    arousalValues = opts.stateHistory.map(s => {
+      if (!s) return 50;
+      if (typeof s.arousal === 'number') return s.arousal;
+      if (s.deltas && typeof s.deltas === 'object') {
+        const vit = typeof s.deltas.vitality === 'number' ? s.deltas.vitality : 0;
+        const sumDeltas = Object.values(s.deltas).reduce((sum, d) => sum + Math.abs(d || 0), 0);
+        return Math.max(0, Math.min(100, Math.round(50 + vit + (sumDeltas * 0.5))));
+      }
+      if (s.values && typeof s.values.vitality === 'number') {
+        return Math.max(0, Math.min(100, Math.round(50 + s.values.vitality / 20)));
+      }
+      return 50;
+    });
+  } else {
+    arousalValues = [50];
+  }
+
   let arousalVariance = 0;
   let maxArousalSpike = 0;
 
@@ -103,8 +169,8 @@ function evaluateDreamGate(opts = {}) {
     costGateReason = `INTERVAL_TOO_SHORT (current: ${windowNo}, last: ${lastDreamWindow}, minGap: ${cfg.minimumDreamIntervalWindows})`;
   }
 
-  // 24小时频次硬顶约束
-  const now = opts.now || Date.now();
+  // 24小时频次硬顶约束 (显式时间注入，绝不隐式依赖系统时刻漂移)
+  const now = typeof opts.now === 'number' ? opts.now : (typeof opts.timestamp === 'number' ? opts.timestamp : Date.now());
   const oneDayAgo = now - 24 * 60 * 60 * 1000;
   const recentDreamCount = dreamHistory.filter(d => (d.generatedAt || d.timestamp || 0) >= oneDayAgo).length;
   if (recentDreamCount >= cfg.maximumDreamCallsPer24h) {
@@ -214,25 +280,53 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const content = String(res.text || '').trim();
     if (!content) return null;
 
-    const dreamId = `dream-w${windowNo}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const now = typeof options.now === 'number' ? options.now : Date.now();
+    const dreamId = `dream-w${windowNo}-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const outputHash = sha256(content);
+
+    const dreamPayload = {
+      dreamId,
+      windowNo,
+      epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
+      promptHash,
+      outputHash,
+      prompt: {
+        system: promptMessages[0] ? promptMessages[0].content : '',
+        user: promptMessages[1] ? promptMessages[1].content : ''
+      },
+      dayResidues: context.dayResidues || [],
+      narrative: content,
+      content,
+      sourceEventIds: context.sourceEventIds || [],
+      gateMetrics: context.gateMetrics || {},
+      gateThresholds: context.gateThresholds || {},
+      dreamModel: apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'),
+      provider: 'deepseek',
+      generatedAt: now,
+      metadata: {
+        model: apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'),
+        temperature: cfg.dreamTemperature,
+        synthesizedAt: new Date(now).toISOString()
+      }
+    };
 
     return {
       recordType: 'subject_dream',
       dreamId,
       windowNo,
+      timestamp: now,
+      epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
+      payload: dreamPayload,
+      usage: res.usage || null,
+      content,
+      narrative: content,
+      promptHash,
+      outputHash,
       sourceEventIds: context.sourceEventIds || [],
       dayResidues: context.dayResidues || [],
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},
-      content,
-      dreamModel: apiClient.cfg ? apiClient.cfg.model : 'unknown',
-      provider: 'deepseek',
-      promptHash,
-      outputHash,
-      generatedAt: Date.now(),
-      epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
-      usage: res.usage || null
+      generatedAt: now
     };
   } catch (err) {
     console.error(`[DreamSystem] 窗口 #${windowNo} 梦境合成调用失败 (Fail-Safe 保障):`, err.message);
@@ -243,6 +337,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
 module.exports = {
   DEFAULT_DREAM_CONFIG,
   sha256,
+  computeWindowArousalTrajectory,
   evaluateDreamGate,
   extractDayResidues,
   buildDreamSynthesisPrompt,

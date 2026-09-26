@@ -181,5 +181,107 @@ function check(name, cond, extra) {
   );
 }
 
+// -------------------------------------------------------------
+// 8. 真实交互唤醒度轨迹计算与门禁触发 (Arousal Trajectory Integration)
+// -------------------------------------------------------------
+{
+  const { computeWindowArousalTrajectory } = require('../src/dream-system');
+  const now = 1700000000000;
+  // 模拟一个包含密集连戳与高情绪证据的真实活跃窗口消息流
+  const activeItems = [
+    { messageId: 'm-001', role: 'user', content: '今天好累', t: now },
+    { messageId: 'm-002', role: 'assistant', content: '抱抱你，休息一下', t: now + 2000 },
+    { messageId: 'm-003', role: 'user', content: '好想一直和你在一起', t: now + 4000 },
+    { messageId: 'm-004', role: 'assistant', content: '我一直都在', t: now + 5000 },
+    { messageId: 'm-005', role: 'user', content: '外面突然狂风暴雨好害怕', t: now + 7000 },
+    { messageId: 'm-006', role: 'assistant', content: '别怕，握住我的手', t: now + 8000 }
+  ];
+
+  const verifiedEvidence = [
+    { evidenceId: 'ev-1', messageId: 'm-003', trait: 'attachment_need', direction: 1, strength: 0.9 },
+    { evidenceId: 'ev-2', messageId: 'm-005', trait: 'vitality', direction: 1, strength: 0.8 }
+  ];
+
+  const trajectory = computeWindowArousalTrajectory(activeItems, verifiedEvidence);
+  check('真实交互轨迹成功划分 5 分段', Array.isArray(trajectory) && trajectory.length === 5);
+
+  const res = evaluateDreamGate({
+    windowNo: 12,
+    arousalTrajectory: trajectory,
+    verifiedEvidence
+  });
+
+  check('密集情绪互动触发唤醒度门禁 eligible 为 true', res.eligible === true);
+  check('唤醒度轨迹方差突破门限', res.metrics.arousalVariance >= 15.0 || res.metrics.maxArousalSpike >= 25.0);
+}
+
+// -------------------------------------------------------------
+// 9. 新异度门禁独立触发 (Condition C: Novelty Gate)
+// -------------------------------------------------------------
+{
+  const calmTrajectory = [50, 50, 50, 50, 50];
+  const res = evaluateDreamGate({
+    windowNo: 20,
+    arousalTrajectory: calmTrajectory,
+    noveltyScore: 0.9, // 突破 noveltyThreshold 0.8
+    verifiedEvidence: []
+  });
+
+  check('高新异度单独触发第一道门禁 eligible 为 true', res.eligible === true);
+  check('新异度指标精确登记', res.metrics.noveltyScore === 0.9);
+}
+
+// -------------------------------------------------------------
+// 10. 冷启动持久化闭环 (Brain 跨重启历史梦境恢复与窗口间隔防御)
+// -------------------------------------------------------------
+{
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const { Brain } = require('../src/brain');
+  const { ExperiencesArchive } = require('../src/experiences-archive');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-brain-dream-coldstart-'));
+  const archive = new ExperiencesArchive(tmpDir);
+
+  // 往归档底座预写入窗口 10 的梦境记录
+  const historicalDreamRecord = {
+    recordType: 'subject_dream',
+    windowNo: 10,
+    timestamp: Date.now() - 3600000,
+    payload: {
+      dreamId: 'dream-w10-init',
+      windowNo: 10,
+      epistemicStatus: 'DREAM_GENERATED_ARTIFACT',
+      narrative: '海风吹拂着旧信件'
+    }
+  };
+  archive.append(historicalDreamRecord);
+
+  // 模拟冷启动实例化 Brain
+  const brain = new Brain(tmpDir, {
+    windowTurns: 10,
+    experimentModules: { sleepConsolidation: true }
+  });
+
+  check('冷启动成功从 Archive 恢复历史梦境记录',
+    Array.isArray(brain.dreamHistory) &&
+    brain.dreamHistory.length === 1 &&
+    brain.dreamHistory[0].windowNo === 10
+  );
+
+  // 在窗口 11 评估门禁 (距上次做梦仅差 1 窗口，不足 3 窗口)
+  const res = evaluateDreamGate({
+    windowNo: 11,
+    arousalTrajectory: [20, 80, 20, 80, 20],
+    dreamHistory: brain.dreamHistory
+  });
+
+  check('跨重启后成本门禁窗口间隔防御依旧生效', res.costGatePassed === false);
+  check('拦截原因准确标记间隔不足', res.reason.includes('INTERVAL_TOO_SHORT'));
+
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

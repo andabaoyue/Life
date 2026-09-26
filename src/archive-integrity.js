@@ -279,11 +279,12 @@ function validateArchiveRecord(record, options = {}) {
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_DREAM_PAYLOAD' };
       }
-      const dreamId = payload.dreamId || rec.recordId;
+      const dreamId = payload.dreamId || rec.dreamId || rec.recordId;
       if (typeof dreamId !== 'string' || !dreamId.trim()) {
         return { valid: false, reason: 'MISSING_DREAM_ID' };
       }
-      if (!payload.epistemicStatus) {
+      const epistemicStatus = payload.epistemicStatus || rec.epistemicStatus;
+      if (!epistemicStatus) {
         return { valid: false, reason: 'MISSING_EPISTEMIC_STATUS' };
       }
       break;
