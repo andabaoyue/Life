@@ -411,6 +411,14 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     evidenceEvents: [
       { eventId: 'ev-real-01', timestamp: '2026-09-26T10:00:00.000Z' },
       { eventId: 'ev-real-02', timestamp: '2026-09-26T11:00:00.000Z' }
+    ],
+    citationEvents: [
+      {
+        eventId: 'ev-cite-real-01',
+        behaviorOrigin: BEHAVIOR_ORIGIN.SUBJECT_GENERATED,
+        quote: '我一直记得那天窗外的雨声。',
+        timestamp: '2026-09-26T12:00:00.000Z'
+      }
     ]
   };
 
@@ -437,7 +445,7 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   const systemInducedValidIdEvent = {
     eventId: 'ev-cite-real-01',
     behaviorOrigin: BEHAVIOR_ORIGIN.SYSTEM_INDUCED,
-    quote: '系统提示我说记得那天。',
+    quote: '我一直记得那天窗外的雨声。',
     timestamp: '2026-09-26T12:00:00.000Z'
   };
   let systemInducedAcquireFailed = false;
@@ -480,6 +488,58 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     acquiredMemory.provenance.sourceKind === PROVENANCE_SOURCE_KINDS.SUBJECT_DERIVED &&
     validateEpistemicSeparation(acquiredMemory) === true
   );
+
+  // Invariant 9.8: 缺少强制 eventStore 时直接拒绝执行 (Fail-Fast)
+  let missingEventStoreFailed = false;
+  try {
+    acquireSubjectMemory({
+      candidate: validCandidate,
+      citationEvent: genuineCitationEvent
+    });
+  } catch (err) {
+    missingEventStoreFailed = true;
+  }
+  check('Invariant 9.8: 缺少强制 eventStore 真实存证校验器时坚决拒绝生成 (Fail-Fast)', missingEventStoreFailed);
+
+  // Invariant 9.9: Candidate 夹带伪造未存证的 evidenceEvents 无法生成 SUBJECT_ACQUIRED
+  const fakeEvidenceCandidate = {
+    ...validCandidate,
+    candidateId: 'cand-fake-ev',
+    evidenceEvents: [
+      { eventId: 'ev-real-01', timestamp: '2026-09-26T10:00:00.000Z' },
+      { eventId: 'ev-fake-fabricated-02', timestamp: '2026-09-26T11:00:00.000Z' }
+    ]
+  };
+  let fakeEvidenceCandidateFailed = false;
+  try {
+    acquireSubjectMemory({
+      candidate: fakeEvidenceCandidate,
+      citationEvent: genuineCitationEvent,
+      eventStore: mockEventStore
+    });
+  } catch (err) {
+    fakeEvidenceCandidateFailed = true;
+  }
+  check('Invariant 9.9: Candidate 包含未在 eventStore 登记的伪造 evidenceEvents 被拦截', fakeEvidenceCandidateFailed);
+
+  // Invariant 9.10: 传入的 citationEvent 未在 candidate.citationEvents 中登记被强拦截
+  const unlinkedCitationEvent = {
+    eventId: 'ev-real-02', // 真实事件但在该候选的 citationEvents 中未注册为主体引用
+    behaviorOrigin: BEHAVIOR_ORIGIN.SUBJECT_GENERATED,
+    quote: '未被候选登记的引用',
+    timestamp: '2026-09-26T12:00:00.000Z'
+  };
+  let unlinkedCitationFailed = false;
+  try {
+    acquireSubjectMemory({
+      candidate: validCandidate,
+      citationEvent: unlinkedCitationEvent,
+      eventStore: mockEventStore
+    });
+  } catch (err) {
+    unlinkedCitationFailed = true;
+  }
+  check('Invariant 9.10: 传入的 citationEvent 未在 candidate.citationEvents 中登记被强拦截', unlinkedCitationFailed);
 }
 
 // ---------------------------------------------------------------------

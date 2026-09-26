@@ -11,9 +11,14 @@
  *    - SubjectAcquiredMemory：主体习得记忆（清醒期经主体主动唤醒并融入经验，subjectAccessible = true）
  * 2. 睡眠三态伪装铁律（Epistemic Separation Invariant）：
  *    系统离线重放和整合产物绝对不能伪装成主体自发回忆直接注入到对白认知层。
- * 3. 彻底封死直接铸造路径（P0-2: Evidence-Gated Subject Memory）：
- *    严禁凭空仅凭一句话或系统提示生成 SubjectAcquiredMemory。必须通过 acquireSubjectMemory()
- *    核验自传候选链（Biographical Candidate）、主体自主引用（SUBJECT_GENERATED）及真实事件追溯。
+ * 3. 彻底封死直接铸造与伪造链路径（P0-2: Watertight Evidence-Gated Subject Memory）：
+ *    - 废除直接铸造入口，严禁仅凭一句话或系统提示生成 SubjectAcquiredMemory。
+ *    - acquireSubjectMemory 实施全证据链强制验真：
+ *      a) 必须提供真实事件存储/校验器（eventStore 强制非空）
+ *      b) candidate 必须持有真实注册的 >=2 条 evidenceEvents，且全部能在 eventStore 中真实溯源
+ *      c) candidate.citationEvents 必须真实包含该引用事件，且标记为 SUBJECT_GENERATED
+ *      d) citationEvent 必须在 eventStore 中真实存在，quote 必须与 candidate 记录严格一致
+ *      e) 严格排除任何 SYSTEM_INDUCED 诱发记录与伪造 ID
  */
 
 'use strict';
@@ -26,6 +31,17 @@ const {
   CANDIDATE_STATUS,
   BEHAVIOR_ORIGIN
 } = require('./experiment-types');
+
+/**
+ * 辅助事件存在性校验
+ */
+function isEventInStore(store, eventId) {
+  if (!store || !eventId) return false;
+  if (typeof store.hasEvent === 'function') return store.hasEvent(eventId);
+  if (typeof store.has === 'function') return store.has(eventId);
+  if (typeof store.getEvent === 'function') return Boolean(store.getEvent(eventId));
+  return false;
+}
 
 /**
  * 创建睡眠重放制品（机器计算中间件）
@@ -124,28 +140,29 @@ function _createSubjectAcquiredMemoryValidated(params) {
 function createSubjectAcquiredMemory() {
   throw new Error(
     'Direct minting of SubjectAcquiredMemory is strictly prohibited. ' +
-    'Subject memory must be evidence-gated through acquireSubjectMemory({ candidate, citationEvent, ... }).'
+    'Subject memory must be evidence-gated through acquireSubjectMemory({ candidate, citationEvent, eventStore, ... }).'
   );
 }
 
 /**
  * 经由证据链严格采纳生成主体习得自传记忆 (Acquire Subject Memory)
  * 
- * 强制门禁审查规则：
- * 1. candidate 存在且状态为 CITED_BY_SUBJECT 或 CRYSTALLIZED
- * 2. candidate 至少拥有 2 条独立经历事件支撑 (evidenceEvents.length >= 2)
- * 3. citationEvent 存在且拥有合法非空的 eventId/messageId
- * 4. citationEvent.behaviorOrigin 必须为 SUBJECT_GENERATED（系统诱发 SYSTEM_INDUCED 坚决拒绝）
- * 5. 若注入了 eventStore，核验 citationEvent 真实存在于事件归档中（防伪造 ID）
- * 6. 时序约束：引用发生时间不得早于原始经历时间
- * 7. 若注入了 experimentSnapshot，核验 experimentRunId 一致性
- * 8. 必须包含主体自主引用的非空 quote 文本
+ * 强制门禁审查规则（全可信链）：
+ * 1. eventStore 必须显式提供，严防无存证伪造
+ * 2. candidate 存在且状态为 CITED_BY_SUBJECT 或 CRYSTALLIZED
+ * 3. candidate 至少拥有 2 条独立经历事件支撑 (evidenceEvents.length >= 2)，且全部在 eventStore 中真实存在
+ * 4. candidate.citationEvents 必须真实包含传入的 citationEvent，且其 behaviorOrigin 必须为 SUBJECT_GENERATED
+ * 5. citationEvent 必须在 eventStore 中真实存在
+ * 6. citationEvent 与 candidate.citationEvents 的 quote 必须完全一致
+ * 7. 严格拦截任何 SYSTEM_INDUCED 诱发行为
+ * 8. 时序约束：引用发生时间不得早于原始经历时间
+ * 9. 若注入了 experimentSnapshot，核验 experimentRunId 一致性
  * 
  * @param {Object} params
  * @param {Object} params.candidate
  * @param {Object} params.citationEvent
+ * @param {Object} params.eventStore 强制必传真实事件库/校验器
  * @param {Object} [params.experimentSnapshot]
- * @param {Object} [params.eventStore]
  * @param {string} [params.crystallizedContext]
  * @returns {Readonly<Object>} SubjectAcquiredMemory
  */
@@ -156,7 +173,12 @@ function acquireSubjectMemory(params = {}) {
 
   const { candidate, citationEvent, experimentSnapshot, eventStore, crystallizedContext } = params;
 
-  // 1. Candidate 存在性与状态校验
+  // 1. 强制要求 eventStore 存证校验器，封锁无背书伪造
+  if (!eventStore || typeof eventStore !== 'object') {
+    throw new Error('acquireSubjectMemory: Mandatory eventStore is required to verify real historical events.');
+  }
+
+  // 2. Candidate 存在性与状态校验
   if (!candidate || typeof candidate !== 'object') {
     throw new Error('acquireSubjectMemory: Valid candidate object is required.');
   }
@@ -169,12 +191,18 @@ function acquireSubjectMemory(params = {}) {
     );
   }
 
-  // 2. Candidate 证据数量必须 >= 2
+  // 3. Candidate 支撑证据必须 >= 2，且每一条必须在 eventStore 中可证实
   if (!Array.isArray(candidate.evidenceEvents) || candidate.evidenceEvents.length < 2) {
     throw new Error('Anti-circular violation: Candidate must have at least 2 distinct evidence events.');
   }
+  for (const ev of candidate.evidenceEvents) {
+    const evId = ev && (ev.eventId || ev.messageId);
+    if (!evId || !isEventInStore(eventStore, evId)) {
+      throw new Error(`Anti-circular violation: Candidate evidence event "${evId}" does not exist in eventStore.`);
+    }
+  }
 
-  // 3. CitationEvent 存在性与来源合法性
+  // 4. CitationEvent 存在性与来源合法性
   if (!citationEvent || typeof citationEvent !== 'object') {
     throw new Error('acquireSubjectMemory: Valid citationEvent object is required.');
   }
@@ -183,7 +211,7 @@ function acquireSubjectMemory(params = {}) {
     throw new Error('acquireSubjectMemory: citationEvent must have a valid string eventId or messageId.');
   }
 
-  // 4. 严格防系统诱导行为（SYSTEM_INDUCED 铁网拦截）
+  // 5. 严格防系统诱导行为（SYSTEM_INDUCED 铁网拦截）
   if (citationEvent.behaviorOrigin === BEHAVIOR_ORIGIN.SYSTEM_INDUCED) {
     throw new Error('Anti-circular violation: SYSTEM_INDUCED citation cannot form SubjectAcquiredMemory.');
   }
@@ -193,22 +221,35 @@ function acquireSubjectMemory(params = {}) {
     );
   }
 
-  // 5. 真实事件库核验（若提供了 eventStore）
-  if (eventStore) {
-    let exists = false;
-    if (typeof eventStore.hasEvent === 'function') {
-      exists = eventStore.hasEvent(citationEventId);
-    } else if (typeof eventStore.has === 'function') {
-      exists = eventStore.has(citationEventId);
-    } else if (typeof eventStore.getEvent === 'function') {
-      exists = Boolean(eventStore.getEvent(citationEventId));
-    }
-    if (!exists) {
-      throw new Error(`Anti-circular violation: Citation event "${citationEventId}" not found in eventStore.`);
-    }
+  // 6. 核验 citationEvent 在 candidate.citationEvents 自身的真实注册记录（防跨候选冒充）
+  if (!Array.isArray(candidate.citationEvents) || candidate.citationEvents.length < 1) {
+    throw new Error('Anti-circular violation: Candidate has no registered citationEvents.');
+  }
+  const matchedCitation = candidate.citationEvents.find(
+    c => c && (c.eventId === citationEventId || c.messageId === citationEventId)
+  );
+  if (!matchedCitation) {
+    throw new Error(
+      `Anti-circular violation: citationEvent "${citationEventId}" is not registered in candidate.citationEvents.`
+    );
+  }
+  if (matchedCitation.behaviorOrigin !== BEHAVIOR_ORIGIN.SUBJECT_GENERATED) {
+    throw new Error('Anti-circular violation: Registered citation in candidate is not SUBJECT_GENERATED.');
   }
 
-  // 6. 时序递进检查
+  // 7. 文本一致性校验
+  const candQuote = String(matchedCitation.quote || matchedCitation.content || '').trim().toLowerCase();
+  const evQuote = String(citationEvent.quote || citationEvent.content || '').trim().toLowerCase();
+  if (!candQuote || candQuote !== evQuote) {
+    throw new Error('Anti-circular violation: Citation quote does not match candidate citation record.');
+  }
+
+  // 8. 真实事件库核验：citationEventId 必须在 eventStore 中真实存在
+  if (!isEventInStore(eventStore, citationEventId)) {
+    throw new Error(`Anti-circular violation: Citation event "${citationEventId}" not found in eventStore.`);
+  }
+
+  // 9. 时序递进检查
   const initialTimestamp = candidate.evidenceEvents[0]?.timestamp;
   if (initialTimestamp && citationEvent.timestamp) {
     const tInit = new Date(initialTimestamp).getTime();
@@ -218,17 +259,11 @@ function acquireSubjectMemory(params = {}) {
     }
   }
 
-  // 7. 实验 Run 一致性检查（若快照提供了 experimentRunId）
+  // 10. 实验 Run 一致性检查（若快照提供了 experimentRunId）
   if (experimentSnapshot && experimentSnapshot.experimentRunId) {
     if (candidate.experimentRunId && candidate.experimentRunId !== experimentSnapshot.experimentRunId) {
       throw new Error('Cross-run contamination: Candidate belongs to different experimentRunId.');
     }
-  }
-
-  // 8. 引用摘录文本非空检查
-  const quote = String(citationEvent.quote || citationEvent.content || '').trim();
-  if (!quote) {
-    throw new Error('acquireSubjectMemory: Citation quote cannot be empty.');
   }
 
   const windowNo = (typeof citationEvent.windowNo === 'number' && citationEvent.windowNo >= 0)
@@ -240,7 +275,7 @@ function acquireSubjectMemory(params = {}) {
     citationEventId,
     windowNo,
     topic: candidate.theme || 'unlabeled_theme',
-    subjectCitationQuote: quote,
+    subjectCitationQuote: citationEvent.quote || citationEvent.content,
     crystallizedContext: crystallizedContext || ''
   });
 }
