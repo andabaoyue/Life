@@ -120,18 +120,27 @@ function reinforceCandidate(candidate, reinforcingEvent, windowNo = 1) {
  * 推进候选状态至 CITED_BY_SUBJECT（被主体自主引用）
  * 
  * 核心防循环安全门禁：
- * 若行为起源被标记为 SYSTEM_INDUCED（由系统诱导），坚决拒绝转为 CITED_BY_SUBJECT！
+ * 1. 若行为起源被标记为 SYSTEM_INDUCED（由系统诱导），坚决拒绝转为 CITED_BY_SUBJECT！
+ * 2. 真实事件注册约束：引用事件必须具备明确的 eventId，并在提供 eventStore 时能被检索验证。
+ * 3. 时序约束：引用时间不得早于原始经历产生时间。
  * 
  * @param {Object} candidate
  * @param {Object} citationEvent
+ * @param {Object} [options={}]
+ * @param {Object} [options.eventStore] 可选的事件存储或校验器
  * @returns {Readonly<Object>}
  */
-function citeCandidateBySubject(candidate, citationEvent) {
+function citeCandidateBySubject(candidate, citationEvent, options = {}) {
   if (!candidate || typeof candidate !== 'object') {
     throw new Error('citeCandidateBySubject: Invalid candidate.');
   }
   if (!citationEvent || typeof citationEvent !== 'object') {
     throw new Error('citeCandidateBySubject: Valid citationEvent is required.');
+  }
+
+  const citationEventId = citationEvent.eventId || citationEvent.messageId;
+  if (!citationEventId || typeof citationEventId !== 'string') {
+    throw new Error('citeCandidateBySubject: citationEvent must have a valid non-empty eventId or messageId.');
   }
 
   // 1. 严格检查行为起源（防循环证明）
@@ -147,21 +156,45 @@ function citeCandidateBySubject(candidate, citationEvent) {
     );
   }
 
-  // 2. 状态检查：必须已达到 REINFORCED 阶段（严禁单次事件直接被引用跳级结晶）
+  // 2. 真实事件库核验（若注入了 eventStore）
+  if (options.eventStore) {
+    let exists = false;
+    if (typeof options.eventStore.hasEvent === 'function') {
+      exists = options.eventStore.hasEvent(citationEventId);
+    } else if (typeof options.eventStore.has === 'function') {
+      exists = options.eventStore.has(citationEventId);
+    } else if (typeof options.eventStore.getEvent === 'function') {
+      exists = Boolean(options.eventStore.getEvent(citationEventId));
+    }
+    if (!exists) {
+      throw new Error(`Anti-circular violation: Citation event "${citationEventId}" does not exist in eventStore.`);
+    }
+  }
+
+  // 3. 状态检查：必须已达到 REINFORCED 阶段（严禁单次事件直接被引用跳级结晶）
   if (candidate.status !== CANDIDATE_STATUS.REINFORCED && candidate.status !== CANDIDATE_STATUS.CITED_BY_SUBJECT) {
     throw new Error(
       `Invalid status transition: Candidate must be in REINFORCED state before subject citation. Current status: ${candidate.status}`
     );
   }
 
-  const citationEventId = citationEvent.eventId || citationEvent.messageId || `cite-${Date.now()}`;
+  // 4. 时序递进检查：引用时间不得早于原始事件经历
+  const initTimestamp = candidate.evidenceEvents[0]?.timestamp;
+  if (initTimestamp && citationEvent.timestamp) {
+    const tInit = new Date(initTimestamp).getTime();
+    const tCite = new Date(citationEvent.timestamp).getTime();
+    if (!Number.isNaN(tInit) && !Number.isNaN(tCite) && tCite < tInit) {
+      throw new Error('Anti-circular violation: Citation timestamp precedes initial experience event.');
+    }
+  }
+
   const nowIso = new Date().toISOString();
 
   const newCitations = [
     ...candidate.citationEvents,
     {
       eventId: citationEventId,
-      windowNo: citationEvent.windowNo || candidate.initialWindowNo,
+      windowNo: typeof citationEvent.windowNo === 'number' ? citationEvent.windowNo : candidate.initialWindowNo,
       behaviorOrigin: BEHAVIOR_ORIGIN.SUBJECT_GENERATED,
       quote: String(citationEvent.quote || citationEvent.content || ''),
       timestamp: citationEvent.timestamp || nowIso

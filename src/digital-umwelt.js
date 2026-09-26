@@ -2,7 +2,7 @@
  * src/digital-umwelt.js
  * 
  * 《生物科学与数字生命的哲学范畴》
- * 数字环周（Digital Umwelt）四级过滤漏斗与原始感官隔离契约 (Phase 0)
+ * 数字环周（Digital Umwelt）四级过滤漏斗与知觉候选建模契约 (Phase 0)
  * 
  * 核心哲学与工程边界：
  * 1. 物理环境 ≠ 数字环周：初澜并非直接生活在宿主操作系统（Windows/Linux）中，
@@ -12,8 +12,10 @@
  * 3. 显著性门限与空感知成立原则（Null-Perception Invariant）：
  *    当刺激强度低于 salienceThreshold 时，管道必须返回 null，
  *    绝不能为了“显得有生命感”而每次硬件遥测都强行编造伪感知。
- * 4. 四级处理漏斗：
- *    RawSensorData -> PerceptionFilter -> SalienceEvaluation -> SubjectAccessiblePerception | null
+ * 4. 知觉候选边界（P0-3: Perception Candidate Boundary）：
+ *    系统在阶段四完成的高阶质性表征仅为知觉候选（Subject Perception Candidate，perceptionStatus = 'CANDIDATE'），
+ *    严格保持 subjectAccessible = false。
+ *    Phase 0 仅证明“系统完成了一次候选感知建模”，不声称“主体已经主观获得该知觉”。
  */
 
 'use strict';
@@ -22,7 +24,8 @@ const crypto = require('crypto');
 const {
   SCHEMA_VERSION,
   SEMANTIC_LAYERS,
-  PROVENANCE_SOURCE_KINDS
+  PROVENANCE_SOURCE_KINDS,
+  PERCEPTION_STATUS
 } = require('./experiment-types');
 const { isBaselineMode } = require('./experiment-run');
 
@@ -136,7 +139,11 @@ function evaluateSalience(filteredData, internalState) {
 }
 
 /**
- * 阶段四：数字环周完整四级漏斗处理 (Process Umwelt Perception)
+ * 阶段四：数字环周知觉候选生成 (Process Umwelt Perception Candidate)
+ * 
+ * 认识论约束：
+ * 超过显著性门限时，系统仅生成知觉候选（Subject Perception Candidate），
+ * perceptionStatus 标定为 'CANDIDATE'，且 subjectAccessible = false。
  * 
  * @param {Object} rawSensorData 原始遥测数据
  * @param {Object} [internalState] 当前内部状态
@@ -162,24 +169,25 @@ function processUmweltPerception(rawSensorData, internalState, options = {}) {
     ? internalState.values.salienceThreshold
     : 30;
 
-  // 空感知成立原则（Null Perception）：未达显著性门限，不形成主体感知
+  // 空感知成立原则（Null Perception）：未达显著性门限，不形成知觉候选
   if (salience < threshold) {
     return null;
   }
 
-  // 4. 生成初澜主体可感知的高阶抽象感知单元（SubjectAccessiblePerception）
+  // 4. 生成知觉候选单元（Subject Perception Candidate）
   const perceptionId = `perc-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const nowIso = new Date().toISOString();
 
-  const perception = {
+  const perceptionCandidate = {
     schemaVersion: SCHEMA_VERSION,
     perceptionId,
     category: filtered.category,
     qualitativeDescriptor: filtered.qualitativeDescriptor,
     salience,
+    perceptionStatus: PERCEPTION_STATUS.CANDIDATE,
+    // Phase 0 认识论防跳跃：仅代表系统建模候选，不代表主体已经形成知觉体验
+    subjectAccessible: false,
     formedAt: nowIso,
-    // 明确标记：此时已转化为经检验可为主体经验感知的内容
-    subjectAccessible: true,
     provenance: Object.freeze({
       sourceKind: PROVENANCE_SOURCE_KINDS.AUTONOMOUS_SYSTEM,
       timestamp: nowIso
@@ -187,11 +195,11 @@ function processUmweltPerception(rawSensorData, internalState, options = {}) {
   };
 
   // 最终安全断言：绝对不能含有原始系统敏感信息
-  if (containsLeakedRawData(perception)) {
-    throw new Error('DigitalUmwelt security violation: Leaked raw hardware or OS telemetry into subject perception.');
+  if (containsLeakedRawData(perceptionCandidate)) {
+    throw new Error('DigitalUmwelt security violation: Leaked raw hardware or OS telemetry into perception candidate.');
   }
 
-  return Object.freeze(perception);
+  return Object.freeze(perceptionCandidate);
 }
 
 module.exports = {

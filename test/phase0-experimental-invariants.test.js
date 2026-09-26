@@ -2,7 +2,7 @@
  * test/phase0-experimental-invariants.test.js
  * 
  * 《生物科学与数字生命的哲学范畴》
- * Phase 0 核心架构、Schema 契约与 10 大实验不变量验证套件
+ * Phase 0 核心架构、Schema 契约与 10 大实验不变量验证套件 (P0-1 ~ P0-4 最终收敛版)
  */
 
 'use strict';
@@ -20,6 +20,7 @@ const {
   CANDIDATE_STATUS,
   BEHAVIOR_ORIGIN,
   MEMORY_EPISTEMIC_STATUS,
+  PERCEPTION_STATUS,
   DEFAULT_EXPERIMENT_MODULES
 } = require('../src/experiment-types');
 
@@ -36,6 +37,8 @@ const {
   createDefaultInternalState,
   validateInternalState,
   isSubjectAccessible,
+  reduceSubjectEvent,
+  commitSubjectTransition,
   applySubjectEvent
 } = require('../src/internal-state');
 
@@ -58,12 +61,13 @@ const {
   createSleepReplayArtifact,
   createSystemConsolidatedRepresentation,
   createSubjectAcquiredMemory,
+  acquireSubjectMemory,
   validateEpistemicSeparation
 } = require('../src/sleep-consolidation-types');
 
 const {
   validateHypothesisSchema,
-  evaluateExperimentSignificance
+  evaluateObservedDifference
 } = require('../src/null-hypothesis');
 
 let failures = 0;
@@ -72,7 +76,7 @@ function check(name, cond, extra) {
   if (!cond) failures++;
 }
 
-console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检验 ===\n');
+console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检验 (收敛版) ===\n');
 
 // ---------------------------------------------------------------------
 // 不变量 1：基线零干预不变量 (Baseline Non-Interference Invariant)
@@ -96,14 +100,14 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   );
 
   const prevState = createDefaultInternalState();
-  const dummyEvent = { type: 'message', eventId: 'ev-test-1', timestamp: new Date().toISOString() };
+  const dummyEvent = { type: 'message', eventId: 'ev-test-1', timestamp: '2026-09-26T12:00:00.000Z' };
   const { nextState, transitionEvent } = applySubjectEvent(prevState, dummyEvent, { snapshot: baselineSnapshot });
 
   check('Invariant 1.3: 基线模式下单向 Reducer 严格产生零变动并返回原引用',
     nextState === prevState && transitionEvent === null
   );
 
-  const rawSensor = { category: 'mouse_move', rawIntensity: 90, timestamp: new Date().toISOString() };
+  const rawSensor = { category: 'mouse_move', rawIntensity: 90, timestamp: '2026-09-26T12:00:00.000Z' };
   const perception = processUmweltPerception(rawSensor, prevState, { snapshot: baselineSnapshot });
   check('Invariant 1.4: 基线模式下数字环周强制输出 null，不产生任何感官干预',
     perception === null
@@ -123,7 +127,7 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     semanticLayer: SEMANTIC_LAYERS.SYSTEM_METRICS,
     cpuUsage: 95.5,
     memoryRss: 1048576,
-    timestamp: new Date().toISOString()
+    timestamp: '2026-09-26T12:00:00.000Z'
   };
   const filteredSys = filterRawTelemetry(rawSysMetrics);
   check('Invariant 2.2: 纯 SYSTEM_METRICS 未经抽象直接进入感知漏斗被拦截为 null', filteredSys === null);
@@ -143,7 +147,7 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
 }
 
 // ---------------------------------------------------------------------
-// 不变量 4：单向确定性 Reducer 纯函数不变量 (Single-Directional Reducer Invariant)
+// 不变量 4：单向确定性 Reducer 纯函数不变量 (P0-1 严格纯函数与提交分离)
 // ---------------------------------------------------------------------
 {
   const expManifest = createExperimentRunManifest({
@@ -153,7 +157,7 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   const expSnapshot = createWindowExperimentSnapshot(1, expManifest);
 
   const initState = createDefaultInternalState();
-  const testMsgEvent = { type: 'message', eventId: 'msg-001', timestamp: new Date().toISOString() };
+  const testMsgEvent = { type: 'message', eventId: 'msg-001', timestamp: '2026-09-26T12:00:00.000Z' };
 
   const res1 = applySubjectEvent(initState, testMsgEvent, { snapshot: expSnapshot });
   const res2 = applySubjectEvent(initState, testMsgEvent, { snapshot: expSnapshot });
@@ -167,15 +171,46 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     res1.nextState.values.cognitiveLoadProxy === res2.nextState.values.cognitiveLoadProxy
   );
 
-  check('Invariant 4.3: Reducer 生成的跃迁事件记录完整的因果追溯 Provenance',
+  check('Invariant 4.3: Commit 层生成的跃迁事件记录完整的因果追溯 Provenance',
     res1.transitionEvent !== null &&
     res1.transitionEvent.triggerEventId === 'msg-001' &&
     res1.transitionEvent.provenance.sourceKind === PROVENANCE_SOURCE_KINDS.AUTONOMOUS_SYSTEM
   );
+
+  // Invariant 4.4: 相同输入重复执行 100 次：nextState 深度完全一致
+  let all100Equal = true;
+  const firstReduction = reduceSubjectEvent(initState, testMsgEvent, { snapshot: expSnapshot });
+  for (let i = 0; i < 99; i++) {
+    const r = reduceSubjectEvent(initState, testMsgEvent, { snapshot: expSnapshot });
+    if (JSON.stringify(r.nextState) !== JSON.stringify(firstReduction.nextState)) {
+      all100Equal = false;
+      break;
+    }
+  }
+  check('Invariant 4.4: reduceSubjectEvent 相同输入重复执行 100 次结果深度完全一致', all100Equal);
+
+  // Invariant 4.5: 纯状态计算结果不包含时间随机字段
+  check('Invariant 4.5: 纯状态计算结果不包含时间随机字段 (无 transitionEventId/createdAt)',
+    firstReduction.nextState.updatedAt === undefined &&
+    firstReduction.createdAt === undefined &&
+    firstReduction.transitionEventId === undefined
+  );
+
+  // Invariant 4.6: 注入固定 clock / deterministic context 时 Replay 与 Live Reduction 状态完全一致
+  const mockClock = { now: () => '2026-09-26T12:30:00.000Z' };
+  const mockIdGen = () => 'trans-fixed-001';
+  const liveCommit = commitSubjectTransition(firstReduction, { clock: mockClock, idGenerator: mockIdGen });
+  const replayCommit = commitSubjectTransition(firstReduction, { clock: mockClock, idGenerator: mockIdGen });
+
+  check('Invariant 4.6: 注入固定时钟与 ID 生成器时 Replay 与 Live 提交结果逐字段全等',
+    JSON.stringify(liveCommit) === JSON.stringify(replayCommit) &&
+    liveCommit.transitionEvent.transitionEventId === 'trans-fixed-001' &&
+    liveCommit.transitionEvent.createdAt === '2026-09-26T12:30:00.000Z'
+  );
 }
 
 // ---------------------------------------------------------------------
-// 不变量 5：数字环周空感知成立不变量 (Null-Perception Invariant)
+// 不变量 5：数字环周空感知与知觉候选界限 (P0-3 认识论防跳跃)
 // ---------------------------------------------------------------------
 {
   const expManifest = createExperimentRunManifest({
@@ -186,32 +221,28 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   const state = createDefaultInternalState({ salienceThreshold: 40 });
 
   // 强度 15 低于 threshold 40
-  const weakSensor = { category: 'subtle_audio', rawIntensity: 15, timestamp: new Date().toISOString() };
+  const weakSensor = { category: 'subtle_audio', rawIntensity: 15, timestamp: '2026-09-26T12:00:00.000Z' };
   const resultLow = processUmweltPerception(weakSensor, state, { snapshot: expSnapshot });
 
   check('Invariant 5.1: 刺激强度低于显著性门限时严格返回 null（空感知成立）', resultLow === null);
 
   // 强度 80 高于 threshold 40
-  const strongSensor = { category: 'window_focus', rawIntensity: 80, timestamp: new Date().toISOString() };
+  const strongSensor = { category: 'window_focus', rawIntensity: 80, timestamp: '2026-09-26T12:00:00.000Z' };
   const resultHigh = processUmweltPerception(strongSensor, state, { snapshot: expSnapshot });
 
-  check('Invariant 5.2: 刺激强度超过门限时生成主体可感知的质性感知单元',
+  check('Invariant 5.2: 刺激强度超过门限时生成知觉候选 (perceptionStatus = CANDIDATE)',
     resultHigh !== null &&
-    resultHigh.subjectAccessible === true &&
+    resultHigh.perceptionStatus === PERCEPTION_STATUS.CANDIDATE &&
     resultHigh.qualitativeDescriptor === 'intense_activity'
   );
-}
 
-// ---------------------------------------------------------------------
-// 不变量 6：原始感官隔离不变量 (Raw Sensory Isolation Invariant)
-// ---------------------------------------------------------------------
-{
-  const expManifest = createExperimentRunManifest({
-    experimentMode: EXPERIMENT_MODES.EXPERIMENTAL,
-    modules: { digitalUmwelt: true }
-  });
-  const expSnapshot = createWindowExperimentSnapshot(1, expManifest);
-  const state = createDefaultInternalState({ salienceThreshold: 20 });
+  check('Invariant 5.3: 知觉候选严格禁止声明 subjectAccessible = true (保持 false)',
+    resultHigh !== null && resultHigh.subjectAccessible === false
+  );
+
+  check('Invariant 5.4: 知觉候选源自系统建模，其来源严格为 AUTONOMOUS_SYSTEM 而非 SUBJECT_DERIVED',
+    resultHigh !== null && resultHigh.provenance.sourceKind === PROVENANCE_SOURCE_KINDS.AUTONOMOUS_SYSTEM
+  );
 
   // 包含原始硬件与宿主系统坐标/PID/路径的脏数据
   const dirtySensor = {
@@ -221,17 +252,34 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     y: 768,
     pid: 8848,
     rawPath: 'C:\\Users\\Administrator\\secret\\file.txt',
-    timestamp: new Date().toISOString()
+    timestamp: '2026-09-26T12:00:00.000Z'
   };
 
   const perception = processUmweltPerception(dirtySensor, state, { snapshot: expSnapshot });
-  check('Invariant 6.1: 原始坐标与系统路径在成型感知中被彻底过滤隔离',
+  check('Invariant 5.5: 任何 Raw Sensor 字段（坐标、路径、PID等）仍不得进入知觉候选',
     perception !== null &&
     perception.x === undefined &&
     perception.pid === undefined &&
     perception.rawPath === undefined &&
     !containsLeakedRawData(perception)
   );
+}
+
+// ---------------------------------------------------------------------
+// 不变量 6：原始感官隔离探测探针 (Raw Sensory Isolation Invariant)
+// ---------------------------------------------------------------------
+{
+  const expManifest = createExperimentRunManifest({
+    experimentMode: EXPERIMENT_MODES.EXPERIMENTAL,
+    modules: { digitalUmwelt: true }
+  });
+  const expSnapshot = createWindowExperimentSnapshot(1, expManifest);
+  const state = createDefaultInternalState({ salienceThreshold: 20 });
+
+  const cleanSensor = { category: 'focus', rawIntensity: 60, timestamp: '2026-09-26T12:00:00.000Z' };
+  const pClean = processUmweltPerception(cleanSensor, state, { snapshot: expSnapshot });
+
+  check('Invariant 6.1: 过滤后的合法知觉单元符合安全结构', !containsLeakedRawData(pClean));
 
   const leakProbe = { coords: { x: 50, y: 100 } };
   check('Invariant 6.2: 隔离检测探针准确捕获嵌套系统敏感字段', containsLeakedRawData(leakProbe) === true);
@@ -241,7 +289,7 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
 // 不变量 7：自传印痕防单事件结晶不变量 (Anti-Circular: Multi-Source Evidence)
 // ---------------------------------------------------------------------
 {
-  const initEv = { eventId: 'ev-init-01', windowNo: 1, summary: '初次谈及星空' };
+  const initEv = { eventId: 'ev-init-01', windowNo: 1, summary: '初次谈及星空', timestamp: '2026-09-26T10:00:00.000Z' };
   const candidate = createBiographicalCandidate(initEv, { theme: 'astronomy_interest' });
 
   check('Invariant 7.1: 新建自传候选初始状态为 PROPOSED 且包含初始事实源',
@@ -271,9 +319,9 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
 // 不变量 8：防提示词诱导循环证明不变量 (Anti-Circular: Origin Validation)
 // ---------------------------------------------------------------------
 {
-  const initEv = { eventId: 'ev-init-02', windowNo: 1, summary: '讨论雨天散步' };
+  const initEv = { eventId: 'ev-init-02', windowNo: 1, summary: '讨论雨天散步', timestamp: '2026-09-26T10:00:00.000Z' };
   const c0 = createBiographicalCandidate(initEv, { theme: 'rain_preference' });
-  const secondEv = { eventId: 'ev-sec-02', windowNo: 2, summary: '第二次在雨天对话' };
+  const secondEv = { eventId: 'ev-sec-02', windowNo: 2, summary: '第二次在雨天对话', timestamp: '2026-09-26T11:00:00.000Z' };
   const cReinforced = reinforceCandidate(c0, secondEv, 2);
 
   check('Invariant 8.1: 独立后续事件成功推进候选至 REINFORCED 状态',
@@ -284,7 +332,8 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   const systemInducedCitation = {
     eventId: 'ev-cite-prompt-01',
     behaviorOrigin: BEHAVIOR_ORIGIN.SYSTEM_INDUCED,
-    quote: '系统提示我喜欢雨天'
+    quote: '系统提示我喜欢雨天',
+    timestamp: '2026-09-26T12:00:00.000Z'
   };
 
   let systemInducedRejected = false;
@@ -299,7 +348,8 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   const subjectGeneratedCitation = {
     eventId: 'ev-cite-user-01',
     behaviorOrigin: BEHAVIOR_ORIGIN.SUBJECT_GENERATED,
-    quote: '上次下雨的时候，我们就聊到过那种潮湿的气味呢'
+    quote: '上次下雨的时候，我们就聊到过那种潮湿的气味呢',
+    timestamp: '2026-09-26T12:00:00.000Z'
   };
   const cCited = citeCandidateBySubject(cReinforced, subjectGeneratedCitation);
 
@@ -314,7 +364,7 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
 }
 
 // ---------------------------------------------------------------------
-// 不变量 9：睡眠认识论三态分立不变量 (Epistemic Separation Invariant)
+// 不变量 9：睡眠认识论三态分立与主体习得记忆门禁 (P0-2 封死直接铸造)
 // ---------------------------------------------------------------------
 {
   const replayArtifact = createSleepReplayArtifact({
@@ -327,30 +377,113 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     abstractSummary: '对话频次聚类中间表征'
   });
 
-  const subjectMemory = createSubjectAcquiredMemory({
-    topic: '雨天记忆',
-    subjectCitationQuote: '我记得那天窗外的雨声。'
-  });
-
   check('Invariant 9.1: 离线重放制品与系统整合表征严格保持 subjectAccessible = false',
     replayArtifact.subjectAccessible === false &&
     sysRepresentation.subjectAccessible === false
   );
 
-  check('Invariant 9.2: 仅主体习得自传记忆具备 subjectAccessible = true',
-    subjectMemory.subjectAccessible === true &&
-    subjectMemory.epistemicStatus === MEMORY_EPISTEMIC_STATUS.SUBJECT_ACQUIRED
-  );
+  // Invariant 9.2: 废除直接公共铸造，仅凭 quote 无法直接生成 SUBJECT_ACQUIRED
+  let directMintFailed = false;
+  try {
+    createSubjectAcquiredMemory({ subjectCitationQuote: '我记得那天窗外的雨声。' });
+  } catch (err) {
+    directMintFailed = true;
+  }
+  check('Invariant 9.2: 废除直接铸造入口，仅凭 quote 无法生成 SUBJECT_ACQUIRED (Fail-Fast)', directMintFailed);
 
   const fakeAccessibleArtifact = { ...replayArtifact, subjectAccessible: true };
   check('Invariant 9.3: 认识论分立审计器准确拦截伪装成主体记忆的离线重放制品',
     validateEpistemicSeparation(replayArtifact) === true &&
     validateEpistemicSeparation(fakeAccessibleArtifact) === false
   );
+
+  // 构造真实候选链与 mock eventStore
+  const mockEventStore = {
+    events: new Set(['ev-real-01', 'ev-real-02', 'ev-cite-real-01']),
+    hasEvent(id) { return this.events.has(id); }
+  };
+
+  const validCandidate = {
+    candidateId: 'cand-valid-01',
+    theme: '雨天回忆',
+    status: CANDIDATE_STATUS.CITED_BY_SUBJECT,
+    initialWindowNo: 1,
+    evidenceEvents: [
+      { eventId: 'ev-real-01', timestamp: '2026-09-26T10:00:00.000Z' },
+      { eventId: 'ev-real-02', timestamp: '2026-09-26T11:00:00.000Z' }
+    ]
+  };
+
+  // Invariant 9.4: 伪造未注册 eventId 无法生成 SUBJECT_ACQUIRED
+  const fakeCitationEvent = {
+    eventId: 'ev-unregistered-fake',
+    behaviorOrigin: BEHAVIOR_ORIGIN.SUBJECT_GENERATED,
+    quote: '我记得那天。',
+    timestamp: '2026-09-26T12:00:00.000Z'
+  };
+  let fakeEventFailed = false;
+  try {
+    acquireSubjectMemory({
+      candidate: validCandidate,
+      citationEvent: fakeCitationEvent,
+      eventStore: mockEventStore
+    });
+  } catch (err) {
+    fakeEventFailed = true;
+  }
+  check('Invariant 9.4: 伪造 eventId 或未在事件库中注册的引用无法生成 SUBJECT_ACQUIRED', fakeEventFailed);
+
+  // Invariant 9.5: SYSTEM_INDUCED 来源即使附带合法 eventId 也绝对无法生成 SUBJECT_ACQUIRED
+  const systemInducedValidIdEvent = {
+    eventId: 'ev-cite-real-01',
+    behaviorOrigin: BEHAVIOR_ORIGIN.SYSTEM_INDUCED,
+    quote: '系统提示我说记得那天。',
+    timestamp: '2026-09-26T12:00:00.000Z'
+  };
+  let systemInducedAcquireFailed = false;
+  try {
+    acquireSubjectMemory({
+      candidate: validCandidate,
+      citationEvent: systemInducedValidIdEvent,
+      eventStore: mockEventStore
+    });
+  } catch (err) {
+    systemInducedAcquireFailed = true;
+  }
+  check('Invariant 9.5: SYSTEM_INDUCED 诱发行为绝对无法生成 SUBJECT_ACQUIRED', systemInducedAcquireFailed);
+
+  // Invariant 9.6: 合法 SUBJECT_GENERATED + 真实 event + 合法 candidate 才能进入 SUBJECT_ACQUIRED
+  const genuineCitationEvent = {
+    eventId: 'ev-cite-real-01',
+    behaviorOrigin: BEHAVIOR_ORIGIN.SUBJECT_GENERATED,
+    quote: '我一直记得那天窗外的雨声。',
+    windowNo: 2,
+    timestamp: '2026-09-26T12:00:00.000Z'
+  };
+  const acquiredMemory = acquireSubjectMemory({
+    candidate: validCandidate,
+    citationEvent: genuineCitationEvent,
+    eventStore: mockEventStore,
+    crystallizedContext: '关于雨天对话的记忆结晶'
+  });
+
+  check('Invariant 9.6: 合法候选与真实主体引用成功转化为 SUBJECT_ACQUIRED 记忆',
+    acquiredMemory !== null &&
+    acquiredMemory.epistemicStatus === MEMORY_EPISTEMIC_STATUS.SUBJECT_ACQUIRED &&
+    acquiredMemory.candidateId === 'cand-valid-01' &&
+    acquiredMemory.citationEventId === 'ev-cite-real-01'
+  );
+
+  // Invariant 9.7: SubjectAcquiredMemory 必须持有完整 Provenance 且通过分立审计
+  check('Invariant 9.7: SubjectAcquiredMemory 声明 subjectAccessible = true 且通过三态审计',
+    acquiredMemory.subjectAccessible === true &&
+    acquiredMemory.provenance.sourceKind === PROVENANCE_SOURCE_KINDS.SUBJECT_DERIVED &&
+    validateEpistemicSeparation(acquiredMemory) === true
+  );
 }
 
 // ---------------------------------------------------------------------
-// 不变量 10：科学假说规范与零假说成立检验 (Falsifiability & Null Hypothesis)
+// 不变量 10：科学假说规范与观测差值评估 (P0-4 严禁滥用统计显著性命名)
 // ---------------------------------------------------------------------
 {
   const h001Path = path.join(__dirname, '..', 'research', 'hypotheses', 'H001-homeostatic-rhythm.json');
@@ -360,13 +493,17 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
     validateHypothesisSchema(h001Raw)
   );
 
-  // 模拟实验组与基线组无显著差异（零假说成立）
+  // 模拟实验组与基线组观测差值小（无实质原始差异）
   const baselineData = { eventCount: 42 };
-  const expNoDivergenceData = { eventCount: 43 };
-  const h0Eval = evaluateExperimentSignificance(baselineData, expNoDivergenceData, h001Raw);
+  const expCloseData = { eventCount: 43 };
+  const diffEval = evaluateObservedDifference(baselineData, expCloseData, h001Raw);
 
-  check('Invariant 10.2: 实验组无统计显著分歧时客观接受零假说 (Null Hypothesis Accepted)',
-    h0Eval.nullHypothesisAccepted === true && h0Eval.isSignificant === false
+  check('Invariant 10.2: 差值评估严谨标定 statisticalInference = NOT_PERFORMED 且判定 NO_LARGE_RAW_DIFFERENCE',
+    diffEval.differenceDelta === 1 &&
+    diffEval.observation === 'NO_LARGE_RAW_DIFFERENCE' &&
+    diffEval.statisticalInference === 'NOT_PERFORMED' &&
+    diffEval.noMeaningfulObservedDifference === true &&
+    diffEval.isSignificant === undefined // 确保未滥用统计显著性字段
   );
 
   // 模拟非法假说定义（缺失零假说 H0 描述）

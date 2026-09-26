@@ -2,14 +2,15 @@
  * src/null-hypothesis.js
  * 
  * 《生物科学与数字生命的哲学范畴》
- * 假说注册规范与零假说（Null Hypothesis）检验契约 (Phase 0)
+ * 假说注册规范、零假说检验契约与观测差值评估 (Phase 0)
  * 
  * 核心哲学与科学边界：
  * 1. 科学可证伪性（Falsifiability）：
  *    任何数字生命实验假说必须具有明确的零假说（Null Hypothesis, H0）与确凿的证伪判据。
- * 2. 诚实面对零结果：
- *    若实验组与基线组在可观测变量上无统计显著差异，该结果是有效的科学发现，
- *    严禁人为修改数据或增加掩饰性机制。
+ * 2. 严谨的科学语标（P0-4: No False Statistical Significance）：
+ *    Phase 0 仅建立基础观测指标与原始差值（Observed Difference / Effect Delta）的数据格式规范，
+ *    严禁在未执行正式假设检验（样本量、检验统计量、p值、置信区间）前宣称“统计显著性（Statistical Significance）”。
+ *    返回结构明确标定 statisticalInference: 'NOT_PERFORMED'。
  */
 
 'use strict';
@@ -29,7 +30,7 @@ const MANDATORY_HYPOTHESIS_FIELDS = [
 ];
 
 /**
- * 校验假说定义的完整性与可证伪性
+ * 校验假说定义的完整性与可证伪性规范
  * 
  * @param {Object} hyp
  * @returns {boolean}
@@ -53,41 +54,46 @@ function validateHypothesisSchema(hyp) {
 }
 
 /**
- * 评估实验组与基线组的差异显著性与证伪状态
+ * 评估实验组与基线组的观测差值 (Evaluate Observed Difference)
+ * 
+ * Phase 0 规范：仅计算原始测量差值，不推断统计显著性
  * 
  * @param {Object} baselineResults 基线数据
  * @param {Object} experimentalResults 实验组数据
  * @param {Object} hypothesis 假说定义
- * @returns {Object} 包含 isSignificant, rejectedNullHypothesis, observationNotes
+ * @returns {Object} 包含 differenceDelta, observation, statisticalInference, noMeaningfulObservedDifference
  */
-function evaluateExperimentSignificance(baselineResults, experimentalResults, hypothesis) {
+function evaluateObservedDifference(baselineResults, experimentalResults, hypothesis) {
   if (!validateHypothesisSchema(hypothesis)) {
-    throw new Error('evaluateExperimentSignificance: Invalid hypothesis schema provided.');
+    throw new Error('evaluateObservedDifference: Invalid hypothesis schema provided.');
   }
 
   const baseCount = (baselineResults && typeof baselineResults.eventCount === 'number') ? baselineResults.eventCount : 0;
   const expCount = (experimentalResults && typeof experimentalResults.eventCount === 'number') ? experimentalResults.eventCount : 0;
 
-  // 简单的可检验度量（Phase 0 框架）
   const delta = Math.abs(expCount - baseCount);
-  const isSignificant = delta > 5; // 初步阈值
+  const rawThreshold = 5;
+  const hasRawDivergence = delta > rawThreshold;
 
   return {
     hypothesisId: hypothesis.hypothesisId,
-    baselineEventCount: baseCount,
-    experimentalEventCount: expCount,
+    baselineValue: baseCount,
+    experimentalValue: expCount,
     differenceDelta: delta,
-    isSignificant,
-    rejectedNullHypothesis: isSignificant,
-    nullHypothesisAccepted: !isSignificant,
-    evaluationConclusion: isSignificant 
-      ? 'Experimental intervention produced statistically observable divergence from baseline.'
-      : 'Null hypothesis accepted: No significant divergence detected between experiment and baseline control.'
+    observation: hasRawDivergence ? 'OBSERVED_RAW_DIFFERENCE' : 'NO_LARGE_RAW_DIFFERENCE',
+    // 明确声明：Phase 0 不执行正式推断统计
+    statisticalInference: 'NOT_PERFORMED',
+    noMeaningfulObservedDifference: !hasRawDivergence,
+    note: 'Phase 0 metric schema only; formal hypothesis testing with p-value and confidence intervals is conducted in Phase 1+ research analysis.'
   };
 }
+
+// 别名支持
+const evaluateEffectDelta = evaluateObservedDifference;
 
 module.exports = {
   MANDATORY_HYPOTHESIS_FIELDS,
   validateHypothesisSchema,
-  evaluateExperimentSignificance
+  evaluateObservedDifference,
+  evaluateEffectDelta
 };

@@ -70,6 +70,15 @@ const MEMORY_EPISTEMIC_STATUS = Object.freeze({
 });
 
 /**
+ * 数字环周知觉候选状态（Phase 0 认识论防跳跃：系统建模候选 ≠ 主体真实感受质）
+ */
+const PERCEPTION_STATUS = Object.freeze({
+  CANDIDATE: 'CANDIDATE',     // 感知候选：经四级漏斗过滤生成的质性表征，尚未经过主体采纳流程
+  ACCEPTED: 'ACCEPTED',       // 主体采纳：后续阶段（Phase 3）经由注意力与交互证实为主体输入
+  UNFORMED: 'UNFORMED'        // 未成型：低于显著性门限或被硬件过滤丢弃
+});
+
+/**
  * 默认实验特性模块开关
  */
 const DEFAULT_EXPERIMENT_MODULES = Object.freeze({
@@ -90,5 +99,7 @@ module.exports = {
   CANDIDATE_STATUS,
   BEHAVIOR_ORIGIN,
   MEMORY_EPISTEMIC_STATUS,
+  PERCEPTION_STATUS,
   DEFAULT_EXPERIMENT_MODULES
 };
+

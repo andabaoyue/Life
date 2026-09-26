@@ -2,7 +2,7 @@
  * src/internal-state.js
  * 
  * 《生物科学与数字生命的哲学范畴》
- * 内部状态代理量化模型与单向确定性 State Reducer (Phase 0)
+ * 内部状态代理量化模型、确定性 State Reducer 与提交层 (Phase 0)
  * 
  * 核心哲学与工程边界：
  * 1. 语义分层：此处定义的一切变量均为 SUBJECT_STATE_PROXY（主体内部状态代理变量），
@@ -13,9 +13,12 @@
  *    - cognitiveLoadProxy 代替含混的 memoryLoad
  *    - uncertaintyProxy 代替含混的 uncertainty
  *    - salienceThreshold 代替含混的 environmentalSalience
- * 4. 纯函数单向 Reducer：
- *    applySubjectEvent(previousState, event, options) -> { nextState, transitionEvent }
- *    保证幂等、纯函数、不可直接修改入参，基线模式下输出零变动。
+ * 4. 纯函数单向 Reducer 与提交层彻底分离（P0-1）：
+ *    - Pure Reduction Layer: reduceSubjectEvent(previousState, event, options)
+ *      严禁访问系统时钟、随机数或外部可变状态，保证同输入严格产生同输出（100% 确定性可重放）。
+ *    - Commit / Provenance Layer: commitSubjectTransition(reductionResult, context)
+ *      仅在生产持久化或显式上下文注入时负责签发 transitionEventId 与 Provenance 时间戳。
+ *    - Live Runtime Facade: applySubjectEvent(previousState, event, options)
  */
 
 'use strict';
@@ -111,9 +114,11 @@ function clamp(val, min, max) {
  * 创建初始内部状态（完全深冻结，防外部直接修改）
  * 
  * @param {Object} [overrides={}]
+ * @param {Object} [options={}]
+ * @param {Object} [options.clock] 可选确定性时钟注入
  * @returns {Readonly<Object>}
  */
-function createDefaultInternalState(overrides = {}) {
+function createDefaultInternalState(overrides = {}, options = {}) {
   const values = {};
   for (const [key, def] of Object.entries(INTERNAL_STATE_PROXY_DEFS)) {
     if (key in overrides && typeof overrides[key] === 'number') {
@@ -123,12 +128,19 @@ function createDefaultInternalState(overrides = {}) {
     }
   }
 
+  const nowIso = (options.clock && typeof options.clock.now === 'function')
+    ? options.clock.now()
+    : (options.timestamp || (options.deterministic ? undefined : new Date().toISOString()));
+
   const state = {
     schemaVersion: SCHEMA_VERSION,
     semanticLayer: SEMANTIC_LAYERS.SUBJECT_STATE_PROXY,
-    values: Object.freeze(values),
-    updatedAt: new Date().toISOString()
+    values: Object.freeze(values)
   };
+
+  if (nowIso) {
+    state.updatedAt = nowIso;
+  }
 
   return Object.freeze(state);
 }
@@ -168,51 +180,50 @@ function isSubjectAccessible(propKey) {
 }
 
 /**
- * 单向确定性 State Reducer (Pure Function)
+ * 纯状态计算层 (Pure State Reduction Layer)
  * 
- * applySubjectEvent(previousState, event, options) -> { nextState, transitionEvent }
- * 
- * 契约保证：
- * 1. 纯函数：绝不修改 previousState，输入不变则输出严格确定。
- * 2. 基线守恒（Baseline Invariant）：
- *    若 options.snapshot 为基线模式，或 snapshot.modules.homeostasis !== true，
- *    则强制返回 previousState 原引用，transitionEvent 为 null，产生 0 变动。
- * 3. 拒绝非法事件：未通过 provenance 校验或非合法事件结构的输入，抛出错误或安全拒绝，不污染状态。
+ * 严格契约（Strict Deterministic Pure Function）：
+ * 1. 同输入必得同输出：禁止调用 Date.now()、new Date()、Math.random()、crypto.randomBytes() 或读取全局可变状态。
+ * 2. 状态值运算封闭：只计算 values 演进、deltas 与 triggerEventId，不附加任何随机 ID 或时间戳。
+ * 3. 基线与未启用守恒：基线模式或未启用稳态模块时，强制返回原状态引用与空 deltas。
  * 
  * @param {Readonly<Object>} previousState 上一内部状态
- * @param {Object} event 输入主体交互事件
- * @param {Object} [options={}] 运行时环境与快照
- * @param {Object} [options.snapshot] 窗口级实验快照
- * @returns {{ nextState: Readonly<Object>, transitionEvent: Readonly<Object>|null }}
+ * @param {Object} event 输入交互事件
+ * @param {Object} [options={}]
+ * @param {Object} [options.snapshot] 实验快照
+ * @returns {Readonly<Object>} reductionResult
  */
-function applySubjectEvent(previousState, event, options = {}) {
+function reduceSubjectEvent(previousState, event, options = {}) {
   if (!validateInternalState(previousState)) {
-    throw new Error('applySubjectEvent: Invalid previousState provided.');
+    throw new Error('reduceSubjectEvent: Invalid previousState provided.');
   }
 
   const snapshot = options.snapshot;
 
   // 1. 基线对照组或未启用稳态模块：严格保证零干预，返回原状态
   if (!snapshot || isBaselineMode(snapshot) || !snapshot.modules || snapshot.modules.homeostasis !== true) {
-    return {
+    return Object.freeze({
       nextState: previousState,
-      transitionEvent: null
-    };
+      deltas: Object.freeze({}),
+      triggerEventId: null,
+      previousValues: previousState.values,
+      nextValues: previousState.values,
+      isNoop: true
+    });
   }
 
   // 2. 校验输入事件的基本合法性
   if (!event || typeof event !== 'object') {
-    throw new Error('applySubjectEvent: event must be a valid object.');
+    throw new Error('reduceSubjectEvent: event must be a valid object.');
   }
 
-  // Phase 0 合同契约下的微步演进（在 Phase 1 之前仅支持基于合同的确定性轻量步进）
-  // 模拟单次合法事件对代理指标的有界影响
   const prevVals = previousState.values;
   const newVals = { ...prevVals };
   const deltas = {};
 
-  // 若为用户消息交互事件，轻微提升 interactionDensity 与 cognitiveLoadProxy，轻微消耗 energy
   const eventType = event.type || event.eventType;
+  const triggerEventId = event.eventId || event.messageId || 'unknown_event';
+
   if (eventType === 'message' || eventType === 'user_input') {
     deltas.energy = -1;
     deltas.interactionDensity = +2;
@@ -225,13 +236,17 @@ function applySubjectEvent(previousState, event, options = {}) {
     deltas.cognitiveLoadProxy = -2;
   } else {
     // 未知或无显著影响事件，保持不变
-    return {
+    return Object.freeze({
       nextState: previousState,
-      transitionEvent: null
-    };
+      deltas: Object.freeze({}),
+      triggerEventId,
+      previousValues: prevVals,
+      nextValues: prevVals,
+      isNoop: true
+    });
   }
 
-  // 计算新值并执行有界约束 [min, max]
+  // 确定性数值有界更新
   for (const [k, delta] of Object.entries(deltas)) {
     const def = INTERNAL_STATE_PROXY_DEFS[k];
     if (def) {
@@ -239,34 +254,101 @@ function applySubjectEvent(previousState, event, options = {}) {
     }
   }
 
-  const nowIso = new Date().toISOString();
+  // 纯函数计算生成的 nextState，不包含时间与随机污染字段
   const nextState = Object.freeze({
     schemaVersion: SCHEMA_VERSION,
     semanticLayer: SEMANTIC_LAYERS.SUBJECT_STATE_PROXY,
-    values: Object.freeze(newVals),
-    updatedAt: nowIso
+    values: Object.freeze(newVals)
   });
 
-  const transitionEventId = `trans-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  return Object.freeze({
+    nextState,
+    deltas: Object.freeze(deltas),
+    triggerEventId,
+    previousValues: Object.freeze({ ...prevVals }),
+    nextValues: Object.freeze({ ...newVals }),
+    isNoop: false
+  });
+}
+
+/**
+ * 提交与溯源层 (Commit / Provenance Layer)
+ * 
+ * 负责在持久化或生产运行阶段附加 transitionEventId、时间戳及 Provenance
+ * 
+ * @param {Object} reductionResult reduceSubjectEvent 的计算结果
+ * @param {Object} [context={}] 运行时提交上下文
+ * @param {Object} [context.clock] 可选的时钟提供者（支持单元测试与回放时间注入）
+ * @param {Function} [context.idGenerator] 可选的 ID 生成器
+ * @returns {{ nextState: Readonly<Object>, transitionEvent: Readonly<Object>|null }}
+ */
+function commitSubjectTransition(reductionResult, context = {}) {
+  if (!reductionResult || typeof reductionResult !== 'object') {
+    throw new Error('commitSubjectTransition: Invalid reductionResult.');
+  }
+
+  if (reductionResult.isNoop || reductionResult.nextState === reductionResult.previousState) {
+    return {
+      nextState: reductionResult.nextState,
+      transitionEvent: null
+    };
+  }
+
+  // 提取时间戳：优先使用 context.clock，其次 context.timestamp，默认系统时间
+  const timestamp = (context.clock && typeof context.clock.now === 'function')
+    ? context.clock.now()
+    : (context.timestamp || new Date().toISOString());
+
+  // 生成唯一 ID：优先使用 context.idGenerator，其次系统 crypto
+  const transitionEventId = (typeof context.idGenerator === 'function')
+    ? context.idGenerator()
+    : `trans-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
   const transitionEvent = Object.freeze({
     transitionEventId,
     schemaVersion: SCHEMA_VERSION,
     semanticLayer: SEMANTIC_LAYERS.SUBJECT_STATE_PROXY,
-    triggerEventId: event.eventId || event.messageId || 'unknown_event',
-    previousValues: Object.freeze({ ...prevVals }),
-    nextValues: Object.freeze({ ...newVals }),
-    deltas: Object.freeze(deltas),
-    createdAt: nowIso,
+    triggerEventId: reductionResult.triggerEventId,
+    previousValues: reductionResult.previousValues,
+    nextValues: reductionResult.nextValues,
+    deltas: reductionResult.deltas,
+    createdAt: timestamp,
     provenance: Object.freeze({
-      sourceKind: PROVENANCE_SOURCE_KINDS.AUTONOMOUS_SYSTEM,
-      timestamp: nowIso
+      sourceKind: context.sourceKind || PROVENANCE_SOURCE_KINDS.AUTONOMOUS_SYSTEM,
+      timestamp
     })
   });
 
+  // 包含提交元数据的状态快照
+  const committedNextState = Object.freeze({
+    ...reductionResult.nextState,
+    updatedAt: timestamp
+  });
+
   return {
-    nextState,
+    nextState: committedNextState,
     transitionEvent
   };
+}
+
+/**
+ * 实时运行时门面函数 (Live Runtime Facade)
+ * 将 Pure Reduction 与 Commit 组合执行，向后兼容现有运行流程
+ * 
+ * @param {Readonly<Object>} previousState 上一内部状态
+ * @param {Object} event 输入主体交互事件
+ * @param {Object} [options={}] 运行时环境与快照
+ * @returns {{ nextState: Readonly<Object>, transitionEvent: Readonly<Object>|null }}
+ */
+function applySubjectEvent(previousState, event, options = {}) {
+  const reduction = reduceSubjectEvent(previousState, event, options);
+  if (reduction.isNoop || reduction.nextState === previousState) {
+    return {
+      nextState: previousState,
+      transitionEvent: null
+    };
+  }
+  return commitSubjectTransition(reduction, options);
 }
 
 module.exports = {
@@ -275,5 +357,7 @@ module.exports = {
   createDefaultInternalState,
   validateInternalState,
   isSubjectAccessible,
+  reduceSubjectEvent,
+  commitSubjectTransition,
   applySubjectEvent
 };
