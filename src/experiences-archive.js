@@ -23,10 +23,10 @@ class ExperiencesArchive {
    */
   append(record) {
     if (!record || typeof record !== 'object') return false;
-    const entry = {
-      ...record,
-      createdAt: record.createdAt || Date.now()
-    };
+    const entry = { ...record };
+    if (!entry.timestamp && !entry.createdAt) {
+      entry.createdAt = Date.now();
+    }
     const line = JSON.stringify(entry) + '\n';
     try {
       if (!fs.existsSync(this.dir)) {
@@ -49,27 +49,53 @@ class ExperiencesArchive {
   }
 
   /**
-   * 归档一个完整窗口的结构化经历与小结
+   * 检查指定窗口是否已存在 window_archive 记录 (支持 Canonical v1 与 Legacy)
    */
-  appendWindowArchive(data) {
-    return this.append({
-      type: 'window_archive',
-      summaryVersion: '1.0',
-      windowNo: data.windowNo,
-      turns: data.turns || 0,
-      messageCount: data.messageCount || 0,
-      events: data.events || [],
-      observations: data.observations || [],
-      interpretations: data.interpretations || [],
-      segments: data.segments || [],
-      windowSynthesis: data.windowSynthesis || {},
-      stateEvidence: data.stateEvidence || [],
-      verifiedEvidence: data.verifiedEvidence || [],
-      rejectedEvidence: data.rejectedEvidence || [],
-      stateChanges: data.stateChanges || [],
-      explanations: data.explanations || [],
-      rawSummaryText: data.rawSummaryText || ''
+  hasWindowArchive(windowNo) {
+    if (typeof windowNo !== 'number' || isNaN(windowNo)) return false;
+    const records = this.readAll();
+    return records.some(r => {
+      const type = r.recordType || r.type;
+      const wNo = (typeof r.windowNo === 'number' && !isNaN(r.windowNo))
+        ? r.windowNo
+        : (r.payload && typeof r.payload.windowNo === 'number' && !isNaN(r.payload.windowNo) ? r.payload.windowNo : null);
+      return type === 'window_archive' && wNo === windowNo;
     });
+  }
+
+  /**
+   * 归档一个完整窗口的结构化经历与小结 (P0-1: 生产环境直接使用 Canonical Schema v1)
+   * P0-2: Exactly-Once 幂等保证，防止同一 windowNo 被重复归档
+   */
+  appendWindowArchive(data, opts = {}) {
+    if (!data || typeof data !== 'object') return false;
+    const windowNo = (typeof data.windowNo === 'number' && !isNaN(data.windowNo))
+      ? data.windowNo
+      : (data.windowNo === null ? null : (data.windowNo !== undefined ? data.windowNo : null));
+
+    if (windowNo !== null && !opts.allowDuplicate && this.hasWindowArchive(windowNo)) {
+      console.warn(`[ExperiencesArchive] 窗口 #${windowNo} 已存在 window_archive 记录，跳过重复写入以保证 Exactly-Once 语义`);
+      return true;
+    }
+
+    const payload = {
+      windowNo,
+      turns: (typeof data.turns === 'number' && !isNaN(data.turns)) ? data.turns : 0,
+      messageCount: (typeof data.messageCount === 'number' && !isNaN(data.messageCount)) ? data.messageCount : 0,
+      events: Array.isArray(data.events) ? data.events : [],
+      observations: Array.isArray(data.observations) ? data.observations : [],
+      interpretations: Array.isArray(data.interpretations) ? data.interpretations : [],
+      segments: Array.isArray(data.segments) ? data.segments : [],
+      windowSynthesis: (data.windowSynthesis && typeof data.windowSynthesis === 'object') ? data.windowSynthesis : {},
+      stateEvidence: Array.isArray(data.stateEvidence) ? data.stateEvidence : [],
+      verifiedEvidence: Array.isArray(data.verifiedEvidence) ? data.verifiedEvidence : [],
+      rejectedEvidence: Array.isArray(data.rejectedEvidence) ? data.rejectedEvidence : [],
+      stateChanges: Array.isArray(data.stateChanges) ? data.stateChanges : [],
+      explanations: Array.isArray(data.explanations) ? data.explanations : [],
+      rawSummaryText: typeof data.rawSummaryText === 'string' ? data.rawSummaryText : ''
+    };
+
+    return this.appendRecord('window_archive', windowNo, payload);
   }
 
   /**

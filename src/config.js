@@ -26,6 +26,8 @@ const DEFAULTS = {
   configVersion: '1.0.0',
   apiKey: '',
   baseURL: 'https://api.deepseek.com',
+  provider: 'deepseek',
+  credentialType: 'deepseek-api-key',
   // 官方 API 模型名。V4.1 Flash 对应的就是 deepseek-flash，
   // 写成 deepseek-v4.1-flash 可能报模型不存在，以你控制台看到的为准。
   model: 'deepseek-flash',
@@ -86,17 +88,37 @@ function finiteNonNegative(v, fallback) {
 
 /* 手改配置仍然支持，但坏类型不能直接流入 Brain。 */
 function sanitize(raw = {}) {
+  const { providerFor, validateCredentialTarget } = require('./provider-policy');
   const price = raw.price && typeof raw.price === 'object' ? raw.price : {};
   const peak = price.peak && typeof price.peak === 'object' ? price.peak : {};
   const valley = price.valley && typeof price.valley === 'object' ? price.valley : {};
-  const baseURL = typeof raw.baseURL === 'string' && /^https?:\/\//i.test(raw.baseURL)
+  let baseURL = typeof raw.baseURL === 'string' && /^https?:\/\//i.test(raw.baseURL)
     ? raw.baseURL.trim() : DEFAULTS.baseURL;
+
+  const rawProvider = raw.provider || providerFor(baseURL);
+  const rawCredType = raw.credentialType || (rawProvider === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
+  const policy = validateCredentialTarget({ provider: rawProvider, baseURL, credentialType: rawCredType });
+
+  let provider = DEFAULTS.provider;
+  let credentialType = DEFAULTS.credentialType;
+  if (policy.ok) {
+    provider = policy.provider;
+    credentialType = policy.credentialType;
+  } else {
+    console.warn('[Config] Provider policy validation failed:', policy.error, 'reverting to default');
+    baseURL = DEFAULTS.baseURL;
+    provider = DEFAULTS.provider;
+    credentialType = DEFAULTS.credentialType;
+  }
+
   return {
     ...DEFAULTS,
     schemaVersion: finiteInt(raw.schemaVersion, DEFAULTS.schemaVersion, 1, 100),
     configVersion: typeof raw.configVersion === 'string' && raw.configVersion.trim() ? raw.configVersion.trim() : DEFAULTS.configVersion,
     apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : DEFAULTS.apiKey,
     baseURL,
+    provider,
+    credentialType,
     model: typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : DEFAULTS.model,
     windowTurns: finiteInt(raw.windowTurns, DEFAULTS.windowTurns, 1, 100000),
     windowMaxTokens: finiteInt(raw.windowMaxTokens, DEFAULTS.windowMaxTokens, 256, 10000000),

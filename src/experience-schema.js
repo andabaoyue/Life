@@ -82,7 +82,7 @@ function createEvent(opts = {}) {
     eventId,
     type: opts.type || 'message',
     timestamp: opts.timestamp || Date.now(),
-    windowNo: opts.windowNo || 1,
+    windowNo: (typeof opts.windowNo === 'number' && !isNaN(opts.windowNo)) ? opts.windowNo : 1,
     messageId: opts.messageId || null,
     source: opts.source || 'user',
     payload: opts.payload || {}
@@ -226,7 +226,7 @@ function createExperience(opts = {}) {
   const experienceId = opts.experienceId || ('exp-' + String(expSeq).padStart(6, '0'));
   return {
     experienceId,
-    windowNo: opts.windowNo || 1,
+    windowNo: (typeof opts.windowNo === 'number' && !isNaN(opts.windowNo)) ? opts.windowNo : 1,
     events: Array.isArray(opts.events) ? opts.events : [],
     observations: Array.isArray(opts.observations) ? opts.observations : [],
     interpretations: Array.isArray(opts.interpretations) ? opts.interpretations : [],

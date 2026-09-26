@@ -24,7 +24,7 @@ function createStateChange(opts = {}) {
   return {
     stateChangeId,
     changeId: stateChangeId, // 别名支持
-    windowNo: opts.windowNo || 1,
+    windowNo: (typeof opts.windowNo === 'number' && !isNaN(opts.windowNo)) ? opts.windowNo : 1,
     trait: String(opts.trait || '').trim(),
     previousValue,
     delta,

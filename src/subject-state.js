@@ -103,7 +103,7 @@ class SubjectState {
           this.data = {
             schemaVersion: SCHEMA_VERSION,
             updatedAt: raw.updatedAt || Date.now(),
-            windowNo: raw.windowNo || 1,
+            windowNo: (typeof raw.windowNo === 'number' && !isNaN(raw.windowNo)) ? raw.windowNo : 1,
             values: { ...DEFAULT_TRAITS, ...raw.values },
             history: Array.isArray(raw.history) ? raw.history : [],
             stateChanges: Array.isArray(raw.stateChanges) ? raw.stateChanges : [],
@@ -146,7 +146,7 @@ class SubjectState {
         const { records, diagnostics } = archive.readAllWithDiagnostics();
         if (records && records.length > 0) {
           console.log(`[SubjectState] 正在从 experiences.jsonl (${records.length} 条记录) 重建损坏的 Subject State...`);
-          const replayReport = SubjectState.replay(records, { diagnostics });
+          const replayReport = SubjectState.replay(records, { diagnostics, archivePath });
           const newWindowNo = replayReport.nextWindowNo || (Math.max(0, ...replayReport.windowStates.map(w => w.windowNo)) + 1);
 
           this.committedEvidenceIds = new Set(replayReport.acceptedEvidenceIds || []);
@@ -334,7 +334,7 @@ class SubjectState {
       return false;
     }
 
-    const replayReport = SubjectState.replay(records, { diagnostics });
+    const replayReport = SubjectState.replay(records, { diagnostics, archivePath: archive.path });
     if (!replayReport || replayReport.replayStatus === 'invalid') {
       this.recoveryStatus = 'RECOVERY_FAILED';
       this.data.recoveryStatus = 'RECOVERY_FAILED';
@@ -841,9 +841,21 @@ class SubjectState {
     let processedRecords = 0;
     let rejectedRecords = 0;
 
-    const corruptCount = options.corruptRecords ?? (options.diagnostics ? options.diagnostics.skippedCount : 0);
-    const integrity = corruptCount > 0 ? 'uncertified' : 'certified';
-    const replayStatus = corruptCount > 0 ? 'partial' : 'complete';
+    // P0-3: 统一完整性权威可信源——调用 ArchiveIntegrityService (或直接使用外部传入的权威完整性报告)
+    let integrityReport = options.integrityReport;
+    if (!integrityReport) {
+      const { ArchiveIntegrityService } = require('./archive-integrity');
+      if (options.archivePath && fs.existsSync(options.archivePath)) {
+        integrityReport = ArchiveIntegrityService.checkArchive(options.archivePath);
+      } else {
+        integrityReport = ArchiveIntegrityService.checkRecords(archiveRecords, options);
+      }
+    }
+
+    const isCertified = integrityReport && integrityReport.integrity === 'certified';
+    const integrity = isCertified ? 'certified' : 'uncertified';
+    const replayStatus = (integrityReport && integrityReport.replayStatus) || (options.corruptRecords > 0 ? 'partial' : 'complete');
+    const corruptCount = (integrityReport && integrityReport.corruptLines) ?? (options.corruptRecords ?? (options.diagnostics ? options.diagnostics.skippedCount : 0));
 
     const NON_STATE_RECORD_TYPES = new Set([
       'recovery_event',
@@ -868,7 +880,7 @@ class SubjectState {
         continue;
       }
 
-      const wNo = record.windowNo || 1;
+      const wNo = (typeof record.windowNo === 'number' && !isNaN(record.windowNo)) ? record.windowNo : 1;
       const ts = record.timestamp || 0;
 
       // 窗口与时间过滤闸门
@@ -986,6 +998,8 @@ class SubjectState {
     return {
       replayStatus,
       integrity,
+      archiveIntegrity: (integrityReport && integrityReport.integrity) || integrity,
+      hasLegacyAdapter: !!(integrityReport && integrityReport.hasLegacyAdapter),
       corruptRecords: corruptCount,
       initialState: { ...initialTraits },
       windowStates,

@@ -88,7 +88,7 @@ class Memory {
             seq++;
             m.messageId = 'm-' + String(seq).padStart(6, '0');
           }
-          if (typeof m.windowNo !== 'number') m.windowNo = data.windowNo || 1;
+          if (typeof m.windowNo !== 'number') m.windowNo = (typeof data.windowNo === 'number' && !isNaN(data.windowNo)) ? data.windowNo : 1;
           if (typeof m.roundNo !== 'number') m.roundNo = 0;
           if (typeof m.bridge !== 'boolean') m.bridge = false;
           if (typeof m.synthetic !== 'boolean') m.synthetic = false;

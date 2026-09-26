@@ -100,6 +100,13 @@ class Brain {
   constructor(userDataDir, cfg) {
     this.dir = userDataDir;
     this.cfg = cfg;
+    const { validateCredentialTarget, providerFor } = require('./provider-policy');
+    const pTarget = cfg.provider || providerFor(cfg.baseURL);
+    const cType = cfg.credentialType || (pTarget === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
+    const policyCheck = validateCredentialTarget({ provider: pTarget, baseURL: cfg.baseURL, credentialType: cType });
+    if (!policyCheck.ok) {
+      console.warn(`[Brain] Provider Policy 检查未通过: ${policyCheck.error}`);
+    }
     this.api = new DeepSeek(cfg);
     this.selfLedger = new SelfLedger(userDataDir, {
       maxEntries: cfg.selfLedgerMaxEntries,
@@ -179,6 +186,8 @@ class Brain {
       this.api.cfg.streamIdleTimeoutMs = this.cfg.streamIdleTimeoutMs;
       this.api.cfg.model = this.cfg.model;
       this.api.cfg.baseURL = this.cfg.baseURL;
+      this.api.cfg.provider = this.cfg.provider;
+      this.api.cfg.credentialType = this.cfg.credentialType;
     }
 
     return true;
@@ -424,9 +433,24 @@ class Brain {
     }
 
     // 先拍快照再调 API：小结要等一两秒，这期间用户可能又发消息进来，
-    // 应用时必须按快照删，不能按「回来时的历史」删，否则会把新对话裁掉。
     const snap = this.memory.windowSnapshot();
     if (!snap.items.length) return false;
+
+    // P0-2: 若当前窗口已在 Archive 中成功归档且 SubjectState 已恢复/前进，直接推进 Memory 关窗完成幂等收尾
+    if (this.experiencesArchive && this.experiencesArchive.hasWindowArchive &&
+        this.experiencesArchive.hasWindowArchive(snap.windowNo) &&
+        (!this.subjectState || this.subjectState.currentWindowNo > snap.windowNo)) {
+      console.warn(`[Brain] 窗口 #${snap.windowNo} 已经归档且状态已前进，直接推进 Memory 关窗完成幂等收尾`);
+      const existing = this.experiencesArchive.getByWindow(snap.windowNo).find(r => r.recordType === 'window_archive' || r.type === 'window_archive');
+      const p = (existing && existing.payload) || existing || {};
+      const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts && p.windowSynthesis.stableUserFacts.join('\n')) || '窗口小结已归档';
+      const done = this.memory.closeWindow(summaryText, snap);
+      if (done) {
+        this.stats.compressions++;
+        this.saveStats(true);
+      }
+      return done;
+    }
 
     // 仅总结当前窗口的真实消息（排除上一窗口残留的 bridge 桥接消息）
     const activeItems = snap.activeItems || snap.items;
@@ -665,25 +689,30 @@ class Brain {
         }
       }
 
-      // P0-08: 先写入 Archive (experiences.jsonl)
+      // P0-08 / P0-2: 先写入 Archive (experiences.jsonl)
       let archiveSuccess = false;
       if (this.experiencesArchive) {
-        archiveSuccess = this.experiencesArchive.appendWindowArchive({
-          windowNo: snap.windowNo,
-          turns: this.memory.data.turnsInWindow,
-          messageCount: activeItems.length,
-          events,
-          observations,
-          interpretations,
-          segments,
-          windowSynthesis: syn,
-          stateEvidence: allEvidence,
-          verifiedEvidence,
-          rejectedEvidence,
-          stateChanges,
-          explanations,
-          rawSummaryText: text
-        });
+        if (this.experiencesArchive.hasWindowArchive && this.experiencesArchive.hasWindowArchive(snap.windowNo)) {
+          console.warn(`[Brain] 窗口 #${snap.windowNo} 经历已在 Archive 中，跳过重复写入`);
+          archiveSuccess = true;
+        } else {
+          archiveSuccess = this.experiencesArchive.appendWindowArchive({
+            windowNo: snap.windowNo,
+            turns: this.memory.data.turnsInWindow,
+            messageCount: activeItems.length,
+            events,
+            observations,
+            interpretations,
+            segments,
+            windowSynthesis: syn,
+            stateEvidence: allEvidence,
+            verifiedEvidence,
+            rejectedEvidence,
+            stateChanges,
+            explanations,
+            rawSummaryText: text
+          });
+        }
       } else {
         archiveSuccess = true;
       }

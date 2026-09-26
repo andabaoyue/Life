@@ -442,7 +442,7 @@ async function testScenarioJ_E2E() {
   const records = archive.readAll();
   check('场景 J: experiences.jsonl 成功追加 1 条 window_archive', records.length === 1);
 
-  const rec = records[0];
+  const rec = (records[0] && records[0].payload) || records[0];
   check('场景 J: 归档包含 Event 列表且与真实 messageId 一致',
     Array.isArray(rec.events) && rec.events.length === 4 &&
     rec.events.some(e => e.messageId === 'm-e2e-001') &&
@@ -522,7 +522,7 @@ async function testFinalConsistencyTestA() {
 
   // 检查 experiences.jsonl 是否保留了本次归档记录与 state_commit_failed 审计事件
   const records = brain.experiencesArchive.readAll();
-  const windowArchive = records.find(r => r.type === 'window_archive');
+  const windowArchive = records.find(r => r.type === 'window_archive' || r.recordType === 'window_archive');
   const commitFailedEvt = records.find(r => (r.recordType === 'recovery_event' || r.type === 'recovery_event') &&
     (r.payload?.action === 'state_commit_failed' || r.action === 'state_commit_failed'));
   check('Test A: Archive 成功落盘并完整保留 window_archive', !!windowArchive);
@@ -673,7 +673,8 @@ async function testFinalConsistencyTestC() {
   await brain.closeWindow();
 
   const archive = new ExperiencesArchive(dir);
-  const rec = archive.readAll()[0];
+  const recRaw = archive.readAll()[0];
+  const rec = (recRaw && recRaw.payload) || recRaw;
   check('Test C: 归档 Event 列表仅包含真实交互 (恰好 2 条)', rec.events.length === 2);
   check('Test C: 真实用户消息进入 Event', rec.events.some(e => e.messageId === 'm-real-001'));
   check('Test C: 真实初澜回复进入 Event', rec.events.some(e => e.messageId === 'm-real-002'));

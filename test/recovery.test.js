@@ -148,11 +148,72 @@ function testInFlightPostSnapshotIsolation() {
   check('并发注入的 assistant 消息完好留存', inFlightAssistant && inFlightAssistant.bridge === false);
 }
 
+// -------------------------------------------------------------
+// 5. P0-2: Exactly-once / idempotent 恢复与关窗防重测试
+// -------------------------------------------------------------
+async function testIdempotentRecoveryAndArchive() {
+  const dir = tmpDir('recovery-idempotent-');
+  const archive = new ExperiencesArchive(dir);
+
+  // 5.1 appendWindowArchive 重复调用防重
+  const ok1 = archive.appendWindowArchive({ windowNo: 1, turns: 2, rawSummaryText: 'first' });
+  check('首次 appendWindowArchive 成功', ok1 && archive.count() === 1);
+
+  const ok2 = archive.appendWindowArchive({ windowNo: 1, turns: 2, rawSummaryText: 'duplicate' });
+  check('重复调用 appendWindowArchive 返回 true (幂等成功)', ok2 === true);
+  check('重复调用未产生重复的 window_archive 记录', archive.count() === 1);
+  const recs = archive.getByWindow(1);
+  check('窗口 1 归档记录严格仅有 1 条', recs.length === 1);
+
+  // 5.2 模拟关窗提交失败后，重试关窗不会生成重复归档
+  const brainDir = tmpDir('brain-retry-');
+  const mockApi = {
+    complete: async () => ({
+      text: JSON.stringify({
+        version: '1.0',
+        windowSynthesis: { stableUserFacts: ['事实1'], subjectExperiences: ['体验1'], stateChangesSuggested: [] },
+        interpretations: []
+      }),
+      usage: {}
+    }),
+    stream: async () => ({ text: 'ok', usage: {} })
+  };
+
+  const brain = new Brain(brainDir, {
+    ...DEFAULTS,
+    windowTurnLimit: 2,
+    keepTailMessages: 2
+  });
+  brain.api = mockApi;
+  brain.memory.append('user', '用户第一句');
+  brain.memory.append('assistant', '初澜第一句');
+  brain.memory.append('user', '用户第二句');
+  brain.memory.append('assistant', '初澜第二句');
+
+  // 模拟第一次 commit 失败（进入 recoveryPending）
+  const origCommit = brain.subjectState.commit.bind(brain.subjectState);
+  brain.subjectState.commit = () => {
+    brain.subjectState.commit = origCommit; // 恢复
+    return false;
+  };
+
+  const res1 = await brain.closeWindow();
+  check('第一次 closeWindow 因 commit 失败返回 false', res1 === false);
+  check('经历归档已记录窗口 1 window_archive', brain.experiencesArchive.hasWindowArchive(1));
+
+  // 第二次调用 closeWindow 重试
+  const res2 = await brain.closeWindow();
+  check('第二次 closeWindow 重试成功', res2 === true);
+  const allArchives = brain.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+  check('经历归档中窗口 1 window_archive 严格仅有 1 条 (无重复记录)', allArchives.length === 1);
+}
+
 async function runAll() {
   await testSummaryFailurePreservesDialogue();
   testArchiveCorruptLineSkipping();
   testSubjectStateCorruptionBackup();
   testInFlightPostSnapshotIsolation();
+  await testIdempotentRecoveryAndArchive();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

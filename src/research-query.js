@@ -20,6 +20,14 @@ const { ALLOWED_TRAITS, DEFAULT_TRAITS } = require('./subject-state');
 const { normalizeArchiveRecord } = require('./experience-schema');
 const { ArchiveIntegrityService } = require('./archive-integrity');
 
+const NON_STATE_RECORD_TYPES = new Set([
+  'recovery_event',
+  'diagnostic',
+  'replay_report',
+  'internal_log',
+  'audit_log'
+]);
+
 function getRecordWindowNo(rec) {
   if (!rec) return null;
   const p = rec.payload || rec;
@@ -177,14 +185,14 @@ class ResearchQuery {
         current: currentValues[trait] ?? 0,
         previous: previousValues[trait] ?? (currentValues[trait] ?? 0),
         latestDelta: latestDeltas[trait] ?? 0,
-        windowNo: stateData.windowNo || 1,
+        windowNo: (typeof stateData.windowNo === 'number' && !isNaN(stateData.windowNo)) ? stateData.windowNo : 1,
         stateChangeId: latestStateChanges[trait] || null,
         range: [-999, 999]
       };
     }
 
     return {
-      windowNo: stateData.windowNo || 1,
+      windowNo: (typeof stateData.windowNo === 'number' && !isNaN(stateData.windowNo)) ? stateData.windowNo : 1,
       recoveryStatus: stateData.recoveryStatus || 'NORMAL',
       updatedAt: stateData.updatedAt || null,
       values: currentValues,
@@ -273,6 +281,10 @@ function getRecordWindowNo(r) {
     const windowMap = new Map();
 
     for (const rec of records) {
+      const recType = rec.recordType || rec.type || (rec.payload && rec.payload.type) || '';
+      if (NON_STATE_RECORD_TYPES.has(recType)) {
+        continue;
+      }
       const wNo = getRecordWindowNo(rec);
       if (!windowMap.has(wNo)) {
         windowMap.set(wNo, {

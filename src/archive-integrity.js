@@ -259,6 +259,135 @@ function validateArchiveRecord(record, options = {}) {
  */
 class ArchiveIntegrityService {
   /**
+   * 评估内存中的归档记录数组的完整性与认证状态 (P0-3: 统一完整性权威源)
+   * @param {Array} records - 归档记录列表
+   * @param {Object} options - 选项 (diagnostics, corruptLines, totalLines, allowLegacy)
+   * @returns {Object} 完整性报告
+   */
+  static checkRecords(records, options = {}) {
+    if (!Array.isArray(records)) {
+      return {
+        integrity: INTEGRITY_STATUS.INVALID,
+        replayStatus: REPLAY_STATUS.INVALID,
+        validCount: 0,
+        invalidCount: 0,
+        corruptLines: 0,
+        skippedCount: 0,
+        totalLines: 0,
+        hasLegacyAdapter: false,
+        diagnostics: [{ lineNumber: 0, error: 'INVALID_RECORDS_ARRAY' }],
+        records: []
+      };
+    }
+
+    const corruptLines = options.corruptLines ?? (options.corruptRecords ?? (options.diagnostics ? (options.diagnostics.skippedCount || 0) : 0));
+    let validCount = 0;
+    let invalidCount = 0;
+    let hasLegacyAdapter = false;
+    const diagnostics = (options.diagnostics && Array.isArray(options.diagnostics.errors))
+      ? [...options.diagnostics.errors]
+      : [];
+    const validRecords = [];
+
+    const { normalizeArchiveRecord } = require('./experience-schema');
+
+    for (let i = 0; i < records.length; i++) {
+      const parsed = records[i];
+      if (!parsed || typeof parsed !== 'object') {
+        invalidCount++;
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: 'INVALID_OBJECT',
+          snippet: String(parsed).slice(0, 100)
+        });
+        continue;
+      }
+
+      const norm = normalizeArchiveRecord(parsed);
+      if (!norm) {
+        invalidCount++;
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: 'NORMALIZATION_FAILED',
+          snippet: JSON.stringify(parsed).slice(0, 100)
+        });
+        continue;
+      }
+
+      if (norm.compatibilityAdapter === 'LegacySchemaAdapter' || norm.sourceSchema) {
+        hasLegacyAdapter = true;
+        if (norm.legacyStatus === 'LEGACY_UNKNOWN') {
+          invalidCount++;
+          diagnostics.push({
+            lineNumber: i + 1,
+            error: 'LEGACY_UNKNOWN_SCHEMA',
+            snippet: JSON.stringify(parsed).slice(0, 100)
+          });
+          continue;
+        }
+        const vResult = validateArchiveRecord(norm, { allowLegacy: true });
+        if (!vResult.valid) {
+          invalidCount++;
+          diagnostics.push({
+            lineNumber: i + 1,
+            error: vResult.reason,
+            snippet: JSON.stringify(parsed).slice(0, 100)
+          });
+        } else {
+          validCount++;
+          validRecords.push(norm);
+        }
+        continue;
+      }
+
+      const vResult = validateArchiveRecord(norm);
+      if (!vResult.valid) {
+        invalidCount++;
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: vResult.reason,
+          snippet: JSON.stringify(parsed).slice(0, 100)
+        });
+      } else {
+        validCount++;
+        validRecords.push(norm);
+      }
+    }
+
+    const totalLines = options.totalLines ?? (records.length + corruptLines);
+    let integrity = INTEGRITY_STATUS.CERTIFIED;
+    let replayStatus = REPLAY_STATUS.COMPLETE;
+
+    if (corruptLines > 0) {
+      integrity = validCount > 0 ? INTEGRITY_STATUS.PARTIAL : INTEGRITY_STATUS.CORRUPTED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
+    } else if (invalidCount > 0) {
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
+    } else if (hasLegacyAdapter) {
+      // P0-09: 遗留兼容记录平滑加载，但绝不自动赋予 CERTIFIED
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.COMPLETE;
+    } else if (totalLines === 0) {
+      integrity = INTEGRITY_STATUS.CERTIFIED;
+      replayStatus = REPLAY_STATUS.COMPLETE;
+    }
+
+    return {
+      integrity,
+      replayStatus,
+      validCount,
+      invalidCount,
+      corruptLines,
+      skippedCount: corruptLines + invalidCount,
+      totalLines,
+      hasLegacyAdapter,
+      diagnostics,
+      records: validRecords
+    };
+  }
+
+  /**
    * 评估指定 experiences.jsonl 文件的完整性与认证状态
    * @param {string} archivePath - experiences.jsonl 绝对路径
    * @returns {Object} 完整性报告
@@ -284,21 +413,18 @@ class ArchiveIntegrityService {
       const rawLines = content.split('\n');
 
       let totalLines = 0;
-      let validCount = 0;
-      let invalidCount = 0;
       let corruptLines = 0;
-      let hasLegacyAdapter = false;
       const diagnostics = [];
-      const records = [];
+      const parsedRecords = [];
 
       for (let i = 0; i < rawLines.length; i++) {
         const line = rawLines[i].trim();
         if (!line) continue;
         totalLines++;
 
-        let parsed = null;
         try {
-          parsed = JSON.parse(line);
+          const parsed = JSON.parse(line);
+          parsedRecords.push(parsed);
         } catch (err) {
           corruptLines++;
           diagnostics.push({
@@ -307,95 +433,14 @@ class ArchiveIntegrityService {
             message: err.message,
             snippet: line.slice(0, 100)
           });
-          continue;
-        }
-
-        // 检查是否具备遗留转换适配器
-        const { normalizeArchiveRecord } = require('./experience-schema');
-        const norm = normalizeArchiveRecord(parsed);
-
-        if (!norm) {
-          invalidCount++;
-          diagnostics.push({
-            lineNumber: i + 1,
-            error: 'NORMALIZATION_FAILED',
-            snippet: line.slice(0, 100)
-          });
-          continue;
-        }
-
-        if (norm.compatibilityAdapter === 'LegacySchemaAdapter' || norm.sourceSchema) {
-          hasLegacyAdapter = true;
-          if (norm.legacyStatus === 'LEGACY_UNKNOWN') {
-            invalidCount++;
-            diagnostics.push({
-              lineNumber: i + 1,
-              error: 'LEGACY_UNKNOWN_SCHEMA',
-              snippet: line.slice(0, 100)
-            });
-            continue;
-          }
-          const vResult = validateArchiveRecord(norm, { allowLegacy: true });
-          if (!vResult.valid) {
-            invalidCount++;
-            diagnostics.push({
-              lineNumber: i + 1,
-              error: vResult.reason,
-              snippet: line.slice(0, 100)
-            });
-          } else {
-            validCount++;
-            records.push(norm);
-          }
-          continue;
-        }
-
-        // 执行严格原生 Schema 校验 (P0-03 & P0-04)
-        const vResult = validateArchiveRecord(norm);
-        if (!vResult.valid) {
-          invalidCount++;
-          diagnostics.push({
-            lineNumber: i + 1,
-            error: vResult.reason,
-            snippet: line.slice(0, 100)
-          });
-        } else {
-          validCount++;
-          records.push(norm);
         }
       }
 
-      // 判定整体完整性与推演状态 (P0-04, P0-05, P0-09)
-      let integrity = INTEGRITY_STATUS.CERTIFIED;
-      let replayStatus = REPLAY_STATUS.COMPLETE;
-
-      if (corruptLines > 0) {
-        integrity = validCount > 0 ? INTEGRITY_STATUS.PARTIAL : INTEGRITY_STATUS.CORRUPTED;
-        replayStatus = REPLAY_STATUS.PARTIAL;
-      } else if (invalidCount > 0) {
-        integrity = INTEGRITY_STATUS.UNCERTIFIED;
-        replayStatus = REPLAY_STATUS.PARTIAL;
-      } else if (hasLegacyAdapter) {
-        // P0-09: 遗留兼容记录平滑加载，但绝不自动赋予 CERTIFIED
-        integrity = INTEGRITY_STATUS.UNCERTIFIED;
-        replayStatus = REPLAY_STATUS.COMPLETE;
-      } else if (totalLines === 0) {
-        integrity = INTEGRITY_STATUS.CERTIFIED;
-        replayStatus = REPLAY_STATUS.COMPLETE;
-      }
-
-      return {
-        integrity,
-        replayStatus,
-        validCount,
-        invalidCount,
+      return ArchiveIntegrityService.checkRecords(parsedRecords, {
         corruptLines,
-        skippedCount: corruptLines + invalidCount,
-        totalLines,
-        hasLegacyAdapter,
-        diagnostics,
-        records
-      };
+        diagnostics: { skippedCount: corruptLines, errors: diagnostics },
+        totalLines
+      });
     } catch (e) {
       return {
         integrity: INTEGRITY_STATUS.INVALID,
