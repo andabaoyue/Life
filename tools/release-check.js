@@ -326,7 +326,7 @@ function checkDocsAndTestSuites() {
     return;
   }
   const readme = fs.readFileSync(readmePath, 'utf8');
-  const block = readme.match(/## 测试\n+```bash\n([\s\S]*?)```/);
+  const block = readme.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
   if (!block) {
     report('FAIL', '项目测试文档', 'README.md 未包含 ## 测试 代码块');
     return;

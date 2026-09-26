@@ -23,7 +23,7 @@ function check(name, cond, extra) {
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
 
 /* 1. 从 README 的 ```bash 测试块里抓「文件 -> 声称项数」 */
-const block = readme.match(/## 测试\n+```bash\n([\s\S]*?)```/);
+const block = readme.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
 check('README 有「测试」代码块', !!block);
 if (!block) { console.log('\n无法继续'); process.exit(1); }
 
