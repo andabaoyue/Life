@@ -65,7 +65,10 @@ src/state-change.js      状态跃迁记录与因果解释强核验（StateChang
 src/canalization.js  沃丁顿发育景观与经历依赖塑性衰减模型（Waddington Canalization）
 src/memory-dynamics.js 零 API 成本记忆动力学与突触修剪（艾宾浩斯幂律、三级状态流转）
 src/dream-system.js  成本门禁式弗洛伊德梦境系统（本地认知张力门禁、两道防线、DREAM_GENERATED_ARTIFACT）
-research/ENGINEERING-DECISION-LOG.md 工程与实验架构不可逆决策账本（D-001~D-007）
+src/internal-regulation.js 内部状态调节中枢（短时调节与长期特质双轨分离、严格事件驱动、唤醒度与门限反向耦合）
+src/attention-gate.js      注意力闸门与感知分流（显著性与认知负荷过滤、ATTENDED≠SUBJECT_ACQUIRED 铁律防线）
+research/ENGINEERING-DECISION-LOG.md 工程与实验架构不可逆决策账本（D-001~D-008）
+research/LIFECYCLE-WIRING-AUDIT.md 生命周期运行链审计与因果图谱报告
 src/agent-interfaces.js Agent 预留接口：能力、权限、提案、审计和 Mock
 src/provider-policy.js Provider / Endpoint / Credential 边界策略
 src/persona.js   人设（只写身份，不写穿着细节；不含旧耳坠设定）
@@ -421,6 +424,11 @@ node test/canalization.test.js           # 27 项：v0.9.7 沃丁顿发育景观
 node test/memory-dynamics.test.js         # 27 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化与上下文重新激活）
 node test/dream-gate.test.js             # 30 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性）
 node test/dream-synthesis.test.js        # 23 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环）
+node test/lifecycle-wiring.test.js    # 20 项：Phase 0.5 运行链闭环与生命动力学贯通（Brain 构造注入、交互与Tracker事件驱动、沃丁顿主链路关窗生效、internal_regulation_snapshot 归档认证与冷启动自愈）
+node test/internal-regulation.test.js # 23 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空）
+node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
+node test/attention-gate.test.js      # 18 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御）
+node test/path-dependency.test.js     # 13 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```

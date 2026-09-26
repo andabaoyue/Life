@@ -42,6 +42,36 @@ function normalizeEvidenceList(raw, at, window) {
   const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
   return list.map(x => evidence(x, at, window)).filter(x => x.quote || x.sourceType === 'PROGRAM_OBSERVATION').slice(0, 4);
 }
+/**
+ * 计算假说反思/证伪压力与有效置信度 (Decision D-005 & Phase 0.5)
+ * 核心原则：反向证据积累产生折扣压力，但历史支持证据永不物理删除。
+ */
+function calculateRevisionPressure(entry) {
+  if (!entry) return { revisionPressure: 0, confidence: 0.5, counterEvidenceRatio: 0, supportWeight: 0, opposeWeight: 0 };
+  const supportList = Array.isArray(entry.support) ? entry.support : [];
+  const opposeList = Array.isArray(entry.oppose) ? entry.oppose : [];
+  if (!supportList.length && !opposeList.length) {
+    return { revisionPressure: 0, confidence: 0.5, counterEvidenceRatio: 0, supportWeight: 0, opposeWeight: 0 };
+  }
+  let supportWeight = 0;
+  for (const s of supportList) supportWeight += (typeof s.confidence === 'number' ? s.confidence : 0.5);
+  let opposeWeight = 0;
+  for (const o of opposeList) opposeWeight += (typeof o.confidence === 'number' ? o.confidence : 0.5);
+  const totalWeight = supportWeight + opposeWeight;
+  const counterEvidenceRatio = totalWeight > 0 ? (opposeWeight / totalWeight) : 0;
+  const revisionPressure = Number(counterEvidenceRatio.toFixed(4));
+  // 基础置信度由支持证据权重决定，但受到反向证据比例的强阻尼折损，有界 [0.05, 1.0]
+  const baseConfidence = totalWeight > 0 ? (supportWeight / totalWeight) : 0.5;
+  const confidence = Number(Math.max(0.05, Math.min(1.0, baseConfidence * (1.0 - revisionPressure * 0.6))).toFixed(4));
+  return {
+    revisionPressure,
+    confidence,
+    counterEvidenceRatio,
+    supportWeight: Number(supportWeight.toFixed(4)),
+    opposeWeight: Number(opposeWeight.toFixed(4))
+  };
+}
+
 function normalizeEntry(raw = {}, index = 0) {
   const at = Number.isFinite(raw.at) ? raw.at : Date.now();
   const window = Number.isInteger(raw.window) ? raw.window : 0;
@@ -52,11 +82,16 @@ function normalizeEntry(raw = {}, index = 0) {
   if (!trait || (!support.length && !oppose.length && !fallbackEvidence)) return null;
   if (fallbackEvidence && !support.length && !oppose.length)
     support.push(evidence(fallbackEvidence, at, window));
-  return {
+  
+  const entry = {
     id: cleanText(raw.id) || `growth-${at}-${index}`,
     at, window, trait, support, oppose,
     evidence: fallbackEvidence
   };
+  const metrics = calculateRevisionPressure(entry);
+  entry.revisionPressure = metrics.revisionPressure;
+  entry.confidence = metrics.confidence;
+  return entry;
 }
 
 class SelfLedger {
@@ -166,7 +201,51 @@ class SelfLedger {
     return this.birthAt;
   }
 
-  /** Current Self 是解释性投影，不是真相；优先保留最近证据，但带出反向证据。 */
+  recordOpposingEvidence(traitOrId, rawOpposingEvidence, meta = {}) {
+    const at = Number.isFinite(meta.at) ? meta.at : Date.now();
+    const window = Number.isInteger(meta.window) ? meta.window : 0;
+    const cleanKey = cleanText(traitOrId);
+    let target = this.entries.find(e => e.id === cleanKey || e.trait === cleanKey);
+    if (!target) {
+      target = normalizeEntry({
+        trait: cleanKey,
+        at,
+        window,
+        oppose: [rawOpposingEvidence]
+      });
+      if (target) {
+        this.entries.push(target);
+        if (this.entries.length > this.maxEntries) this.entries = this.entries.slice(-this.maxEntries);
+        this.save(false, true);
+        return { created: true, entry: target, metrics: calculateRevisionPressure(target) };
+      }
+      return { created: false, error: 'INVALID_ENTRY' };
+    }
+
+    const normList = normalizeEvidenceList(rawOpposingEvidence, at, window);
+    if (!normList.length) return { updated: false, reason: 'NO_VALID_EVIDENCE' };
+
+    for (const ev of normList) {
+      target.oppose.push(ev);
+    }
+    if (target.oppose.length > 10) {
+      target.oppose = target.oppose.slice(-10);
+    }
+    const metrics = calculateRevisionPressure(target);
+    target.revisionPressure = metrics.revisionPressure;
+    target.confidence = metrics.confidence;
+    this.save(false, true);
+    return { updated: true, entry: target, metrics };
+  }
+
+  getEntryMetrics(traitOrId) {
+    const cleanKey = cleanText(traitOrId);
+    const target = this.entries.find(e => e.id === cleanKey || e.trait === cleanKey);
+    if (!target) return null;
+    return calculateRevisionPressure(target);
+  }
+
+  /** Current Self 是解释性投影，不是真相；优先保留最近证据，但带出反向证据与反思压力。 */
   currentSelfText() {
     if (!this.entries.length) return '';
     const budgetChars = this.currentSelfTokenBudget * 2;
@@ -176,7 +255,11 @@ class SelfLedger {
       const e = this.entries[i];
       const support = e.support.map(x => `${x.sourceType}: ${x.quote}`).filter(Boolean).join('；');
       const oppose = e.oppose.map(x => `${x.sourceType}: ${x.quote}`).filter(Boolean).join('；');
-      const line = `- 倾向：${e.trait}。支持：${support || '无'}。反向：${oppose || '无'}`;
+      const metrics = calculateRevisionPressure(e);
+      let line = `- 倾向：${e.trait}。支持：${support || '无'}。反向：${oppose || '无'}`;
+      if (metrics.revisionPressure >= 0.25) {
+        line += `（反思压力: ${(metrics.revisionPressure * 100).toFixed(0)}%）`;
+      }
       if (size + line.length > budgetChars && chosen.length) break;
       chosen.unshift(line); size += line.length;
     }
@@ -190,4 +273,4 @@ class SelfLedger {
   list() { return this.entries.map((e, i) => ({ index: i, ...e })); }
 }
 
-module.exports = { SelfLedger, normalizeEntry, SOURCE_TYPES, SCHEMA_VERSION };
+module.exports = { SelfLedger, normalizeEntry, calculateRevisionPressure, SOURCE_TYPES, SCHEMA_VERSION };

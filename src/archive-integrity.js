@@ -36,7 +36,7 @@ function computeCanonicalRecordHash(rec) {
   return crypto.createHash('sha256').update(JSON.stringify(canonicalObj), 'utf8').digest('hex');
 }
 
-// 合法归档记录类型白名单 (P0-03 & v0.9.6 P0-12 & v0.9.7)
+// 合法归档记录类型白名单 (P0-03 & v0.9.6 P0-12 & v0.9.7 & Phase 0.5)
 const VALID_RECORD_TYPES = new Set([
   'window_summary',
   'window_archive',
@@ -50,7 +50,8 @@ const VALID_RECORD_TYPES = new Set([
   'state_change',
   'self_projection',
   'subject_dream',
-  'memory_dynamics_snapshot'
+  'memory_dynamics_snapshot',
+  'internal_regulation_snapshot'
 ]);
 
 // 完整性状态枚举
@@ -293,6 +294,13 @@ function validateArchiveRecord(record, options = {}) {
     case 'memory_dynamics_snapshot': {
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_MEMORY_DYNAMICS_PAYLOAD' };
+      }
+      break;
+    }
+
+    case 'internal_regulation_snapshot': {
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_INTERNAL_REGULATION_PAYLOAD' };
       }
       break;
     }

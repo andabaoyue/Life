@@ -794,7 +794,9 @@ class SubjectState {
     const { computePlasticityMultiplier } = require('./canalization');
     const canalizationEnabled = opts.canalization !== undefined
       ? Boolean(opts.canalization)
-      : (opts.experimentModules ? Boolean(opts.experimentModules.biographicalCanalization) : false);
+      : (opts.experimentModules
+          ? Boolean(opts.experimentModules.biographicalCanalization)
+          : (this.opts?.experimentModules ? Boolean(this.opts.experimentModules.biographicalCanalization) : false));
 
     const windowDepth = Math.max(0, (typeof targetWindowNo === 'number' && !Number.isNaN(targetWindowNo) ? targetWindowNo : 1) - 1);
     const plasticityMultiplier = canalizationEnabled

@@ -13,6 +13,7 @@ const { ExperiencesArchive } = require('./experiences-archive');
 const { SubjectState } = require('./subject-state');
 const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation, validateWindowSummary } = require('./experience-schema');
 const { createStateChangeExplanation } = require('./state-change');
+const { InternalRegulationManager } = require('./internal-regulation');
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -116,7 +117,8 @@ class Brain {
     this.experiencesArchive = new ExperiencesArchive(userDataDir);
     this.subjectState = new SubjectState(userDataDir, {
       stepWeight: cfg.subjectStateStepWeight,
-      maxDeltaPerWindow: cfg.subjectStateMaxDelta
+      maxDeltaPerWindow: cfg.subjectStateMaxDelta,
+      experimentModules: cfg.experimentModules
     });
     this.memory = new Memory(userDataDir, {
       persona: systemPersona(cfg),
@@ -130,6 +132,11 @@ class Brain {
     this.dreamHistory = [];
     this._restoreDreamHistory();
     this._restoreEngramSnapshotFromArchive();
+    this.internalRegulation = new InternalRegulationManager(userDataDir, {
+      enabled: Boolean(cfg.experimentModules?.internalRegulation),
+      experimentModules: cfg.experimentModules
+    });
+    this._restoreInternalRegulationFromArchive();
 
     this.statsPath = path.join(userDataDir, 'stats.json');
     this.statsWriter = new DeferredWriter(() => writeJsonAtomic(this.statsPath, this.stats), { delayMs: 3000 });
@@ -200,6 +207,35 @@ class Brain {
       }
     } catch (e) {
       console.warn('[Brain] 从经历归档恢复记忆动力学快照失败:', e.message);
+    }
+  }
+
+  _restoreInternalRegulationFromArchive() {
+    if (!this.internalRegulation || !this.experiencesArchive) return;
+    try {
+      if (fs.existsSync(this.internalRegulation.path)) return;
+      const records = this.experiencesArchive.readAll();
+      let latestPayload = null;
+      for (const r of records) {
+        if (!r) continue;
+        const type = r.recordType || r.type;
+        if (type === 'internal_regulation_snapshot' && r.payload && r.payload.state) {
+          latestPayload = r.payload;
+        }
+      }
+      if (latestPayload && latestPayload.state) {
+        const s = latestPayload.state;
+        if (typeof s.energy === 'number') this.internalRegulation.energy = s.energy;
+        if (typeof s.restPressure === 'number') this.internalRegulation.restPressure = s.restPressure;
+        if (typeof s.arousal === 'number') this.internalRegulation.arousal = s.arousal;
+        if (typeof s.interactionDensity === 'number') this.internalRegulation.interactionDensity = s.interactionDensity;
+        if (typeof s.cognitiveLoadProxy === 'number') this.internalRegulation.cognitiveLoadProxy = s.cognitiveLoadProxy;
+        this.internalRegulation.salienceThreshold = this.internalRegulation._computeSalienceThreshold(this.internalRegulation.arousal);
+        this.internalRegulation.updatedAt = s.updatedAt || Date.now();
+        this.internalRegulation.save();
+      }
+    } catch (e) {
+      console.warn('[Brain] 从经历归档恢复内部调节快照失败:', e.message);
     }
   }
 
@@ -400,6 +436,24 @@ class Brain {
     if (tr && !proactive) sleepIntent = tr.recordUserInput(userText);
     if (tr) snap = tr.snapshot();
 
+    // Phase 0.5: 内部调节中枢更新 (用户交互与物理刺激事件驱动)
+    if (this.internalRegulation && !proactive) {
+      const now = Date.now();
+      const intervalMs = this._lastInteractionAt ? (now - this._lastInteractionAt) : 0;
+      this._lastInteractionAt = now;
+      this.internalRegulation.updateOnInteractionTurn({
+        role: 'user',
+        messageLength: userText ? userText.length : 0,
+        intervalMs,
+        timestamp: now
+      });
+      if (snap) {
+        if (snap.clicks > 0) this.internalRegulation.updateOnActivity('poke', { count: snap.clicks, timestamp: now });
+        if (snap.drags > 0) this.internalRegulation.updateOnActivity('drag', { count: snap.drags, timestamp: now });
+        if (snap.idleMin > 10) this.internalRegulation.updateOnActivity('idle', { idleMin: snap.idleMin, timestamp: now });
+      }
+    }
+
     // v0.9.7: 关联线索触发休眠记忆重新激活 (Contextual Reactivation)
     if (this.memory && this.memory.engramManager && !proactive) {
       this.memory.reactivateByContext(userText, this.memory.data.windowNo);
@@ -523,12 +577,26 @@ class Brain {
       + (wearNote ? '\n[系统] 换装执行结果：' + wearNote : ''));
     this.track(usage);
 
+    // Phase 0.5: 内部调节中枢更新 (模型回复产出负荷)
+    if (this.internalRegulation) {
+      this.internalRegulation.updateOnInteractionTurn({
+        role: 'assistant',
+        messageLength: (clean || text) ? (clean || text).length : 0,
+        timestamp: Date.now()
+      });
+    }
+
     /* ---- 入睡联动（幂等）----
        两个入口都算数：用户明说道晚安，或她自己打出 [state:sleepy]。
        enterSleepMode 内部带守卫，重复触发不会把 sleepStartTime 刷成"刚睡"。 */
     // sleepy 只是模型表达的当下情绪，不等于用户说了晚安。
     // 只有明确的用户晚安意图才进入全局睡眠，避免下午一句“有点困”关闭主动搭话。
-    if (tr && sleepIntent) tr.enterSleepMode();
+    if (tr && sleepIntent) {
+      tr.enterSleepMode();
+      if (this.internalRegulation) {
+        this.internalRegulation.updateOnSleep(true, { timestamp: Date.now() });
+      }
+    }
 
     // 边界处理放在回答之后：本轮的 user+assistant 已经进了缓存
     let windowClosed = false, merged = false;
@@ -806,7 +874,11 @@ class Brain {
         verifiedEvidence = verifyResult.verified;
         rejectedEvidence = verifyResult.rejected;
 
-        const reduceResult = this.subjectState.reduce(verifiedEvidence, snap.windowNo, { stageOnly: true });
+        const reduceResult = this.subjectState.reduce(verifiedEvidence, snap.windowNo, {
+          stageOnly: true,
+          canalization: this.cfg.experimentModules?.biographicalCanalization,
+          experimentModules: this.cfg.experimentModules
+        });
         if (reduceResult && Array.isArray(reduceResult.stateChanges)) {
           stateChanges = reduceResult.stateChanges;
         }
@@ -944,6 +1016,21 @@ class Brain {
             });
           } catch (e) {
             console.error('[Brain] memory_dynamics_snapshot 归档失败:', e.message);
+          }
+        }
+
+        // Phase 0.5: 内部调节中枢快照归档 (Internal Regulation Snapshot)
+        if (this.internalRegulation && this.cfg.experimentModules?.internalRegulation === true) {
+          try {
+            this.internalRegulation.updateOnWindowClose(snap.windowNo, {
+              turnsRecorded: snap.actualTurnCount
+            });
+            if (this.experiencesArchive) {
+              const regSnapshot = this.internalRegulation.createSnapshotRecord(snap.windowNo);
+              this.experiencesArchive.append(regSnapshot);
+            }
+          } catch (e) {
+            console.error('[Brain] internal_regulation_snapshot 归档失败:', e.message);
           }
         }
 

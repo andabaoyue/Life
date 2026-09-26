@@ -130,6 +130,8 @@
         ? opts.behaviorPool
         : Object.values(BEHAVIOR_DEFINITIONS);
 
+      this.internalRegulation = opts.internalRegulation || null;
+
       // 可控随机数生成器与自定义行为选择器注入（消除测试随机性与 flakiness）
       this.rng = typeof opts.rng === 'function' ? opts.rng : Math.random;
       this.pickBehavior = typeof opts.pickBehavior === 'function' ? opts.pickBehavior : null;
@@ -142,6 +144,52 @@
       this._timer = null;
       this._destroyed = false;
       this.enabled = opts.enabled !== false;
+    }
+
+    /**
+     * 注入内部调节中枢引用 (Phase 0.5: Regulation -> Behavior Channel)
+     */
+    setInternalRegulation(provider) {
+      this.internalRegulation = provider;
+    }
+
+    /**
+     * 计算受当前内部稳态调节后的行为权重字典
+     */
+    getModulatedWeights() {
+      let reg = null;
+      if (this.internalRegulation && typeof this.internalRegulation.getState === 'function') {
+        reg = this.internalRegulation.getState();
+      }
+      const result = {};
+      for (const item of this.behaviorPool) {
+        let w = item.weight || 1.0;
+        if (reg) {
+          if (item.id === ANIMATION_STATES.YAWN) {
+            // restPressure: [0, 100], 高疲劳打哈欠权重最高放大至 2.5 倍
+            const pressure = typeof reg.restPressure === 'number' ? reg.restPressure : 0;
+            w = w * (1.0 + (pressure / 100) * 1.5);
+          } else if (item.id === ANIMATION_STATES.STRETCH) {
+            // energy: [0, 100], 低体能伸懒腰权重最高放大至 2.0 倍
+            const energy = typeof reg.energy === 'number' ? reg.energy : 100;
+            w = w * (1.0 + ((100 - energy) / 100) * 1.0);
+          } else if (item.id === ANIMATION_STATES.LOOK_AROUND) {
+            // arousal: [0, 100], 高唤醒（警觉）张望权重最高放大至 2.0 倍
+            const arousal = typeof reg.arousal === 'number' ? reg.arousal : 50;
+            if (arousal > 50) {
+              w = w * (1.0 + ((arousal - 50) / 50) * 1.0);
+            }
+          } else if (item.id === ANIMATION_STATES.TIDY_HAIR) {
+            // 低唤醒度（平静）时梳理头发概率稍高
+            const arousal = typeof reg.arousal === 'number' ? reg.arousal : 50;
+            if (arousal < 50) {
+              w = w * (1.0 + ((50 - arousal) / 50) * 0.5);
+            }
+          }
+        }
+        result[item.id] = Number(w.toFixed(4));
+      }
+      return result;
     }
 
     /**
@@ -164,17 +212,18 @@
     }
 
     /**
-     * 加权抽取下一个自主微动作定义
+     * 加权抽取下一个自主微动作定义 (支持内部稳态概率调制)
      */
     _pickBehavior() {
       if (typeof this.pickBehavior === 'function') {
         const custom = this.pickBehavior(this.behaviorPool);
         if (custom) return custom;
       }
-      const totalWeight = this.behaviorPool.reduce((sum, a) => sum + (a.weight || 1), 0);
+      const modulatedWeights = this.getModulatedWeights();
+      const totalWeight = this.behaviorPool.reduce((sum, a) => sum + (modulatedWeights[a.id] || a.weight || 1), 0);
       let r = this.rng() * totalWeight;
       for (const item of this.behaviorPool) {
-        const w = item.weight || 1;
+        const w = modulatedWeights[item.id] || item.weight || 1;
         if (r <= w) return item;
         r -= w;
       }

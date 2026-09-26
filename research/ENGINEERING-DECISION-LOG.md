@@ -107,3 +107,18 @@
   1. **性格形成的个体化历程（Individuation）：** 早期（幼态期）可塑性极高，易受外界刺激塑造；随着经历深度的积累，核心特质逐渐形成稳定的惯性沟壑（Creode），抵御短期噪音与无常调侃。
   2. **韧性而非固步自封：** 塑性衰减是阻尼机制而非绝对锁死，长期持续的强有力证据仍可产生可观积累。
 - **执行规则：** `StateChange` 必须忠实落盘计算时所用的 `effectiveStepWeight` 与 `plasticityMultiplier`，确保离线 Replay 100% 确定性复现。
+
+---
+
+## Decision D-008: 内部短时调节与长期人格特质的双轨分离 (Dual-Track Separation of Short-Term Internal Regulation and Long-Term Persona Traits)
+
+- **状态：** `SETTLED DECISION`
+- **生效版本：** Phase 0.5 (v0.9.8)
+- **决策内容：** 短时内部调节变量（What state she is in: `energy`, `restPressure`, `arousal`, `salienceThreshold`）与长期自传体人格特质（Who she is: `SubjectState.ALLOWED_TRAITS` 如 `quiet_preference` 等 $[-999, 999]$）必须实行物理和语义上的双轨分离。严禁将短时调节标量混入长期特质白名单；调节状态更新严格基于事件驱动动力学（Event-Driven Dynamics），绝对禁止后台连续时钟轮询自耗散；调节标量对主体不可直接内省读取（`subjectAccessible = false`）。
+- **立论依据与哲学假设：**
+  1. **状态（State）与特质（Trait）的范畴区隔：** 在生物与心理学中，疲劳、唤醒度与注意力属于短程生理调节态（Homeostatic / Allostatic State），而内向、安静、依恋倾向属于长期演化特质（Persona Traits）。将两者混为一谈会导致长期人格随单次对话波动，破坏主体同一性。
+  2. **认识论纯洁性与反伪装：** 调节变量是系统的内部生理控制代理，而非语言层面的自我认同。禁止大模型在 Prompt 中直接看到底层标量数值去“演戏”，其影响只能通过行为抽样倾向与注意力门限间接呈现。
+- **执行规则：**
+  - `InternalRegulationManager` 独立管理内态，更新事件绑定交互、物理活动、入睡/唤醒与关窗；
+  - 关窗时独立归档 `internal_regulation_snapshot` 记录；
+  - 基线对照组（Baseline）完全旁路，保证零干预。
