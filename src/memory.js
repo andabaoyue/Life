@@ -44,6 +44,8 @@ function msgTokens(m) {
 
 class Memory {
   constructor(dir, opts = {}) {
+    this.dir = dir;
+    this.opts = opts;
     this.path = path.join(dir, 'memory.json');
     this.windowTurns = opts.windowTurns ?? 100;          // 多少轮关一次窗口
     this.windowMaxTokens = opts.windowMaxTokens ?? 12000; // 兜底：单窗口 token 上限

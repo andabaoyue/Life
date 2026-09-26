@@ -58,6 +58,18 @@ const DEFAULTS = {
   price: {
     peak:   { hit: 0.04, miss: 2, out: 8 },
     valley: { hit: 0.02, miss: 1, out: 4 }
+  },
+
+  // ---- 生命实验动力学体系 (Phase 0.5) ----
+  experimentMode: 'baseline', // 'baseline' | 'experimental' | 'ablation'
+  experimentModules: {
+    homeostasis: false,
+    internalRegulation: false,
+    digitalUmwelt: false,
+    attentionGate: false,
+    biographicalCanalization: false,
+    memoryDynamics: false,
+    sleepConsolidation: false
   }
 };
 
@@ -137,7 +149,32 @@ function sanitize(raw = {}) {
     price: {
       peak: { hit: finiteNonNegative(peak.hit, DEFAULTS.price.peak.hit), miss: finiteNonNegative(peak.miss, DEFAULTS.price.peak.miss), out: finiteNonNegative(peak.out, DEFAULTS.price.peak.out) },
       valley: { hit: finiteNonNegative(valley.hit, DEFAULTS.price.valley.hit), miss: finiteNonNegative(valley.miss, DEFAULTS.price.valley.miss), out: finiteNonNegative(valley.out, DEFAULTS.price.valley.out) }
-    }
+    },
+    ...(() => {
+      const validModes = ['baseline', 'experimental', 'ablation'];
+      const rawModules = raw.experimentModules && typeof raw.experimentModules === 'object' ? raw.experimentModules : {};
+      let experimentMode = typeof raw.experimentMode === 'string' && validModes.includes(raw.experimentMode.trim().toLowerCase())
+        ? raw.experimentMode.trim().toLowerCase()
+        : null;
+
+      if (!experimentMode) {
+        const hasAnyActive = Object.values(rawModules).some(v => v === true);
+        experimentMode = hasAnyActive ? 'experimental' : 'baseline';
+      }
+
+      const isBaseline = experimentMode === 'baseline';
+      const experimentModules = {
+        homeostasis: isBaseline ? false : Boolean(rawModules.homeostasis),
+        internalRegulation: isBaseline ? false : Boolean(rawModules.internalRegulation),
+        digitalUmwelt: isBaseline ? false : Boolean(rawModules.digitalUmwelt),
+        attentionGate: isBaseline ? false : Boolean(rawModules.attentionGate),
+        biographicalCanalization: isBaseline ? false : Boolean(rawModules.biographicalCanalization),
+        memoryDynamics: isBaseline ? false : Boolean(rawModules.memoryDynamics),
+        sleepConsolidation: isBaseline ? false : Boolean(rawModules.sleepConsolidation)
+      };
+
+      return { experimentMode, experimentModules };
+    })()
   };
 }
 

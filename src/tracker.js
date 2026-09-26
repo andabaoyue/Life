@@ -61,6 +61,18 @@ class ActivityTracker {
     this.lastPhysicalAt = now;
     this.lastConversationAt = now;
     this.spokenDuringIdle = false;
+
+    /* ---- Phase 0.5: 内部稳态调节中枢与环境知觉流水线接线 ---- */
+    this.internalRegulation = opts.internalRegulation || null;
+    this.perceptionPipeline = typeof opts.perceptionPipeline === 'function' ? opts.perceptionPipeline : null;
+  }
+
+  setInternalRegulation(provider) {
+    this.internalRegulation = provider || null;
+  }
+
+  setPerceptionPipeline(pipeline) {
+    this.perceptionPipeline = typeof pipeline === 'function' ? pipeline : null;
   }
 
   /** 用户主动输入。返回"这句是不是晚安"——是晚安就不叫醒她。 */
@@ -99,6 +111,21 @@ class ActivityTracker {
     this.lastPhysicalAt = at;
     this.spokenDuringIdle = false;
     if (this.sleepMode) this.wakeUp(at);
+
+    // Phase 0.5 (P0-3): 真实物理事件直接驱动 InternalRegulationManager，无需等待下一次聊天请求
+    if (this.internalRegulation && typeof this.internalRegulation.updateOnActivity === 'function') {
+      const kind = type === 'click' ? 'poke' : 'drag';
+      this.internalRegulation.updateOnActivity(kind, { count: 1, timestamp: at });
+    }
+
+    // Phase 0.5 (P0-2): 环境感知候选流水线直连
+    if (typeof this.perceptionPipeline === 'function') {
+      this.perceptionPipeline({
+        category: type === 'click' ? 'tactile_poke' : 'tactile_drag',
+        rawIntensity: type === 'click' ? 75 : 60,
+        timestamp: at
+      });
+    }
 
     // 只删「已提交且已过 1 分钟」的：未消费的绝不因时间丢
     const expire = at - 60000;
@@ -195,6 +222,11 @@ class ActivityTracker {
     this.spokenDuringIdle = true;
     this.justWokenUp = false;
     this.wokenUpAt = null;
+
+    // Phase 0.5 (P0-3): 入睡实时事件直连
+    if (this.internalRegulation && typeof this.internalRegulation.updateOnSleep === 'function') {
+      this.internalRegulation.updateOnSleep(true, { timestamp: at });
+    }
     return true;
   }
 
@@ -207,7 +239,32 @@ class ActivityTracker {
     this.justWokenUp = true;
     this.wokenUpAt = at;
     this.spokenDuringIdle = false;
+
+    // Phase 0.5 (P0-3): 唤醒实时事件直连
+    if (this.internalRegulation && typeof this.internalRegulation.updateOnSleep === 'function') {
+      this.internalRegulation.updateOnSleep(false, { timestamp: at });
+    }
     return true;
+  }
+
+  /**
+   * 记录静默挂机事件 (Phase 0.5: P0-3)
+   * 仅在长时间静默触发时进行事件驱动更新，绝无轮询 setInterval 代谢
+   */
+  recordIdle(idleMin, at = this.now()) {
+    const min = Number.isFinite(idleMin) ? idleMin : Math.max(0, Math.round((at - this.lastInteractionAt) / 60000));
+    if (min >= 10) {
+      if (this.internalRegulation && typeof this.internalRegulation.updateOnActivity === 'function') {
+        this.internalRegulation.updateOnActivity('idle', { idleMin: min, timestamp: at });
+      }
+      if (typeof this.perceptionPipeline === 'function') {
+        this.perceptionPipeline({
+          category: 'environmental_silence',
+          rawIntensity: Math.min(100, min * 3),
+          timestamp: at
+        });
+      }
+    }
   }
 }
 

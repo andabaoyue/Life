@@ -21,6 +21,12 @@ function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
   brain.tracker = tracker || null;
+  if (tracker && brain.internalRegulation) {
+    tracker.setInternalRegulation(brain.internalRegulation);
+  }
+  if (tracker && typeof brain.processEnvironmentalPerception === 'function') {
+    tracker.setPerceptionPipeline((raw) => brain.processEnvironmentalPerception(raw));
+  }
   if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock();
 }
 
@@ -172,6 +178,9 @@ ipcMain.on('activity', (e, type) => {
   if (tracker) tracker.record(type);
   // 用户有了新交互，重置空闲检查闹钟
   scheduleProactiveCheck(IDLE_MS);
+  if (win && !win.isDestroyed() && brain && brain.internalRegulation) {
+    win.webContents.send('internal-regulation-updated', brain.internalRegulation.getState());
+  }
 });
 
 /* ---------- 对话 ---------- */
@@ -288,6 +297,9 @@ ipcMain.handle('memory-delete', (e, idx) => {
   if (!brain) return false;
   return brain.memory.deleteWindow(idx);
 });
+
+// Phase 0.5: 内部调节中枢权威状态只读查询通道
+ipcMain.handle('internal-regulation-get', () => (brain && brain.internalRegulation ? brain.internalRegulation.getState() : null));
 
 /* ---------- 换装 ----------
    服装只是外观层：这里没有任何路径会碰 persona 里的人格设定，

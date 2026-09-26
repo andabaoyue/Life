@@ -410,6 +410,63 @@ class InternalRegulationManager {
       return false;
     }
   }
+
+  /**
+   * 离线归档重放能力 (Replay Invariant / Section XIV & Phase 0.5)
+   * 依据 ExperiencesArchive 中的历史快照直接重建内部调节状态轨迹，绝不发起任何外部 LLM 请求。
+   *
+   * @param {Array<Object>} archiveRecords
+   * @param {Object} [options={}]
+   * @returns {Object}
+   */
+  static replay(archiveRecords = [], options = {}) {
+    if (!Array.isArray(archiveRecords)) {
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        totalSnapshots: 0,
+        windowStates: [],
+        finalState: null,
+        replayStatus: 'invalid'
+      };
+    }
+
+    const snapshots = archiveRecords.filter(r => {
+      if (!r || typeof r !== 'object') return false;
+      const type = r.recordType || r.type;
+      return type === 'internal_regulation_snapshot' && r.payload && r.payload.state;
+    });
+
+    snapshots.sort((a, b) => {
+      const wA = typeof a.windowNo === 'number' ? a.windowNo : (a.payload?.windowNo || 0);
+      const wB = typeof b.windowNo === 'number' ? b.windowNo : (b.payload?.windowNo || 0);
+      if (wA !== wB) return wA - wB;
+      const tA = a.timestamp || a.payload?.timestamp || 0;
+      const tB = b.timestamp || b.payload?.timestamp || 0;
+      return tA - tB;
+    });
+
+    const windowStates = snapshots.map(s => {
+      const state = s.payload.state;
+      const windowNo = typeof s.windowNo === 'number' ? s.windowNo : (s.payload?.windowNo || 0);
+      return {
+        windowNo,
+        timestamp: s.payload.timestamp || s.timestamp,
+        state: Object.freeze({ ...state }),
+        salienceThreshold: typeof s.payload.salienceThreshold === 'number' ? s.payload.salienceThreshold : state.salienceThreshold,
+        recentTransitionsCount: s.payload.recentTransitionsCount || 0
+      };
+    });
+
+    const finalState = windowStates.length > 0 ? windowStates[windowStates.length - 1].state : null;
+
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      totalSnapshots: windowStates.length,
+      windowStates,
+      finalState,
+      replayStatus: windowStates.length > 0 ? 'complete' : 'empty'
+    };
+  }
 }
 
 module.exports = {

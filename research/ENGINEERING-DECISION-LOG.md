@@ -122,3 +122,17 @@
   - `InternalRegulationManager` 独立管理内态，更新事件绑定交互、物理活动、入睡/唤醒与关窗；
   - 关窗时独立归档 `internal_regulation_snapshot` 记录；
   - 基线对照组（Baseline）完全旁路，保证零干预。
+
+---
+
+## Decision D-009: 生产运行时统一权威接线与因果闭环规范 (Production Runtime Unified Authority & Causal Closure)
+
+- **状态：** `SETTLED DECISION`
+- **生效版本：** Phase 0.5 Runtime Closure
+- **决策内容：**
+  1. **单一生命权威实例（Single Authority Instance）：** `InternalRegulationManager` 为整个生命系统的唯一生理状态权威，绝对禁止多进程或跨层复制独立状态（`Brain.internalRegulation === BehaviorScheduler.internalRegulation`），渲染端调度器通过跨进程权威状态同步桥接，杜绝“两个身体”。
+  2. **统一配置入口与基线隔离（Unified Config & Baseline Invariant）：** 建立 `src/config.js` 的 `experimentModules` 唯一配置源；在 `baseline` 模式下所有实验动力学模块强制全旁路，确保原有生产路径 100% 保持原生确定性。
+  3. **直接事件驱动连接（Direct Event-Driven Wiring）：** `ActivityTracker` 收集的物理事件（`click/poke`、`drag`、`idle`、`sleep`、`wake`）以事件驱动实时通知 `InternalRegulationManager`，消除必须等待下一次文本对话的延迟耦合，同时坚守零后台 `setInterval` 轮询耗散铁律。
+  4. **数字环周与注意力闸门认识论防线（Perception Candidate & Attention Invariant）：** 真实物理刺激经四级漏斗进入 `DigitalUmwelt` 生成知觉候选，再经 `AttentionGate` 进行显著性门限过滤；严格恪守 `subjectAccessible = false` 与 `ATTENDED ≠ SUBJECT_ACQUIRED`，绝不越级篡改主体状态或自传记忆。
+  5. **冷启动恢复历史事实优先原则（History Precedence on Cold Restart）：** 系统冷启动按照 `Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection` 严格顺序恢复；经历归档快照的真实历史事实严格优先于默认初始状态。
+

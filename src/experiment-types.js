@@ -93,10 +93,12 @@ const PERCEPTION_STATUS = Object.freeze({
  */
 const DEFAULT_EXPERIMENT_MODULES = Object.freeze({
   homeostasis: false,
-  sleepConsolidation: false,
+  internalRegulation: false,
   digitalUmwelt: false,
+  attentionGate: false,
   biographicalCanalization: false,
-  memoryDynamics: false
+  memoryDynamics: false,
+  sleepConsolidation: false
 });
 
 module.exports = {

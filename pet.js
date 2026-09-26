@@ -60,6 +60,26 @@ if (typeof DomAnimationRenderer !== 'undefined' && typeof AnimationController !=
         return true;
       }
     });
+
+    // Phase 0.5 (P0-1): 接通主进程权威 InternalRegulation 状态同步通道，绝不复制第二具身体
+    if (typeof api !== 'undefined' && api) {
+      let currentSyncedState = null;
+      const regulationProvider = {
+        getState: () => currentSyncedState
+      };
+      if (typeof api.getInternalRegulation === 'function') {
+        api.getInternalRegulation().then(state => {
+          if (state) currentSyncedState = state;
+        }).catch(() => {});
+      }
+      if (typeof api.onInternalRegulation === 'function') {
+        api.onInternalRegulation(state => {
+          if (state) currentSyncedState = state;
+        });
+      }
+      behaviorScheduler.setInternalRegulation(regulationProvider);
+    }
+
     behaviorScheduler.start();
   }
 

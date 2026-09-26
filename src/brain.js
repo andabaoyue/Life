@@ -6,7 +6,7 @@ const { PERSONA } = require('./persona');
 const { CREATIVE_SKILL } = require('./creative-skill');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
 const { writeJsonAtomic } = require('./atomic');
-const { tryLoad } = require('./config');
+const { tryLoad, sanitize, DEFAULTS } = require('./config');
 const { SelfLedger } = require('./self-ledger');
 const { DeferredWriter } = require('./deferred-writer');
 const { ExperiencesArchive } = require('./experiences-archive');
@@ -100,43 +100,52 @@ function parseWear(text) {
 class Brain {
   constructor(userDataDir, cfg) {
     this.dir = userDataDir;
-    this.cfg = cfg;
+    this.cfg = cfg || {};
+    const sanitizedExp = sanitize({
+      experimentMode: this.cfg.experimentMode,
+      experimentModules: this.cfg.experimentModules
+    });
+    this.cfg.experimentMode = sanitizedExp.experimentMode;
+    this.cfg.experimentModules = sanitizedExp.experimentModules;
     const { validateCredentialTarget, providerFor } = require('./provider-policy');
-    const pTarget = cfg.provider || providerFor(cfg.baseURL);
-    const cType = cfg.credentialType || (pTarget === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
-    const policyCheck = validateCredentialTarget({ provider: pTarget, baseURL: cfg.baseURL, credentialType: cType });
+    const pTarget = this.cfg.provider || providerFor(this.cfg.baseURL);
+    const cType = this.cfg.credentialType || (pTarget === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
+    const policyCheck = validateCredentialTarget({ provider: pTarget, baseURL: this.cfg.baseURL, credentialType: cType });
     if (!policyCheck.ok) {
       console.warn(`[Brain] Provider Policy 检查未通过: ${policyCheck.error}`);
     }
-    this.api = new DeepSeek(cfg);
-    this.selfLedger = new SelfLedger(userDataDir, {
-      maxEntries: cfg.selfLedgerMaxEntries,
-      currentSelfTokenBudget: cfg.currentSelfTokenBudget
-    });
-    this.birthAt = this.selfLedger.setBirthAt(Date.now());
+    this.api = new DeepSeek(this.cfg);
+
+    // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
     this.experiencesArchive = new ExperiencesArchive(userDataDir);
     this.subjectState = new SubjectState(userDataDir, {
-      stepWeight: cfg.subjectStateStepWeight,
-      maxDeltaPerWindow: cfg.subjectStateMaxDelta,
-      experimentModules: cfg.experimentModules
+      stepWeight: this.cfg.subjectStateStepWeight,
+      maxDeltaPerWindow: this.cfg.subjectStateMaxDelta,
+      experimentModules: this.cfg.experimentModules
     });
     this.memory = new Memory(userDataDir, {
-      persona: systemPersona(cfg),
-      windowTurns: cfg.windowTurns,
-      windowMaxTokens: cfg.windowMaxTokens,
-      keepTailMessages: cfg.keepTailMessages,
-      memoryCapTokens: cfg.memoryCapTokens,
-      experimentModules: cfg.experimentModules,
-      memoryDynamics: cfg.experimentModules?.memoryDynamics
+      persona: systemPersona(this.cfg),
+      windowTurns: this.cfg.windowTurns,
+      windowMaxTokens: this.cfg.windowMaxTokens,
+      keepTailMessages: this.cfg.keepTailMessages,
+      memoryCapTokens: this.cfg.memoryCapTokens,
+      experimentModules: this.cfg.experimentModules,
+      memoryDynamics: this.cfg.experimentModules?.memoryDynamics
     });
     this.dreamHistory = [];
     this._restoreDreamHistory();
     this._restoreEngramSnapshotFromArchive();
     this.internalRegulation = new InternalRegulationManager(userDataDir, {
-      enabled: Boolean(cfg.experimentModules?.internalRegulation),
-      experimentModules: cfg.experimentModules
+      enabled: Boolean(this.cfg.experimentModules?.internalRegulation),
+      experimentModules: this.cfg.experimentModules
     });
     this._restoreInternalRegulationFromArchive();
+
+    this.selfLedger = new SelfLedger(userDataDir, {
+      maxEntries: this.cfg.selfLedgerMaxEntries,
+      currentSelfTokenBudget: this.cfg.currentSelfTokenBudget
+    });
+    this.birthAt = this.selfLedger.setBirthAt(Date.now());
 
     this.statsPath = path.join(userDataDir, 'stats.json');
     this.statsWriter = new DeferredWriter(() => writeJsonAtomic(this.statsPath, this.stats), { delayMs: 3000 });
@@ -146,17 +155,107 @@ class Brain {
     this.boundary = false;   // 关窗/合并进行中，防重入
     this.generationId = 1;
     this.shutdownRequested = false;
-    // 换装执行器（main 注入）。没注入时 [wear:x] 只是被剥离、不执行，
-    // 也绝不会因此谎称换好了 —— 浏览器单测跑的就是这条无衣柜路径。
+
+    // 换装执行器（main 注入）。
     this.wardrobe = null;
-    // 本地活动追踪器（main 注入）。没注入时整条环境感知链路自动隐身：
-    // 逻辑全部写成 `if (tr && ...)`，浏览器预览与单元测试不必造一个 tracker。
+    // 本地活动追踪器与行为调度器（main 注入或构造传入）
     this.tracker = null;
+    this.behaviorScheduler = (cfg && cfg.behaviorScheduler) ? cfg.behaviorScheduler : null;
+    if (this.behaviorScheduler && this.internalRegulation) {
+      this.behaviorScheduler.setInternalRegulation(this.internalRegulation);
+    }
+    if (cfg && cfg.tracker) {
+      this.bindTracker(cfg.tracker);
+    }
+
+    // Phase 0.5: 环境知觉与注意力流水线缓冲区 (bounded <= 50)
+    this.recentPerceptions = [];
 
     // 实验遥测与缓存破坏归因底座 (v0.9.6 P0-14 & P0-15)
     this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
     this.telemetrySeq = 0;
     this.pendingCacheBreakReason = null;
+  }
+
+  bindBehaviorScheduler(scheduler) {
+    this.behaviorScheduler = scheduler || null;
+    if (this.behaviorScheduler && this.internalRegulation) {
+      this.behaviorScheduler.setInternalRegulation(this.internalRegulation);
+    }
+  }
+
+  setBehaviorScheduler(scheduler) {
+    this.bindBehaviorScheduler(scheduler);
+  }
+
+  bindTracker(tracker) {
+    this.tracker = tracker || null;
+    if (this.tracker && this.internalRegulation) {
+      this.tracker.setInternalRegulation(this.internalRegulation);
+    }
+    if (this.tracker && typeof this.processEnvironmentalPerception === 'function') {
+      this.tracker.setPerceptionPipeline((raw) => this.processEnvironmentalPerception(raw));
+    }
+  }
+
+  /**
+   * 数字环周环境感知与注意力闸门真实生产流水线 (Phase 0.5: P0-2 & DigitalUmwelt -> AttentionGate)
+   * 
+   * 认识论不变量（Epistemic Invariant）：
+   * 1. subjectAccessible: false 绝对守恒。
+   * 2. ATTENDED ≠ SUBJECT_ACQUIRED 绝对守恒。
+   * 3. 绝不越级直接篡改 SubjectState 或 Subject Memory。
+   * 
+   * @param {Object} rawSensorData
+   * @returns {Object|null}
+   */
+  processEnvironmentalPerception(rawSensorData) {
+    if (!this.cfg.experimentModules?.digitalUmwelt) return null;
+    const { filterRawTelemetry, processUmweltPerception } = require('./digital-umwelt');
+    const { evaluateAttentionGate, assertNotSubjectAcquired } = require('./attention-gate');
+
+    const filtered = filterRawTelemetry(rawSensorData);
+    if (!filtered) return null;
+
+    const internalState = {
+      values: this.internalRegulation ? this.internalRegulation.getState() : {}
+    };
+    const snapshot = {
+      experimentMode: this.cfg.experimentMode,
+      modules: this.cfg.experimentModules
+    };
+
+    const candidate = processUmweltPerception(rawSensorData, internalState, { snapshot });
+    if (!candidate) return null;
+
+    let gateResult = null;
+    if (this.cfg.experimentModules?.attentionGate) {
+      gateResult = evaluateAttentionGate(candidate, this.internalRegulation, {
+        snapshot,
+        modules: this.cfg.experimentModules
+      });
+    } else {
+      gateResult = Object.freeze({
+        status: 'ATTENDED',
+        attended: true,
+        reason: 'ATTENTION_GATE_DISABLED',
+        subjectAccessible: false
+      });
+    }
+
+    assertNotSubjectAcquired(gateResult);
+
+    const record = {
+      candidate,
+      gateResult,
+      timestamp: Date.now()
+    };
+    this.recentPerceptions.push(record);
+    if (this.recentPerceptions.length > 50) {
+      this.recentPerceptions.shift();
+    }
+
+    return record;
   }
 
   /**
@@ -448,9 +547,12 @@ class Brain {
         timestamp: now
       });
       if (snap) {
-        if (snap.clicks > 0) this.internalRegulation.updateOnActivity('poke', { count: snap.clicks, timestamp: now });
-        if (snap.drags > 0) this.internalRegulation.updateOnActivity('drag', { count: snap.drags, timestamp: now });
-        if (snap.idleMin > 10) this.internalRegulation.updateOnActivity('idle', { idleMin: snap.idleMin, timestamp: now });
+        const trackerDirectlyWired = Boolean(tr && tr.internalRegulation === this.internalRegulation);
+        if (!trackerDirectlyWired) {
+          if (snap.clicks > 0) this.internalRegulation.updateOnActivity('poke', { count: snap.clicks, timestamp: now });
+          if (snap.drags > 0) this.internalRegulation.updateOnActivity('drag', { count: snap.drags, timestamp: now });
+          if (snap.idleMin > 10) this.internalRegulation.updateOnActivity('idle', { idleMin: snap.idleMin, timestamp: now });
+        }
       }
     }
 
