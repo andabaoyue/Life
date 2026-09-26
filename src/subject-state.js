@@ -451,7 +451,16 @@ class SubjectState {
         (r.payload?.recoveryPending === true || r.recoveryPending === true)
       );
 
-      const NON_STATE = new Set(['recovery_event', 'diagnostic', 'replay_report', 'internal_log', 'audit_log']);
+      const NON_STATE = new Set([
+        'recovery_event',
+        'diagnostic',
+        'replay_report',
+        'internal_log',
+        'audit_log',
+        'self_projection',
+        'subject_dream',
+        'memory_dynamics_snapshot'
+      ]);
       let maxArchiveWindow = 0;
       for (const r of records) {
         const recType = r.recordType || r.type;
@@ -774,12 +783,24 @@ class SubjectState {
   }
 
   /**
-   * 确定性状态 Reducer：新状态 = 旧状态 + clamp(∑(direction * strength * stepWeight), -maxDelta, maxDelta)
+   * 确定性状态 Reducer：新状态 = 旧状态 + clamp(∑(direction * strength * effectiveStepWeight), -maxDelta, maxDelta)
    */
   reduce(verifiedEvidence, windowNo, opts = {}) {
-    const stepWeight = opts.stepWeight ?? this.stepWeight;
+    const baseStepWeight = opts.baseStepWeight ?? opts.stepWeight ?? this.stepWeight;
     const maxDelta = opts.maxDeltaPerWindow ?? this.maxDeltaPerWindow;
     const targetWindowNo = windowNo ?? this.data.windowNo;
+
+    // v0.9.7: 沃丁顿发育景观与经历依赖塑性衰减 (Canalization)
+    const { computePlasticityMultiplier } = require('./canalization');
+    const canalizationEnabled = opts.canalization !== undefined
+      ? Boolean(opts.canalization)
+      : (opts.experimentModules ? Boolean(opts.experimentModules.biographicalCanalization) : false);
+
+    const windowDepth = Math.max(0, (typeof targetWindowNo === 'number' && !Number.isNaN(targetWindowNo) ? targetWindowNo : 1) - 1);
+    const plasticityMultiplier = canalizationEnabled
+      ? computePlasticityMultiplier(windowDepth, { gamma: opts.gamma, enabled: true })
+      : (typeof opts.plasticityMultiplier === 'number' ? opts.plasticityMultiplier : 1.0);
+    const effectiveStepWeight = opts.effectiveStepWeight ?? Number((baseStepWeight * plasticityMultiplier).toFixed(6));
 
     // 确保接受的 verifiedEvidence 均已记入 committed 集合并持久化 (P0-01)
     for (const ev of verifiedEvidence) {
@@ -803,7 +824,7 @@ class SubjectState {
         rawDeltas[ev.trait] = 0;
         traitEvidenceMap[ev.trait] = [];
       }
-      rawDeltas[ev.trait] += ev.direction * ev.strength * stepWeight;
+      rawDeltas[ev.trait] += ev.direction * ev.strength * effectiveStepWeight;
       if (ev.evidenceId) {
         traitEvidenceMap[ev.trait].push(ev.evidenceId);
       }
@@ -827,7 +848,10 @@ class SubjectState {
           delta: clampedDelta,
           newValue: nextVal,
           evidenceIds: traitEvidenceMap[trait] || [],
-          stepWeight,
+          baseStepWeight,
+          effectiveStepWeight,
+          plasticityMultiplier,
+          stepWeight: effectiveStepWeight,
           maxDelta
         });
         newChanges.push(sc);
@@ -939,7 +963,9 @@ class SubjectState {
       'replay_report',
       'internal_log',
       'audit_log',
-      'self_projection'
+      'self_projection',
+      'subject_dream',
+      'memory_dynamics_snapshot'
     ]);
 
     // 标准化并按 archiveSeq（优先）或时间戳升序排序 (v0.9.6 P0-05)
@@ -999,21 +1025,26 @@ class SubjectState {
         rej = [record.payload];
       }
 
-      // P0-07: 提取本窗口历史 Reducer 参数
+      // P0-07 & v0.9.7: 提取本窗口历史 Reducer 参数 (含发育阻尼塑性参数)
       let stepWeight = options.forceReducerParams ? defaultStepWeight : null;
       let maxDelta = options.forceReducerParams ? defaultMaxDelta : null;
+      let baseStepWeight = defaultStepWeight;
+      let plasticityMultiplier = 1.0;
 
       if (stepWeight === null) {
         const histChanges = (record.payload && Array.isArray(record.payload.stateChanges))
           ? record.payload.stateChanges
           : (Array.isArray(record.stateChanges) ? record.stateChanges : []);
-        const histReducer = (histChanges[0] && histChanges[0].reducer)
+        const firstChange = histChanges[0] || {};
+        const histReducer = (firstChange && firstChange.reducer)
           || (record.payload && record.payload.reducer)
           || record.reducer;
 
         if (histReducer && typeof histReducer.stepWeight === 'number') {
           stepWeight = histReducer.stepWeight;
           maxDelta = histReducer.maxDelta ?? defaultMaxDelta;
+          baseStepWeight = histReducer.baseStepWeight ?? firstChange.baseStepWeight ?? defaultStepWeight;
+          plasticityMultiplier = histReducer.plasticityMultiplier ?? firstChange.plasticityMultiplier ?? 1.0;
         } else {
           stepWeight = defaultStepWeight;
           maxDelta = defaultMaxDelta;
@@ -1073,6 +1104,9 @@ class SubjectState {
             delta: clampedDelta,
             newValue: next,
             evidenceIds: traitEvidenceMap[trait] || [],
+            baseStepWeight,
+            effectiveStepWeight: stepWeight,
+            plasticityMultiplier,
             stepWeight,
             maxDelta
           }));

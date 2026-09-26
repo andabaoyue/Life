@@ -61,12 +61,22 @@ const BEHAVIOR_ORIGIN = Object.freeze({
 });
 
 /**
- * 睡眠记忆认识论三态分立
+ * 睡眠记忆与梦境制品认识论状态分立
  */
 const MEMORY_EPISTEMIC_STATUS = Object.freeze({
   SLEEP_REPLAY_ARTIFACT: 'SLEEP_REPLAY_ARTIFACT',           // 系统睡眠回放中间制品（机器运算物，非主体梦境）
   SYSTEM_CONSOLIDATED: 'SYSTEM_CONSOLIDATED',               // 系统整合候选表征（暂存外部缓冲，未获主体确认）
-  SUBJECT_ACQUIRED: 'SUBJECT_ACQUIRED'                     // 主体习得自传记忆（清醒期经由主体主动唤醒并融入对话）
+  SUBJECT_ACQUIRED: 'SUBJECT_ACQUIRED',                     // 主体习得自传记忆（清醒期经由主体主动唤醒并融入对话）
+  DREAM_GENERATED_ARTIFACT: 'DREAM_GENERATED_ARTIFACT'     // 梦境合成生成制品（象征性隐喻背景，不可直写主体状态）
+});
+
+/**
+ * 记忆痕迹动力学三级活跃度分级 (v0.9.7)
+ */
+const ENGRAM_TIERS = Object.freeze({
+  ACTIVE: 'ACTIVE',       // 活跃：进入 Prompt Memory 优先上下文
+  FADING: 'FADING',       // 衰退：低优先级或概括印象
+  DORMANT: 'DORMANT'      // 休眠：移出活跃上下文预算，保留原始归档
 });
 
 /**
@@ -85,7 +95,8 @@ const DEFAULT_EXPERIMENT_MODULES = Object.freeze({
   homeostasis: false,
   sleepConsolidation: false,
   digitalUmwelt: false,
-  biographicalCanalization: false
+  biographicalCanalization: false,
+  memoryDynamics: false
 });
 
 module.exports = {
@@ -99,6 +110,7 @@ module.exports = {
   CANDIDATE_STATUS,
   BEHAVIOR_ORIGIN,
   MEMORY_EPISTEMIC_STATUS,
+  ENGRAM_TIERS,
   PERCEPTION_STATUS,
   DEFAULT_EXPERIMENT_MODULES
 };

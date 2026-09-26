@@ -31,6 +31,10 @@ function createStateChange(opts = {}) {
   const delta = Number.isFinite(opts.delta) ? opts.delta : 0;
   const newValue = Number.isFinite(opts.newValue) ? opts.newValue : (previousValue + delta);
 
+  const baseStepWeight = opts.baseStepWeight ?? opts.stepWeight ?? 20;
+  const plasticityMultiplier = typeof opts.plasticityMultiplier === 'number' ? opts.plasticityMultiplier : 1.0;
+  const effectiveStepWeight = opts.effectiveStepWeight ?? Number((baseStepWeight * plasticityMultiplier).toFixed(6));
+
   return {
     stateChangeId,
     changeId: stateChangeId, // 别名支持
@@ -41,8 +45,14 @@ function createStateChange(opts = {}) {
     newValue,
     evidenceIds: Array.isArray(opts.evidenceIds) ? [...opts.evidenceIds] : [],
     roundingMode: opts.roundingMode || 'symmetric',
+    baseStepWeight,
+    effectiveStepWeight,
+    plasticityMultiplier,
     reducer: {
-      stepWeight: opts.stepWeight ?? 20,
+      stepWeight: effectiveStepWeight,
+      baseStepWeight,
+      effectiveStepWeight,
+      plasticityMultiplier,
       maxDelta: opts.maxDelta ?? 50,
       roundingMode: opts.roundingMode || 'symmetric'
     },

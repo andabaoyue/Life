@@ -123,8 +123,11 @@ class Brain {
       windowTurns: cfg.windowTurns,
       windowMaxTokens: cfg.windowMaxTokens,
       keepTailMessages: cfg.keepTailMessages,
-      memoryCapTokens: cfg.memoryCapTokens
+      memoryCapTokens: cfg.memoryCapTokens,
+      experimentModules: cfg.experimentModules,
+      memoryDynamics: cfg.experimentModules?.memoryDynamics
     });
+    this.dreamHistory = [];
     this.statsPath = path.join(userDataDir, 'stats.json');
     this.statsWriter = new DeferredWriter(() => writeJsonAtomic(this.statsPath, this.stats), { delayMs: 3000 });
     this.stats = this.loadStats();
@@ -866,6 +869,60 @@ class Brain {
               totalEntries: this.selfLedger ? this.selfLedger.entries.length : 0
             }
           });
+        }
+
+        // v0.9.7: 记忆痕迹动力学快照归档 (Memory Dynamics Snapshot)
+        if (this.memory.engramManager && this.experiencesArchive) {
+          try {
+            this.experiencesArchive.append({
+              recordType: 'memory_dynamics_snapshot',
+              windowNo: snap.windowNo,
+              payload: {
+                windowNo: snap.windowNo,
+                report: this.memory.lastDecayReport || null,
+                snapshot: this.memory.engramManager.exportSnapshot(snap.windowNo)
+              }
+            });
+          } catch (e) {
+            console.error('[Brain] memory_dynamics_snapshot 归档失败:', e.message);
+          }
+        }
+
+        // v0.9.7: 成本门禁式梦境系统 (Cost-Gated Dream Consolidation)
+        const dreamEnabled = this.cfg.experimentModules?.sleepConsolidation === true;
+        if (dreamEnabled && this.experiencesArchive) {
+          try {
+            const { evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
+            const gateResult = evaluateDreamGate({
+              windowNo: snap.windowNo,
+              stateHistory: this.subjectState ? this.subjectState.data.history : [],
+              verifiedEvidence: verifiedEvidence || [],
+              dreamHistory: this.dreamHistory || []
+            });
+
+            if (gateResult && gateResult.allowDream) {
+              const residues = extractDayResidues(snap.activeItems || [], verifiedEvidence || []);
+              const dreamPrompt = buildDreamSynthesisPrompt(residues, snap.windowNo);
+              const dreamRecord = await synthesizeDream(this.api, dreamPrompt, {
+                windowNo: snap.windowNo,
+                sourceEventIds: (verifiedEvidence || []).map(e => e.evidenceId).filter(Boolean),
+                dayResidues: residues,
+                gateMetrics: gateResult.metrics,
+                gateThresholds: gateResult.thresholds
+              }, this.cfg.dreamConfig || {});
+
+              if (dreamRecord) {
+                if (!Array.isArray(this.dreamHistory)) this.dreamHistory = [];
+                this.dreamHistory.push(dreamRecord);
+                this.experiencesArchive.append(dreamRecord);
+                if (dreamRecord.usage) {
+                  this.track(dreamRecord.usage, true, 'dream');
+                }
+              }
+            }
+          } catch (err) {
+            console.error('[Brain] Dream consolidation failed (Fail-Safe):', err.message);
+          }
         }
 
         if (this.cfg.selfGrowthEnabled === true)

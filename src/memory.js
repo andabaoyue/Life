@@ -56,6 +56,18 @@ class Memory {
     this.writer = new DeferredWriter(() => writeJsonAtomic(this.path, this.data), { delayMs: 3000 });
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
                   totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0 };
+
+    // v0.9.7: 记忆痕迹动力学管理器 (Memory Dynamics & Synaptic Pruning)
+    const dynamicsEnabled = opts.memoryDynamics !== undefined
+      ? Boolean(opts.memoryDynamics)
+      : (opts.experimentModules ? Boolean(opts.experimentModules.memoryDynamics) : false);
+    if (dynamicsEnabled) {
+      const { EngramTraceManager } = require('./memory-dynamics');
+      this.engramManager = new EngramTraceManager(opts.engramConfig);
+    } else {
+      this.engramManager = null;
+    }
+
     this.load();
   }
 
@@ -204,10 +216,17 @@ class Memory {
     // 那组用例钉住（那组在旧顺序下会红），不靠注释维持。
     let s = this.persona;
     if (this.data.windows.length) {
-      const mem = this.data.windows
-        .map(w => (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text)
-        .join('\n');
-      s += '\n\n【你与此前的记忆】\n' + mem;
+      let activeWindows = this.data.windows;
+      if (this.engramManager) {
+        const dormantNos = new Set(this.engramManager.getDormantTraces().map(t => t.sourceWindowNo));
+        activeWindows = this.data.windows.filter(w => !dormantNos.has(w.no));
+      }
+      if (activeWindows.length) {
+        const mem = activeWindows
+          .map(w => (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text)
+          .join('\n');
+        s += '\n\n【你与此前的记忆】\n' + mem;
+      }
     }
     // 穿着块只带真实状态，平时逐字节不变；换装那一次破缓存是必要的代价 ——
     // 不然模型只能凭想象回答自己穿了什么，就成了编造。
@@ -307,6 +326,17 @@ class Memory {
       at: Date.now(),
       text: String(summaryText).trim()
     });
+
+    if (this.engramManager) {
+      this.engramManager.registerTrace({
+        sourceWindowNo: closedWindowNo,
+        createdWindow: closedWindowNo,
+        salienceBonus: 0.1,
+        contentRef: String(summaryText).slice(0, 100)
+      });
+      this.lastDecayReport = this.engramManager.decayAll(closedWindowNo);
+    }
+
     this.data.windowNo++;
     // 快照之后可能被 rollback 弹掉几条，drop 不能越过当前长度
     this.data.history.splice(0, Math.min(snap.drop, this.data.history.length));

@@ -36,7 +36,7 @@ function computeCanonicalRecordHash(rec) {
   return crypto.createHash('sha256').update(JSON.stringify(canonicalObj), 'utf8').digest('hex');
 }
 
-// 合法归档记录类型白名单 (P0-03 & v0.9.6 P0-12)
+// 合法归档记录类型白名单 (P0-03 & v0.9.6 P0-12 & v0.9.7)
 const VALID_RECORD_TYPES = new Set([
   'window_summary',
   'window_archive',
@@ -48,7 +48,9 @@ const VALID_RECORD_TYPES = new Set([
   'evidence',
   'evidence_rejected',
   'state_change',
-  'self_projection'
+  'self_projection',
+  'subject_dream',
+  'memory_dynamics_snapshot'
 ]);
 
 // 完整性状态枚举
@@ -269,6 +271,27 @@ function validateArchiveRecord(record, options = {}) {
     case 'self_projection': {
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_SELF_PROJECTION_PAYLOAD' };
+      }
+      break;
+    }
+
+    case 'subject_dream': {
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_DREAM_PAYLOAD' };
+      }
+      const dreamId = payload.dreamId || rec.recordId;
+      if (typeof dreamId !== 'string' || !dreamId.trim()) {
+        return { valid: false, reason: 'MISSING_DREAM_ID' };
+      }
+      if (!payload.epistemicStatus) {
+        return { valid: false, reason: 'MISSING_EPISTEMIC_STATUS' };
+      }
+      break;
+    }
+
+    case 'memory_dynamics_snapshot': {
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_MEMORY_DYNAMICS_PAYLOAD' };
       }
       break;
     }
