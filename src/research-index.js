@@ -16,10 +16,10 @@ const fs = require('fs');
 function extractRecordWindowNo(record) {
   if (!record || typeof record !== 'object') return null;
   const p = record.payload || record;
-  if (typeof record.windowNo === 'number' && !isNaN(record.windowNo)) return record.windowNo;
-  if (typeof p.windowNo === 'number' && !isNaN(p.windowNo)) return p.windowNo;
-  if (typeof record.window === 'number' && !isNaN(record.window)) return record.window;
-  if (typeof p.window === 'number' && !isNaN(p.window)) return p.window;
+  if (typeof record.windowNo === 'number' && !Number.isNaN(record.windowNo)) return record.windowNo;
+  if (typeof p.windowNo === 'number' && !Number.isNaN(p.windowNo)) return p.windowNo;
+  if (typeof record.window === 'number' && !Number.isNaN(record.window)) return record.window;
+  if (typeof p.window === 'number' && !Number.isNaN(p.window)) return p.window;
   return null;
 }
 

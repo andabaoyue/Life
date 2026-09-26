@@ -228,21 +228,31 @@ function checkLayerTransparency() {
   const uniqueFiles = [...new Set(expectedFiles)];
   const emptyLayers = [];
   const validLayers = [];
+  const abnormalLayers = [];
 
   for (const rel of uniqueFiles) {
     const full = path.join(ROOT, rel);
+    if (!fs.existsSync(full)) {
+      abnormalLayers.push({ rel, reason: '文件不存在' });
+      continue;
+    }
     const res = getPngAlphaBbox(full);
-    if (!res) continue;
-    if (res.empty) {
+    if (!res) {
+      abnormalLayers.push({ rel, reason: '非标准 8-bit RGBA 格式或 IDAT 解压失败' });
+    } else if (res.empty) {
       emptyLayers.push({ rel, bbox: 'empty/null' });
     } else {
       validLayers.push({ rel, bbox: `${res.bbox.width}x${res.bbox.height} at (${res.bbox.minX},${res.bbox.minY})` });
     }
   }
 
+  if (abnormalLayers.length > 0) {
+    report('FAIL', '分层资产格式异常', `检测到 ${abnormalLayers.length} 个图层异常无法解析: ${abnormalLayers.map(e => `${path.basename(e.rel)} (${e.reason})`).join(', ')}`);
+  }
+
   if (emptyLayers.length > 0) {
     report('WARN', '分层资产透明度审计', `检测到 ${emptyLayers.length} 个正在制作中的换装图层目前为全透明空图层 (bbox: empty/null): ${emptyLayers.map(e => path.basename(e.rel)).join(', ')} (严格遵循非破坏性审计规范：保留美术现场，禁止造假图)`);
-  } else {
+  } else if (abnormalLayers.length === 0) {
     report('PASS', '分层资产透明度审计', `全部 ${uniqueFiles.length} 个换装图层均包含有效 Alpha 内容`);
   }
 }

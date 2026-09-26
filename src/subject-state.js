@@ -128,6 +128,9 @@ class SubjectState {
           // P0-09: 文件损坏时，优先从 experiences.jsonl 执行离线 Replay 重建
           this.rebuildFromArchiveOrFallback();
         }
+      } else {
+        // subject-state.json 尚不存在时，检查是否存在已落盘的经历归档以自愈（如首次关窗 Archive 落盘后进程崩溃）
+        this.checkAndAutoRecoverConsistency();
       }
     } catch {
       // 异常恢复
@@ -147,7 +150,9 @@ class SubjectState {
         if (records && records.length > 0) {
           console.log(`[SubjectState] 正在从 experiences.jsonl (${records.length} 条记录) 重建损坏的 Subject State...`);
           const replayReport = SubjectState.replay(records, { diagnostics, archivePath });
-          const newWindowNo = replayReport.nextWindowNo || (Math.max(0, ...replayReport.windowStates.map(w => w.windowNo)) + 1);
+          const newWindowNo = (typeof replayReport.nextWindowNo === 'number' && !Number.isNaN(replayReport.nextWindowNo))
+            ? replayReport.nextWindowNo
+            : (Math.max(0, ...replayReport.windowStates.map(w => (typeof w.windowNo === 'number' && !Number.isNaN(w.windowNo)) ? w.windowNo : 0)) + 1);
 
           this.committedEvidenceIds = new Set(replayReport.acceptedEvidenceIds || []);
           this.committedFingerprints = new Set(replayReport.acceptedEvidenceFingerprints || []);
@@ -351,7 +356,9 @@ class SubjectState {
       }
     }
 
-    const newWindowNo = replayReport.nextWindowNo || (Math.max(0, ...replayReport.windowStates.map(w => w.windowNo)) + 1);
+    const newWindowNo = (typeof replayReport.nextWindowNo === 'number' && !Number.isNaN(replayReport.nextWindowNo))
+      ? replayReport.nextWindowNo
+      : (Math.max(0, ...replayReport.windowStates.map(w => (typeof w.windowNo === 'number' && !Number.isNaN(w.windowNo)) ? w.windowNo : 0)) + 1);
     const isCertified = replayReport.integrity === 'certified' && replayReport.replayStatus === 'complete';
 
     if (isCertified) {
@@ -449,8 +456,12 @@ class SubjectState {
       for (const r of records) {
         const recType = r.recordType || r.type;
         if (NON_STATE.has(recType)) continue;
-        const wNo = r.windowNo || (r.payload && r.payload.windowNo) || 0;
-        if (wNo > maxArchiveWindow) maxArchiveWindow = wNo;
+        const wNo = (typeof r.windowNo === 'number' && !Number.isNaN(r.windowNo))
+          ? r.windowNo
+          : ((r.payload && typeof r.payload.windowNo === 'number' && !Number.isNaN(r.payload.windowNo))
+            ? r.payload.windowNo
+            : null);
+        if (wNo !== null && wNo > maxArchiveWindow) maxArchiveWindow = wNo;
       }
 
       if (hasPendingRecovery || (maxArchiveWindow >= this.data.windowNo && maxArchiveWindow > 0)) {
@@ -880,11 +891,13 @@ class SubjectState {
         continue;
       }
 
-      const wNo = (typeof record.windowNo === 'number' && !isNaN(record.windowNo)) ? record.windowNo : 1;
+      const wNo = (typeof record.windowNo === 'number' && !Number.isNaN(record.windowNo))
+        ? record.windowNo
+        : (record.windowNo === null ? null : (record.payload && typeof record.payload.windowNo === 'number' && !Number.isNaN(record.payload.windowNo) ? record.payload.windowNo : null));
       const ts = record.timestamp || 0;
 
       // 窗口与时间过滤闸门
-      if (targetUntilWindow !== null && wNo > targetUntilWindow) continue;
+      if (targetUntilWindow !== null && wNo !== null && wNo > targetUntilWindow) continue;
       if (targetUntilTimestamp !== null && ts > targetUntilTimestamp) continue;
 
       let evidence = [];
@@ -932,7 +945,9 @@ class SubjectState {
 
       processedRecords++;
       rejectedRecords += rej.length;
-      actualWindowNos.push(wNo);
+      if (typeof wNo === 'number' && !Number.isNaN(wNo)) {
+        actualWindowNos.push(wNo);
+      }
 
       const rawDeltas = {};
       const traitEvidenceMap = {};

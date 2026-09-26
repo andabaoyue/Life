@@ -185,14 +185,14 @@ class ResearchQuery {
         current: currentValues[trait] ?? 0,
         previous: previousValues[trait] ?? (currentValues[trait] ?? 0),
         latestDelta: latestDeltas[trait] ?? 0,
-        windowNo: (typeof stateData.windowNo === 'number' && !isNaN(stateData.windowNo)) ? stateData.windowNo : 1,
+        windowNo: (typeof stateData.windowNo === 'number' && !Number.isNaN(stateData.windowNo)) ? stateData.windowNo : (stateData.windowNo === null ? null : 1),
         stateChangeId: latestStateChanges[trait] || null,
         range: [-999, 999]
       };
     }
 
     return {
-      windowNo: (typeof stateData.windowNo === 'number' && !isNaN(stateData.windowNo)) ? stateData.windowNo : 1,
+      windowNo: (typeof stateData.windowNo === 'number' && !Number.isNaN(stateData.windowNo)) ? stateData.windowNo : (stateData.windowNo === null ? null : 1),
       recoveryStatus: stateData.recoveryStatus || 'NORMAL',
       updatedAt: stateData.updatedAt || null,
       values: currentValues,
@@ -235,26 +235,32 @@ class ResearchQuery {
       }
     }
 
-    // 按 windowNo 升序排列
-    allChanges.sort((a, b) => (a.windowNo || 0) - (b.windowNo || 0));
+    // 按 windowNo 升序排列（null/unknown 排在最前面，不伪造成 0）
+    allChanges.sort((a, b) => {
+      const aNum = typeof a.windowNo === 'number' && !Number.isNaN(a.windowNo);
+      const bNum = typeof b.windowNo === 'number' && !Number.isNaN(b.windowNo);
+      if (!aNum && !bNum) return 0;
+      if (!aNum) return -1;
+      if (!bNum) return 1;
+      return a.windowNo - b.windowNo;
+    });
 
     let filtered = allChanges;
     if (trait) {
       filtered = filtered.filter(sc => sc.trait === trait);
     }
     if (fromWindow !== null) {
-      filtered = filtered.filter(sc => (sc.windowNo || 0) >= fromWindow);
+      filtered = filtered.filter(sc => {
+        if (typeof sc.windowNo !== 'number' || Number.isNaN(sc.windowNo)) return false;
+        return sc.windowNo >= fromWindow;
+      });
     }
     if (toWindow !== null) {
-      filtered = filtered.filter(sc => (sc.windowNo || 0) <= toWindow);
+      filtered = filtered.filter(sc => {
+        if (typeof sc.windowNo !== 'number' || Number.isNaN(sc.windowNo)) return false;
+        return sc.windowNo <= toWindow;
+      });
     }
-
-function getRecordWindowNo(r) {
-  if (!r || typeof r !== 'object') return null;
-  if (typeof r.windowNo === 'number' && !isNaN(r.windowNo)) return r.windowNo;
-  if (r.payload && typeof r.payload.windowNo === 'number' && !isNaN(r.payload.windowNo)) return r.payload.windowNo;
-  return null;
-}
 
     return filtered.map(sc => ({
       stateChangeId: sc.stateChangeId || sc.changeId,

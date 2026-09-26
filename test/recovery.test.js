@@ -208,12 +208,159 @@ async function testIdempotentRecoveryAndArchive() {
   check('经历归档中窗口 1 window_archive 严格仅有 1 条 (无重复记录)', allArchives.length === 1);
 }
 
+// -----------------------------------------------------------------------------
+// 6. 故障注入专项四场景测试 (Fault Injection Cases A / B / C / D)
+// -----------------------------------------------------------------------------
+async function testFaultInjectionMatrix() {
+  // Case A: Archive 成功, State commit 失败, 进程退出 -> 重启 -> Recovery -> Replay -> State 恢复 -> 窗口正常结束
+  {
+    const dirA = tmpDir('fault-a-');
+    const brain1 = new Brain(dirA, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+    const firstMsg = brain1.memory.append('user', '初澜，喜欢安静一点的环境。');
+    brain1.memory.append('assistant', '好的呢，我会安静陪伴。');
+    brain1.memory.append('user', '初澜，请继续保持安静。');
+    brain1.memory.append('assistant', '明白。');
+
+    const mockApi = {
+      complete: async () => ({
+        text: JSON.stringify({
+          windowSynthesis: {
+            stableUserFacts: ['偏好安静'],
+            subjectExperiences: ['安静陪伴'],
+            stateChangesSuggested: [
+              {
+                trait: 'quiet_preference',
+                direction: 1,
+                strength: 1.0,
+                messageId: firstMsg.messageId,
+                quote: '喜欢安静一点的环境'
+              }
+            ]
+          }
+        }),
+        usage: { total_tokens: 50 }
+      })
+    };
+    brain1.api = mockApi;
+
+    // 注入故障：commit 写入磁盘时失败并抛出异常
+    brain1.subjectState.commit = () => false;
+    const resA1 = await brain1.closeWindow();
+    check('Case A.1: 关窗因 commit 失败返回 false', resA1 === false);
+    check('Case A.2: Archive 已可靠落盘 window_archive #1', brain1.experiencesArchive.hasWindowArchive(1));
+
+    // 模拟进程退出与冷重启：新建 Brain 实例
+    const brainRestart = new Brain(dirA, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+    brainRestart.api = mockApi;
+
+    // 检查重启后一致性检测：由于持久化状态落后于归档，自动触发恢复
+    check('Case A.3: 重启后自动从归档 Replay 恢复状态至 Window #2', brainRestart.subjectState.currentWindowNo === 2);
+    check('Case A.4: 恢复后特质计算正确演化 (+20)', brainRestart.subjectState.values.quiet_preference === 20);
+
+    const archivesA = brainRestart.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+    check('Case A.5: 重启恢复未重复制造 window_archive 记录', archivesA.length === 1);
+
+    try { fs.rmSync(dirA, { recursive: true, force: true }); } catch {}
+  }
+
+  // Case B: Archive 文件已有损坏或非法记录 -> 不会误认为成功 archive -> 允许写入合法 archive
+  {
+    const dirB = tmpDir('fault-b-');
+    const archivePath = path.join(dirB, 'experiences.jsonl');
+    fs.mkdirSync(dirB, { recursive: true });
+    // 写入一条非法/损坏记录（缺少有效 payload）
+    fs.writeFileSync(archivePath, JSON.stringify({ recordType: 'window_archive', windowNo: 1, payload: null }) + '\n', 'utf8');
+
+    const archive = new ExperiencesArchive(dirB);
+    check('Case B.1: 非法/损坏的 window_archive 记录不会被误判为成功归档', archive.hasWindowArchive(1) === false);
+
+    // 允许合法归档写入覆盖异常状态
+    const ok = archive.appendWindowArchive({
+      windowNo: 1,
+      turns: 10,
+      events: [{ eventId: 'evt-001', type: 'message', source: 'user' }]
+    });
+    check('Case B.2: 合法归档顺利写入，不被旧坏记录永久阻塞', ok === true);
+    check('Case B.3: 写入合法归档后 hasWindowArchive(1) 认证通过', archive.hasWindowArchive(1) === true);
+
+    try { fs.rmSync(dirB, { recursive: true, force: true }); } catch {}
+  }
+
+  // Case C: 同一个 closeWindow 连续调用两次 -> 只产生一个逻辑 archive
+  {
+    const dirC = tmpDir('fault-c-');
+    const mockApi = {
+      complete: async () => {
+        await new Promise(r => setTimeout(r, 20));
+        return {
+          text: JSON.stringify({
+            windowSynthesis: { stableUserFacts: ['活力'], subjectExperiences: [], stateChangesSuggested: [] }
+          }),
+          usage: { total_tokens: 40 }
+        };
+      }
+    };
+    const brainC = new Brain(dirC, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+    brainC.api = mockApi;
+    brainC.memory.append('user', '今天很有活力！');
+    brainC.memory.append('assistant', '太好啦！');
+    brainC.memory.append('user', '继续保持！');
+    brainC.memory.append('assistant', '冲呀！');
+
+    // 连续两次触发 closeWindow
+    const [p1, p2] = await Promise.all([brainC.closeWindow(), brainC.closeWindow()]);
+    const archivesC = brainC.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+    check('Case C.1: 连续调用 closeWindow 经历归档严格仅产生 1 条 window_archive', archivesC.length === 1);
+    check('Case C.2: 窗口状态正常收敛', p1 === true || p2 === true);
+
+    try { fs.rmSync(dirC, { recursive: true, force: true }); } catch {}
+  }
+
+  // Case D: Recovery 成功，然后再次 closeWindow -> 不重复产生 archive
+  {
+    const dirD = tmpDir('fault-d-');
+    const mockApi = {
+      complete: async () => ({
+        text: JSON.stringify({
+          windowSynthesis: { stableUserFacts: ['安静'], subjectExperiences: [], stateChangesSuggested: [] }
+        }),
+        usage: { total_tokens: 30 }
+      })
+    };
+    const brainD = new Brain(dirD, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+    brainD.api = mockApi;
+    brainD.memory.append('user', '保持安静。');
+    brainD.memory.append('assistant', '收到。');
+    brainD.memory.append('user', '继续保持。');
+    brainD.memory.append('assistant', '好的。');
+
+    // 第一次关窗 commit 拦截
+    brainD.subjectState.commit = () => false;
+    await brainD.closeWindow();
+
+    // 触发 recovery
+    brainD.subjectState.recoverFromPending(brainD.experiencesArchive, 'test');
+    check('Case D.1: Recovery 顺利完成', brainD.subjectState.recoveryPending === false);
+
+    // 恢复正常后再次 closeWindow
+    brainD.subjectState.commit = () => true;
+    const resD2 = await brainD.closeWindow();
+    check('Case D.2: 再次 closeWindow 成功收尾', resD2 === true);
+
+    const archivesD = brainD.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+    check('Case D.3: 经历归档绝不重复产生 window_archive', archivesD.length === 1);
+
+    try { fs.rmSync(dirD, { recursive: true, force: true }); } catch {}
+  }
+}
+
 async function runAll() {
   await testSummaryFailurePreservesDialogue();
   testArchiveCorruptLineSkipping();
   testSubjectStateCorruptionBackup();
   testInFlightPostSnapshotIsolation();
   await testIdempotentRecoveryAndArchive();
+  await testFaultInjectionMatrix();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

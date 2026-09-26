@@ -371,8 +371,8 @@ node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、e
 node test/wardrobe.test.js       # 55 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离
 node test/secure.test.js         # 38 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚
 node test/atomic.test.js         # 20 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出
-node test/config.test.js         # 22 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一
-node test/deepseek.test.js       # 30 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离
+node test/config.test.js         # 28 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离
+node test/deepseek.test.js       # 32 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离、预先abort与headers后abort
 node test/layout.test.js         # 16 项：宽高比为常量、来回缩放收得回、下边缘钉住、main.js 不许再用量出来的比例
 node test/creative-mode.check.js # 7 项：创作 Skill（DS Skill）加载、成年角色边界、模式配置和超时配置检查
 node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
@@ -386,7 +386,7 @@ node test/render-adapter.test.js       # 10 项：DOM 动画渲染适配器、�
 node test/experience-schema.test.js # 22 项：Event / Observation / Interpretation 三层分离、合法性校验、复合经历封装与向后兼容转换
 node test/state-change.test.js      # 12 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
-node test/recovery.test.js          # 25 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重
+node test/recovery.test.js          # 38 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
 node test/research.test.js          # 69 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容）
 node test/archive-schema.test.js      # 20 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）
@@ -399,7 +399,7 @@ node test/research-stat-defaults.test.js   # 22 项：v0.9.5.2 彻底消除虚�
 node test/legacy-schema-certification.test.js # 14 项：v0.9.5.2 缺失 schemaVersion 规范处理（严禁隐式补写原生 v1、经过 LegacySchemaAdapter 且归档降级 UNCERTIFIED）
 node test/archive-event-strictness.test.js # 20 项：v0.9.5.2 Event 来源白名单与完整性防御（缺源拦截、未知源拦截、Synthetic 拦截、Bridge Provenance 核验与坏账防御）
 node test/legacy-metadata-fabrication.test.js # 30 项：v0.9.5.2 遗留数据元数据严禁伪造（缺 schemaVersion 禁补原生 v1、缺时间戳禁补 Date.now()、缺 windowNo 禁补 1、缺 roundNo 禁补 1、缺 messageId 禁编 UNKNOWN_MESSAGE、全链路端到端防伪）
-node test/research-window-defaults.test.js # 27 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null）
+node test/research-window-defaults.test.js # 43 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null、全生命周期 0/null 保留测试）
 node test/archive-event-runtime-parity.test.js # 17 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
 node test/research-index-unknown-window.test.js # 31 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0、IPC 通道防御默认 1 降级）
 node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）

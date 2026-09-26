@@ -422,6 +422,18 @@ class Brain {
 
   /** 生成本窗口小结并归档 */
   async closeWindow() {
+    if (this._closingWindow) {
+      return this._closingWindowPromise || false;
+    }
+    this._closingWindow = true;
+    this._closingWindowPromise = this._closeWindowInternal().finally(() => {
+      this._closingWindow = false;
+      this._closingWindowPromise = null;
+    });
+    return this._closingWindowPromise;
+  }
+
+  async _closeWindowInternal() {
     // P0-01: 若检测到 SubjectState 处于 recovery_pending 状态，先执行 Replay 自动恢复
     if (this.subjectState && this.subjectState.recoveryPending) {
       console.warn('[Brain] 检测到 subjectState 处于 recovery_pending 状态，正在执行 Replay 自动恢复...');

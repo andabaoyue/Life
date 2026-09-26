@@ -318,6 +318,50 @@ async function main() {
     check('P1-2: 超过 requestTimeoutMs 触发 request timeout',
       reqCaught && reqCaught.message === 'request timeout' && reqCaught.name === 'TimeoutError');
 
+    // 5.4 发起前已处于 abort 状态测试
+    const acPre = new AbortController();
+    acPre.abort(new Error('pre aborted'));
+    let preCaught = null;
+    try {
+      await dAbort.stream([{ role: 'user', content: 'test' }], () => {}, { signal: acPre.signal });
+    } catch (e) {
+      preCaught = e;
+    }
+    check('P1-1: 请求发起前已 abort 立即拒绝且不产生流数据',
+      preCaught && /pre aborted|aborted/i.test(preCaught.message));
+
+    // 5.5 建立连接并收到 headers 后立即 abort 测试
+    let headersServerClosed = false;
+    const headersSrv = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        // 不立即发送 chunk，保持连接
+      });
+      res.on('close', () => { headersServerClosed = true; });
+    });
+    await new Promise(r => headersSrv.listen(0, '127.0.0.1', r));
+    const headersUrl = 'http://127.0.0.1:' + headersSrv.address().port;
+    const dHeaders = new DeepSeek({ baseURL: headersUrl, apiKey: 'k', model: 'm' });
+    const acHeaders = new AbortController();
+    let headersChunkCount = 0;
+    const headersPromise = dHeaders.stream([{ role: 'user', content: 'test' }], () => {
+      headersChunkCount++;
+    }, { signal: acHeaders.signal });
+
+    // 等待连接建立、headers 发出后立即 abort
+    await new Promise(r => setTimeout(r, 50));
+    acHeaders.abort(new Error('abort after headers'));
+    let headersCaught = null;
+    try {
+      await headersPromise;
+    } catch (e) {
+      headersCaught = e;
+    }
+    check('P1-1: 收到 headers 尚未接收数据块前 abort 顺利中止并释放连接',
+      headersCaught && /abort after headers|aborted/i.test(headersCaught.message) && headersChunkCount === 0);
+    headersSrv.close();
+
     streamSrv.close();
   }
 

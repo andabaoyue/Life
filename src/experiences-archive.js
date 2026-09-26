@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { wrapArchiveRecord } = require('./experience-schema');
+const { wrapArchiveRecord, normalizeArchiveRecord } = require('./experience-schema');
+const { validateArchiveRecord } = require('./archive-integrity');
 
 /**
  * Append-Only 原始实验底座：experiences.jsonl
@@ -49,17 +50,38 @@ class ExperiencesArchive {
   }
 
   /**
-   * 检查指定窗口是否已存在 window_archive 记录 (支持 Canonical v1 与 Legacy)
+   * 检查指定窗口是否已存在可靠完成的 window_archive 记录 (支持 Canonical v1 与 Legacy)
+   * 严格区分「可靠完成归档」与「存在异常/损坏/伪造记录」。
+   * 坏记录或非法记录绝不能永久阻塞合法归档写入。
    */
   hasWindowArchive(windowNo) {
-    if (typeof windowNo !== 'number' || isNaN(windowNo)) return false;
+    if (typeof windowNo !== 'number' || Number.isNaN(windowNo)) return false;
     const records = this.readAll();
     return records.some(r => {
       const type = r.recordType || r.type;
-      const wNo = (typeof r.windowNo === 'number' && !isNaN(r.windowNo))
+      if (type !== 'window_archive') return false;
+      const wNo = (typeof r.windowNo === 'number' && !Number.isNaN(r.windowNo))
         ? r.windowNo
-        : (r.payload && typeof r.payload.windowNo === 'number' && !isNaN(r.payload.windowNo) ? r.payload.windowNo : null);
-      return type === 'window_archive' && wNo === windowNo;
+        : (r.payload && typeof r.payload.windowNo === 'number' && !Number.isNaN(r.payload.windowNo) ? r.payload.windowNo : null);
+      if (wNo !== windowNo) return false;
+
+      // 若声明了 recordType 但 payload 为 null 或非对象，属于半截/损坏记录，不能作为有效完成态
+      if (r.recordType && (!r.payload || typeof r.payload !== 'object' || Array.isArray(r.payload))) {
+        return false;
+      }
+
+      // 验证是否为可靠完成的有效归档
+      const norm = normalizeArchiveRecord(r);
+      if (!norm) return false;
+      const vResult = validateArchiveRecord(norm, { allowLegacy: true });
+      if (!vResult.valid) return false;
+
+      // 完成态检查：必须具备实际归档内容（events, windowSynthesis 或 rawSummaryText）
+      const p = norm.payload || norm;
+      const hasContent = (Array.isArray(p.events) && p.events.length > 0) ||
+                         (p.windowSynthesis && typeof p.windowSynthesis === 'object' && Object.keys(p.windowSynthesis).length > 0) ||
+                         (typeof p.rawSummaryText === 'string' && p.rawSummaryText.trim().length > 0);
+      return Boolean(hasContent);
     });
   }
 
@@ -69,7 +91,7 @@ class ExperiencesArchive {
    */
   appendWindowArchive(data, opts = {}) {
     if (!data || typeof data !== 'object') return false;
-    const windowNo = (typeof data.windowNo === 'number' && !isNaN(data.windowNo))
+    const windowNo = (typeof data.windowNo === 'number' && !Number.isNaN(data.windowNo))
       ? data.windowNo
       : (data.windowNo === null ? null : (data.windowNo !== undefined ? data.windowNo : null));
 
@@ -79,6 +101,8 @@ class ExperiencesArchive {
     }
 
     const payload = {
+      archiveId: typeof data.archiveId === 'string' && data.archiveId ? data.archiveId : (`arch-w${windowNo}-${Date.now()}`),
+      windowId: typeof data.windowId === 'string' && data.windowId ? data.windowId : (`win-${windowNo}`),
       windowNo,
       turns: (typeof data.turns === 'number' && !isNaN(data.turns)) ? data.turns : 0,
       messageCount: (typeof data.messageCount === 'number' && !isNaN(data.messageCount)) ? data.messageCount : 0,
