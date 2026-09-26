@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Life</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="stage">
+
+    <!-- 对话记录 -->
+    <div id="log" class="hidden">
+      <div id="logBar"><span>记录</span><button id="logClose">×</button></div>
+      <div id="logBody"></div>
+    </div>
+
+    <!-- 设置 / 统计面板 -->
+    <div id="panel" class="hidden">
+      <div class="p-title">设置</div>
+      <label>API Key</label>
+      <div class="row">
+        <input id="keyInput" type="password" placeholder="sk-..." spellcheck="false">
+        <button id="keySave">保存</button>
+      </div>
+      <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
+      <div class="p-title">创作模式</div>
+      <div class="row">
+        <button id="creativeToggle">载入创作 Skill</button>
+        <span class="hint" id="creativeState">日常聊天模式</span>
+      </div>
+      <div class="hint">只注入当前 system，不写入长期记忆；适合成人向虚构小说创作。</div>
+      <div class="row btns">
+        <button id="openCfg">打开配置文件</button>
+        <button id="clearMem">清空记忆</button>
+        <button id="resetSelf">重置成长档案</button>
+      </div>
+      <div class="p-title">用量</div>
+      <div id="stats" class="stats">—</div>
+      <div class="p-title">衣柜</div>
+      <div id="wdPresets" class="wd-presets"></div>
+      <div id="wdSlots" class="wd-slots"></div>
+      <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
+      <div class="p-title">我的记忆</div>
+      <div id="memList" class="memlist">—</div>
+      <div class="row btns"><button id="closePanel">关闭</button></div>
+    </div>
+
+    <!-- 实验观测与可复盘工具面板 (v0.9.5) -->
+    <div id="researchPanel" class="hidden">
+      <div id="researchHeader">
+        <span id="researchTitle">实验观测与复盘工具 (v0.9.5)</span>
+        <div class="r-actions">
+          <button id="rRefreshBtn" class="r-btn-sm" title="手动刷新快照">刷新快照</button>
+          <button id="rCloseBtn" class="r-btn-close" title="关闭">×</button>
+        </div>
+      </div>
+      <div id="researchTabs">
+        <button class="r-tab active" data-rtab="state">主体状态</button>
+        <button class="r-tab" data-rtab="windows">Window 浏览器</button>
+        <button class="r-tab" data-rtab="provenance">归因与 EOI</button>
+        <button class="r-tab" data-rtab="replay">Replay 实验室</button>
+        <button class="r-tab" data-rtab="export">数据导出</button>
+      </div>
+      <div id="researchBody">
+        <!-- 1. 主体状态面板 -->
+        <div id="rPaneState" class="r-pane">
+          <div class="r-section-title">初澜主体状态 (Trait Bounds: [-999, 999])</div>
+          <div id="rTraitsList" class="r-traits-grid"></div>
+          <div class="r-section-title" style="margin-top: 8px;">特质跃迁与演化历史</div>
+          <div id="rTraitHistory" class="r-table-container">—</div>
+        </div>
+
+        <!-- 2. Window 浏览器面板 -->
+        <div id="rPaneWindows" class="r-pane hidden">
+          <div class="r-toolbar">
+            <label>选择窗口：</label>
+            <select id="rWindowSelect"></select>
+            <span id="rWindowIntegrityBadge" class="r-badge badge-certified">CERTIFIED</span>
+            <span id="rWindowReplayBadge" class="r-badge badge-certified">COMPLETE</span>
+          </div>
+          <div id="rWindowSummaryCard" class="r-card">—</div>
+          <div class="r-seg-tabs" id="rSegTabs">
+            <button class="r-seg-btn active" data-seg="1">分段 1 (01–20)</button>
+            <button class="r-seg-btn" data-seg="2">分段 2 (21–40)</button>
+            <button class="r-seg-btn" data-seg="3">分段 3 (41–60)</button>
+            <button class="r-seg-btn" data-seg="4">分段 4 (61–80)</button>
+            <button class="r-seg-btn" data-seg="5">分段 5 (81–100)</button>
+          </div>
+          <div id="rRoundsList" class="r-rounds-list">—</div>
+        </div>
+
+        <!-- 3. 归因与 EOI 溯源面板 -->
+        <div id="rPaneProvenance" class="r-pane hidden">
+          <div class="r-subtabs">
+            <button class="r-subtab active" data-subtab="prov">StateChange 归因溯源</button>
+            <button class="r-subtab" data-subtab="eoi">EOI 事实三层追溯</button>
+            <button class="r-subtab" data-subtab="rejected">被拒证据审计</button>
+          </div>
+          <div id="rSubPaneProv" class="r-subpane">
+            <div class="r-toolbar">
+              <input id="rScInput" placeholder="输入 StateChange ID (如 sc-000001)...">
+              <button id="rTraceBtn" class="r-btn-sm">开始溯源</button>
+            </div>
+            <div id="rProvResult" class="r-tree-view">请选择或输入 StateChange ID 进行溯源反查</div>
+          </div>
+          <div id="rSubPaneEoi" class="r-subpane hidden">
+            <div class="r-toolbar">
+              <input id="rEoiInput" placeholder="输入 ID (如 int-000001 或 obs-000001)...">
+              <button id="rTraceEoiBtn" class="r-btn-sm">EOI 追溯</button>
+            </div>
+            <div id="rEoiResult" class="r-tree-view">Interpretation → Observation → Event → Message 结构追溯</div>
+          </div>
+          <div id="rSubPaneRejected" class="r-subpane hidden">
+            <div id="rRejectedList" class="r-table-container">—</div>
+          </div>
+        </div>
+
+        <!-- 4. Replay 实验室面板 -->
+        <div id="rPaneReplay" class="r-pane hidden">
+          <div class="r-section-title">确定性离线 Replay (Fail-Stop 熔断保护)</div>
+          <div class="r-replay-controls">
+            <div class="r-row">
+              <button id="rReplayAllBtn" class="r-btn-action">完整重演 (Replay All)</button>
+              <button id="rReplayCancelBtn" class="r-btn-danger" disabled>取消重演</button>
+            </div>
+            <div class="r-row">
+              <input id="rReplayUntilWin" type="number" placeholder="重演至指定 Window No" min="1">
+              <button id="rReplayUntilBtn" class="r-btn-sm">指定窗口重演</button>
+            </div>
+          </div>
+          <div class="r-progress-box">
+            <div class="r-progress-bar">
+              <div id="rProgressBarFill" class="r-progress-fill" style="width: 0%;"></div>
+            </div>
+            <div class="r-progress-meta">
+              <span id="rProgressStage">就绪</span>
+              <span id="rProgressPercent">0%</span>
+            </div>
+          </div>
+          <div id="rReplayResultCard" class="r-card">—</div>
+        </div>
+
+        <!-- 5. 数据导出面板 -->
+        <div id="rPaneExport" class="r-pane hidden">
+          <div class="r-section-title">实验观测与复盘数据导出 (严格只读)</div>
+          <div class="r-export-btns">
+            <button id="rExpTrajJson" class="r-btn-sm">状态轨迹 (JSON)</button>
+            <button id="rExpTrajCsv" class="r-btn-sm">状态轨迹 (CSV)</button>
+            <button id="rExpScCsv" class="r-btn-sm">状态跃迁 (CSV)</button>
+            <button id="rExpEvCsv" class="r-btn-sm">证据清单 (CSV)</button>
+            <button id="rExpFullBundle" class="r-btn-action">完整实验包 (Bundle)</button>
+          </div>
+          <textarea id="rExportOutput" class="r-export-textarea" readonly spellcheck="false" placeholder="导出数据预览将在此处生成..."></textarea>
+        </div>
+      </div>
+      <div id="researchFooter">
+        <span id="rFooterStatus">Snapshot: 就绪 | 观察层只读受控</span>
+        <span id="rFooterHashes">SHA-256: 校验中</span>
+      </div>
+    </div>
+
+    <!-- 桌宠本体 -->
+    <div id="pet">
+      <div id="bubble" class="hidden"></div>
+      <div id="figure">
+        <!-- 兜底单图：衣柜图层不可用时显示它（CSS 按 .layered 切换）。
+             图层 <img> 由 pet.js 依 wardrobe.layers() 动态创建，全部共用
+             760x1000 画布锚点，绝对定位叠在 base 上。 -->
+        <img id="sprite" src="assets/pet.png" alt="初澜" draggable="false">
+        <div id="layers"></div>
+      </div>
+      <div id="shadow"></div>
+    </div>
+
+    <!-- 输入区 -->
+    <div id="inputBar">
+      <input id="input" type="text" placeholder="说点什么…（Enter 发送）"
+             spellcheck="false" autocomplete="off" maxlength="2000">
+      <button id="send" title="发送">↑</button>
+    </div>
+  </div>
+
+  <div id="menu" class="hidden">
+    <div data-act="talk">对话</div>
+    <div data-act="log">记录</div>
+    <div data-act="panel">设置 / 用量</div>
+    <div data-act="research">实验观测 / 复盘</div>
+    <div data-act="pin">固定在最前</div>
+    <div data-act="outline">切换描边</div>
+    <div data-act="bigger">放大</div>
+    <div data-act="smaller">缩小</div>
+    <div data-act="quit">退出</div>
+  </div>
+
+  <script src="src/animation-state.js"></script>
+  <script src="src/render-adapter.js"></script>
+  <script src="src/animation-controller.js"></script>
+  <script src="src/behavior-scheduler.js"></script>
+  <script src="pet.js"></script>
+</body>
+</html>

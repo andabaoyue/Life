@@ -1,0 +1,752 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-drag: none;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+
+body.preview { background: linear-gradient(160deg,#2b2f4a,#4a3b5c); }
+
+#stage { position: relative; width: 100%; height: 100%; }
+
+/* ---------------- 桌宠 ---------------- */
+#pet {
+  position: absolute;
+  left: 50%;
+  bottom: 52px;
+  transform: translateX(-50%);
+  width: 210px;
+  cursor: grab;
+  transition: opacity .2s;
+}
+#pet.dragging { cursor: grabbing; }
+#pet.thinking #figure { animation-duration: 1.1s; }
+
+#figure {
+  transform-origin: 50% 100%;
+  animation: breathe 3.2s ease-in-out infinite;
+  transition: filter .2s ease-out;
+}
+#figure[data-anim-state] {
+  animation: none; /* 程序化自然动力学全权接管 transform */
+}
+#figure[data-anim-state] + #shadow {
+  animation: none; /* 程序化自然动力学全权接管投影缩放 */
+}
+#pet:hover #figure:not([data-anim-state]) { animation-duration: 1.8s; }
+
+#sprite {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,.25));
+}
+
+/* 描边：浅色壁纸下让白发轮廓不糊掉。偏移保持 1px 以内，
+   否则飘出来的细发丝会糊成一团灰 */
+body.outline #sprite {
+  filter:
+    drop-shadow(1px 0 0 rgba(45,50,80,.45))
+    drop-shadow(-1px 0 0 rgba(45,50,80,.45))
+    drop-shadow(0 1px 0 rgba(45,50,80,.45))
+    drop-shadow(0 -1px 0 rgba(45,50,80,.45))
+    drop-shadow(0 4px 6px rgba(0,0,0,.25));
+}
+
+/* 眨眼挂在立绘内容上（#sprite 单图 / #layers 图层），不再挂 #figure：
+   animation-name 是覆盖属性，旧写法让 blink 那一瞬把 data-state 的动画
+   （tilt/sway）整个顶掉，180ms 后动画从 0% 重播 —— 实测好奇状态下
+   倾斜角被强行拉回 0°，跳变 2.23°（探针 L），比表情本身的切换还突兀。
+   换成"父容器摆姿态、子元素眨眼睛"，两个 transform 相乘叠加，互不打断。
+   实测给 #layers 加 scaleY(.94) 不改变 #figure 的几何（V1 前后完全一致），
+   所以不会连带影响气泡高度。 */
+#pet.blink #sprite,
+#pet.blink #layers { animation: blink .18s ease; }
+#sprite, #layers { transform-origin: 50% 100%; }
+
+/* 表情切换瞬间的遮掩微动（pet.js 的 setState 加类，180ms 后摘掉）。
+   和 blink 用同一个载体 #sprite / #layers，理由同上：挂 #figure 会顶掉
+   data-state 的状态动画。两者同时命中时按源码顺序取后写的这条 ——
+   都是 .18s 的微动，叠不出第二层 transform（同一属性只会有一个动画生效），
+   所以这里不强行做"眨眼+切换"的复合动画，只做一件事。 */
+#pet.state-switch #sprite,
+#pet.state-switch #layers { animation: face-switch .18s ease-out; }
+
+@keyframes face-switch {
+  0%   { transform: scale(1, 1); }
+  45%  { transform: scale(1.012, .965); }
+  100% { transform: scale(1, 1); }
+}
+
+/* ---------------- 换装分层渲染 ----------------
+   图层顺序由数据层 layers() 决定（pet.js 写入 z-index），CSS 只负责
+   「同画布对齐」：所有资源共用 760x1000 画布，等比铺满即天然对齐。
+   任何一件图缺失时 pet.js 会摘掉 .layered，回到单张 pet.png —— 
+   桌宠永远不会变成空白。 */
+#layers {
+  position: relative;   /* 必须显式声明：#figure 带 transform，
+                           不设的话绝对定位的图层会越过容器去贴 #figure，
+                           base 撑出的高度就和图层对不上 */
+}
+#layers .layer {
+  display: block;
+  width: 100%;
+  pointer-events: none;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+#layers .layer:not(.base) {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+/* 角色层级独立锚点（规范要求：严禁所有层一律用中心点） */
+#layers .layer[data-slot="hair"],
+#layers .layer[data-slot="hairAccessory"],
+#layers .layer[data-slot="backHair"],
+#layers .layer[data-slot="frontHair"] {
+  transform-origin: 50% 18%; /* 头顶/后脑发根锚点 */
+}
+#layers .layer[data-slot="dress"],
+#layers .layer[data-slot="outerwear"],
+#layers .layer[data-slot="top"],
+#layers .layer[data-slot="bottom"] {
+  transform-origin: 50% 45%; /* 腰线/躯干悬垂锚点 */
+}
+#layers .layer[data-slot="socks"],
+#layers .layer[data-slot="shoes"],
+#layers .layer[data-slot="base"] {
+  transform-origin: 50% 100%; /* 脚底基准线锚点 */
+}
+
+/* 眼睛表达层差分渲染 */
+#figure[data-eye-state="eye_half"] {
+  --eye-squint: 0.95;
+}
+#figure[data-eye-state="eye_close"] {
+  --eye-squint: 0.90;
+}
+#figure[data-eye-state="eye_wide"] {
+  --eye-squint: 1.03;
+}
+
+#figure.layered #sprite { display: none; }
+
+/* 阴影/描边挂在容器上：整套图层只算一次轮廓，
+   衣服内缘不会出现一圈圈重复的投影 */
+#figure.layered #layers { filter: drop-shadow(0 4px 6px rgba(0,0,0,.25)); }
+body.outline #figure.layered #layers {
+  filter:
+    drop-shadow(1px 0 0 rgba(45,50,80,.45))
+    drop-shadow(-1px 0 0 rgba(45,50,80,.45))
+    drop-shadow(0 1px 0 rgba(45,50,80,.45))
+    drop-shadow(0 -1px 0 rgba(45,50,80,.45))
+    drop-shadow(0 4px 6px rgba(0,0,0,.25));
+}
+
+@keyframes breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-4px) scale(1.012); }
+}
+@keyframes blink {
+  0% { transform: scaleY(1); } 50% { transform: scaleY(.94); } 100% { transform: scaleY(1); }
+}
+
+#shadow {
+  position: absolute;
+  left: 50%; bottom: -6px;
+  width: 60%; height: 14px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(0,0,0,.35), transparent 70%);
+  animation: shadowPulse 3.2s ease-in-out infinite;
+}
+@keyframes shadowPulse {
+  0%,100% { transform: translateX(-50%) scaleX(1); opacity:.5; }
+  50%     { transform: translateX(-50%) scaleX(.85); opacity:.35; }
+}
+
+/* ---------------- 气泡 ---------------- */
+#bubble {
+  position: absolute;
+  left: 50%; bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  width: max-content;
+  max-width: 300px;
+  /* 长回答不能顶出窗口：透明窗口外的像素既看不见也点不到，
+     表现就是"话说到一半没了"。
+     max-height 不用写死的常数 —— 立绘会随缩放变大变小（#pet 120~420px），
+     头顶剩余空间跟着变，只有 pet.js 量出来的 --bubble-max 才是对的。
+     这里给个兜底值，防止测量函数还没来得及跑就先溢出。 */
+  max-height: var(--bubble-max, 140px);
+  /* 溢出时保留**结尾**而不是开头：气泡是"扫一眼"的地方，流式过程中
+     最新的话必须在；完整内容在「记录」面板里，一个字都不会丢。
+     刻意不做成可滚动 —— #bubble 是 pointer-events:none，
+     为的是不挡住桌面上的图标窗口，一旦能滚动就得吃回鼠标事件。 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: rgba(255,255,255,.96);
+  color: #2f3340;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 8px 12px;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.22);
+  z-index: 10;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+  user-select: text;
+}
+#bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%; bottom: -6px;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(255,255,255,.96);
+  border-bottom: 0;
+}
+#bubble .cursor {
+  display: inline-block;
+  width: 6px; height: 13px;
+  background: #7d8aa8;
+  vertical-align: -2px;
+  animation: cur .7s steps(2) infinite;
+}
+/* 正文这一格不许被压扁：#bubble 是纵向 flex + justify-content:flex-end，
+   只有当子项保持完整高度并真的溢出时，裁掉的才是顶部而不是文字被挤小。
+   少了这条，flex 的 min-height:auto 会让它自己缩起来，看着像字变小了。 */
+#bubble .bubble-text {
+  display: block;
+  flex: 0 0 auto;   /* 不伸缩：保持完整高度并真的溢出，裁的才是顶部 */
+}
+@keyframes cur { 0%,50% {opacity:1} 51%,100% {opacity:0} }
+
+/* ---------- 状态驱动的轻量动画 ----------
+   表情帧立绘以后再加；现在先让 data-state 有可见反馈。
+   每条都是"没有对应动画也只是不动"，缺资源不报错。
+
+   单次动作（happy/annoyed）必须把 breathe 串在后面：
+   animation 是整体覆盖属性，只写 bounce 的话 1.2 秒后动画列表耗尽，
+   而 data-state 还挂在那儿 —— 桌宠会彻底定格不再呼吸。
+   breathe 用 delay 错开，bounce 跑完正好无缝接上。 */
+body[data-state="happy"]   #figure { animation: bounce .6s ease 2, breathe 3.2s ease-in-out infinite 1.2s; }
+body[data-state="curious"] #figure { animation: tilt 1.6s ease-in-out infinite; }
+body[data-state="sleepy"]  #figure { animation: sway 3.2s ease-in-out infinite; filter: brightness(.92) saturate(.85); }
+body[data-state="embarrassed"] #figure { animation: sway 1.2s ease-in-out infinite; filter: sepia(.25) hue-rotate(-18deg); }
+body[data-state="annoyed"] #figure { animation: shake .5s ease 2, breathe 3.2s ease-in-out infinite 1s; }
+body[data-state="sad"]     #figure { filter: brightness(.88) saturate(.7); animation: sway 4s ease-in-out infinite; }
+body[data-state="thinking"] #figure { animation-duration: 1.1s; }
+
+/* 主进程移动窗口，渲染层只表现姿态；没有专用立绘时也不会空白。 */
+body[data-motion-state="walking"] #figure { animation: walk-bob .55s ease-in-out infinite; }
+body[data-motion-state="wall_hanging"] #figure { animation: wall-hang 1.2s ease-in-out infinite; }
+body[data-motion-state="icon_climbing"] #figure { animation: climb-pull .7s ease-in-out infinite; }
+body[data-motion-state="wall_hanging"] #shadow,
+body[data-motion-state="icon_climbing"] #shadow { opacity: .18; transform: translateX(-50%) scaleX(.55); }
+
+@keyframes walk-bob { 0%,100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-3px) rotate(-1deg); } }
+@keyframes wall-hang { 0%,100% { transform: rotate(-3deg) translateX(-1px); } 50% { transform: rotate(3deg) translateX(1px); } }
+@keyframes climb-pull { 0%,100% { transform: translateY(1px) rotate(-2deg); } 50% { transform: translateY(-4px) rotate(2deg); } }
+
+@keyframes bounce { 0%,100%{transform:translateY(0)} 30%{transform:translateY(-10px)} 60%{transform:translateY(-3px)} }
+@keyframes tilt   { 0%,100%{transform:rotate(0)} 50%{transform:rotate(3deg)} }
+@keyframes sway   { 0%,100%{transform:rotate(0) translateY(0)} 50%{transform:rotate(-2deg) translateY(2px)} }
+@keyframes shake  { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+
+/* ---------------- 输入区 ---------------- */
+#inputBar {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  display: none;
+  gap: 6px;
+  z-index: 15;
+}
+body.talking #inputBar { display: flex; }
+
+#input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255,255,255,.94);
+  border: none;
+  border-radius: 16px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #2f3340;
+  outline: none;
+  font-family: inherit;
+}
+#input::placeholder { color: #9aa2b5; }
+
+#send {
+  width: 32px;
+  border: none;
+  border-radius: 16px;
+  background: #5b6b8c;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  flex: none;
+}
+#send:hover { background: #4a5a7a; }
+#send:disabled { background: #aab; cursor: default; }
+
+/* ---------------- 记录 ---------------- */
+#log {
+  position: absolute;
+  left: 8px; right: 8px; top: 8px; bottom: 52px;
+  background: rgba(20,22,34,.92);
+  border-radius: 12px;
+  z-index: 14;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#logBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 6px;
+  font-size: 12px;
+  color: #9aa6c4;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  flex: none;
+}
+#logBar button {
+  background: none;
+  border: none;
+  color: #9aa6c4;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+#logBar button:hover { color: #fff; }
+#logBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 12px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #dfe3ee;
+  user-select: text;
+}
+#log .u { color: #8fd0a8; margin-top: 8px; word-break: break-word; }
+#log .a { color: #cfe0ff; margin-top: 3px; word-break: break-word; }
+#log .sys { color: #8b93ab; font-size: 11px; margin-top: 6px; }
+
+/* 记录面板会盖在气泡上方，两者内容重复，打开记录时就不显示气泡 */
+body.showlog #bubble { display: none !important; }
+
+/* ---------------- 面板 ---------------- */
+#panel {
+  position: absolute;
+  left: 8px; right: 8px; top: 8px; bottom: 8px;
+  background: rgba(20,22,34,.95);
+  border-radius: 12px;
+  padding: 12px;
+  z-index: 16;
+  color: #e6e9f2;
+  font-size: 12px;
+  overflow-y: auto;
+}
+.p-title { font-size: 12px; color: #9aa6c4; margin: 6px 0; font-weight: 600; }
+#panel label { display: block; color: #9aa6c4; margin-bottom: 4px; }
+.row { display: flex; gap: 6px; margin-bottom: 6px; }
+.row.btns { margin-top: 8px; }
+#panel input {
+  flex: 1; min-width: 0;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #fff; font-size: 12px; outline: none;
+  font-family: inherit;
+}
+#panel button {
+  background: rgba(255,255,255,.13);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 6px;
+  color: #e6e9f2;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+#panel button:hover { background: rgba(255,255,255,.22); }
+#panel button.on {
+  background: rgba(180,140,255,.25);
+  border-color: rgba(205,175,255,.65);
+  color: #f0e5ff;
+}
+.hint { color: #7d8aa8; font-size: 11px; margin-bottom: 4px; word-break: break-all; }
+.memlist {
+  background: rgba(255,255,255,.06);
+  border-radius: 8px;
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow-y: auto;
+  color: #cfd6e6;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.memlist .mem { display: flex; gap: 6px; align-items: flex-start; padding: 3px 0; }
+.memlist .mem .txt { flex: 1; min-width: 0; word-break: break-word; }
+.memlist .mem .tag { color: #7d8aa8; flex: none; }
+.memlist .mem button {
+  flex: none; padding: 1px 6px; font-size: 11px;
+  background: rgba(255,120,120,.16);
+  border: 1px solid rgba(255,120,120,.3);
+  border-radius: 5px; color: #ffb4b4; cursor: pointer;
+}
+.memlist .empty { color: #7d8aa8; }
+
+/* ---------------- 衣柜面板 ---------------- */
+.wd-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.wd-presets button { flex: none; }
+.wd-presets button.on {
+  background: rgba(150,200,255,.24);
+  border-color: rgba(160,210,255,.55);
+  color: #dcecff;
+}
+.wd-slots { display: flex; flex-direction: column; gap: 6px; }
+.wd-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.wd-slot { flex: none; width: 44px; color: #7d8aa8; font-size: 11px; }
+.wd-item { padding: 2px 7px; font-size: 11px; }
+.wd-item.on {
+  background: rgba(150,200,255,.24);
+  border-color: rgba(160,210,255,.55);
+  color: #dcecff;
+}
+.wd-off {
+  padding: 2px 7px; font-size: 11px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 6px; color: #93a0bd; cursor: pointer;
+}
+.wd-off.on { color: #ffb4b4; border-color: rgba(255,120,120,.35); }
+.stats {
+  background: rgba(255,255,255,.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.75;
+  font-variant-numeric: tabular-nums;
+}
+.stats b { color: #9fe0b0; font-weight: 600; }
+.stats .warn { color: #f0c674; }
+
+.hidden { display: none !important; }
+
+/* ---------------- 右键菜单 ---------------- */
+#menu {
+  position: absolute;
+  z-index: 30;
+  background: rgba(24,26,38,.97);
+  border-radius: 8px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0,0,0,.45);
+  min-width: 116px;
+}
+#menu div {
+  color: #e6e9f2;
+  font-size: 12.5px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+#menu div:hover { background: rgba(255,255,255,.12); }
+
+/* ---------------- 实验观测与复盘工具面板 (v0.9.5) ---------------- */
+#researchPanel {
+  position: absolute;
+  left: 8px; right: 8px; top: 8px; bottom: 8px;
+  background: rgba(16, 19, 31, 0.98);
+  border-radius: 12px;
+  z-index: 22;
+  color: #e6eaf6;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0,0,0,.6);
+  border: 1px solid rgba(255,255,255,.1);
+}
+
+#researchHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255,255,255,.05);
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  flex: none;
+}
+#researchTitle { font-size: 12px; font-weight: 600; color: #a4b6df; }
+.r-actions { display: flex; gap: 6px; align-items: center; }
+
+.r-btn-sm {
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 4px;
+  color: #dce3f5;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.r-btn-sm:hover { background: rgba(255,255,255,.2); color: #fff; }
+.r-btn-close {
+  background: none; border: none; color: #8e9bb8; font-size: 16px;
+  cursor: pointer; padding: 0 4px; line-height: 1;
+}
+.r-btn-close:hover { color: #fff; }
+
+#researchTabs {
+  display: flex;
+  gap: 4px;
+  padding: 5px 8px;
+  background: rgba(0,0,0,.25);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  flex-wrap: wrap;
+  flex: none;
+}
+.r-tab {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 4px;
+  color: #9aa7c7;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.r-tab:hover { background: rgba(255,255,255,.12); color: #d0dbf2; }
+.r-tab.active {
+  background: rgba(90,140,255,.28);
+  border-color: rgba(120,170,255,.6);
+  color: #e5eeff;
+  font-weight: 600;
+}
+
+#researchBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+  min-height: 0;
+}
+.r-pane { display: flex; flex-direction: column; gap: 6px; }
+
+.r-section-title {
+  font-size: 11px;
+  color: #92a2c8;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+/* Trait 状态卡片 */
+.r-traits-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 6px;
+}
+.r-trait-card {
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.r-trait-card:hover { background: rgba(255,255,255,.09); border-color: rgba(140,180,255,.4); }
+.r-trait-card.selected { border-color: #64b5f6; background: rgba(100,181,246,.12); }
+.r-trait-name { font-size: 11px; color: #a8b8db; font-weight: 500; }
+.r-trait-val { font-size: 16px; font-weight: 700; color: #8fe0a8; margin: 2px 0; }
+.r-trait-meta { font-size: 10px; color: #72809e; }
+.r-delta-pos { color: #8fe0a8; }
+.r-delta-neg { color: #ff9999; }
+.r-delta-zero { color: #72809e; }
+
+/* 表格与条目 */
+.r-table-container {
+  background: rgba(0,0,0,.2);
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.06);
+  padding: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.r-table-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.r-table-row:last-child { border-bottom: none; }
+
+/* Badges */
+.r-badge {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  display: inline-block;
+}
+.badge-bridge { background: rgba(255,165,2,0.22); color: #ffbe76; border: 1px solid rgba(255,165,2,0.4); }
+.badge-active { background: rgba(46,213,115,0.2); color: #7bed9f; border: 1px solid rgba(46,213,115,0.4); }
+.badge-recorded { background: rgba(46,213,115,0.2); color: #7bed9f; border: 1px solid rgba(46,213,115,0.4); }
+.badge-not-recorded { background: rgba(149,165,166,0.2); color: #bdc3c7; border: 1px solid rgba(149,165,166,0.4); }
+.badge-unresolved { background: rgba(243,156,18,0.2); color: #f39c12; border: 1px solid rgba(243,156,18,0.4); }
+.badge-corrupted { background: rgba(231,76,60,0.25); color: #e74c3c; border: 1px solid rgba(231,76,60,0.5); }
+.badge-missing { background: rgba(108,92,231,0.2); color: #a29bfe; border: 1px solid rgba(108,92,231,0.4); }
+.badge-certified { background: rgba(30,144,255,0.22); color: #70a1ff; border: 1px solid rgba(30,144,255,0.4); }
+.badge-uncertified { background: rgba(255,71,87,0.22); color: #ff6b81; border: 1px solid rgba(255,71,87,0.4); }
+.badge-accepted { background: rgba(46,204,113,0.2); color: #2ecc71; border: 1px solid rgba(46,204,113,0.3); }
+.badge-rejected { background: rgba(231,76,60,0.2); color: #e74c3c; border: 1px solid rgba(231,76,60,0.3); }
+
+/* Window Explorer */
+.r-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.r-toolbar select, .r-toolbar input {
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 4px;
+  color: #fff;
+  padding: 3px 6px;
+  font-size: 11px;
+  outline: none;
+}
+.r-card {
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 6px;
+  padding: 6px 8px;
+  line-height: 1.5;
+}
+.r-seg-tabs { display: flex; gap: 3px; margin: 4px 0; overflow-x: auto; }
+.r-seg-btn {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 4px;
+  color: #8fa0c5;
+  padding: 2px 6px;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.r-seg-btn.active { background: rgba(120,160,255,.24); border-color: rgba(140,180,255,.5); color: #e0ebff; }
+.r-rounds-list {
+  background: rgba(0,0,0,.2);
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.06);
+  padding: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.r-round-item {
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  line-height: 1.4;
+}
+
+/* Provenance & EOI */
+.r-subtabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.r-subtab {
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 4px;
+  color: #8fa0c5;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.r-subtab.active { background: rgba(140,110,255,.25); border-color: rgba(160,130,255,.5); color: #f0e6ff; }
+.r-tree-view {
+  background: rgba(0,0,0,.22);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-height: 80px;
+  max-height: 160px;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+/* Replay */
+.r-replay-controls { display: flex; flex-direction: column; gap: 5px; }
+.r-row { display: flex; gap: 6px; align-items: center; }
+.r-btn-action {
+  background: rgba(52,152,219,.3);
+  border: 1px solid rgba(52,152,219,.6);
+  border-radius: 4px;
+  color: #d8eeff;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.r-btn-action:hover { background: rgba(52,152,219,.45); color: #fff; }
+.r-btn-danger {
+  background: rgba(231,76,60,.25);
+  border: 1px solid rgba(231,76,60,.5);
+  border-radius: 4px;
+  color: #ffd2cc;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.r-btn-danger:hover { background: rgba(231,76,60,.4); }
+.r-btn-danger:disabled { opacity: .5; cursor: default; }
+.r-progress-box { margin-top: 4px; }
+.r-progress-bar {
+  height: 6px;
+  background: rgba(255,255,255,.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.r-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3498db, #2ecc71);
+  width: 0%;
+  transition: width .2s ease;
+}
+.r-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #8c9cb8;
+  margin-top: 2px;
+}
+
+/* Export */
+.r-export-btns { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.r-export-textarea {
+  width: 100%;
+  height: 140px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px;
+  color: #d5def5;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  padding: 6px;
+  outline: none;
+  resize: vertical;
+  user-select: text;
+}
+
+#researchFooter {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 8px;
+  background: rgba(0,0,0,.3);
+  border-top: 1px solid rgba(255,255,255,.05);
+  font-size: 9.5px;
+  color: #6b7794;
+  flex: none;
+}
+

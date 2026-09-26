@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Environment and sensitive keys
+.env
+.env.*
+*.key
+*.pem
+*.secret
+credentials/
+secrets/
+
+# Runtime and persistent user state (stored in %APPDATA% by design, protected if placed locally)
+experiences.jsonl
+*.jsonl
+subject-state.json
+self-ledger.json
+memory.json
+wardrobe.json
+stats.json
+life-config.json
+life-key
+gpt-girl-config.json
+gpt-girl-key
+
+# Logs and temp files
+logs/
+*.log
+temp/
+tmp/
+coverage/
+dist/
+build/
+.cache/
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

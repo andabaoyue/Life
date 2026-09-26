@@ -1,0 +1,493 @@
+const { app, BrowserWindow, ipcMain, screen, shell, Menu, safeStorage } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { load, save, tryLoad } = require('./src/config');
+const { Brain } = require('./src/brain');
+const { Wardrobe, CATALOG } = require('./src/wardrobe');
+const { ActivityTracker } = require('./src/tracker');
+const { TriggerEngine, COOLDOWN_MS, IDLE_MS } = require('./src/trigger');
+const { DesktopMotion } = require('./src/desktop-motion');
+const { checkAssets } = require('./src/asset-check');
+const secure = require('./src/secure');
+const layout = require('./src/layout');
+const { ResearchService } = require('./src/research-service');
+const { registerResearchIpc } = require('./src/research-ipc');
+
+/* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
+   都收在这一个函数里。以前只有 wardrobe 在这里绑，tracker 若另处再绑一次，
+   就变成"重建的 brain 带着旧 tracker / 忘了带 tracker" —— 同一个对象两处出处，
+   v0.7.0 那次穿着块顺序、v0.7.1 那次热重载重写都是这个形状。 */
+function bindBrainDeps(brain) {
+  if (!brain) return;
+  brain.wardrobe = wardrobe || null;
+  brain.tracker = tracker || null;
+  if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock();
+}
+
+let win = null;
+let brain = null;
+let cfg = null;
+let wardrobe = null;
+let tracker = null;
+let trigger = null;
+let motion = null;
+let assetReport = null;
+let proactiveTimer = null;
+const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
+let keyEncrypted = false;   // 面板要如实显示「已加密 / 明文降级」，不吹安全状态
+let researchService = null;
+
+app.name = 'Life';
+
+// 同一个 userData 目录只允许一个实例，避免 memory/stats 的丢失更新。
+const singleInstance = typeof app.requestSingleInstanceLock === 'function'
+  ? app.requestSingleInstanceLock() : true;
+if (!singleInstance) app.quit();
+else app.on('second-instance', () => {
+  if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); }
+});
+
+function createWindow() {
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
+  const W = layout.BASE_W, H = layout.BASE_H;
+
+  win = new BrowserWindow({
+    title: 'Life',
+    width: W, height: H,
+    x: sw - W - 30, y: sh - H - 20,
+    frame: false, transparent: true, resizable: false,
+    alwaysOnTop: true, skipTaskbar: true, hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false
+    }
+  });
+  win.loadFile('index.html');
+  setupMotion();
+  // 拖到一半焦点丢了（在别的程序上松手），渲染进程收不到 mouseup ——
+  // 主进程知道失焦，主动通知它收尾，否则桌宠会一直粘着鼠标。
+  win.on('blur', () => {
+    if (dragging && win && !win.isDestroyed()) win.webContents.send('drag-cancel');
+  });
+  win.webContents.on('did-finish-load', () => {
+    if (assetReport && (!assetReport.ok || assetReport.warnings.length > 0)) {
+      win.webContents.send('asset-warning', assetReport);
+    }
+  });
+  scheduleProactiveCheck(IDLE_MS);
+}
+
+function syncMotionBlock(reason = 'user-priority') {
+  if (!motion) return;
+  const blocked = dragging || motionUi.bubble || motionUi.talking
+    || motionUi.chatBusy || motionUi.hidden || !!(tracker && tracker.sleepMode);
+  motion.setBlocked(blocked, reason);
+}
+
+function setupMotion() {
+  if (!win || !cfg) return;
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea || { x: 0, y: 0, ...display.workAreaSize };
+  const [width, height] = win.getSize();
+  const [x, y] = win.getPosition();
+  motion = new DesktopMotion({
+    enabled: cfg.motionEnabled,
+    speed: cfg.motionSpeed,
+    tickMs: cfg.motionTickMs,
+    margin: cfg.motionMargin,
+    onState: (s) => {
+      if (tracker) tracker.setMotionState(s.state, s.label);
+      if (win && !win.isDestroyed()) win.webContents.send('motion-state', s);
+    },
+    onMove: (p) => {
+      if (win && !win.isDestroyed() && !dragging) win.setPosition(Math.round(p.x), Math.round(p.y));
+    }
+  });
+  motion.configure({ x: area.x, y: area.y, width: area.width, height: area.height },
+    { width, height }, { x, y });
+  syncMotionBlock('startup');
+}
+
+function reconfigureMotion() {
+  if (!motion || !win || win.isDestroyed()) return;
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea || { x: 0, y: 0, ...display.workAreaSize };
+  const [width, height] = win.getSize();
+  const [x, y] = win.getPosition();
+  motion.configure({ x: area.x, y: area.y, width: area.width, height: area.height },
+    { width, height }, { x, y });
+}
+
+/* ---------- 拖动 ---------- */
+let dragging = false;
+ipcMain.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); });
+ipcMain.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); });
+ipcMain.on('drag-move', (e, { dx, dy }) => {
+  if (!dragging || !win) return;
+  const [x, y] = win.getPosition();
+  win.setPosition(Math.round(x + dx), Math.round(y + dy));
+  reconfigureMotion();
+});
+
+ipcMain.on('motion-ui-state', (e, state = {}) => {
+  for (const k of Object.keys(motionUi)) {
+    if (typeof state[k] === 'boolean') motionUi[k] = state[k];
+  }
+  syncMotionBlock('ui-state');
+});
+
+ipcMain.handle('motion-status', () => motion ? motion.snapshot() : null);
+
+ipcMain.handle('toggle-pin', () => {
+  if (!win) return false;
+  const on = !win.isAlwaysOnTop();
+  win.setAlwaysOnTop(on, 'screen-saver');
+  return on;   // 返回新状态，菜单文案才能区分「已置顶/已取消置顶」
+});
+
+ipcMain.on('resize-pet', (e, factor) => {
+  if (!win) return;
+  const [w, h] = win.getSize();
+  const next = layout.nextSize(w, Number(factor) || 1);
+  if (next.w === w && next.h === h) return;   // 已经到边界，不用再动
+  const [x, y] = win.getPosition();
+  // 脚钉住：桌宠是 bottom 定位，只改尺寸会让她在放大时往屏幕底下陷。
+  win.setPosition(x, layout.anchorBottom(y, h, next.h));
+  win.setSize(next.w, next.h);
+  reconfigureMotion();
+  syncMotionBlock('resize');
+});
+
+ipcMain.on('quit-app', () => {
+  if (brain && typeof brain.flushAll === 'function') brain.flushAll();
+  app.quit();
+});
+
+/* ---------- 本地活动（被戳 / 被拖） ----------
+   计数放在主进程：这里同时是 brain 和 tracker 的所在地，环境块要在发请求前
+   取快照。渲染端只知道"我这儿点了一下"，把它自己那套时间戳再算一遍就是
+   第二个事实来源 —— 于是又回到"一个改了一个没改"那个老形状。
+   用 .on 不用 .handle：这是纯上报，没有返回值，省一次 promise 往返。 */
+ipcMain.on('activity', (e, type) => {
+  if (tracker) tracker.record(type);
+  // 用户有了新交互，重置空闲检查闹钟
+  scheduleProactiveCheck(IDLE_MS);
+});
+
+/* ---------- 对话 ---------- */
+// 并发保护：上一条没回完就发新消息时，先掐断上一条
+ipcMain.handle('chat-send', async (e, text, opts) => {
+  if (!brain || !brain.ready) {
+    return { ok: false, needKey: true };
+  }
+  // 主动搭话：渲染端把 proactive-check 给的那份提案原样带回来。
+  // 走"发出去再带回来"而不是主进程存一份 pendingOffer，是为了消灭
+  // 「提案发了却没回复、主进程还留着它」这种陈旧状态 —— 那会让下一次
+  // 开口拿着上一次的 at 去记冷却。没有 offer 的 proactive 一律当普通消息。
+  const offer = (opts && opts.proactive && opts.offer) || null;
+  const proactive = !!offer;
+  if (proactive && !validOffer(offer)) return { ok: false, declined: true };
+  motionUi.chatBusy = true;
+  syncMotionBlock('chat');
+  brain.abort();
+  try {
+    const res = await brain.ask(offer ? offer.reason : text, (delta) => {
+      if (win && !win.isDestroyed()) win.webContents.send('chat-delta', delta);
+    }, { proactive, proactiveHint: offer && offer.hint });
+    // 主动搭话真的说出口了才记账；被渲染端礼貌闸门拦下时压根不会走到这
+    if (proactive && trigger) trigger.commit(offer);
+    // 换装是在 brain 里执行的（提案→真实状态→结果写回历史），
+    // 这里只在真的换上了时把新图层推给渲染端，
+    // 保证屏幕上穿的、系统提示里说的、历史里记的三者是同一件事。
+    if (res.wearChanged) pushWardrobe();
+    return { ok: true, text: res.text, state: res.state,
+             wears: res.wears, wearNote: res.wearNote,
+             windowClosed: res.windowClosed, merged: res.merged,
+             proactive };
+  } catch (err) {
+    if (err.name === 'AbortError') return { ok: false, aborted: true };
+    return { ok: false, error: err.message };
+  } finally {
+    motionUi.chatBusy = false;
+    syncMotionBlock('chat-done');
+    scheduleProactiveCheck(IDLE_MS);
+  }
+});
+
+/* ---------- 主动搭话 ----------
+   主进程判"该不该说"（它看得见静默、睡眠、连戳），渲染端判"现在能不能说"
+   （它看得见输入框和气泡）。所以这里只出提案，不直接发请求：
+   用户在打字时烧掉一次真 API 调用，既花钱又是打扰。 */
+// 提案有效期 = 冷却长度。超过就拒：那已经是"上一次想说的话"了，
+// 拿它去记冷却会把时间线记歪。
+const OFFER_TTL_MS = COOLDOWN_MS;
+function validOffer(offer) {
+  if (!offer || (offer.kind !== 'poke' && offer.kind !== 'idle')) return false;
+  if (typeof offer.at !== 'number' || !Number.isFinite(offer.at)) return false;
+  const age = Date.now() - offer.at;
+  return age >= 0 && age <= OFFER_TTL_MS;
+}
+
+function scheduleProactiveCheck(delayMs) {
+  if (proactiveTimer) clearTimeout(proactiveTimer);
+  proactiveTimer = setTimeout(() => {
+    proactiveTimer = null;
+    checkAndPushProactive();
+  }, Math.max(100, delayMs));
+  if (proactiveTimer.unref) proactiveTimer.unref();
+}
+
+function checkAndPushProactive() {
+  if (!trigger || !brain || !brain.ready || !win || win.isDestroyed()) return;
+  const offer = trigger.evaluate();
+  if (offer) {
+    win.webContents.send('proactive-offer', offer);
+  } else {
+    const at = Date.now();
+    const lastAct = tracker ? tracker.lastInteractionAt : at;
+    const idleRemaining = IDLE_MS - (at - lastAct);
+    const nextDelay = idleRemaining > 0 ? idleRemaining : COOLDOWN_MS;
+    scheduleProactiveCheck(Math.max(COOLDOWN_MS, nextDelay));
+  }
+}
+
+ipcMain.on('proactive-declined', () => {
+  scheduleProactiveCheck(COOLDOWN_MS);
+});
+
+ipcMain.handle('proactive-check', () => {
+  if (!trigger || !brain || !brain.ready) return null;
+  return trigger.evaluate();
+});
+
+ipcMain.handle('chat-report', () => {
+  // 面板上那些数字（model / 窗口参数）和 config-get 同一个盲区，一起补
+  syncCfgFromDisk();
+  return brain ? brain.report() : null;
+});
+
+ipcMain.handle('memory-clear', () => {
+  if (!brain) return false;
+  brain.clearMemory();
+  return true;
+});
+
+ipcMain.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
+
+// 自我成长记录只读展示；删除/覆盖留到 schema 和审计策略明确后再开放。
+ipcMain.handle('self-ledger-list', () => (brain ? brain.listSelfLedger() : []));
+
+ipcMain.handle('self-ledger-reset', () => {
+  if (!brain) return { ok: false, error: '程序尚未初始化' };
+  brain.selfLedger.reset();
+  brain.birthAt = brain.selfLedger.birthAt;
+  return { ok: true, birthAt: brain.birthAt };
+});
+
+ipcMain.handle('memory-delete', (e, idx) => {
+  if (!brain) return false;
+  return brain.memory.deleteWindow(idx);
+});
+
+/* ---------- 换装 ----------
+   服装只是外观层：这里没有任何路径会碰 persona 里的人格设定，
+   穿什么衣服都不会改变她是谁。
+   但 system 末尾的「当前穿着」块必须跟着真实状态走 ——
+   否则模型被问到穿了什么时只能凭想象回答，那就是编造。 */
+/* 只有状态真的变了才推：被拒的搭配不推、重复点同一件不推，
+   否则屏幕会白闪一次，模型那边也会以为刚换过衣服。 */
+function pushWardrobe(r) {
+  if (r && !(r.ok && r.changed)) return;
+  if (!win || win.isDestroyed() || !wardrobe) return;
+  if (brain) brain.memory.wardrobe = wardrobe.promptBlock();
+  win.webContents.send('wardrobe-changed', wardrobe.layers());
+}
+
+ipcMain.handle('wardrobe-state', () =>
+  wardrobe ? { catalog: wardrobe.catalog(), layers: wardrobe.layers() }
+           : { catalog: null, layers: [] });
+
+ipcMain.handle('wardrobe-set', (e, { slot, itemId }) => {
+  if (!wardrobe) return { ok: false, error: '换装系统未初始化' };
+  const r = wardrobe.setEquip(String(slot || ''), itemId === undefined ? null : itemId);
+  pushWardrobe(r);
+  return r;
+});
+
+ipcMain.handle('wardrobe-preset', (e, id) => {
+  if (!wardrobe) return { ok: false, error: '换装系统未初始化' };
+  const r = wardrobe.applyPreset(id);
+  pushWardrobe(r);
+  return r;
+});
+
+/* ---------- 配置 ----------
+   apiKey 不再明文落盘：走 src/secure.js（Electron safeStorage）。
+   内存里的 cfg.apiKey 仍是明文（要拿去发请求），磁盘上只有密文文件。 */
+const getSS = () => safeStorage || null;
+
+function persistCfg(next) {
+  const r = secure.saveConfig(getSS, app.getPath('userData'), next,
+    (disk) => save(app.getPath('userData'), next, disk));
+  keyEncrypted = r.encrypted;
+  return r;
+}
+
+/* 面板打开前先从盘上同步一次。
+   brain.ask() 每轮开头已经会 refreshConfig()，但那是唯一的挂点：
+   用户在编辑器里改了 model 或价格，接着右键打开「设置 / 用量」，
+   下面 config-get / chat-report 读的是内存里那份 —— 于是不发消息就看不到
+   自己刚改的东西，看起来像"热重载没生效"。代价是一次几百字节的同步读。
+   热重载的**做法只有一处**（Brain.refreshConfig）：这里不重写一遍，
+   否则"怎么同步"就有两个出处，早晚会像 v0.7.0 那次穿着块顺序一样，
+   一个改了一个没改。brain.cfg 与这里的 cfg 始终是同一个对象
+   （config-set-key 重建 brain 时传的就是这个 cfg），所以直接借它用。 */
+function syncCfgFromDisk() {
+  if (brain) { brain.refreshConfig(); return; }
+  const next = tryLoad(app.getPath('userData'));
+  if (!next) return;
+  const { apiKey } = cfg;
+  Object.assign(cfg, next, { apiKey });
+}
+
+ipcMain.handle('config-get', () => {
+  syncCfgFromDisk();
+  return {
+  hasKey: !!cfg.apiKey,
+  keyEncrypted,
+  baseURL: cfg.baseURL,
+  model: cfg.model,
+  windowTurns: cfg.windowTurns,
+  windowMaxTokens: cfg.windowMaxTokens,
+  keepTailMessages: cfg.keepTailMessages,
+  memoryCapTokens: cfg.memoryCapTokens,
+  selfGrowthEnabled: cfg.selfGrowthEnabled !== false,
+  selfLedgerMaxEntries: cfg.selfLedgerMaxEntries,
+  currentSelfTokenBudget: cfg.currentSelfTokenBudget,
+  birthAt: brain && brain.birthAt,
+  archiveStatus: brain && brain.selfLedger && brain.selfLedger.status,
+  writingMode: !!cfg.writingMode,
+  requestTimeoutMs: cfg.requestTimeoutMs,
+  streamIdleTimeoutMs: cfg.streamIdleTimeoutMs,
+  motionEnabled: cfg.motionEnabled,
+  motionSpeed: cfg.motionSpeed,
+  motionTickMs: cfg.motionTickMs,
+  motionMargin: cfg.motionMargin
+  };
+});
+
+ipcMain.handle('config-set-key', (e, key) => {
+  const oldBrain = brain;
+  const oldCfg = cfg;
+  const next = { ...cfg, apiKey: String(key || '').trim() };
+
+  // 1. 保留旧 Brain，不提前 shutdown
+  // 2. 持久化并验证新配置
+  let r;
+  try {
+    r = persistCfg(next);
+  } catch (err) {
+    return { ok: false, error: '配置持久化失败: ' + err.message };
+  }
+
+  // 3. 尝试使用新配置创建并初始化新 Brain
+  let candidateBrain;
+  try {
+    candidateBrain = new Brain(app.getPath('userData'), next);
+    bindBrainDeps(candidateBrain); // 新 Brain 接入同一个 tracker / 衣柜
+  } catch (err) {
+    // 新 Brain 初始化失败：必须回滚配置持久化到旧状态
+    try {
+      persistCfg(oldCfg);
+    } catch (rbErr) {
+      console.error('[Rollback] 回滚配置失败:', rbErr.message);
+    }
+    // 旧 Brain 完好无损，继续工作
+    return { ok: false, error: '新 Brain 初始化失败: ' + err.message };
+  }
+
+  // 4. 新 Brain 初始化成功后，再 flush / 关闭旧 Brain
+  try {
+    if (oldBrain) {
+      if (typeof oldBrain.flushAll === 'function') oldBrain.flushAll();
+      if (typeof oldBrain.shutdown === 'function') oldBrain.shutdown();
+      else if (typeof oldBrain.abort === 'function') oldBrain.abort();
+    }
+  } catch (err) {
+    console.warn('[Brain] 旧 Brain 关闭异常（非致命）:', err.message);
+  }
+
+  // 5. 切换主引用
+  cfg = next;
+  brain = candidateBrain;
+  keyEncrypted = r.encrypted;
+
+  return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: r.encrypted };
+});
+
+ipcMain.handle('creative-mode-get', () => ({ enabled: !!(cfg && cfg.writingMode) }));
+
+ipcMain.handle('creative-mode-set', (e, enabled) => {
+  if (!cfg || !brain) return { ok: false, error: '程序尚未初始化' };
+  const next = { ...cfg, writingMode: enabled === true };
+  try {
+    // 不调用 persistCfg：切换创作模式不应重复处理或降级保存 API Key。
+    save(app.getPath('userData'), next);
+    Object.assign(cfg, next);
+    brain.refreshConfig();
+    return { ok: true, enabled: cfg.writingMode };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('config-open', () => {
+  const p = secure.cfgPath(app.getPath('userData'));
+  if (!fs.existsSync(p)) {
+    // 交给唯一那个写盘口生成，别在这里手抄一份：
+    // 加密可用时它写出的文件本来就不含 key，降级时才含明文。
+    // 若在此处硬写「去掉 key」的文件，降级用户下次启动就没 key 了。
+    persistCfg(cfg);
+  }
+  shell.openPath(p);
+  return p;
+});
+
+ipcMain.handle('asset-check', () => assetReport || checkAssets(__dirname, CATALOG));
+
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
+  const r = secure.loadConfig(getSS, app.getPath('userData'),
+    () => load(app.getPath('userData')));
+  cfg = r.cfg;
+  keyEncrypted = r.encrypted;
+  // 环境变量只注入当前进程，不自动持久化，避免临时 Key 变成磁盘凭据。
+  if (!cfg.apiKey && process.env.DEEPSEEK_API_KEY) {
+    cfg = { ...cfg, apiKey: process.env.DEEPSEEK_API_KEY };
+  }
+  // 顺序要紧：先造 tracker/wardrobe 再造 brain，bind 才拿得到东西往里注。
+  // （反过来也不报错，只会静默注进去两个 null —— 那正是最难查的那种。）
+  tracker = new ActivityTracker();
+  wardrobe = new Wardrobe(app.getPath('userData'));
+  brain = new Brain(app.getPath('userData'), cfg);
+  // 换装执行器 + 本地活动追踪器注入：模型给提案 -> wardrobe 落真实状态 ->
+  // 结果写回历史；她被戳了几下 -> tracker 记账 -> 随当轮 user 消息如实告知。
+  bindBrainDeps(brain);
+  trigger = new TriggerEngine(tracker);
+  assetReport = checkAssets(__dirname, CATALOG);
+  if (assetReport && (!assetReport.ok || assetReport.warnings.length)) {
+    for (const w of assetReport.warnings) console.warn('[AssetCheck]', w);
+  }
+  researchService = new ResearchService(app.getPath('userData'));
+  registerResearchIpc(ipcMain, researchService);
+  createWindow();
+});
+
+app.on('before-quit', () => {
+  if (brain && typeof brain.flushAll === 'function') brain.flushAll();
+});
+
+app.on('window-all-closed', () => {
+  if (brain && typeof brain.flushAll === 'function') brain.flushAll();
+  app.quit();
+});

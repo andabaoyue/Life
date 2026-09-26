@@ -1,0 +1,19 @@
+{
+  "name": "life",
+  "productName": "Life",
+  "characterName": "初澜",
+  "characterNameEn": "Chulan",
+  "version": "0.9.5.2",
+  "description": "Life — 数字生命实验平台 (主体: 初澜 / Chulan)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "find . -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check",
+    "test": "node test/docs.test.js"
+  },
+  "dependencies": {
+    "electron": "^44.4.3"
+  },
+  "author": "",
+  "license": "MIT"
+}

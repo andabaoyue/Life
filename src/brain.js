@@ -1,0 +1,879 @@
+const fs = require('fs');
+const path = require('path');
+const { Memory } = require('./memory');
+const { DeepSeek, isPeakHour, costOf } = require('./deepseek');
+const { PERSONA } = require('./persona');
+const { CREATIVE_SKILL } = require('./creative-skill');
+const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
+const { writeJsonAtomic } = require('./atomic');
+const { tryLoad } = require('./config');
+const { SelfLedger } = require('./self-ledger');
+const { DeferredWriter } = require('./deferred-writer');
+const { ExperiencesArchive } = require('./experiences-archive');
+const { SubjectState } = require('./subject-state');
+const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation } = require('./experience-schema');
+const { createStateChangeExplanation } = require('./state-change');
+
+const SUMMARY_SYS =
+  '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
+  + '必须严格区分「用户给予（userGiven）」与「初澜经历（chulanExperience）」，绝不允许混同：\n'
+  + '1. 【用户给予】只记用户明确告诉、要求记住、明确表达、纠正或双方约定的事实（姓名、职业、偏好、目标、约定）。冲突以新为准。\n'
+  + '2. 【初澜经历】只记初澜在互动中观察到的规律、做出的选择、形成的行为趋势、对关系的连续理解与内部反思。不记程序触发理由、寒暄或无根据猜测。\n'
+  + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity，'
+  + 'direction 为 [-1, 1] 方向，strength 为 [0, 1] 强度，messageId 必须严格引用对话中程序签发的真实 ID（如 m-000001），quote 必须逐字摘自该条消息原文。\n'
+  + '请只输出如下合法 JSON 对象（不要 Markdown 代码块包裹）：\n'
+  + '{"segments":[{"range":"1-20","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
+  + '{"range":"21-40","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
+  + '{"range":"41-60","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
+  + '{"range":"61-80","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
+  + '{"range":"81-100","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]}],'
+  + '"windowSynthesis":{"stableUserFacts":[],"subjectExperiences":[],"stateChangesSuggested":[],"unresolved":[]}}';
+
+const MERGE_SYS =
+  '你是长期记忆合并助手。下面给出若干条按时间顺序排列的记忆片段，'
+  + '把它们合并成一条连贯的早期记忆，要求：'
+  + '同一事实以最新的为准，用户纠正过的结论必须覆盖旧版本；'
+  + '保留所有具体的人名、称呼、数字、偏好、项目和约定，不得改写具体信息；'
+  + '去掉重复条目；控制在 250 字以内；只输出正文。';
+
+const GROWTH_SYS =
+  '你是数字主体的经历筛选器。只从给定对话中提取可能改变初澜是谁的长期成长证据，'
+  + '例如明确形成的偏好、价值取向、边界、愿望、反思或关系理解；不要记录点击、拖拽、时间、'
+  + '一次性情绪、模型猜测、用户普通事实或没有证据的意识宣称。'
+  + '只输出 JSON 数组，每项格式为 {"trait":"简短倾向","support":[{"sourceType":"USER|EXPERIENCE|SELF_INFERRED|OBSERVATION|MODEL_PRIOR","window":0,"messageIds":[],"quote":"短证据摘录","confidence":0.0}],"oppose":[]}。'
+  + '没有足够证据就输出 []。support 与 oppose 都要保留，不能用最新值覆盖矛盾经历。';
+
+function systemPersona(cfg) {
+  return cfg.writingMode ? PERSONA + '\n\n' + CREATIVE_SKILL : PERSONA;
+}
+
+/* ---------- 状态标记 ----------
+   persona 要求模型在末尾附 [state:xx]。解析失败就按 idle 处理并原样保留文本，
+   绝不能因为格式跑偏把回复弄丢或弄崩。 */
+const STATES = ['idle', 'happy', 'curious', 'thinking', 'sleepy',
+                'embarrassed', 'annoyed', 'sad'];
+// 句末标点是模型的habit（"好呀~[state:happy]。"），必须容错，
+// 否则标记既触发不了表情，又会作为正文永久留在历史里污染前缀。
+const STATE_RE = /\[\s*state\s*[:：]\s*([a-z]+)\s*\][\s\p{P}~]*$/iu;
+
+function parseState(text) {
+  const m = text.match(STATE_RE);
+  if (!m) return { text, state: 'idle' };
+  const s = m[1].toLowerCase();
+  // 未知状态词不剥离：宁可屏幕上多一个怪标记，也不能把正文掏空。
+  // 之前 [state:dance] 会被剥成空文本，触发"返回空内容"，一条好回复白白报废。
+  if (!STATES.includes(s)) return { text, state: 'idle' };
+  const clean = text.slice(0, m.index).trimEnd();
+  return { text: clean || text, state: s };
+}
+
+/* ---------- 换装提案标记 ----------
+   模型可以输出 [wear:itemId]，但这只是「提案」——
+   衣服是不是真穿上了，由 main 里的 wardrobe 决定并把结果带回来。
+   未知 id 不剥离（同 state 的教训：不能把正文掏空），
+   也绝不允许「说了 [wear:x] 就当换好了」。 */
+const WEAR_RE = /\[\s*wear\s*[:：]\s*([a-z0-9_]+)\s*\][\s\p{P}~]*$/iu;
+
+function parseWear(text) {
+  const m = text.match(WEAR_RE);
+  if (!m) return { text, wear: null };
+  const key = m[1].toLowerCase();
+  const offSlot = key.startsWith('off_') ? key.slice(4) : null;
+  const canOff = offSlot && SLOTS.some(s => s.id.toLowerCase() === offSlot && !s.required);
+  // 只认衣柜里真实存在的条目/预设，或真实的非必选槽位脱下指令；幻觉 id 原样留在正文里，
+  // applyProposal 会如实返回失败，屏幕上也不会出现幽灵标记被吃掉的情况。
+  if (!CATALOG[key] && !PRESETS[key] && !canOff) return { text, wear: null };
+  const clean = text.slice(0, m.index).trimEnd();
+  return { text: clean || text, wear: key };
+}
+
+/**
+ * 调度：对话 -> 记录 usage -> 到窗口边界就小结 -> 记忆超预算就合并。
+ *
+ * 缓存策略的核心是「把破坏集中到同一刻」：
+ *   窗口内 system 完全不变，前缀只追加 -> 基本全命中；
+ *   窗口关闭时 system 必然要变（多了条小结），这一轮请求一定未命中；
+ *   既然这一刻已经破了，记忆合并就搭在同一个时刻一起做，
+ *   否则分两次做要破两次缓存。
+ */
+class Brain {
+  constructor(userDataDir, cfg) {
+    this.dir = userDataDir;
+    this.cfg = cfg;
+    this.api = new DeepSeek(cfg);
+    this.selfLedger = new SelfLedger(userDataDir, {
+      maxEntries: cfg.selfLedgerMaxEntries,
+      currentSelfTokenBudget: cfg.currentSelfTokenBudget
+    });
+    this.birthAt = this.selfLedger.setBirthAt(Date.now());
+    this.experiencesArchive = new ExperiencesArchive(userDataDir);
+    this.subjectState = new SubjectState(userDataDir, {
+      stepWeight: cfg.subjectStateStepWeight,
+      maxDeltaPerWindow: cfg.subjectStateMaxDelta
+    });
+    this.memory = new Memory(userDataDir, {
+      persona: systemPersona(cfg),
+      windowTurns: cfg.windowTurns,
+      windowMaxTokens: cfg.windowMaxTokens,
+      keepTailMessages: cfg.keepTailMessages,
+      memoryCapTokens: cfg.memoryCapTokens
+    });
+    this.statsPath = path.join(userDataDir, 'stats.json');
+    this.statsWriter = new DeferredWriter(() => writeJsonAtomic(this.statsPath, this.stats), { delayMs: 3000 });
+    this.stats = this.loadStats();
+    this.ctrl = null;
+    this.pendingUser = false;
+    this.boundary = false;   // 关窗/合并进行中，防重入
+    this.generationId = 1;
+    this.shutdownRequested = false;
+    // 换装执行器（main 注入）。没注入时 [wear:x] 只是被剥离、不执行，
+    // 也绝不会因此谎称换好了 —— 浏览器单测跑的就是这条无衣柜路径。
+    this.wardrobe = null;
+    // 本地活动追踪器（main 注入）。没注入时整条环境感知链路自动隐身：
+    // 逻辑全部写成 `if (tr && ...)`，浏览器预览与单元测试不必造一个 tracker。
+    this.tracker = null;
+  }
+
+  /**
+   * 热重载配置（v0.7，配合 config.js 每次都真读盘）。
+   *
+   * 为什么放在 ask 开头而不是搞 fs.watch：一轮对话本来就要发一次请求，
+   * 多一次几百字节的 stat + 读盘看不见，而"改了配置文件要重启"是文档里
+   * 明明白白引导用户去改配置的反面。
+   *
+   * 三条规矩：
+   *   1. 用 Object.assign 就地改，**不换对象引用**。this.api 和 main 的 cfg
+   *      持有的是同一个对象，换引用就等于让 DeepSeek 客户端继续用旧 model。
+   *   2. apiKey 不参与：盘上那份按设计不含明文 key（或只有降级明文），
+   *      key 由 main 在启动时经 secure.js 解出来。这里覆盖它会把 key 抹成空。
+   *   3. 读不到（文件正被编辑器写坏）就整份保持现状，绝不退到 DEFAULTS ——
+   *      否则"改配置改出个语法错误"会让窗口参数当场跳回出厂值。
+   */
+  refreshConfig() {
+    const next = tryLoad(this.dir);
+    if (!next) return false;
+    const apiKey = this.cfg.apiKey;
+    Object.assign(this.cfg, next, { apiKey });
+
+    // 1. Memory 的窗口与上下文参数
+    const m = this.memory;
+    m.windowTurns = this.cfg.windowTurns;
+    m.windowMaxTokens = this.cfg.windowMaxTokens;
+    m.keepTail = this.cfg.keepTailMessages;
+    m.memoryCap = this.cfg.memoryCapTokens;
+    m.persona = systemPersona(this.cfg);
+
+    // 2. SelfLedger 档案参数同步（P1-02）
+    if (this.selfLedger) {
+      if (typeof this.cfg.selfLedgerMaxEntries === 'number') {
+        this.selfLedger.maxEntries = this.cfg.selfLedgerMaxEntries;
+      }
+      if (typeof this.cfg.currentSelfTokenBudget === 'number') {
+        this.selfLedger.currentSelfTokenBudget = this.cfg.currentSelfTokenBudget;
+      }
+    }
+
+    // 3. DeepSeek API 运行时参数同步（超时时间、模型名等）
+    if (this.api && this.api.cfg) {
+      this.api.cfg.requestTimeoutMs = this.cfg.requestTimeoutMs;
+      this.api.cfg.streamIdleTimeoutMs = this.cfg.streamIdleTimeoutMs;
+      this.api.cfg.model = this.cfg.model;
+      this.api.cfg.baseURL = this.cfg.baseURL;
+    }
+
+    return true;
+  }
+
+  loadStats() {
+    // 老版本的 stats.json 可能缺字段，用默认值兜一层再合并，
+    // 否则 undefined++ 会变 NaN，面板上一串 NaN。
+    const base = { requests: 0, hit: 0, miss: 0, out: 0, cost: 0,
+                   compressions: 0, merges: 0, summaryCalls: 0, growthCalls: 0,
+                   lastHitRate: 0, history: [] };
+    try { return { ...base, ...JSON.parse(fs.readFileSync(this.statsPath, 'utf8')) }; }
+    catch { return base; }
+  }
+  saveStats(immediate = false) {
+    this.statsWriter.markDirty();
+    if (immediate) {
+      this.statsWriter.flush();
+    }
+  }
+
+  flushAll() {
+    if (this.memory && typeof this.memory.flush === 'function') this.memory.flush();
+    if (this.selfLedger && typeof this.selfLedger.flush === 'function') this.selfLedger.flush();
+    if (this.subjectState && typeof this.subjectState.flush === 'function') this.subjectState.flush();
+    if (this.experiencesArchive && typeof this.experiencesArchive.flush === 'function') this.experiencesArchive.flush();
+    if (this.statsWriter && typeof this.statsWriter.flush === 'function') this.statsWriter.flush();
+  }
+
+  get ready() { return !!this.cfg.apiKey; }
+
+  shutdown() {
+    this.shutdownRequested = true;
+    this.generationId++;
+    this.abort();
+    this.flushAll();
+  }
+
+  currentSelfContext() {
+    if (!this.cfg.currentSelfTokenBudget) return '';
+    const ageHours = Math.max(0, Date.now() - this.birthAt) / 3600000;
+    const projection = this.selfLedger.currentSelfText();
+    const stateSnapshot = this.subjectState ? this.subjectState.formatSnapshot() : '';
+    return '【出生与程序年龄】\n- 出生时刻：' + new Date(this.birthAt).toISOString()
+      + '\n- 程序运行意义上的年龄：约 ' + ageHours.toFixed(1) + ' 小时'
+      + (projection ? '\n' + projection : '')
+      + (stateSnapshot ? '\n' + stateSnapshot : '');
+  }
+
+  /**
+   * 打断当前请求。
+   * 同步回滚，不能等 ask() 的 catch —— main 是 abort() 之后立刻 ask(新消息)，
+   * 异步回滚会误删刚追加的新消息。
+   */
+  abort() {
+    if (!this.ctrl) return;
+    const c = this.ctrl;
+    this.ctrl = null;
+    if (this.pendingUser) {
+      this.memory.rollback(1);
+      this.pendingUser = false;
+    }
+    c.abort();
+  }
+
+  /**
+   * 一次对话。onDelta(text) 用于逐字上屏（原始流，含状态标记，前端自行遮蔽）。
+   * 返回 { text, state, usage, windowClosed, merged }
+   *
+   * opts.proactive = true 时是「她主动搭话」：触发理由会作为 synthetic user
+   * 进入 history，确保下一轮完整复用 DeepSeek 的 user/assistant 前缀缓存单元；
+   * synthetic 不计入用户轮数，也不会在关窗小结中被当成用户事实。
+   */
+  async ask(userText, onDelta, opts = {}) {
+    if (this.shutdownRequested) throw new Error('Brain 已停止');
+    const proactive = !!opts.proactive;
+    // 每轮开头热读一次配置（改文件不必重启）。
+    // 对缓存无害：model 变了不影响 system 文本，窗口参数也不进 prompt。
+    this.refreshConfig();
+    if (!this.ready) throw new Error('还没填 API Key');
+
+    /* ---- 本地活动：意图判定 + 环境快照 ----
+       顺序要紧：recordUserInput 要在快照之前，否则"静默多久"算的是这一句之前。 */
+    const tr = this.tracker;
+    let sleepIntent = false, snap = null;
+    if (tr && !proactive) sleepIntent = tr.recordUserInput(userText);
+    if (tr) snap = tr.snapshot();
+
+    const envText = snap ? snap.promptText : '';
+    const currentSelf = this.currentSelfContext();
+    const shouldAttach = proactive || (snap && (
+      snap.justWokenUp || snap.idleMin >= 15 || snap.clicks > 0 || snap.drags > 0));
+    /* 瞬时上下文（当前自我投影与程序年龄 + 环境感知快照）绝不写入永久历史 memory.history：
+       持久化历史 = 稳定事实；当前环境与自我投影 = 瞬时上下文。
+       如果每轮写入历史，会导致历史中堆叠大量过期的自我账本副本，造成严重的 Token 膨胀并破坏长期记忆。
+       正确数据流：memory.history 仅保存纯净用户输入（主动搭话记录纯净触发理由），
+       在构建发给 DeepSeek 的请求时，动态附加在当前 user 消息末尾。 */
+    const dynamicContext = [currentSelf, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    const proactivePayload = proactive
+      ? '[自主感知触发]：' + userText
+        + (opts.proactiveHint ? '\n[内部语气提示]：' + String(opts.proactiveHint) : '')
+      : '';
+    const historyText = proactive ? proactivePayload : userText;
+
+    if (proactive) {
+      // 主动搭话以 synthetic 纯净消息进入 history，让后续轮次复用「主动触发 + 模型回复」前缀。
+      // synthetic=true 在关窗小结时以“程序触发”标注，不会被当成用户事实。
+      this.memory.append('user', historyText,
+        { synthetic: true, source: 'proactive' });
+    } else {
+      this.memory.append('user', historyText);
+    }
+    this.pendingUser = true;
+
+    // 动态将瞬时上下文注入到本轮 API 请求的最后一条 user 消息副本中，不污染 this.memory.data.history
+    const messages = this.memory.build(dynamicContext);
+
+    const ctrl = new AbortController();
+    this.ctrl = ctrl;
+
+    let text, usage;
+    try {
+      const r = await this.api.stream(messages, onDelta, {
+        signal: ctrl.signal
+      });
+      text = r.text; usage = r.usage;
+    } catch (err) {
+      // 只有「还是本次请求」时才回滚，避免被后来的请求抢跑
+      if (this.ctrl === ctrl && this.pendingUser) {
+        this.memory.rollback(1);
+        this.pendingUser = false;
+      }
+      // 置空同样要带守卫：abort() 后 main 会同步发起新请求（ctrl 已是新的），
+      // 本次的 AbortError 稍后才进 catch，无条件置空会抹掉新请求的 controller，
+      // 导致下一次 abort() 失效、两路流并发上屏。
+      if (this.ctrl === ctrl) this.ctrl = null;
+      // 遥测刻意**不**回滚：没 commit 就等于没消费，这些事件下次如实补报。
+      throw err;
+    }
+
+    if (this.ctrl === ctrl) this.ctrl = null;
+    this.pendingUser = false;
+
+    if (!text) {
+      // 主动搭话没追加过，也就没什么可回滚 —— 少一个「 rollback 删错人」的分支
+      if (!proactive) this.memory.rollback(1);
+      throw new Error('返回空内容');
+    }
+
+    // 请求真的走完了才消费这批遥测（commit 内含 lastConversationAt 更新）
+    if (tr && snap) tr.commit(snap.throughSeq);
+
+    // 状态/换装标记只驱动表情与衣柜，不进历史 ——
+    // 存进 history 会让后续前缀带上这些噪音，模型也容易学着乱加。
+    // 交替剥到不动为止：模型可能连发多条 [wear:] 提案再收尾 [state:]，
+    // 顺序没有保证。每轮都要求文本变短，最多 8 层，绝不可能死循环。
+    // 与前端 stripState 的循环行为一致，两边藏的是同一批标记。
+    let clean = text, state = 'idle';
+    const wears = [];
+    // 循环没有次数上限，靠「每轮文本必须变短」保证终止 ——
+    // 这里刻意不写 for(i<8)：前端 stripState 也是不设上限的同一套规则，
+    // 一旦模型连发超过 8 条提案，后端只剥 8 条、前端全剥，
+    // 屏幕上和写进历史的就不是同一批标记了（那是比不剥更糟的错）。
+    for (;;) {
+      const a = parseState(clean);
+      const w = parseWear(a.text);
+      // 剥离是从尾部往头部走的，所以第一个剥到的非 idle 状态才是模型放在
+      // 末尾收尾的那一个 —— 它才是结论。之前无条件覆盖会让正文里更靠前的
+      // 那个赢：模型引用「比如 [state:happy] 这种标记」时，被采用的竟是举例。
+      // 已知取舍：结尾真是 [state:idle] 而前面出现过别的状态时，仍会取前面那个
+      // —— parseState 分不清「没带标记」和「标记就是 idle」，
+      // 为这种少见情况再多带一个标志位不值得。
+      if (state === 'idle' && a.state !== 'idle') state = a.state;
+      // 连发多条换装提案是合法的，必须逐条收集，不能只留一个。
+      // 刻意不去重：模型真写了两遍，历史里就该看到两条如实结果，
+      // 悄悄合并成一条又是「程序替模型说话」。
+      if (w.wear) wears.unshift(w.wear);
+      if (w.text === clean) break;   // 这一轮一个标记都没剥掉 → 收尾
+      clean = w.text;
+    }
+
+    // 语言状态 ≠ 程序状态：模型说了 [wear:x] 不算换上，
+    // 逐条真实执行，每条的结果写回历史，下一轮它看到的是事实而不是想象。
+    // 顺序执行意味着后面的提案能看到前面的结果：
+    // [wear:连衣裙][wear:上装] 第二条会被互斥规则拒掉，这也是如实上报的一部分。
+    const wearNotes = [];
+    let wearChanged = false;
+    if (wears.length && this.wardrobe) {
+      for (const id of wears) {
+        const r = this.wardrobe.applyProposal(id);
+        if (r.ok && r.changed) wearChanged = true;
+        wearNotes.push(r.ok
+          ? (r.changed ? '已实际换上 ' + id : '本来就已经穿着 ' + id)
+          : id + ' 未生效：' + r.error);
+      }
+      // 穿着块只在真有事发生时重建一次，不必每条提案都算一遍
+      if (wearChanged) this.memory.wardrobe = this.wardrobe.promptBlock();
+    }
+    const wearNote = wearNotes.join('；') || null;
+    this.memory.append('assistant', (clean || text)
+      + (wearNote ? '\n[系统] 换装执行结果：' + wearNote : ''));
+    this.track(usage);
+
+    /* ---- 入睡联动（幂等）----
+       两个入口都算数：用户明说道晚安，或她自己打出 [state:sleepy]。
+       enterSleepMode 内部带守卫，重复触发不会把 sleepStartTime 刷成"刚睡"。 */
+    // sleepy 只是模型表达的当下情绪，不等于用户说了晚安。
+    // 只有明确的用户晚安意图才进入全局睡眠，避免下午一句“有点困”关闭主动搭话。
+    if (tr && sleepIntent) tr.enterSleepMode();
+
+    // 边界处理放在回答之后：本轮的 user+assistant 已经进了缓存
+    let windowClosed = false, merged = false;
+    if (this.memory.needsWindowReset() && !this.boundary) {
+      // 小结要在飞一两秒，期间用户可能又聊满一个窗口。
+      // 不做重入保护的话，两个快照的删除区间会互相重叠，可能吃掉尾部桥接。
+      this.boundary = true;
+      try {
+        windowClosed = await this.closeWindow();
+        // 搭在同一个时刻做，省一次缓存破坏
+        if (windowClosed && this.memory.needsMemoryMerge()) {
+          merged = await this.mergeMemory();
+        }
+      } finally {
+        this.boundary = false;
+      }
+    }
+    // 返回 wears 数组而不是单个 wear：一条回复里连发多个提案是合法的，
+    // 只回一个名字就等于告诉上层"只发生过一件事"，那是撒谎。
+    return { text: clean || text, state, wears, wearNote, wearChanged,
+             usage, windowClosed, merged };
+  }
+
+  /** 生成本窗口小结并归档 */
+  async closeWindow() {
+    // P0-01: 若检测到 SubjectState 处于 recovery_pending 状态，先执行 Replay 自动恢复
+    if (this.subjectState && this.subjectState.recoveryPending) {
+      console.warn('[Brain] 检测到 subjectState 处于 recovery_pending 状态，正在执行 Replay 自动恢复...');
+      const recovered = this.subjectState.recoverFromPending(this.experiencesArchive, 'state_commit_failed');
+      if (!recovered) {
+        console.error('[Brain] 状态恢复未完成，禁止推进当前窗口');
+        return false;
+      }
+    }
+
+    // 先拍快照再调 API：小结要等一两秒，这期间用户可能又发消息进来，
+    // 应用时必须按快照删，不能按「回来时的历史」删，否则会把新对话裁掉。
+    const snap = this.memory.windowSnapshot();
+    if (!snap.items.length) return false;
+
+    // 仅总结当前窗口的真实消息（排除上一窗口残留的 bridge 桥接消息）
+    const activeItems = snap.activeItems || snap.items;
+
+    // 建立 messageId 索引映射，用于 Provenance 证据强验证
+    const msgMap = new Map();
+    for (const m of activeItems) {
+      if (m && m.messageId) msgMap.set(m.messageId, m);
+    }
+
+    /* 提炼材料要先剥掉环境块（见 memory.cleanContentForSummary）。
+       只动**送给小结的文本**，历史本身不改 —— 改写已经发生过的事，
+       等于偷偷改用户的记录，那是比留脏数据更糟的做法。 */
+    const dialogue = activeItems.map(m => {
+      const speaker = m.synthetic ? '程序触发（不是用户原话）' : (m.role === 'user' ? '用户' : '初澜');
+      const idPrefix = m.messageId ? `[${m.messageId}] ` : '';
+      const roundPrefix = m.roundNo ? `[第${m.roundNo}轮] ` : '';
+      return `${idPrefix}${roundPrefix}${speaker}：` + this.memory.cleanContentForSummary(m.content);
+    }).join('\n');
+
+    try {
+      const { text, usage } = await this.api.complete(
+        [{ role: 'system', content: SUMMARY_SYS },
+         { role: 'user', content: '【对话】\n' + dialogue }],
+        { maxTokens: 900, temperature: 0.2 }
+      );
+      this.track(usage, true, 'summary');
+      if (this.shutdownRequested) return false;
+      if (!text) return false;
+
+      // 尝试解析 5×20 + Window Synthesis 结构化 JSON
+      let structured = null;
+      try {
+        const rawJson = String(text || '').trim()
+          .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        const parsed = JSON.parse(rawJson);
+        if (parsed && typeof parsed === 'object' && (parsed.windowSynthesis || Array.isArray(parsed.segments))) {
+          structured = parsed;
+        }
+      } catch {
+        // 模型或测试 mock 返回纯文本小结时优雅降级
+      }
+
+      let summaryTextForMemory = text;
+      let verifiedEvidence = [];
+      let rejectedEvidence = [];
+
+      // P0-01 & P0-03: 程序仅为当前窗口的真实交互消息签发 Event (严格排除 System Prompt、Bridge 桥接、Synthetic 与内部调试)
+      const events = [];
+      const eventIdsSet = new Set();
+      for (const m of activeItems) {
+        if (!isEligibleSubjectEvent(m)) {
+          continue;
+        }
+
+        const evt = createEvent({
+          eventId: 'evt-' + m.messageId.replace(/^m-/, ''),
+          type: 'message',
+          timestamp: m.t || Date.now(),
+          windowNo: snap.windowNo,
+          messageId: m.messageId,
+          source: m.role || 'user',
+          payload: {
+            content: m.content || '',
+            roundNo: m.roundNo
+          }
+        });
+        const vEvt = validateEvent(evt);
+        if (vEvt.valid) {
+          events.push(evt);
+          eventIdsSet.add(evt.eventId);
+        } else {
+          console.warn('[Brain] 消息被判定为非主体事件，已过滤:', m.messageId, vEvt.reason);
+        }
+      }
+
+      let observations = [];
+      let interpretations = [];
+      let allEvidence = [];
+      let syn = {};
+      let segments = [];
+
+      if (structured) {
+        syn = structured.windowSynthesis || {};
+        segments = structured.segments || [];
+
+        const userFacts = Array.isArray(syn.stableUserFacts) && syn.stableUserFacts.length > 0
+          ? '用户事实：' + syn.stableUserFacts.join('；')
+          : '';
+        const chulanExps = Array.isArray(syn.subjectExperiences) && syn.subjectExperiences.length > 0
+          ? '初澜经历：' + syn.subjectExperiences.join('；')
+          : '';
+        const conciseParts = [userFacts, chulanExps].filter(Boolean);
+        if (conciseParts.length > 0) {
+          summaryTextForMemory = conciseParts.join('\n');
+        }
+
+        // P0-02: 收集与核验 Observation (必须基于真实存在的 Event)
+        if (Array.isArray(structured.observations) && structured.observations.length > 0) {
+          for (const obs of structured.observations) {
+            const v = validateObservation(obs, eventIdsSet);
+            if (v.valid) {
+              observations.push(obs);
+            } else {
+              console.warn('[Brain] 拒绝未经验证的 Observation (引用的 Event 不存在):', obs.observationId, v.reason);
+            }
+          }
+        } else if (Array.isArray(segments)) {
+          // 程序从 segments 中提炼 Observation，自动绑定底层真实 Events
+          for (const seg of segments) {
+            if (Array.isArray(seg.chulanExperience) && seg.chulanExperience.length > 0) {
+              const relEvts = events.slice(0, Math.min(events.length, 20)).map(e => e.eventId);
+              if (relEvts.length > 0) {
+                observations.push(createObservation({
+                  eventIds: relEvts,
+                  type: 'interaction_segment',
+                  content: seg.chulanExperience.join('；'),
+                  confidence: 0.9,
+                  source: 'segment_analysis'
+                }));
+              }
+            }
+          }
+        }
+
+        // 程序保底 Observation
+        if (observations.length === 0 && events.length > 0) {
+          observations.push(createObservation({
+            eventIds: events.slice(0, 5).map(e => e.eventId),
+            type: 'window_dialogue_flow',
+            content: '本窗口交互流分析',
+            confidence: 1.0,
+            source: 'dialogue_stream'
+          }));
+        }
+
+        const validObsIds = new Set(observations.map(o => o.observationId));
+
+        // P0-02: 收集与核验 Interpretation (必须基于真实存在的 Observation)
+        if (Array.isArray(structured.interpretations) && structured.interpretations.length > 0) {
+          for (const interp of structured.interpretations) {
+            const v = validateInterpretation(interp, validObsIds);
+            if (v.valid) {
+              interpretations.push(interp);
+            } else {
+              console.warn('[Brain] 拒绝未经验证的 Interpretation (引用的 Observation 不存在):', interp.interpretationId, v.reason);
+            }
+          }
+        } else if (syn.subjectExperiences && syn.subjectExperiences.length > 0 && observations.length > 0) {
+          interpretations.push(createInterpretation({
+            observationIds: [observations[0].observationId],
+            content: syn.subjectExperiences.join('；'),
+            confidence: 0.8,
+            perspective: 'chulan'
+          }));
+        }
+
+        // 收集所有状态证据
+        if (Array.isArray(segments)) {
+          for (const seg of segments) {
+            if (Array.isArray(seg.stateEvidence)) {
+              allEvidence.push(...seg.stateEvidence);
+            }
+          }
+        }
+        if (Array.isArray(syn.stateChangesSuggested)) {
+          allEvidence.push(...syn.stateChangesSuggested);
+        }
+      } else {
+        // 纯文本降级分支
+        if (events.length > 0) {
+          const obs = createObservation({
+            eventIds: events.slice(0, 5).map(e => e.eventId),
+            type: 'plain_text_stream',
+            content: '纯文本交互记录',
+            confidence: 1.0,
+            source: 'dialogue_stream'
+          });
+          observations.push(obs);
+          interpretations.push(createInterpretation({
+            observationIds: [obs.observationId],
+            content: '对日常对话的持续感知',
+            confidence: 0.5,
+            perspective: 'chulan'
+          }));
+        }
+        syn = { stableUserFacts: [text], subjectExperiences: [] };
+      }
+
+      // 执行严格 Provenance、Trait 白名单与防重核验
+      let stateChanges = [];
+      let explanations = [];
+      let stateStaging = null;
+
+      if (this.subjectState) {
+        // P0-08: 两阶段提交——在验证与 Reducer 前创建完整暂存快照，若 Archive 失败则连同已登记指纹一并回滚
+        stateStaging = this.subjectState.createStagingSnapshot();
+        const verifyResult = this.subjectState.verifyEvidence(allEvidence, msgMap, snap.windowNo, { stageOnly: true });
+        verifiedEvidence = verifyResult.verified;
+        rejectedEvidence = verifyResult.rejected;
+
+        const reduceResult = this.subjectState.reduce(verifiedEvidence, snap.windowNo, { stageOnly: true });
+        if (reduceResult && Array.isArray(reduceResult.stateChanges)) {
+          stateChanges = reduceResult.stateChanges;
+        }
+
+        // P0-05 & P0-06: 为每个 StateChange 构造并核验证实解释
+        for (const sc of stateChanges) {
+          const rawExpl = syn.stateExplanations && syn.stateExplanations[sc.trait];
+          let explInput;
+          if (rawExpl && typeof rawExpl === 'object') {
+            explInput = {
+              claimedDelta: rawExpl.claimedDelta,
+              claimedTrait: rawExpl.claimedTrait || sc.trait,
+              text: rawExpl.text || rawExpl.summary || `特质 [${sc.trait}] 变动`,
+              evidenceIds: rawExpl.evidenceIds || sc.evidenceIds
+            };
+          } else if (typeof rawExpl === 'string') {
+            explInput = {
+              text: rawExpl,
+              claimedTrait: sc.trait,
+              evidenceIds: sc.evidenceIds
+            };
+          } else {
+            const explText = (syn.subjectExperiences && syn.subjectExperiences[0])
+              || `特质 [${sc.trait}] 在第 ${snap.windowNo} 窗口增量 ${sc.delta > 0 ? '+' : ''}${sc.delta}`;
+            explInput = {
+              claimedDelta: sc.delta,
+              claimedTrait: sc.trait,
+              text: explText,
+              evidenceIds: sc.evidenceIds
+            };
+          }
+          const explanationObj = createStateChangeExplanation(sc, explInput);
+          explanations.push(explanationObj);
+        }
+      }
+
+      // P0-08: 先写入 Archive (experiences.jsonl)
+      let archiveSuccess = false;
+      if (this.experiencesArchive) {
+        archiveSuccess = this.experiencesArchive.appendWindowArchive({
+          windowNo: snap.windowNo,
+          turns: this.memory.data.turnsInWindow,
+          messageCount: activeItems.length,
+          events,
+          observations,
+          interpretations,
+          segments,
+          windowSynthesis: syn,
+          stateEvidence: allEvidence,
+          verifiedEvidence,
+          rejectedEvidence,
+          stateChanges,
+          explanations,
+          rawSummaryText: text
+        });
+      } else {
+        archiveSuccess = true;
+      }
+
+      // P0-08: 失败保护：若 Archive 写入失败，绝不提交 Subject State，不删除原始消息，中止关窗
+      if (!archiveSuccess) {
+        console.error('[Brain] Archive 写入失败，回滚状态暂存并中止本次关窗 (保障数据一致性)');
+        if (this.subjectState && stateStaging) {
+          this.subjectState.rollbackStage(stateStaging);
+        }
+        return false;
+      }
+
+      // Archive 确认写入成功后，正式提交 Subject State 持久化 (P0-01)
+      let stateCommitSuccess = true;
+      if (this.subjectState) {
+        stateCommitSuccess = this.subjectState.commit();
+      }
+
+      if (!stateCommitSuccess) {
+        console.error('[Brain] Archive 写入成功但 Subject State commit 失败！进入 recovery_pending 状态，中止本次关窗');
+        if (this.subjectState) {
+          this.subjectState.recoveryPending = true;
+          this.subjectState.recoveryPendingReason = 'state_commit_failed';
+        }
+        if (this.experiencesArchive) {
+          this.experiencesArchive.appendRecord('recovery_event', snap.windowNo, {
+            action: 'state_commit_failed',
+            timestamp: Date.now(),
+            windowNo: snap.windowNo,
+            reason: 'state_commit_failed',
+            recoveryPending: true
+          });
+        }
+        // 禁止继续推进当前 Window，保留 Archive 与原始 Message，返回 false
+        return false;
+      }
+
+      const done = this.memory.closeWindow(summaryTextForMemory, snap);
+      if (done) {
+        this.stats.compressions++;
+        this.saveStats(true);
+        if (this.cfg.selfGrowthEnabled === true)
+          await this.growSelf(dialogue, summaryTextForMemory, this.memory.data.windowNo - 1);
+      }
+      return done;
+    } catch (e) {
+      // 小结失败就不动历史，下个周期再试；宁可窗口超长也不能丢对话
+      console.error('window summary failed:', e.message);
+      return false;
+    }
+  }
+
+  /** 记忆超预算：把较旧的片段合并成一条早期记忆 */
+  async mergeMemory() {
+    const plan = this.memory.planMerge();
+    if (!plan) return false;
+
+    const body = plan.old.map(w =>
+      (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text).join('\n');
+
+    try {
+      const { text, usage } = await this.api.complete(
+        [{ role: 'system', content: MERGE_SYS },
+         { role: 'user', content: body }],
+        { maxTokens: 400, temperature: 0.2 }
+      );
+      this.track(usage, true, 'merge');
+      if (this.shutdownRequested) return false;
+      if (!text) return false;
+      this.memory.applyMerge(text, plan.keep);
+      this.stats.merges++;
+      this.saveStats(true);
+      return true;
+    } catch (e) {
+      console.error('memory merge failed:', e.message);
+      return false;
+    }
+  }
+
+  /** 低频主体成长检查点：只在窗口小结成功后调用一次。 */
+  async growSelf(dialogue, summary, window) {
+    try {
+      if (this.shutdownRequested) return 0;
+      const { text, usage } = await this.api.complete(
+        [{ role: 'system', content: GROWTH_SYS },
+         { role: 'user', content: '【窗口小结】\n' + summary + '\n【窗口对话】\n' + dialogue }],
+        { maxTokens: 420, temperature: 0.15 }
+      );
+      this.track(usage, true, 'growth');
+      if (this.shutdownRequested) return 0;
+      this.stats.growthCalls = (this.stats.growthCalls || 0) + 1;
+      const raw = String(text || '').trim()
+        .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+      const added = this.selfLedger.append(JSON.parse(raw), { window });
+      this.saveStats();
+      return added;
+    } catch (e) {
+      // 成长提炼失败不能影响已经成功归档的对话窗口；下一个窗口继续尝试。
+      // 非 JSON 的兼容模型响应属于“本轮没有形成可验证成长记录”，不刷屏；
+      // 网络/文件等真正异常仍保留日志，便于定位。
+      if (!(e instanceof SyntaxError))
+        console.error('self growth checkpoint failed:', e.message);
+      return 0;
+    }
+  }
+
+  /**
+   * summary=true 时只累计花费，不计入命中率。
+   * 小结/合并是另一套前缀，混进主线会让命中率的数字失真。
+   */
+  track(usage, summary = false, bucket = summary ? 'summary' : 'chat') {
+    const hit = usage.prompt_cache_hit_tokens || 0;
+    const miss = usage.prompt_cache_miss_tokens || 0;
+    const out = usage.completion_tokens || 0;
+    const price = isPeakHour() ? this.cfg.price.peak : this.cfg.price.valley;
+    const c = costOf(usage, price);
+
+    this.stats.history.push({
+      t: Date.now(), hit, miss, out, cost: +c.toFixed(6),
+      rate: (hit + miss) ? +(hit / (hit + miss) * 100).toFixed(1) : 0,
+      kind: bucket,
+      prompt: usage.prompt_tokens || hit + miss
+    });
+    if (this.stats.history.length > 300) this.stats.history.shift();
+
+    this.stats.cost += c;
+    if (summary) {
+      this.stats.summaryCalls = (this.stats.summaryCalls || 0) + 1;
+      this.stats[bucket + 'PromptTokens'] = (this.stats[bucket + 'PromptTokens'] || 0)
+        + (usage.prompt_tokens || hit + miss);
+      this.stats[bucket + 'OutputTokens'] = (this.stats[bucket + 'OutputTokens'] || 0) + out;
+      this.stats[bucket + 'Cost'] = (this.stats[bucket + 'Cost'] || 0) + c;
+    } else {
+      this.stats.requests++;
+      this.stats.hit += hit;
+      this.stats.miss += miss;
+      this.stats.out += out;
+      this.stats.lastHitRate = (hit + miss) ? hit / (hit + miss) : 0;
+    }
+    this.saveStats();
+  }
+
+  report() {
+    const tot = this.stats.hit + this.stats.miss;
+    const m = this.memory;
+    return {
+      requests: this.stats.requests,
+      hit: this.stats.hit,
+      miss: this.stats.miss,
+      out: this.stats.out,
+      rate: tot ? +(this.stats.hit / tot * 100).toFixed(1) : 0,
+      lastRate: +(this.stats.lastHitRate * 100).toFixed(1),
+      cost: +this.stats.cost.toFixed(4),
+      compressions: this.stats.compressions,
+      merges: this.stats.merges || 0,
+      growthCalls: this.stats.growthCalls || 0,
+      growthPromptTokens: this.stats.growthPromptTokens || 0,
+      growthOutputTokens: this.stats.growthOutputTokens || 0,
+      growthCost: +(this.stats.growthCost || 0).toFixed(4),
+      summaryCost: +(this.stats.summaryCost || 0).toFixed(4),
+      mergeCost: +(this.stats.mergeCost || 0).toFixed(4),
+      peak: isPeakHour(),
+      model: this.cfg.model,
+
+      // 记忆状态
+      windowTurns: m.data.turnsInWindow,
+      windowTarget: m.windowTurns,
+      windowNo: m.data.windowNo,
+      totalTurns: m.data.totalTurns,
+      historyLen: m.history.length,
+      historyTokens: m.historyTokens(),
+      segments: m.windows.length,
+      memoryTokens: m.memoryTokens(),
+      memoryCap: m.memoryCap,
+      contextTokens: m.contextTokens(),
+      selfLedgerEntries: this.selfLedger.entries.length,
+      rawLedgerChars: this.selfLedger.estimatedRawChars(),
+      currentSelfTokens: Math.ceil(this.selfLedger.currentSelfText().length / 2),
+      birthAt: this.birthAt,
+      archiveStatus: this.selfLedger.status,
+      subjectState: this.subjectState ? this.subjectState.values : null,
+      archiveEntries: this.experiencesArchive ? this.experiencesArchive.count() : 0,
+      bridgeCount: m.history.filter(x => x.bridge).length
+    };
+  }
+
+  clearMemory() { this.memory.reset(); }
+
+  listSelfLedger() { return this.selfLedger.list(); }
+}
+
+module.exports = { Brain, parseState, parseWear, STATES };
