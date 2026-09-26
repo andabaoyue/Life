@@ -103,17 +103,23 @@ function validateEvent(evt) {
   }
 
   // 来源黑名单与正向白名单检查 (P1-02)
-  const src = String(evt.source || '').toLowerCase();
+  const src = String(evt.source || '').toLowerCase().trim();
+  if (!src) {
+    return { valid: false, reason: 'INVALID_EVENT_SOURCE' };
+  }
   if (PROHIBITED_EVENT_SOURCES.has(src)) {
     return { valid: false, reason: 'PROHIBITED_EVENT_SOURCE: ' + src };
   }
   if (!ALLOWED_EVENT_SOURCES.has(src)) {
-    return { valid: false, reason: 'INVALID_EVENT_SOURCE: ' + src };
+    return { valid: false, reason: 'INVALID_EVENT_SOURCE (EVENT_INVALID_SOURCE): ' + src };
   }
 
-  // 检查 payload 或顶层是否夹带禁止标记 (Synthetic / Bridge / System)
+  // 检查 payload 或顶层是否夹带禁止标记 (Synthetic / Generated / Bridge / System)
   if (evt.synthetic === true || (evt.payload && evt.payload.synthetic === true)) {
     return { valid: false, reason: 'SYNTHETIC_EVENT_PROHIBITED' };
+  }
+  if (evt.generated === true || (evt.payload && evt.payload.generated === true)) {
+    return { valid: false, reason: 'GENERATED_EVENT_PROHIBITED' };
   }
   if (evt.bridge === true || (evt.payload && evt.payload.bridge === true)) {
     return { valid: false, reason: 'BRIDGE_EVENT_PROHIBITED' };
@@ -234,11 +240,14 @@ function createExperience(opts = {}) {
  * 标准 JSONL Archive 记录封装器
  */
 function wrapArchiveRecord(recordType, windowNo, payload = {}) {
+  const resolvedWindowNo = (typeof windowNo === 'number' && !isNaN(windowNo))
+    ? windowNo
+    : (windowNo === null ? null : (windowNo !== undefined ? windowNo : null));
   return {
     schemaVersion: SCHEMA_VERSION,
     recordType,
     timestamp: Date.now(),
-    windowNo: windowNo || 1,
+    windowNo: resolvedWindowNo,
     payload
   };
 }

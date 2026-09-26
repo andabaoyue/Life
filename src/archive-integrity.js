@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ALLOWED_TRAITS } = require('./subject-state');
-const { ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
+const { validateEvent, ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
 
@@ -121,25 +121,26 @@ function validateArchiveRecord(record, options = {}) {
             return { valid: false, reason: 'INVALID_EVENT_IN_SUMMARY' };
           }
           const ep = evt.payload || evt;
-          if (evt.synthetic === true || ep.synthetic === true) {
-            return { valid: false, reason: 'SYNTHETIC_EVENT_PROHIBITED' };
-          }
-          if (evt.generated === true || ep.generated === true) {
-            return { valid: false, reason: 'GENERATED_EVENT_PROHIBITED' };
-          }
-          const src = evt.source || ep.source;
-          if (!src || typeof src !== 'string' || !src.trim()) {
-            return { valid: false, reason: 'INVALID_EVENT_SOURCE' };
-          }
-          const cleanSrc = String(src).toLowerCase().trim();
-          if (!ALLOWED_EVENT_SOURCES.has(cleanSrc)) {
-            return { valid: false, reason: 'INVALID_EVENT_SOURCE (EVENT_INVALID_SOURCE): ' + cleanSrc };
-          }
           if (evt.bridge === true || ep.bridge === true) {
             const prov = evt.provenance || ep.provenance;
             if (!prov || typeof prov !== 'object' || (!prov.sourceEventId && !prov.sourceMessageId && !prov.windowNo)) {
               return { valid: false, reason: 'BRIDGE_EVENT_UNPROVEN' };
             }
+          }
+          const normEvt = {
+            eventId: evt.eventId || ep.eventId,
+            type: evt.type || ep.type,
+            source: evt.source || ep.source,
+            messageId: evt.messageId || ep.messageId || null,
+            synthetic: evt.synthetic === true || ep.synthetic === true,
+            generated: evt.generated === true || ep.generated === true,
+            bridge: (evt.bridge === true || ep.bridge === true) && !(evt.provenance || ep.provenance),
+            provenance: evt.provenance || ep.provenance || null,
+            payload: evt.payload || {}
+          };
+          const vEvt = validateEvent(normEvt);
+          if (!vEvt.valid) {
+            return { valid: false, reason: vEvt.reason, eventValidation: vEvt };
           }
         }
       }
@@ -156,24 +157,27 @@ function validateArchiveRecord(record, options = {}) {
     }
 
     case 'event': {
-      if (typeof payload.eventId !== 'string' || !payload.eventId.trim()) {
-        return { valid: false, reason: 'EVENT_MISSING_EVENT_ID' };
-      }
-      if (typeof payload.type !== 'string' || !ALLOWED_EVENT_TYPES.has(payload.type.trim())) {
-        return { valid: false, reason: 'EVENT_INVALID_TYPE: ' + payload.type };
-      }
-      if (!payload.source || typeof payload.source !== 'string' || !payload.source.trim()) {
-        return { valid: false, reason: 'INVALID_EVENT_SOURCE' };
-      }
-      const src = String(payload.source).toLowerCase().trim();
-      if (!ALLOWED_EVENT_SOURCES.has(src)) {
-        return { valid: false, reason: 'INVALID_EVENT_SOURCE (EVENT_INVALID_SOURCE): ' + src };
-      }
-      if (record.bridge === true || payload.bridge === true) {
-        const prov = record.provenance || payload.provenance;
+      const ep = payload;
+      if (record.bridge === true || ep.bridge === true) {
+        const prov = record.provenance || ep.provenance;
         if (!prov || typeof prov !== 'object' || (!prov.sourceEventId && !prov.sourceMessageId && !prov.windowNo)) {
           return { valid: false, reason: 'BRIDGE_EVENT_UNPROVEN' };
         }
+      }
+      const normEvt = {
+        eventId: ep.eventId || record.eventId,
+        type: ep.type || record.type,
+        source: ep.source || record.source,
+        messageId: ep.messageId || record.messageId || null,
+        synthetic: record.synthetic === true || ep.synthetic === true,
+        generated: record.generated === true || ep.generated === true,
+        bridge: (record.bridge === true || ep.bridge === true) && !(record.provenance || ep.provenance),
+        provenance: record.provenance || ep.provenance || null,
+        payload: ep.payload || ep
+      };
+      const vEvt = validateEvent(normEvt);
+      if (!vEvt.valid) {
+        return { valid: false, reason: vEvt.reason, eventValidation: vEvt };
       }
       break;
     }

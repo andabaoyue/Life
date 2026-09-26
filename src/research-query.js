@@ -38,10 +38,42 @@ class ResearchQuery {
     this.memoryPath = path.join(userDataDir, 'memory.json');
     this.index = options.index || null;
     this._lastQueryMode = 'FULL_SCAN';
+    this._integrityCache = null;
   }
 
   setIndex(index) {
     this.index = index;
+  }
+
+  invalidateCache() {
+    this._integrityCache = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 辅助方法：完整性快照缓存 (H-04 性能优化)
+  // 避免在 Window 循环或高频查询中对同一无变化的归档文件重复执行 O(N) 全量哈希与格式校验
+  // ---------------------------------------------------------------------------
+  _getIntegritySnapshot() {
+    if (!fs.existsSync(this.archivePath)) {
+      return ArchiveIntegrityService.checkArchive(this.archivePath);
+    }
+
+    try {
+      const stat = fs.statSync(this.archivePath);
+      const cacheKey = `${stat.size}-${stat.mtimeMs}`;
+      if (this._integrityCache && this._integrityCache.key === cacheKey) {
+        return this._integrityCache.report;
+      }
+
+      const report = ArchiveIntegrityService.checkArchive(this.archivePath);
+      this._integrityCache = {
+        key: cacheKey,
+        report
+      };
+      return report;
+    } catch {
+      return ArchiveIntegrityService.checkArchive(this.archivePath);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -251,6 +283,11 @@ function getRecordWindowNo(r) {
       windowMap.get(wNo).records.push(rec);
     }
 
+    // H-04 性能优化：在窗口循环前只执行一次完整性快照扫描，避免 O(Window × Archive) 重复全量 I/O
+    const integrityReport = this._getIntegritySnapshot();
+    const defaultArchiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'CERTIFIED';
+    const defaultReplayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'COMPLETE';
+
     // 汇总各窗口概况
     const summaries = [];
     for (const [wNo, wData] of windowMap.entries()) {
@@ -293,9 +330,8 @@ function getRecordWindowNo(r) {
         if (Array.isArray(p.stateChanges)) stateChangesCount += p.stateChanges.length;
       }
 
-      const integrityReport = ArchiveIntegrityService.checkArchive(this.archivePath);
-      let archiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'CERTIFIED';
-      let replayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'COMPLETE';
+      let archiveIntegrity = defaultArchiveIntegrity;
+      let replayStatus = defaultReplayStatus;
       if (wNo === null) {
         archiveIntegrity = 'UNCERTIFIED';
         replayStatus = 'UNRESOLVED';
@@ -345,7 +381,7 @@ function getRecordWindowNo(r) {
     let records = [];
     if (this.index && this.index.ensureIndex()) {
       this._lastQueryMode = 'INDEX';
-      const descs = this.index.windowIndex.get(windowNo) || [];
+      const descs = this.index.getWindowDescriptors(windowNo) || [];
       for (const d of descs) {
         const rec = this.index.readRecordAtOffset(d.byteOffset, d.byteLength);
         if (rec) {
@@ -392,7 +428,7 @@ function getRecordWindowNo(r) {
     // P0-01: 绝对禁止伪造不存在的 segments 事实
     // 若归档记录中无 segments，如实返回空数组，不得由程序臆造假段落
 
-    const integrityReport = ArchiveIntegrityService.checkArchive(this.archivePath);
+    const integrityReport = this._getIntegritySnapshot();
     let archiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'CERTIFIED';
     let replayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'COMPLETE';
     if (windowNo === null) {
@@ -426,7 +462,7 @@ function getRecordWindowNo(r) {
    */
   getWindowRounds(windowNo, segmentIndex = null) {
     const detail = this.getWindowDetail(windowNo);
-    const integrityReport = ArchiveIntegrityService.checkArchive(this.archivePath);
+    const integrityReport = this._getIntegritySnapshot();
     const isCertified = (integrityReport.integrity === 'certified');
 
     const rounds = [];

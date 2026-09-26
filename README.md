@@ -1,4 +1,4 @@
-# Life · 初澜 (Chulan) v0.9.5.2
+# Life · 初澜 (Chulan) v0.9.5.3
 
 Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
 
@@ -400,6 +400,10 @@ node test/legacy-schema-certification.test.js # 14 项：v0.9.5.2 缺失 schemaV
 node test/archive-event-strictness.test.js # 20 项：v0.9.5.2 Event 来源白名单与完整性防御（缺源拦截、未知源拦截、Synthetic 拦截、Bridge Provenance 核验与坏账防御）
 node test/legacy-metadata-fabrication.test.js # 30 项：v0.9.5.2 遗留数据元数据严禁伪造（缺 schemaVersion 禁补原生 v1、缺时间戳禁补 Date.now()、缺 windowNo 禁补 1、缺 roundNo 禁补 1、缺 messageId 禁编 UNKNOWN_MESSAGE、全链路端到端防伪）
 node test/research-window-defaults.test.js # 27 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null）
+node test/archive-event-runtime-parity.test.js # 17 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
+node test/research-index-unknown-window.test.js # 21 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0）
+node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）
+node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```
@@ -445,6 +449,12 @@ pip install opencv-contrib-python numpy pillow
 ## 版本记录
 
 只记**会影响行为或数据格式**的变化，方便以后回头看哪次动过什么。
+
+**v0.9.5.3** — Codex Findings Fix（安全漏洞修复与架构一致性收敛）：针对 Codex Independent Audit 提出的 4 个 HIGH 级发现完成专项修复：
+- **H-01** (Archive Event Validation Parity): `src/archive-integrity.js` 统一接入规范级运行时事件校验器 (`validateEvent`)，对 `window_summary.payload.events[]` 及独立 `event` 归档记录实施与运行时完全对齐的强校验；`src/experience-schema.js` 全面禁止 `generated: true` 与 `synthetic: true` 伪造事件，来源空值或非法值坚决拦截并降级 `UNCERTIFIED`。
+- **H-02** (ResearchIndex Unknown Window Handling): `src/research-index.js` 彻底切断将未知 `windowNo` (null/undefined) 错误映射至 Window 1 的隐式逻辑；分离 `windowIndex` (Map) 与 `unknownWindowDescriptors` (Array)；引入 `extractRecordWindowNo` 精确支持 falsy 的 `windowNo = 0`，检索与详情查询保留 `null`。
+- **H-03** (Renderer Export Path Security): `src/research-ipc.js` 对渲染进程通过 `research:export` 传入自定义 `targetDir` / `targetPath` 实施即刻拒绝 (`RENDERER_TARGET_DIR_PROHIBITED`)；落盘模式严格由主进程原生安全对话框 (`dialog.showOpenDialog`) 用户主动授权；`src/research-export.js` 底层强校验规范化路径并彻底封杀 `..` 路径穿越攻击。
+- **H-04** (Integrity Scan Complexity Reduction): `src/research-query.js` 引入基于文件大小与修改时间的完整性快照缓存 (`_getIntegritySnapshot`)；`getWindows()` 将完整性评估移出多窗口遍历循环，算法复杂度由 $O(\text{Window} \times \text{Archive})$ 彻底降为 $O(\text{Archive})$。
 
 **v0.9.5.2** — 实验观察层完整性硬化 (Integrity Hardening)：彻底消灭 Research Layer 残留的“程序推断事实”与“默认补全数据”，恪守“没有证据就没有事实”、“不确定不得篡改成没发生”、“程序推断不得升级为实验事实”三大哲学准则；`src/research-query.js` 彻底删除 `Math.ceil(num/2)` 等基于 messageId 的数字推断逻辑，未标明确切轮次时严格保持为 `roundNo = null, status = 'UNRESOLVED'`；彻底删除 `|| 100`、`|| 200`、`segmentCount: 5` 等虚假默认统计值，`turns: 0` 与 `messageCount: 0` 如实返回 0，缺失返回 null；`src/experience-schema.js` 严禁在缺少 `schemaVersion` 时隐式补写原生 `schemaVersion: 1`，全部规范路由至 `LegacySchemaAdapter`（`sourceSchema: 'legacy-v0.9.4'`，归档判定强制为 `UNCERTIFIED`）；`src/archive-integrity.js` 强化正向白名单防线，Event 记录 `source` 强制为必填字段（缺源拦截 `INVALID_EVENT_SOURCE`），拒绝未知源；严禁 Synthetic / Generated 事件进入认证（`SYNTHETIC_EVENT_PROHIBITED` / `UNCERTIFIED`）；严查 Bridge 事件溯源来源（无 Provenance 拦截降级）；`src/research-service.js` 统一 Replay 状态与 `ArchiveIntegrityService` Canonical 单一可信源；`pet.js` 前端 UI 完善空安全与语义映射，严格区分 `content = ""`（真实空内容）与 `content = null`（未记录 / 不确定）；补齐 `package.json` 中的 `npm test` 入口脚本，新增 4 套反伪证专项攻击测试套件并通过全量回归。
 
