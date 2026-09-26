@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
-const { createStateChange, validateStateChange } = require('./state-change');
+const { createStateChange, validateStateChange, symmetricRound } = require('./state-change');
 const { normalizeArchiveRecord } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
@@ -103,7 +103,7 @@ class SubjectState {
           this.data = {
             schemaVersion: SCHEMA_VERSION,
             updatedAt: raw.updatedAt || Date.now(),
-            windowNo: raw.windowNo || 1,
+            windowNo: (typeof raw.windowNo === 'number' && !isNaN(raw.windowNo)) ? raw.windowNo : 1,
             values: { ...DEFAULT_TRAITS, ...raw.values },
             history: Array.isArray(raw.history) ? raw.history : [],
             stateChanges: Array.isArray(raw.stateChanges) ? raw.stateChanges : [],
@@ -128,6 +128,9 @@ class SubjectState {
           // P0-09: 文件损坏时，优先从 experiences.jsonl 执行离线 Replay 重建
           this.rebuildFromArchiveOrFallback();
         }
+      } else {
+        // subject-state.json 尚不存在时，检查是否存在已落盘的经历归档以自愈（如首次关窗 Archive 落盘后进程崩溃）
+        this.checkAndAutoRecoverConsistency();
       }
     } catch {
       // 异常恢复
@@ -146,8 +149,10 @@ class SubjectState {
         const { records, diagnostics } = archive.readAllWithDiagnostics();
         if (records && records.length > 0) {
           console.log(`[SubjectState] 正在从 experiences.jsonl (${records.length} 条记录) 重建损坏的 Subject State...`);
-          const replayReport = SubjectState.replay(records, { diagnostics });
-          const newWindowNo = replayReport.nextWindowNo || (Math.max(0, ...replayReport.windowStates.map(w => w.windowNo)) + 1);
+          const replayReport = SubjectState.replay(records, { diagnostics, archivePath });
+          const newWindowNo = (typeof replayReport.nextWindowNo === 'number' && !Number.isNaN(replayReport.nextWindowNo))
+            ? replayReport.nextWindowNo
+            : (Math.max(0, ...replayReport.windowStates.map(w => (typeof w.windowNo === 'number' && !Number.isNaN(w.windowNo)) ? w.windowNo : 0)) + 1);
 
           this.committedEvidenceIds = new Set(replayReport.acceptedEvidenceIds || []);
           this.committedFingerprints = new Set(replayReport.acceptedEvidenceFingerprints || []);
@@ -334,7 +339,7 @@ class SubjectState {
       return false;
     }
 
-    const replayReport = SubjectState.replay(records, { diagnostics });
+    const replayReport = SubjectState.replay(records, { diagnostics, archivePath: archive.path });
     if (!replayReport || replayReport.replayStatus === 'invalid') {
       this.recoveryStatus = 'RECOVERY_FAILED';
       this.data.recoveryStatus = 'RECOVERY_FAILED';
@@ -351,7 +356,9 @@ class SubjectState {
       }
     }
 
-    const newWindowNo = replayReport.nextWindowNo || (Math.max(0, ...replayReport.windowStates.map(w => w.windowNo)) + 1);
+    const newWindowNo = (typeof replayReport.nextWindowNo === 'number' && !Number.isNaN(replayReport.nextWindowNo))
+      ? replayReport.nextWindowNo
+      : (Math.max(0, ...replayReport.windowStates.map(w => (typeof w.windowNo === 'number' && !Number.isNaN(w.windowNo)) ? w.windowNo : 0)) + 1);
     const isCertified = replayReport.integrity === 'certified' && replayReport.replayStatus === 'complete';
 
     if (isCertified) {
@@ -449,8 +456,12 @@ class SubjectState {
       for (const r of records) {
         const recType = r.recordType || r.type;
         if (NON_STATE.has(recType)) continue;
-        const wNo = r.windowNo || (r.payload && r.payload.windowNo) || 0;
-        if (wNo > maxArchiveWindow) maxArchiveWindow = wNo;
+        const wNo = (typeof r.windowNo === 'number' && !Number.isNaN(r.windowNo))
+          ? r.windowNo
+          : ((r.payload && typeof r.payload.windowNo === 'number' && !Number.isNaN(r.payload.windowNo))
+            ? r.payload.windowNo
+            : null);
+        if (wNo !== null && wNo > maxArchiveWindow) maxArchiveWindow = wNo;
       }
 
       if (hasPendingRecovery || (maxArchiveWindow >= this.data.windowNo && maxArchiveWindow > 0)) {
@@ -581,6 +592,71 @@ class SubjectState {
           status: 'rejected',
           reason: 'MESSAGE_ID_NOT_FOUND',
           windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.1 目标窗口匹配强核验 (v0.9.6 P0-07)
+      const targetWindowNo = (typeof windowNo === 'number' && !Number.isNaN(windowNo))
+        ? windowNo
+        : ((opts && typeof opts.windowNo === 'number' && !Number.isNaN(opts.windowNo)) ? opts.windowNo : null);
+      if (targetWindowNo !== null && typeof sourceMsg.windowNo === 'number' && !Number.isNaN(sourceMsg.windowNo) && sourceMsg.windowNo !== targetWindowNo) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'MESSAGE_WINDOW_MISMATCH',
+          windowNo: targetWindowNo,
+          messageWindowNo: sourceMsg.windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.2 Synthetic 消息不具备主体经历资格 (v0.9.6 P0-07)
+      if (sourceMsg.synthetic === true) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'SYNTHETIC_MESSAGE_NOT_ELIGIBLE',
+          windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.3 Bridge 消息仅作前缀缓存桥接，不计入新窗口证据 (v0.9.6 P0-07)
+      if (sourceMsg.bridge === true) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'BRIDGE_MESSAGE_NOT_ELIGIBLE',
+          windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.4 消息角色合法性检验 (仅限 user 或 assistant) (v0.9.6 P0-07)
+      if (sourceMsg.role && sourceMsg.role !== 'user' && sourceMsg.role !== 'assistant') {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'INVALID_MESSAGE_ROLE',
+          windowNo,
+          role: sourceMsg.role,
           trait: cleanTrait,
           messageId: messageId.trim(),
           quote: String(quote || ''),
@@ -737,7 +813,7 @@ class SubjectState {
     const newChanges = [];
 
     for (const [trait, sum] of Object.entries(rawDeltas)) {
-      const clampedDelta = clamp(Math.round(sum), -maxDelta, maxDelta);
+      const clampedDelta = clamp(symmetricRound(sum), -maxDelta, maxDelta);
       if (clampedDelta !== 0) {
         appliedDeltas[trait] = clampedDelta;
         const currentVal = this.data.values[trait] ?? 0;
@@ -841,25 +917,54 @@ class SubjectState {
     let processedRecords = 0;
     let rejectedRecords = 0;
 
-    const corruptCount = options.corruptRecords ?? (options.diagnostics ? options.diagnostics.skippedCount : 0);
-    const integrity = corruptCount > 0 ? 'uncertified' : 'certified';
-    const replayStatus = corruptCount > 0 ? 'partial' : 'complete';
+    // P0-3: 统一完整性权威可信源——调用 ArchiveIntegrityService (或直接使用外部传入的权威完整性报告)
+    let integrityReport = options.integrityReport;
+    if (!integrityReport) {
+      const { ArchiveIntegrityService } = require('./archive-integrity');
+      if (options.archivePath && fs.existsSync(options.archivePath)) {
+        integrityReport = ArchiveIntegrityService.checkArchive(options.archivePath);
+      } else {
+        integrityReport = ArchiveIntegrityService.checkRecords(archiveRecords, options);
+      }
+    }
+
+    const isCertified = integrityReport && integrityReport.integrity === 'certified';
+    const integrity = isCertified ? 'certified' : 'uncertified';
+    const replayStatus = (integrityReport && integrityReport.replayStatus) || (options.corruptRecords > 0 ? 'partial' : 'complete');
+    const corruptCount = (integrityReport && integrityReport.corruptLines) ?? (options.corruptRecords ?? (options.diagnostics ? options.diagnostics.skippedCount : 0));
 
     const NON_STATE_RECORD_TYPES = new Set([
       'recovery_event',
       'diagnostic',
       'replay_report',
       'internal_log',
-      'audit_log'
+      'audit_log',
+      'self_projection'
     ]);
 
-    // 标准化并按时间戳升序排序
+    // 标准化并按 archiveSeq（优先）或时间戳升序排序 (v0.9.6 P0-05)
     const normalized = [];
+    let hasArchiveSeq = false;
     for (const r of archiveRecords) {
       const norm = normalizeArchiveRecord(r);
-      if (norm) normalized.push(norm);
+      if (norm) {
+        if (typeof norm.archiveSeq === 'number' && !Number.isNaN(norm.archiveSeq)) {
+          hasArchiveSeq = true;
+        }
+        normalized.push(norm);
+      }
     }
-    normalized.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    const ordering = hasArchiveSeq ? 'archive_seq' : 'legacy';
+    if (hasArchiveSeq) {
+      normalized.sort((a, b) => {
+        const seqA = typeof a.archiveSeq === 'number' ? a.archiveSeq : Infinity;
+        const seqB = typeof b.archiveSeq === 'number' ? b.archiveSeq : Infinity;
+        if (seqA !== seqB) return seqA - seqB;
+        return (a.timestamp || 0) - (b.timestamp || 0);
+      });
+    } else {
+      normalized.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    }
 
     for (const record of normalized) {
       const recType = record.recordType || record.type || (record.payload && record.payload.type) || '';
@@ -868,11 +973,13 @@ class SubjectState {
         continue;
       }
 
-      const wNo = record.windowNo || 1;
+      const wNo = (typeof record.windowNo === 'number' && !Number.isNaN(record.windowNo))
+        ? record.windowNo
+        : (record.windowNo === null ? null : (record.payload && typeof record.payload.windowNo === 'number' && !Number.isNaN(record.payload.windowNo) ? record.payload.windowNo : null));
       const ts = record.timestamp || 0;
 
       // 窗口与时间过滤闸门
-      if (targetUntilWindow !== null && wNo > targetUntilWindow) continue;
+      if (targetUntilWindow !== null && wNo !== null && wNo > targetUntilWindow) continue;
       if (targetUntilTimestamp !== null && ts > targetUntilTimestamp) continue;
 
       let evidence = [];
@@ -920,7 +1027,9 @@ class SubjectState {
 
       processedRecords++;
       rejectedRecords += rej.length;
-      actualWindowNos.push(wNo);
+      if (typeof wNo === 'number' && !Number.isNaN(wNo)) {
+        actualWindowNos.push(wNo);
+      }
 
       const rawDeltas = {};
       const traitEvidenceMap = {};
@@ -950,7 +1059,7 @@ class SubjectState {
       const deltas = {};
       const stepChanges = [];
       for (const [trait, sum] of Object.entries(rawDeltas)) {
-        const clampedDelta = clamp(Math.round(sum), -maxDelta, maxDelta);
+        const clampedDelta = clamp(symmetricRound(sum), -maxDelta, maxDelta);
         if (clampedDelta !== 0) {
           deltas[trait] = clampedDelta;
           const curr = currentValues[trait] ?? 0;
@@ -986,6 +1095,13 @@ class SubjectState {
     return {
       replayStatus,
       integrity,
+      archiveIntegrity: (integrityReport && integrityReport.integrity) || integrity,
+      syntax_integrity: (integrityReport && integrityReport.syntax_integrity) || (corruptCount > 0 ? 'corrupted' : 'valid'),
+      sequence_integrity: (integrityReport && integrityReport.sequence_integrity) || (hasArchiveSeq ? 'monotonic' : 'legacy'),
+      hash_integrity: (integrityReport && integrityReport.hash_integrity) || (hasArchiveSeq ? 'verified' : 'legacy'),
+      ordering,
+      orderingIntegrity: ordering,
+      hasLegacyAdapter: !!(integrityReport && integrityReport.hasLegacyAdapter),
       corruptRecords: corruptCount,
       initialState: { ...initialTraits },
       windowStates,

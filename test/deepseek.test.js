@@ -257,6 +257,114 @@ async function main() {
   check('usage 缺字段按 0 算而不是 NaN',
     costOf({}, { hit: 1, miss: 1, out: 1 }) === 0 && !Number.isNaN(costOf({}, {})));
 
+  /* ---- 5. P1-1 & P1-2: 流式生命周期 AbortSignal 与双超时隔离 ---- */
+  {
+    let abortTestClosed = false;
+    const streamSrv = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write(DELTA('第1句'));
+        // 挂起不结束，等待客户端操作
+      });
+      res.on('close', () => { abortTestClosed = true; });
+    });
+    await new Promise(r => streamSrv.listen(0, '127.0.0.1', r));
+    const srvUrl = 'http://127.0.0.1:' + streamSrv.address().port;
+
+    // 5.1 caller AbortSignal 中途取消测试
+    const dAbort = new DeepSeek({ baseURL: srvUrl, apiKey: 'k', model: 'm', streamIdleTimeoutMs: 10000 });
+    const ac = new AbortController();
+    let receivedFirst = '';
+    const streamPromise = dAbort.stream([{ role: 'user', content: 'test' }], chunk => {
+      receivedFirst += chunk;
+      ac.abort(new Error('user cancelled'));
+    }, { signal: ac.signal });
+
+    let abortCaught = null;
+    try {
+      await streamPromise;
+    } catch (e) {
+      abortCaught = e;
+    }
+    check('P1-1: 中途触发 AbortSignal 立即中止流式读取', abortCaught && /user cancelled/.test(abortCaught.message));
+    check('P1-1: 中途取消保留已接收的 partial 文本', abortCaught && abortCaught.partial === '第1句');
+
+    // 等待服务端收到连接释放
+    for (let i = 0; i < 20 && !abortTestClosed; i++) {
+      await new Promise(r => setTimeout(r, 20));
+    }
+    check('P1-1: AbortSignal 取消后底层 reader 与连接已释放', abortTestClosed === true);
+
+    // 5.2 streamIdleTimeoutMs 块间空闲超时测试
+    const dIdle = new DeepSeek({ baseURL: srvUrl, apiKey: 'k', model: 'm', streamIdleTimeoutMs: 100 });
+    let idleCaught = null;
+    try {
+      await dIdle.stream([{ role: 'user', content: 'test' }], () => {});
+    } catch (e) {
+      idleCaught = e;
+    }
+    check('P1-2: 超过 streamIdleTimeoutMs 触发 stream idle timeout',
+      idleCaught && idleCaught.message === 'stream idle timeout' && idleCaught.name === 'TimeoutError');
+
+    // 5.3 requestTimeoutMs 全局生命周期超时测试
+    const dReq = new DeepSeek({ baseURL: srvUrl, apiKey: 'k', model: 'm', requestTimeoutMs: 100, streamIdleTimeoutMs: 5000 });
+    let reqCaught = null;
+    try {
+      await dReq.stream([{ role: 'user', content: 'test' }], () => {});
+    } catch (e) {
+      reqCaught = e;
+    }
+    check('P1-2: 超过 requestTimeoutMs 触发 request timeout',
+      reqCaught && reqCaught.message === 'request timeout' && reqCaught.name === 'TimeoutError');
+
+    // 5.4 发起前已处于 abort 状态测试
+    const acPre = new AbortController();
+    acPre.abort(new Error('pre aborted'));
+    let preCaught = null;
+    try {
+      await dAbort.stream([{ role: 'user', content: 'test' }], () => {}, { signal: acPre.signal });
+    } catch (e) {
+      preCaught = e;
+    }
+    check('P1-1: 请求发起前已 abort 立即拒绝且不产生流数据',
+      preCaught && /pre aborted|aborted/i.test(preCaught.message));
+
+    // 5.5 建立连接并收到 headers 后立即 abort 测试
+    let headersServerClosed = false;
+    const headersSrv = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        // 不立即发送 chunk，保持连接
+      });
+      res.on('close', () => { headersServerClosed = true; });
+    });
+    await new Promise(r => headersSrv.listen(0, '127.0.0.1', r));
+    const headersUrl = 'http://127.0.0.1:' + headersSrv.address().port;
+    const dHeaders = new DeepSeek({ baseURL: headersUrl, apiKey: 'k', model: 'm' });
+    const acHeaders = new AbortController();
+    let headersChunkCount = 0;
+    const headersPromise = dHeaders.stream([{ role: 'user', content: 'test' }], () => {
+      headersChunkCount++;
+    }, { signal: acHeaders.signal });
+
+    // 等待连接建立、headers 发出后立即 abort
+    await new Promise(r => setTimeout(r, 50));
+    acHeaders.abort(new Error('abort after headers'));
+    let headersCaught = null;
+    try {
+      await headersPromise;
+    } catch (e) {
+      headersCaught = e;
+    }
+    check('P1-1: 收到 headers 尚未接收数据块前 abort 顺利中止并释放连接',
+      headersCaught && /abort after headers|aborted/i.test(headersCaught.message) && headersChunkCount === 0);
+    headersSrv.close();
+
+    streamSrv.close();
+  }
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 }

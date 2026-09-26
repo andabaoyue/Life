@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Menu, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Menu, safeStorage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { load, save, tryLoad } = require('./src/config');
@@ -479,7 +479,7 @@ app.whenReady().then(() => {
     for (const w of assetReport.warnings) console.warn('[AssetCheck]', w);
   }
   researchService = new ResearchService(app.getPath('userData'));
-  registerResearchIpc(ipcMain, researchService);
+  registerResearchIpc(ipcMain, researchService, { dialog });
   createWindow();
 });
 

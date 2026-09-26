@@ -189,6 +189,44 @@ check('6.1: 轨迹中 sc-win-0 的 windowNo 严格保留为 0', scZero && scZero
 const scNull = trajectory.find(sc => sc.stateChangeId === 'sc-no-win');
 check('6.2: 轨迹中 sc-no-win 的 windowNo 严格保留为 null', scNull && scNull.windowNo === null);
 
+// -----------------------------------------------------------------------------
+// 7. 显式验证 windowNo = 0 / null / undefined / 1 四类边界语义
+// -----------------------------------------------------------------------------
+const { createStateChange } = require('../src/state-change');
+const { createEvent, createExperience } = require('../src/experience-schema');
+const { SubjectState } = require('../src/subject-state');
+
+// 7.1 StateChange
+check('7.1: StateChange windowNo=0 严格保留为 0', createStateChange({ windowNo: 0 }).windowNo === 0);
+check('7.2: StateChange windowNo=null 严格保留为 null', createStateChange({ windowNo: null }).windowNo === null);
+check('7.3: StateChange windowNo=undefined 默认缺省为 1', createStateChange({ windowNo: undefined }).windowNo === 1);
+check('7.4: StateChange windowNo=1 准确为 1', createStateChange({ windowNo: 1 }).windowNo === 1);
+
+// 7.2 Event
+check('7.5: Event windowNo=0 严格保留为 0', createEvent({ windowNo: 0 }).windowNo === 0);
+check('7.6: Event windowNo=null 严格保留为 null', createEvent({ windowNo: null }).windowNo === null);
+check('7.7: Event windowNo=undefined 默认缺省为 1', createEvent({ windowNo: undefined }).windowNo === 1);
+check('7.8: Event windowNo=1 准确为 1', createEvent({ windowNo: 1 }).windowNo === 1);
+
+// 7.3 Experience
+check('7.9: Experience windowNo=0 严格保留为 0', createExperience({ windowNo: 0 }).windowNo === 0);
+check('7.10: Experience windowNo=null 严格保留为 null', createExperience({ windowNo: null }).windowNo === null);
+check('7.11: Experience windowNo=undefined 默认缺省为 1', createExperience({ windowNo: undefined }).windowNo === 1);
+check('7.12: Experience windowNo=1 准确为 1', createExperience({ windowNo: 1 }).windowNo === 1);
+
+// 7.4 SubjectState.replay
+const rep0 = SubjectState.replay([{ schemaVersion: 1, recordType: 'window_summary', windowNo: 0, timestamp: 100, payload: { turns: 1 } }]);
+check('7.13: Replay windowNo=0 在 windowStates 中保留为 0', rep0.windowStates[0] && rep0.windowStates[0].windowNo === 0);
+
+const repNull = SubjectState.replay([{ schemaVersion: 1, recordType: 'window_summary', windowNo: null, timestamp: 100, payload: { turns: 1 } }]);
+check('7.14: Replay windowNo=null 在 windowStates 中保持为 null (不降级为 1)', repNull.windowStates[0] && repNull.windowStates[0].windowNo === null);
+
+const repUndef = SubjectState.replay([{ schemaVersion: 1, recordType: 'window_summary', timestamp: 100, payload: { turns: 1 } }]);
+check('7.15: Replay windowNo 缺失在 windowStates 中保持为 null (绝不冒充 1)', repUndef.windowStates[0] && repUndef.windowStates[0].windowNo === null);
+
+const rep1 = SubjectState.replay([{ schemaVersion: 1, recordType: 'window_summary', windowNo: 1, timestamp: 100, payload: { turns: 1 } }]);
+check('7.16: Replay windowNo=1 在 windowStates 中准确为 1', rep1.windowStates[0] && rep1.windowStates[0].windowNo === 1);
+
 try {
   fs.rmSync(dir, { recursive: true, force: true });
 } catch {}

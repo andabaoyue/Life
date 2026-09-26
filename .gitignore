@@ -32,6 +32,7 @@ coverage/
 dist/
 build/
 .cache/
+*.zip
 
 # OS and Editor files
 .DS_Store

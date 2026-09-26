@@ -88,17 +88,28 @@ class DeepSeek {
   }
 
   async raw(body, signal) {
-    const url = this.cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
-    const ctrl = new AbortController();
-    const forwardAbort = () => ctrl.abort(signal && signal.reason);
-    if (signal) {
-      if (signal.aborted) forwardAbort();
-      else signal.addEventListener('abort', forwardAbort, { once: true });
+    const { providerFor, validateCredentialTarget } = require('./provider-policy');
+    const provider = this.cfg.provider || providerFor(this.cfg.baseURL);
+    const credentialType = this.cfg.credentialType || (provider === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
+    const policy = validateCredentialTarget({ provider, baseURL: this.cfg.baseURL, credentialType });
+    if (!policy.ok) {
+      throw new Error(`[DeepSeek] Provider Policy 违规拦截: ${policy.error}`);
     }
+
+    const url = this.cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
+    let res;
+    // 如果上层未传递 signal，内部兜底建立超时保护控制器
+    const fallbackCtrl = signal ? null : new AbortController();
     const requestTimeoutMs = Number.isFinite(this.cfg.requestTimeoutMs)
       ? this.cfg.requestTimeoutMs : 60000;
-    const timer = setTimeout(() => ctrl.abort(new Error('request timeout')), requestTimeoutMs);
-    let res;
+    const timer = fallbackCtrl
+      ? setTimeout(() => {
+          const err = new Error('request timeout');
+          err.name = 'TimeoutError';
+          fallbackCtrl.abort(err);
+        }, requestTimeoutMs)
+      : null;
+
     try {
       res = await fetch(url, {
         method: 'POST',
@@ -107,12 +118,12 @@ class DeepSeek {
           Authorization: 'Bearer ' + this.cfg.apiKey
         },
         body: JSON.stringify(body),
-        signal: ctrl.signal
+        signal: signal || fallbackCtrl.signal
       });
     } finally {
-      clearTimeout(timer);
-      if (signal) signal.removeEventListener('abort', forwardAbort);
+      if (timer) clearTimeout(timer);
     }
+
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error('HTTP ' + res.status + ' ' + text.slice(0, 300));
@@ -122,18 +133,48 @@ class DeepSeek {
 
   /** 非流式，用于生成摘要 */
   async complete(messages, opts = {}) {
-    const res = await this.raw({
-      model: this.cfg.model,
-      messages,
-      stream: false,
-      temperature: opts.temperature ?? 0.3,
-      max_tokens: opts.maxTokens ?? 400
-    }, opts.signal);
-    const j = await res.json();
-    return {
-      text: (j.choices?.[0]?.message?.content || '').trim(),
-      usage: j.usage || {}
-    };
+    const callerSignal = opts.signal;
+    const ctrl = new AbortController();
+    const forwardAbort = () => ctrl.abort(callerSignal && callerSignal.reason);
+    if (callerSignal) {
+      if (callerSignal.aborted) forwardAbort();
+      else callerSignal.addEventListener('abort', forwardAbort, { once: true });
+    }
+
+    // P1-2: requestTimeoutMs 覆盖整个请求与响应解析生命周期
+    const requestTimeoutMs = Number.isFinite(this.cfg.requestTimeoutMs)
+      ? this.cfg.requestTimeoutMs : 60000;
+    let requestTimer = null;
+    if (requestTimeoutMs > 0) {
+      requestTimer = setTimeout(() => {
+        const err = new Error('request timeout');
+        err.name = 'TimeoutError';
+        ctrl.abort(err);
+      }, requestTimeoutMs);
+    }
+
+    try {
+      const res = await this.raw({
+        model: this.cfg.model,
+        messages,
+        stream: false,
+        temperature: opts.temperature ?? 0.3,
+        max_tokens: opts.maxTokens ?? 400
+      }, ctrl.signal);
+      const j = await res.json();
+      return {
+        text: (j.choices?.[0]?.message?.content || '').trim(),
+        usage: j.usage || {}
+      };
+    } catch (err) {
+      if (err.message === 'request timeout') {
+        err.name = 'TimeoutError';
+      }
+      throw err;
+    } finally {
+      if (requestTimer) clearTimeout(requestTimer);
+      if (callerSignal) callerSignal.removeEventListener('abort', forwardAbort);
+    }
   }
 
   /**
@@ -141,94 +182,168 @@ class DeepSeek {
    * 返回完整文本 + usage。
    */
   async stream(messages, onDelta, opts = {}) {
-    const res = await this.raw({
-      model: this.cfg.model,
-      messages,
-      stream: true,
-      // OpenAI 协议流式默认不返回 usage，必须显式开启；
-      // 漏了这行，真实 API 下 usage 恒为空，命中率/计费全是 0
-      stream_options: { include_usage: true },
-      temperature: opts.temperature ?? 1.0,
-      max_tokens: opts.maxTokens ?? 600
-    }, opts.signal);
+    const callerSignal = opts.signal;
+    const ctrl = new AbortController();
+    const forwardAbort = () => ctrl.abort(callerSignal && callerSignal.reason);
+    if (callerSignal) {
+      if (callerSignal.aborted) forwardAbort();
+      else callerSignal.addEventListener('abort', forwardAbort, { once: true });
+    }
 
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '', full = '', usage = {}, streamError = null;
+    // P1-2: requestTimeoutMs 覆盖整个请求与流式生命周期
+    const requestTimeoutMs = Number.isFinite(this.cfg.requestTimeoutMs)
+      ? this.cfg.requestTimeoutMs : 60000;
+    let requestTimer = null;
+    if (requestTimeoutMs > 0) {
+      requestTimer = setTimeout(() => {
+        const err = new Error('request timeout');
+        err.name = 'TimeoutError';
+        ctrl.abort(err);
+      }, requestTimeoutMs);
+    }
 
-    // 一行 SSE -> 文本增量/usage。抽出来是因为循环之外还要补处理最后一段。
-    const consume = (line) => {
-      const s = line.trim();
-      if (!s.startsWith('data:')) return;
-      const payload = s.slice(5).trim();
-      if (payload === '[DONE]') return;
-      let j;
-      try { j = JSON.parse(payload); } catch { return; }
-      // OpenAI 兼容服务在流内报错时 HTTP 仍是 200，错误只出现在某一条 data 里
-      // （余额耗尽、限速、内容审核拦截）。不接住的话它会连同半截回复一起被
-      // 当成"成功"，最后只报一句"返回空内容"，真实原因永久丢失。
-      if (j.error) {
-        const e = j.error;
-        const why = e.message || e.msg || JSON.stringify(e);
-        streamError = new Error(why + (e.type || e.code ? '（' + (e.type || e.code) + '）' : ''));
-        return;
+    let reader = null;
+    let streamError = null;
+    let full = '';
+    let usage = {};
+
+    try {
+      const res = await this.raw({
+        model: this.cfg.model,
+        messages,
+        stream: true,
+        // OpenAI 协议流式默认不返回 usage，必须显式开启；
+        // 漏了这行，真实 API 下 usage 恒为空，命中率/计费全是 0
+        stream_options: { include_usage: true },
+        temperature: opts.temperature ?? 1.0,
+        max_tokens: opts.maxTokens ?? 600
+      }, ctrl.signal);
+
+      reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+
+      // 一行 SSE -> 文本增量/usage。抽出来是因为循环之外还要补处理最后一段。
+      const consume = (line) => {
+        const s = line.trim();
+        if (!s.startsWith('data:')) return;
+        const payload = s.slice(5).trim();
+        if (payload === '[DONE]') return;
+        let j;
+        try { j = JSON.parse(payload); } catch { return; }
+        // OpenAI 兼容服务在流内报错时 HTTP 仍是 200，错误只出现在某一条 data 里
+        // （余额耗尽、限速、内容审核拦截）。不接住的话它会连同半截回复一起被
+        // 当成"成功"，最后只报一句"返回空内容"，真实原因永久丢失。
+        if (j.error) {
+          const e = j.error;
+          const why = e.message || e.msg || JSON.stringify(e);
+          streamError = new Error(why + (e.type || e.code ? '（' + (e.type || e.code) + '）' : ''));
+          return;
+        }
+        if (j.usage) usage = j.usage;
+        const d = j.choices?.[0]?.delta?.content;
+        if (d) { full += d; onDelta && onDelta(d); }
+      };
+
+      // P1-2: streamIdleTimeoutMs 仅约束连续 chunk 之间的等待空闲时间
+      const streamIdleTimeoutMs = Number.isFinite(this.cfg.streamIdleTimeoutMs)
+        ? this.cfg.streamIdleTimeoutMs : 20000;
+
+      while (true) {
+        if (ctrl.signal.aborted) {
+          const abortReason = ctrl.signal.reason;
+          const err = abortReason instanceof Error ? abortReason : new Error(abortReason || 'aborted');
+          err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+          throw err;
+        }
+
+        let idleTimer = null;
+        let onAbortHandler = null;
+
+        try {
+          const readPromise = reader.read();
+
+          const idlePromise = new Promise((_, reject) => {
+            idleTimer = setTimeout(() => {
+              const err = new Error('stream idle timeout');
+              err.name = 'TimeoutError';
+              reject(err);
+            }, streamIdleTimeoutMs);
+          });
+
+          const abortPromise = new Promise((_, reject) => {
+            onAbortHandler = () => {
+              const abortReason = ctrl.signal.reason;
+              const err = abortReason instanceof Error ? abortReason : new Error(abortReason || 'aborted');
+              err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+              reject(err);
+            };
+            ctrl.signal.addEventListener('abort', onAbortHandler, { once: true });
+          });
+
+          const { done, value } = await Promise.race([readPromise, idlePromise, abortPromise]);
+
+          if (idleTimer) clearTimeout(idleTimer);
+          if (onAbortHandler) ctrl.signal.removeEventListener('abort', onAbortHandler);
+
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+
+          // SSE 按行解析，行尾可能是 \n 或 \r\n；没有换行的尾巴留在 buf 里等下一块
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) consume(line);
+          if (streamError) break;      // 已经报错就不用再读下去了（也避免挂到连接超时）
+        } catch (readErr) {
+          if (idleTimer) clearTimeout(idleTimer);
+          if (onAbortHandler) ctrl.signal.removeEventListener('abort', onAbortHandler);
+          try { await reader.cancel(); } catch { /* 释放挂起的响应流 */ }
+          if (readErr.message === 'stream idle timeout' || readErr.message === 'request timeout') {
+            readErr.name = 'TimeoutError';
+          }
+          readErr.partial = full;
+          throw readErr;
+        }
       }
-      if (j.usage) usage = j.usage;
-      const d = j.choices?.[0]?.delta?.content;
-      if (d) { full += d; onDelta && onDelta(d); }
-    };
 
-    while (true) {
-      let readTimer;
-      try {
-        const readPromise = reader.read();
-        const streamIdleTimeoutMs = Number.isFinite(this.cfg.streamIdleTimeoutMs)
-          ? this.cfg.streamIdleTimeoutMs : 20000;
-        const timeoutPromise = new Promise((_, reject) => {
-          readTimer = setTimeout(() => reject(new Error('stream idle timeout')), streamIdleTimeoutMs);
-        });
-        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
-        clearTimeout(readTimer);
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-
-      // SSE 按行解析，行尾可能是 \n 或 \r\n；没有换行的尾巴留在 buf 里等下一块
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) consume(line);
-      if (streamError) break;      // 已经报错就不用再读下去了（也避免挂到连接超时）
-      } catch (err) {
-        clearTimeout(readTimer);
-        try { await reader.cancel(); } catch { /* 释放挂起的响应流 */ }
-        err.name = err.message === 'stream idle timeout' ? 'TimeoutError' : err.name;
-        err.partial = full;
-        throw err;
+      if (streamError) {
+        // break 只是不再消费，连接本身还开着：实测（服务端发完 error 帧后故意不关，
+        // 客户端进程单独数 net.Socket 句柄）每报错一次就挂住一条，连发 6 次 → Δ6，
+        // 不随 GC 归零；补 cancel() 后 Δ-1（连接回 keep-alive 池，不累积）。
+        // 桌宠是常驻小进程，报错往往是连续的（余额耗尽时每轮都报），
+        // 攒下来就是越用越多的挂起连接。cancel() 显式把流读完并释放。
+        try { await reader.cancel(); } catch { /* 已经关了就不用管 */ }
       }
-    }
 
-    if (streamError) {
-      // break 只是不再消费，连接本身还开着：实测（服务端发完 error 帧后故意不关，
-      // 客户端进程单独数 net.Socket 句柄）每报错一次就挂住一条，连发 6 次 → Δ6，
-      // 不随 GC 归零；补 cancel() 后 Δ-1（连接回 keep-alive 池，不累积）。
-      // 桌宠是常驻小进程，报错往往是连续的（余额耗尽时每轮都报），
-      // 攒下来就是越用越多的挂起连接。cancel() 显式把流读完并释放。
-      try { await reader.cancel(); } catch { /* 已经关了就不用管 */ }
+      // 收尾必须 flush：多字节字符可能卡在 decoder 里，
+      // 最后一段也没有换行触发循环内处理。真实 DeepSeek 的 usage 包就在
+      // [DONE] 之前 —— 服务端少发一个换行，命中率/计费就会静默归零。
+      if (!streamError) {
+        buf += dec.decode();         // 无参调用吐出 decoder 里剩余的字节
+        if (buf) consume(buf);
+      }
+      if (streamError) {
+        // 把已经收到的半截回复一起带出去：调用方可以决定是丢弃还是保留，
+        // 也让用户看得见"说到一半断的"，而不是以为什么都没发生。
+        streamError.partial = full;
+        throw streamError;
+      }
+      return { text: full, usage };
+    } catch (outerErr) {
+      if (reader) {
+        try { await reader.cancel(); } catch {}
+      }
+      if (outerErr.message === 'request timeout') {
+        outerErr.name = 'TimeoutError';
+      }
+      if (outerErr.partial === undefined) {
+        outerErr.partial = full;
+      }
+      throw outerErr;
+    } finally {
+      if (requestTimer) clearTimeout(requestTimer);
+      if (callerSignal) callerSignal.removeEventListener('abort', forwardAbort);
     }
-
-    // 收尾必须 flush：多字节字符可能卡在 decoder 里，
-    // 最后一段也没有换行触发循环内处理。真实 DeepSeek 的 usage 包就在
-    // [DONE] 之前 —— 服务端少发一个换行，命中率/计费就会静默归零。
-    if (!streamError) {
-      buf += dec.decode();         // 无参调用吐出 decoder 里剩余的字节
-      if (buf) consume(buf);
-    }
-    if (streamError) {
-      // 把已经收到的半截回复一起带出去：调用方可以决定是丢弃还是保留，
-      // 也让用户看得见"说到一半断的"，而不是以为什么都没发生。
-      streamError.partial = full;
-      throw streamError;
-    }
-    return { text: full, usage };
   }
 }
 

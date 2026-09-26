@@ -5,16 +5,18 @@
  * 1. JS 语法静态检查通过（node --check）
  * 2. 创作规范文件 skills/DS Skill.md 存在且内容规范
  * 3. 换装系统所需的 12 个 PNG 图层资源全部存在且符合 760x1000 规范
- * 4. 兜底皮套 assets/pet.png 存在且符合 1015x1171 比例规范
- * 5. package-lock.json 存在且与 package.json 依赖元数据一致
- * 6. 配置版本与默认配置完整性 (schemaVersion=1, configVersion="1.0.0")
- * 7. README.md 文档声明与测试集文件清单严格一致
+ * 4. 换装图层透明度与 Alpha 边界非破坏性审计 (P1-6: 识别全透明空图层并预警，绝不破坏/覆盖资产)
+ * 5. 兜底皮套 assets/pet.png 存在且符合 1015x1171 比例规范
+ * 6. package-lock.json 存在且与 package.json 依赖元数据一致
+ * 7. 配置版本与默认配置完整性 (schemaVersion=1, configVersion="1.0.0")
+ * 8. README.md 文档声明与测试集文件清单严格一致
  *
  * 输出格式：结构化 (PASS / WARN / FAIL)
  */
 
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -32,7 +34,7 @@ function report(status, title, detail = '') {
 }
 
 console.log('====================================================');
-console.log('       Life (初澜) v0.9.5.2 发布包资源完整性自动化检查   ');
+console.log('       Life (初澜) v0.9.6 发布包资源完整性自动化检查     ');
 console.log('====================================================\n');
 
 /* 1. JS 语法检查 */
@@ -126,7 +128,136 @@ function checkWardrobeAssets() {
   }
 }
 
-/* 4. 兜底立绘尺寸检查 */
+function unfilterScanline(filterType, currentLine, prevLine, bpp) {
+  const line = Buffer.alloc(currentLine.length);
+  for (let i = 0; i < currentLine.length; i++) {
+    const raw = currentLine[i];
+    const a = i >= bpp ? line[i - bpp] : 0;
+    const b = prevLine ? prevLine[i] : 0;
+    const c = (prevLine && i >= bpp) ? prevLine[i - bpp] : 0;
+    let val = 0;
+    switch (filterType) {
+      case 0: val = raw; break;
+      case 1: val = (raw + a) & 0xFF; break;
+      case 2: val = (raw + b) & 0xFF; break;
+      case 3: val = (raw + Math.floor((a + b) / 2)) & 0xFF; break;
+      case 4: {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        const pr = (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+        val = (raw + pr) & 0xFF;
+        break;
+      }
+      default: val = raw; break;
+    }
+    line[i] = val;
+  }
+  return line;
+}
+
+function getPngAlphaBbox(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const buf = fs.readFileSync(filePath);
+  if (buf.length < 24 || buf.slice(0, 8).toString('hex') !== '89504e470d0a1a0a') return null;
+  const w = buf.readUInt32BE(16);
+  const h = buf.readUInt32BE(20);
+  const bitDepth = buf[24];
+  const colorType = buf[25];
+  if (bitDepth !== 8 || colorType !== 6) return null; // 仅限 8-bit RGBA
+
+  let pos = 8;
+  const idats = [];
+  while (pos < buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.slice(pos + 4, pos + 8).toString('ascii');
+    if (type === 'IDAT') idats.push(buf.slice(pos + 8, pos + 8 + len));
+    pos += 12 + len;
+  }
+  if (!idats.length) return null;
+  let decompressed;
+  try {
+    decompressed = zlib.inflateSync(Buffer.concat(idats));
+  } catch {
+    return null;
+  }
+  const bpp = 4;
+  const scanlineLen = w * bpp;
+  const stride = 1 + scanlineLen;
+
+  let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
+  let prevLine = null;
+
+  for (let y = 0; y < h; y++) {
+    const filter = decompressed[y * stride];
+    const rawScanline = decompressed.slice(y * stride + 1, y * stride + stride);
+    const line = unfilterScanline(filter, rawScanline, prevLine, bpp);
+    prevLine = line;
+
+    for (let x = 0; x < w; x++) {
+      const alpha = line[x * 4 + 3];
+      if (alpha > 0) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (maxX === -1) return { empty: true, bbox: null };
+  return {
+    empty: false,
+    bbox: { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 }
+  };
+}
+
+/* 4. 换装图层透明度与 Alpha 边界非破坏性审计 (P1-6) */
+function checkLayerTransparency() {
+  const { CATALOG } = require('../src/wardrobe');
+  const expectedFiles = [
+    'assets/character/base/base.png',
+    'assets/character/accessories/choker_key_01.png'
+  ];
+
+  for (const item of Object.values(CATALOG)) {
+    if (item.file) expectedFiles.push('assets/character/' + item.file);
+  }
+
+  const uniqueFiles = [...new Set(expectedFiles)];
+  const emptyLayers = [];
+  const validLayers = [];
+  const abnormalLayers = [];
+
+  for (const rel of uniqueFiles) {
+    const full = path.join(ROOT, rel);
+    if (!fs.existsSync(full)) {
+      abnormalLayers.push({ rel, reason: '文件不存在' });
+      continue;
+    }
+    const res = getPngAlphaBbox(full);
+    if (!res) {
+      abnormalLayers.push({ rel, reason: '非标准 8-bit RGBA 格式或 IDAT 解压失败' });
+    } else if (res.empty) {
+      emptyLayers.push({ rel, bbox: 'empty/null' });
+    } else {
+      validLayers.push({ rel, bbox: `${res.bbox.width}x${res.bbox.height} at (${res.bbox.minX},${res.bbox.minY})` });
+    }
+  }
+
+  if (abnormalLayers.length > 0) {
+    report('FAIL', '分层资产格式异常', `检测到 ${abnormalLayers.length} 个图层异常无法解析: ${abnormalLayers.map(e => `${path.basename(e.rel)} (${e.reason})`).join(', ')}`);
+  }
+
+  if (emptyLayers.length > 0) {
+    report('WARN', '分层资产透明度审计', `检测到 ${emptyLayers.length} 个正在制作中的换装图层目前为全透明空图层 (bbox: empty/null): ${emptyLayers.map(e => path.basename(e.rel)).join(', ')} (严格遵循非破坏性审计规范：保留美术现场，禁止造假图)`);
+  } else if (abnormalLayers.length === 0) {
+    report('PASS', '分层资产透明度审计', `全部 ${uniqueFiles.length} 个换装图层均包含有效 Alpha 内容`);
+  }
+}
+
+/* 5. 兜底立绘尺寸检查 */
 function checkFallbackSprite() {
   const petPath = path.join(ROOT, 'assets', 'pet.png');
   if (!fs.existsSync(petPath)) {
@@ -147,7 +278,7 @@ function checkFallbackSprite() {
   }
 }
 
-/* 5. 依赖锁 package-lock.json 检查 */
+/* 6. 依赖锁 package-lock.json 检查 */
 function checkPackageLock() {
   const pkgPath = path.join(ROOT, 'package.json');
   const lockPath = path.join(ROOT, 'package-lock.json');
@@ -172,7 +303,7 @@ function checkPackageLock() {
   }
 }
 
-/* 6. 配置 Schema 与默认参数检查 */
+/* 7. 配置 Schema 与默认参数检查 */
 function checkConfigDefaults() {
   try {
     const { DEFAULTS, sanitize } = require('../src/config');
@@ -187,7 +318,7 @@ function checkConfigDefaults() {
   }
 }
 
-/* 7. README 文档与测试集完整性 */
+/* 8. README 文档与测试集完整性 */
 function checkDocsAndTestSuites() {
   const readmePath = path.join(ROOT, 'README.md');
   if (!fs.existsSync(readmePath)) {
@@ -218,6 +349,7 @@ function checkDocsAndTestSuites() {
 checkJsSyntax();
 checkCreativeSkill();
 checkWardrobeAssets();
+checkLayerTransparency();
 checkFallbackSprite();
 checkPackageLock();
 checkConfigDefaults();

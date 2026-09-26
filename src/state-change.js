@@ -9,6 +9,16 @@
  *    若解释声称的数值与真实 Reducer 计算结果不一致，则该解释被裁定为无效（INVALID），严禁影响状态。
  */
 
+/**
+ * 纯函数：正负对称的整数化规则 (v0.9.6 P0-10)
+ * 严格满足：symmetricRound(-x) === -symmetricRound(x)
+ * 消除传统 Math.round(+1.5)=2 与 Math.round(-1.5)=-1 的不对称方向偏差。
+ */
+function symmetricRound(x) {
+  if (x === 0 || !Number.isFinite(x)) return 0;
+  return Math.sign(x) * Math.round(Math.abs(x));
+}
+
 let stateChangeSeq = 0;
 
 /**
@@ -24,15 +34,17 @@ function createStateChange(opts = {}) {
   return {
     stateChangeId,
     changeId: stateChangeId, // 别名支持
-    windowNo: opts.windowNo || 1,
+    windowNo: (typeof opts.windowNo === 'number' && !Number.isNaN(opts.windowNo)) ? opts.windowNo : (opts.windowNo === null ? null : 1),
     trait: String(opts.trait || '').trim(),
     previousValue,
     delta,
     newValue,
     evidenceIds: Array.isArray(opts.evidenceIds) ? [...opts.evidenceIds] : [],
+    roundingMode: opts.roundingMode || 'symmetric',
     reducer: {
       stepWeight: opts.stepWeight ?? 20,
-      maxDelta: opts.maxDelta ?? 50
+      maxDelta: opts.maxDelta ?? 50,
+      roundingMode: opts.roundingMode || 'symmetric'
     },
     createdAt: opts.createdAt || Date.now()
   };
@@ -135,5 +147,6 @@ function createStateChangeExplanation(stateChange, explanationData = {}) {
 module.exports = {
   createStateChange,
   validateStateChange,
-  createStateChangeExplanation
+  createStateChangeExplanation,
+  symmetricRound
 };

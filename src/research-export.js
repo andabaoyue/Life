@@ -105,7 +105,7 @@ function exportFullResearchBundle(researchQuery, options = {}) {
 
   const metadata = {
     schemaVersion: 1,
-    appVersion: '0.9.5.2',
+    appVersion: '0.9.5.3',
     archiveSchemaVersion: 1,
     subjectStateSchemaVersion: 1,
     exportTimestamp: Date.now()
@@ -131,11 +131,19 @@ function exportFullResearchBundle(researchQuery, options = {}) {
   };
 
   if (targetDir) {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+    if (typeof targetDir !== 'string' || !targetDir.trim()) {
+      throw new Error('INVALID_TARGET_DIR: Target directory must be a valid non-empty string');
+    }
+    if (targetDir.includes('..')) {
+      throw new Error('PATH_TRAVERSAL_DETECTED: Target directory cannot contain traversal sequence (..)');
+    }
+    const canonicalDir = path.resolve(targetDir);
+    if (!fs.existsSync(canonicalDir)) {
+      fs.mkdirSync(canonicalDir, { recursive: true });
     }
     for (const [filename, content] of Object.entries(bundle)) {
-      fs.writeFileSync(path.join(targetDir, filename), content, 'utf8');
+      const safeFilename = path.basename(filename);
+      fs.writeFileSync(path.join(canonicalDir, safeFilename), content, 'utf8');
     }
   }
 

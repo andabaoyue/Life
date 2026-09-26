@@ -969,7 +969,8 @@ async function main() {
     check('P0-04: experiences.jsonl 成功追加完整窗口归档记录',
       p0Brain.experiencesArchive.count() === 1);
 
-    const wArchive = p0Brain.experiencesArchive.readAll()[0];
+    const wRawArchive = p0Brain.experiencesArchive.readAll()[0];
+    const wArchive = (wRawArchive && wRawArchive.payload) || wRawArchive;
     check('P0-04: 经历归档完整保留 segments 与 windowSynthesis 双通道',
       wArchive && wArchive.segments && wArchive.segments.length === 1 &&
       wArchive.windowSynthesis && wArchive.windowSynthesis.stableUserFacts[0] === '用户希望平时聊天安静一些' &&

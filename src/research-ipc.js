@@ -9,8 +9,11 @@
  * 3. 渲染进程绝无对底层实验数据库的直接修改能力。
  */
 
-function registerResearchIpc(ipcMain, researchService) {
+const path = require('path');
+
+function registerResearchIpc(ipcMain, researchService, options = {}) {
   if (!ipcMain || !researchService) return;
+  const dialog = options.dialog || null;
 
   // 1. 主体状态查询
   ipcMain.handle('research:get-state', () => {
@@ -23,13 +26,27 @@ function registerResearchIpc(ipcMain, researchService) {
   });
 
   ipcMain.handle('research:get-window', (e, opts) => {
-    const wNo = typeof opts === 'number' ? opts : ((opts && opts.windowNo) || 1);
+    let wNo = null;
+    if (typeof opts === 'number') {
+      wNo = opts;
+    } else if (opts && opts.windowNo !== undefined) {
+      wNo = opts.windowNo;
+    } else if (opts === null) {
+      wNo = null;
+    } else {
+      wNo = (opts && opts.windowNo) ?? 1;
+    }
     return researchService.query.getWindowDetail(wNo);
   });
 
   ipcMain.handle('research:get-window-rounds', (e, opts) => {
-    const wNo = (opts && opts.windowNo) || 1;
-    const segIdx = (opts && opts.segmentIndex) !== undefined ? opts.segmentIndex : null;
+    let wNo = null;
+    if (typeof opts === 'number') {
+      wNo = opts;
+    } else if (opts && opts.windowNo !== undefined) {
+      wNo = opts.windowNo;
+    }
+    const segIdx = (opts && opts.segmentIndex !== undefined) ? opts.segmentIndex : null;
     return researchService.query.getWindowRounds(wNo, segIdx);
   });
 
@@ -88,9 +105,43 @@ function registerResearchIpc(ipcMain, researchService) {
     return { ok: researchService.cancelReplayTask(taskId) };
   });
 
-  // 10. 轨迹与数据包导出
-  ipcMain.handle('research:export', (e, opts) => {
-    return researchService.exportData(opts || {});
+  // 10. 轨迹与数据包导出 (H-03 安全防护)
+  ipcMain.handle('research:export', async (e, opts = {}) => {
+    const rawOpts = opts || {};
+    // 安全防护 (H-03): 严格禁止渲染进程直接传入任意目标路径，防止任意目录写入
+    if (rawOpts.targetDir !== undefined || rawOpts.targetPath !== undefined || rawOpts.destPath !== undefined || rawOpts.destination !== undefined) {
+      return { ok: false, error: 'RENDERER_TARGET_DIR_PROHIBITED' };
+    }
+
+    const { type = 'full', format = 'json', saveToDisk = false } = rawOpts;
+
+    // 如果指定保存到磁盘，必须由主进程受信任逻辑控制，或通过主进程原生 dialog 由用户主动选择
+    if (saveToDisk) {
+      if (!dialog || typeof dialog.showOpenDialog !== 'function') {
+        return { ok: false, error: 'DIALOG_UNAVAILABLE' };
+      }
+      const dialogResult = await dialog.showOpenDialog({
+        title: '选择导出目录',
+        properties: ['openDirectory', 'createDirectory']
+      });
+      if (dialogResult.canceled || !dialogResult.filePaths || dialogResult.filePaths.length === 0) {
+        return { ok: false, cancelled: true, error: 'EXPORT_CANCELLED' };
+      }
+      const trustedTargetDir = dialogResult.filePaths[0];
+      try {
+        const result = researchService.exportData({
+          type,
+          format,
+          targetDir: trustedTargetDir
+        });
+        return { ok: true, targetDir: trustedTargetDir, result };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    }
+
+    // 默认内存导出：返回导出结果（字符串或 JSON 结构）
+    return researchService.exportData({ type, format });
   });
 
   // 11. 快照手动刷新

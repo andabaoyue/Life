@@ -536,7 +536,7 @@ function testG_Export() {
   check('Full Bundle 包含 state-changes.json', !!bundleResult.files['state-changes.json']);
 
   const meta = JSON.parse(bundleResult.files['metadata.json']);
-  check('metadata.json 标明 appVersion=0.9.5.2', meta.appVersion === '0.9.5.2');
+  check('metadata.json 标明 appVersion=0.9.5.3', meta.appVersion === '0.9.5.3');
   check('metadata.json 包含 exportTimestamp', typeof meta.exportTimestamp === 'number');
 
   check('导出目录中成功落地真实文件', fs.existsSync(path.join(exportTargetDir, 'metadata.json')));

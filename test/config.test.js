@@ -146,6 +146,24 @@ check('price 只按 peak/valley 两档合并，档内是整体替换', (() => {
   })());
 }
 
+/* ---- 8. Provider Policy 安全与凭据隔离边界 (v0.9.1) ---- */
+{
+  const { validateCredentialTarget, providerFor, isLocalHost } = require('../src/provider-policy');
+  check('DeepSeek 官方 HTTPS 且凭据为 deepseek-api-key 时允许通过',
+    validateCredentialTarget({ baseURL: 'https://api.deepseek.com/v1', credentialType: 'deepseek-api-key' }).ok === true);
+  check('本地 localhost / 127.0.0.1 允许明文 HTTP（兼容 Ollama / llama-server）',
+    validateCredentialTarget({ baseURL: 'http://127.0.0.1:11434/v1', credentialType: 'apiKey' }).ok === true
+    && validateCredentialTarget({ baseURL: 'http://localhost:8080/v1', credentialType: 'apiKey' }).ok === true);
+  check('公网 Endpoint 禁止使用明文 HTTP',
+    validateCredentialTarget({ baseURL: 'http://api.openai.com/v1', credentialType: 'apiKey' }).ok === false);
+  check('公网第三方自定义 Provider 严禁携带 DeepSeek 官方专属 Key',
+    validateCredentialTarget({ baseURL: 'https://api.openai.com/v1', credentialType: 'deepseek-api-key' }).ok === false);
+  check('DeepSeek 官方 Endpoint 必须使用专用 deepseek-api-key（禁止通用 apiKey）',
+    validateCredentialTarget({ baseURL: 'https://api.deepseek.com/v1', credentialType: 'apiKey' }).ok === false);
+  check('非法 baseURL 安全拦截报错',
+    validateCredentialTarget({ baseURL: 'not-a-valid-url' }).ok === false);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 for (const d of [A, B]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 交给系统 */ } }
 process.exit(failures ? 1 : 0);

@@ -23,9 +23,18 @@ const {
 } = require('./research-export');
 const { SubjectState, DEFAULT_TRAITS, ALLOWED_TRAITS } = require('./subject-state');
 const { normalizeArchiveRecord } = require('./experience-schema');
+const { symmetricRound } = require('./state-change');
 const { validateArchiveRecord, ArchiveIntegrityService } = require('./archive-integrity');
 
 const REPLAY_CHUNK_SIZE = 500;
+
+const NON_STATE_RECORD_TYPES = new Set([
+  'recovery_event',
+  'diagnostic',
+  'replay_report',
+  'internal_log',
+  'audit_log'
+]);
 
 function calcFileSha256(filePath) {
   if (!fs.existsSync(filePath)) return '';
@@ -193,7 +202,31 @@ class ResearchService {
         lineEntries.push({ lineNum: i + 1, text: raw });
       }
 
-      task.totalWindows = lineEntries.length;
+      // P1-5: 统计唯一逻辑窗口数，严格排除非状态审计/诊断记录，绝非原始 JSONL 行数
+      const logicalWindows = new Set();
+      for (const entry of lineEntries) {
+        try {
+          const parsed = JSON.parse(entry.text);
+          const recType = parsed.recordType || parsed.type || (parsed.payload && parsed.payload.type) || '';
+          if (NON_STATE_RECORD_TYPES.has(recType)) {
+            continue;
+          }
+          const wNo = (typeof parsed.windowNo === 'number' && !isNaN(parsed.windowNo))
+            ? parsed.windowNo
+            : ((parsed.payload && typeof parsed.payload.windowNo === 'number' && !isNaN(parsed.payload.windowNo))
+              ? parsed.payload.windowNo
+              : (typeof parsed.window === 'number' && !isNaN(parsed.window) ? parsed.window : null));
+          if (wNo !== null) {
+            logicalWindows.add(wNo);
+          } else {
+            logicalWindows.add('unresolved');
+          }
+        } catch {
+          // 语法损坏在下文 replay 循环中按 Fail-Stop 规则触发熔断
+        }
+      }
+
+      task.totalWindows = logicalWindows.size;
       task.stage = 'replaying';
 
       const initialTraits = task.options.initialTraits || { ...DEFAULT_TRAITS };
@@ -265,6 +298,12 @@ class ResearchService {
         }
 
         const payload = normalized.payload || normalized;
+        const recType = normalized.recordType || normalized.type || (payload && payload.type) || '';
+        if (NON_STATE_RECORD_TYPES.has(recType)) {
+          lastValidRecord = entry.lineNum;
+          continue;
+        }
+
         const wNo = (typeof normalized.windowNo === 'number' && !isNaN(normalized.windowNo))
           ? normalized.windowNo
           : ((payload && typeof payload.windowNo === 'number' && !isNaN(payload.windowNo)) ? payload.windowNo : null);
@@ -317,7 +356,7 @@ class ResearchService {
 
         const deltas = {};
         for (const [trait, sum] of Object.entries(rawDeltas)) {
-          const clamped = Math.max(-maxDelta, Math.min(maxDelta, Math.round(sum)));
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, symmetricRound(sum)));
           if (clamped !== 0) {
             deltas[trait] = clamped;
             const curr = currentValues[trait] ?? 0;

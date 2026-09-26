@@ -13,6 +13,16 @@
 
 const fs = require('fs');
 
+function extractRecordWindowNo(record) {
+  if (!record || typeof record !== 'object') return null;
+  const p = record.payload || record;
+  if (typeof record.windowNo === 'number' && !Number.isNaN(record.windowNo)) return record.windowNo;
+  if (typeof p.windowNo === 'number' && !Number.isNaN(p.windowNo)) return p.windowNo;
+  if (typeof record.window === 'number' && !Number.isNaN(record.window)) return record.window;
+  if (typeof p.window === 'number' && !Number.isNaN(p.window)) return p.window;
+  return null;
+}
+
 class ResearchIndex {
   constructor(archiveFilePath) {
     this.archivePath = archiveFilePath;
@@ -29,6 +39,7 @@ class ResearchIndex {
     this.stateChangeIndex = new Map();// stateChangeId -> descriptor
     this.messageIndex = new Map();    // messageId -> descriptor[]
     this.windowIndex = new Map();     // windowNo -> descriptor[]
+    this.unknownWindowDescriptors = []; // windowNo === null -> descriptor[]
     this.allIdsIndex = new Map();     // generic id -> descriptor
   }
 
@@ -62,6 +73,7 @@ class ResearchIndex {
     this.stateChangeIndex.clear();
     this.messageIndex.clear();
     this.windowIndex.clear();
+    this.unknownWindowDescriptors = [];
     this.allIdsIndex.clear();
   }
 
@@ -137,7 +149,7 @@ class ResearchIndex {
 
         if (valid && parsed && typeof parsed === 'object') {
           const recType = parsed.recordType || parsed.type || (parsed.payload && parsed.payload.type) || 'unknown';
-          const windowNo = parsed.windowNo || (parsed.payload && parsed.payload.windowNo) || 1;
+          const windowNo = extractRecordWindowNo(parsed);
           entry.recordType = recType;
           entry.windowNo = windowNo;
 
@@ -150,11 +162,15 @@ class ResearchIndex {
             payload: parsed.payload || parsed
           };
 
-          // 记录至 window 映射
-          if (!this.windowIndex.has(windowNo)) {
-            this.windowIndex.set(windowNo, []);
+          // 记录至 window 映射：严格区分 knownWindowIndex 与 unknownWindowDescriptors (绝不把 null 映射为 1)
+          if (windowNo === null) {
+            this.unknownWindowDescriptors.push(desc);
+          } else {
+            if (!this.windowIndex.has(windowNo)) {
+              this.windowIndex.set(windowNo, []);
+            }
+            this.windowIndex.get(windowNo).push(desc);
           }
-          this.windowIndex.get(windowNo).push(desc);
 
           // 1. 递归提取并索引 Window Archive / Window Summary 内部复合单元
           this._indexRecordContent(parsed, desc);
@@ -178,7 +194,7 @@ class ResearchIndex {
    */
   _indexRecordContent(record, baseDesc) {
     const payload = record.payload || record;
-    const windowNo = record.windowNo || payload.windowNo || 1;
+    const windowNo = baseDesc.windowNo;
 
     // Helper: 绑定单一 ID
     const registerId = (id, map, extra = {}) => {
@@ -343,9 +359,13 @@ class ResearchIndex {
 
   /**
    * 获取指定 Window 的所有记录条目
+   * 严格禁止将 unknown window 映射到 key=1
    */
   getWindowDescriptors(windowNo) {
     this.ensureIndex();
+    if (windowNo === null || windowNo === undefined) {
+      return this.unknownWindowDescriptors;
+    }
     return this.windowIndex.get(windowNo) || [];
   }
 
@@ -365,7 +385,8 @@ class ResearchIndex {
       evidenceCount: this.evidenceIndex.size,
       stateChangeCount: this.stateChangeIndex.size,
       messageCount: this.messageIndex.size,
-      windowCount: this.windowIndex.size
+      windowCount: this.windowIndex.size,
+      unknownWindowCount: this.unknownWindowDescriptors.length
     };
   }
 }

@@ -1,4 +1,4 @@
-# Life · 初澜 (Chulan) v0.9.5.2
+# Life · 初澜 (Chulan) v0.9.6
 
 Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
 
@@ -104,7 +104,7 @@ test/            测试
 
 ## 创作 Skill（DS Skill）的放置方式
 
-`skills/DS Skill.md` 是独立的模式规范（统一称为 `DS Skill`），不放进 `persona.js`，也不放进运行时记忆文件。这样可以保证 GPT 娘平时不会被成人向小说规则影响，长期记忆也不会把创作规则当成用户事实。
+`skills/DS Skill.md` 是独立的模式规范（统一称为 `DS Skill`），不放进 `persona.js`，也不放进运行时记忆文件。这样可以保证初澜平时不会被成人向小说规则影响，长期记忆也不会把创作规则当成用户事实。
 
 设置面板中的「载入创作 Skill」会把这份文件作为 system 提示词的一部分注入。关闭创作模式后，下一次请求只使用普通 persona 和已有记忆。这个切换会改变 system 前缀，因此可能造成一次缓存未命中，这是预期代价。
 
@@ -371,8 +371,8 @@ node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、e
 node test/wardrobe.test.js       # 55 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离
 node test/secure.test.js         # 38 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚
 node test/atomic.test.js         # 20 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出
-node test/config.test.js         # 22 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一
-node test/deepseek.test.js       # 25 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验
+node test/config.test.js         # 28 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离
+node test/deepseek.test.js       # 32 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离、预先abort与headers后abort
 node test/layout.test.js         # 16 项：宽高比为常量、来回缩放收得回、下边缘钉住、main.js 不许再用量出来的比例
 node test/creative-mode.check.js # 7 项：创作 Skill（DS Skill）加载、成年角色边界、模式配置和超时配置检查
 node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
@@ -386,7 +386,7 @@ node test/render-adapter.test.js       # 10 项：DOM 动画渲染适配器、�
 node test/experience-schema.test.js # 22 项：Event / Observation / Interpretation 三层分离、合法性校验、复合经历封装与向后兼容转换
 node test/state-change.test.js      # 12 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
-node test/recovery.test.js          # 17 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离
+node test/recovery.test.js          # 38 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
 node test/research.test.js          # 69 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容）
 node test/archive-schema.test.js      # 20 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）
@@ -399,7 +399,19 @@ node test/research-stat-defaults.test.js   # 22 项：v0.9.5.2 彻底消除虚�
 node test/legacy-schema-certification.test.js # 14 项：v0.9.5.2 缺失 schemaVersion 规范处理（严禁隐式补写原生 v1、经过 LegacySchemaAdapter 且归档降级 UNCERTIFIED）
 node test/archive-event-strictness.test.js # 20 项：v0.9.5.2 Event 来源白名单与完整性防御（缺源拦截、未知源拦截、Synthetic 拦截、Bridge Provenance 核验与坏账防御）
 node test/legacy-metadata-fabrication.test.js # 30 项：v0.9.5.2 遗留数据元数据严禁伪造（缺 schemaVersion 禁补原生 v1、缺时间戳禁补 Date.now()、缺 windowNo 禁补 1、缺 roundNo 禁补 1、缺 messageId 禁编 UNKNOWN_MESSAGE、全链路端到端防伪）
-node test/research-window-defaults.test.js # 27 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null）
+node test/research-window-defaults.test.js # 43 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null、全生命周期 0/null 保留测试）
+node test/archive-event-runtime-parity.test.js # 17 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
+node test/research-index-unknown-window.test.js # 31 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0、IPC 通道防御默认 1 降级）
+node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）
+node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
+node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命实验层核心架构、Schema 契约、基线零干预、内部状态代理、纯函数 Reducer 确定性（100次无漂移与时钟隔离）、数字环周知觉候选界限、证据门禁自传记忆全可信链、睡眠三态分立与零假说门禁
+node test/window-boundary.test.js        # 33 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）
+node test/archive-integrity.test.js       # 37 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）
+node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
+node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
+node test/reducer-symmetry.test.js        # 20 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）
+node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
+node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```
@@ -444,7 +456,20 @@ pip install opencv-contrib-python numpy pillow
 
 ## 版本记录
 
-只记**会影响行为或数据格式**的变化，方便以后回头看哪次动过什么。
+**v0.9.6** — 《初澜数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：
+- **P0-01 ~ P0-04** (窗口边界与指标冻结)：确立 `turn_limit`、`token_limit`、`manual`、`recovery` 四大关窗触发原因；在请求模型小结前由 `windowSnapshot()` 冻结 `snapshotTurnCount`、`targetTurnCount`、`actualTurnCount` 与 `closeReason`，彻底消除异步关窗期间并发对话导致的轮数指标漂移与坏账；Bridge 桥接消息不入小结并严格隔离。
+- **P0-05 ~ P0-07** (严格 5×20 小结契约与 Fail-Stop)：落实 `validateWindowSummary()` 结构契约校验；强制要求 5 个连续分段完整覆盖窗口轮次且无重叠遗漏；小结格式不合法时触发 Fail-Stop 熔断停机，绝对保留历史对话零丢字，零污染写入经历底座。
+- **P0-08 ~ P0-10** (Archive Canonical Schema v1 与哈希链溯源)：`experiences.jsonl` 全量升级为 Canonical Schema v1，引入全局自增单调 `archiveSeq`、强唯一性 `recordId`（`rec-{type}-{seq}-{rand}`）、SHA-256 前向哈希链（`prevHash` -> `recordHash`）与底层 `fsync` 真实物理持久化，实现全链路防篡改与可复盘验证。
+- **P0-11 ~ P0-12** (证据溯源 12 条内生自校验规则)：`SubjectState.verifyEvidence()` 确立 12 条内生检验律，全面拦截跨窗口窜供、合成/生成数据伪造、Bridge 桥接消息污染、角色越权、重复指纹与空引用，筑牢认知所有权防线。
+- **P0-13** (状态转移纯对称整数舍入)：消除 JS 浮点舍入与正负不对称误差，在 `state-change.js`、`SubjectState.reduce()`、`SubjectState.replay()` 及 `ResearchService` 中统一采用无偏对称舍入（`symmetricRound`），保证离线 Replay 演化重放与在线状态推进 100% 绝对一致。
+- **P0-14 ~ P0-15** (当前自我因果投影与实验遥测)：在经历底座增加 `recordType: 'self_projection'` 因果投影记录，与 `Self-Ledger` 保持因果溯源绑定；建立 Append-Only 实验遥测日志 `experiment-telemetry.jsonl`，对 DeepSeek 前缀缓存破坏实现七大类别精准归因。
+- **P0-16 ~ P0-18** (全套不变量攻击测试矩阵与发布门禁)：新增 7 套专用测试套件共 171 项断言，全工程测试套件达 52 套，全部 100% 通过且零回归。
+
+**v0.9.5.3** — Codex Findings Fix（安全漏洞修复与架构一致性收敛）：针对 Codex Independent Audit 提出的 4 个 HIGH 级发现完成专项修复：
+- **H-01** (Archive Event Validation Parity): `src/archive-integrity.js` 统一接入规范级运行时事件校验器 (`validateEvent`)，对 `window_summary.payload.events[]` 及独立 `event` 归档记录实施与运行时完全对齐的强校验；`src/experience-schema.js` 全面禁止 `generated: true` 与 `synthetic: true` 伪造事件，来源空值或非法值坚决拦截并降级 `UNCERTIFIED`。
+- **H-02** (ResearchIndex Unknown Window Handling): `src/research-index.js` 彻底切断将未知 `windowNo` (null/undefined) 错误映射至 Window 1 的隐式逻辑；分离 `windowIndex` (Map) 与 `unknownWindowDescriptors` (Array)；引入 `extractRecordWindowNo` 精确支持 falsy 的 `windowNo = 0`，检索与详情查询保留 `null`。
+- **H-03** (Renderer Export Path Security): `src/research-ipc.js` 对渲染进程通过 `research:export` 传入自定义 `targetDir` / `targetPath` 实施即刻拒绝 (`RENDERER_TARGET_DIR_PROHIBITED`)；落盘模式严格由主进程原生安全对话框 (`dialog.showOpenDialog`) 用户主动授权；`src/research-export.js` 底层强校验规范化路径并彻底封杀 `..` 路径穿越攻击。
+- **H-04** (Integrity Scan Complexity Reduction): `src/research-query.js` 引入基于文件大小与修改时间的完整性快照缓存 (`_getIntegritySnapshot`)；`getWindows()` 将完整性评估移出多窗口遍历循环，算法复杂度由 $O(\text{Window} \times \text{Archive})$ 彻底降为 $O(\text{Archive})$。
 
 **v0.9.5.2** — 实验观察层完整性硬化 (Integrity Hardening)：彻底消灭 Research Layer 残留的“程序推断事实”与“默认补全数据”，恪守“没有证据就没有事实”、“不确定不得篡改成没发生”、“程序推断不得升级为实验事实”三大哲学准则；`src/research-query.js` 彻底删除 `Math.ceil(num/2)` 等基于 messageId 的数字推断逻辑，未标明确切轮次时严格保持为 `roundNo = null, status = 'UNRESOLVED'`；彻底删除 `|| 100`、`|| 200`、`segmentCount: 5` 等虚假默认统计值，`turns: 0` 与 `messageCount: 0` 如实返回 0，缺失返回 null；`src/experience-schema.js` 严禁在缺少 `schemaVersion` 时隐式补写原生 `schemaVersion: 1`，全部规范路由至 `LegacySchemaAdapter`（`sourceSchema: 'legacy-v0.9.4'`，归档判定强制为 `UNCERTIFIED`）；`src/archive-integrity.js` 强化正向白名单防线，Event 记录 `source` 强制为必填字段（缺源拦截 `INVALID_EVENT_SOURCE`），拒绝未知源；严禁 Synthetic / Generated 事件进入认证（`SYNTHETIC_EVENT_PROHIBITED` / `UNCERTIFIED`）；严查 Bridge 事件溯源来源（无 Provenance 拦截降级）；`src/research-service.js` 统一 Replay 状态与 `ArchiveIntegrityService` Canonical 单一可信源；`pet.js` 前端 UI 完善空安全与语义映射，严格区分 `content = ""`（真实空内容）与 `content = null`（未记录 / 不确定）；补齐 `package.json` 中的 `npm test` 入口脚本，新增 4 套反伪证专项攻击测试套件并通过全量回归。
 

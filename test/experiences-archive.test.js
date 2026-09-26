@@ -75,9 +75,12 @@ check('appendWindowArchive 成功追加完整窗口', r2 && archive.count() === 
 // 4. 按窗口号检索
 const w1Records = archive.getByWindow(1);
 check('getByWindow(1) 成功筛选出窗口记录',
-  w1Records.length === 1 && w1Records[0].type === 'window_archive' && w1Records[0].windowNo === 1);
+  w1Records.length === 1 &&
+  (w1Records[0].recordType === 'window_summary' || w1Records[0].recordType === 'window_archive' || w1Records[0].type === 'window_archive') &&
+  w1Records[0].windowNo === 1);
+const w1Payload = w1Records[0].payload || w1Records[0];
 check('归档中包含完整的 5 个 segments 与 windowSynthesis',
-  w1Records[0].segments.length === 5 && w1Records[0].windowSynthesis.stableUserFacts[0] === '用户叫阿哲');
+  w1Payload.segments.length === 5 && w1Payload.windowSynthesis.stableUserFacts[0] === '用户叫阿哲');
 check('getByWindow(2) 不存在时返回空数组', archive.getByWindow(2).length === 0);
 
 // 5. 持续追加不截断（验证 Append-Only 无 maxEntries 限制）

@@ -12,12 +12,31 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { ALLOWED_TRAITS } = require('./subject-state');
-const { ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
+const { validateEvent, ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
 
-// 合法归档记录类型白名单 (P0-03)
+/**
+ * 计算 Canonical Archive Record 哈希 (v0.9.6 P0-06)
+ * 使用严格字段顺序确保序列化确定性。
+ */
+function computeCanonicalRecordHash(rec) {
+  if (!rec || typeof rec !== 'object') return '';
+  const canonicalObj = {
+    archiveSeq: typeof rec.archiveSeq === 'number' ? rec.archiveSeq : null,
+    recordId: rec.recordId || null,
+    recordType: rec.recordType || rec.type || null,
+    windowNo: (typeof rec.windowNo === 'number' && !isNaN(rec.windowNo)) ? rec.windowNo : (rec.windowNo === null ? null : null),
+    timestamp: typeof rec.timestamp === 'number' ? rec.timestamp : null,
+    payload: rec.payload !== undefined ? rec.payload : {},
+    prevHash: rec.prevHash || null
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(canonicalObj), 'utf8').digest('hex');
+}
+
+// 合法归档记录类型白名单 (P0-03 & v0.9.6 P0-12)
 const VALID_RECORD_TYPES = new Set([
   'window_summary',
   'window_archive',
@@ -28,7 +47,8 @@ const VALID_RECORD_TYPES = new Set([
   'interpretation',
   'evidence',
   'evidence_rejected',
-  'state_change'
+  'state_change',
+  'self_projection'
 ]);
 
 // 完整性状态枚举
@@ -121,25 +141,26 @@ function validateArchiveRecord(record, options = {}) {
             return { valid: false, reason: 'INVALID_EVENT_IN_SUMMARY' };
           }
           const ep = evt.payload || evt;
-          if (evt.synthetic === true || ep.synthetic === true) {
-            return { valid: false, reason: 'SYNTHETIC_EVENT_PROHIBITED' };
-          }
-          if (evt.generated === true || ep.generated === true) {
-            return { valid: false, reason: 'GENERATED_EVENT_PROHIBITED' };
-          }
-          const src = evt.source || ep.source;
-          if (!src || typeof src !== 'string' || !src.trim()) {
-            return { valid: false, reason: 'INVALID_EVENT_SOURCE' };
-          }
-          const cleanSrc = String(src).toLowerCase().trim();
-          if (!ALLOWED_EVENT_SOURCES.has(cleanSrc)) {
-            return { valid: false, reason: 'INVALID_EVENT_SOURCE (EVENT_INVALID_SOURCE): ' + cleanSrc };
-          }
           if (evt.bridge === true || ep.bridge === true) {
             const prov = evt.provenance || ep.provenance;
             if (!prov || typeof prov !== 'object' || (!prov.sourceEventId && !prov.sourceMessageId && !prov.windowNo)) {
               return { valid: false, reason: 'BRIDGE_EVENT_UNPROVEN' };
             }
+          }
+          const normEvt = {
+            eventId: evt.eventId || ep.eventId,
+            type: evt.type || ep.type,
+            source: evt.source || ep.source,
+            messageId: evt.messageId || ep.messageId || null,
+            synthetic: evt.synthetic === true || ep.synthetic === true,
+            generated: evt.generated === true || ep.generated === true,
+            bridge: (evt.bridge === true || ep.bridge === true) && !(evt.provenance || ep.provenance),
+            provenance: evt.provenance || ep.provenance || null,
+            payload: evt.payload || {}
+          };
+          const vEvt = validateEvent(normEvt);
+          if (!vEvt.valid) {
+            return { valid: false, reason: vEvt.reason, eventValidation: vEvt };
           }
         }
       }
@@ -156,24 +177,27 @@ function validateArchiveRecord(record, options = {}) {
     }
 
     case 'event': {
-      if (typeof payload.eventId !== 'string' || !payload.eventId.trim()) {
-        return { valid: false, reason: 'EVENT_MISSING_EVENT_ID' };
-      }
-      if (typeof payload.type !== 'string' || !ALLOWED_EVENT_TYPES.has(payload.type.trim())) {
-        return { valid: false, reason: 'EVENT_INVALID_TYPE: ' + payload.type };
-      }
-      if (!payload.source || typeof payload.source !== 'string' || !payload.source.trim()) {
-        return { valid: false, reason: 'INVALID_EVENT_SOURCE' };
-      }
-      const src = String(payload.source).toLowerCase().trim();
-      if (!ALLOWED_EVENT_SOURCES.has(src)) {
-        return { valid: false, reason: 'INVALID_EVENT_SOURCE (EVENT_INVALID_SOURCE): ' + src };
-      }
-      if (record.bridge === true || payload.bridge === true) {
-        const prov = record.provenance || payload.provenance;
+      const ep = payload;
+      if (record.bridge === true || ep.bridge === true) {
+        const prov = record.provenance || ep.provenance;
         if (!prov || typeof prov !== 'object' || (!prov.sourceEventId && !prov.sourceMessageId && !prov.windowNo)) {
           return { valid: false, reason: 'BRIDGE_EVENT_UNPROVEN' };
         }
+      }
+      const normEvt = {
+        eventId: ep.eventId || record.eventId,
+        type: ep.type || record.type,
+        source: ep.source || record.source,
+        messageId: ep.messageId || record.messageId || null,
+        synthetic: record.synthetic === true || ep.synthetic === true,
+        generated: record.generated === true || ep.generated === true,
+        bridge: (record.bridge === true || ep.bridge === true) && !(record.provenance || ep.provenance),
+        provenance: record.provenance || ep.provenance || null,
+        payload: ep.payload || ep
+      };
+      const vEvt = validateEvent(normEvt);
+      if (!vEvt.valid) {
+        return { valid: false, reason: vEvt.reason, eventValidation: vEvt };
       }
       break;
     }
@@ -242,6 +266,13 @@ function validateArchiveRecord(record, options = {}) {
       break;
     }
 
+    case 'self_projection': {
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_SELF_PROJECTION_PAYLOAD' };
+      }
+      break;
+    }
+
     default:
       return { valid: false, reason: 'UNHANDLED_RECORD_TYPE: ' + recType };
   }
@@ -254,6 +285,202 @@ function validateArchiveRecord(record, options = {}) {
  * 作为 Replay、ResearchQuery、Explorer UI 的唯一可信源。
  */
 class ArchiveIntegrityService {
+  /**
+   * 评估内存中的归档记录数组的完整性与认证状态 (P0-3: 统一完整性权威源)
+   * @param {Array} records - 归档记录列表
+   * @param {Object} options - 选项 (diagnostics, corruptLines, totalLines, allowLegacy)
+   * @returns {Object} 完整性报告
+   */
+  static checkRecords(records, options = {}) {
+    if (!Array.isArray(records)) {
+      return {
+        integrity: INTEGRITY_STATUS.INVALID,
+        replayStatus: REPLAY_STATUS.INVALID,
+        validCount: 0,
+        invalidCount: 0,
+        corruptLines: 0,
+        skippedCount: 0,
+        totalLines: 0,
+        hasLegacyAdapter: false,
+        diagnostics: [{ lineNumber: 0, error: 'INVALID_RECORDS_ARRAY' }],
+        records: []
+      };
+    }
+
+    const corruptLines = options.corruptLines ?? (options.corruptRecords ?? (options.diagnostics ? (options.diagnostics.skippedCount || 0) : 0));
+    let validCount = 0;
+    let invalidCount = 0;
+    let hasLegacyAdapter = false;
+    const diagnostics = (options.diagnostics && Array.isArray(options.diagnostics.errors))
+      ? [...options.diagnostics.errors]
+      : [];
+    const validRecords = [];
+
+    const { normalizeArchiveRecord } = require('./experience-schema');
+
+    for (let i = 0; i < records.length; i++) {
+      const parsed = records[i];
+      if (!parsed || typeof parsed !== 'object') {
+        invalidCount++;
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: 'INVALID_OBJECT',
+          snippet: String(parsed).slice(0, 100)
+        });
+        continue;
+      }
+
+      const norm = normalizeArchiveRecord(parsed);
+      if (!norm) {
+        invalidCount++;
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: 'NORMALIZATION_FAILED',
+          snippet: JSON.stringify(parsed).slice(0, 100)
+        });
+        continue;
+      }
+
+      if (norm.compatibilityAdapter === 'LegacySchemaAdapter' || norm.sourceSchema) {
+        hasLegacyAdapter = true;
+        if (norm.legacyStatus === 'LEGACY_UNKNOWN') {
+          invalidCount++;
+          diagnostics.push({
+            lineNumber: i + 1,
+            error: 'LEGACY_UNKNOWN_SCHEMA',
+            snippet: JSON.stringify(parsed).slice(0, 100)
+          });
+          continue;
+        }
+        const vResult = validateArchiveRecord(norm, { allowLegacy: true });
+        if (!vResult.valid) {
+          invalidCount++;
+          diagnostics.push({
+            lineNumber: i + 1,
+            error: vResult.reason,
+            snippet: JSON.stringify(parsed).slice(0, 100)
+          });
+        } else {
+          validCount++;
+          validRecords.push(norm);
+        }
+        continue;
+      }
+
+      const vResult = validateArchiveRecord(norm);
+      if (!vResult.valid) {
+        invalidCount++;
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: vResult.reason,
+          snippet: JSON.stringify(parsed).slice(0, 100)
+        });
+      } else {
+        validCount++;
+        validRecords.push(norm);
+      }
+    }
+
+    const totalLines = options.totalLines ?? (records.length + corruptLines);
+    let integrity = INTEGRITY_STATUS.CERTIFIED;
+    let replayStatus = REPLAY_STATUS.COMPLETE;
+
+    let syntax_integrity = corruptLines > 0 ? (validCount > 0 ? 'partial' : 'corrupted') : 'valid';
+    let sequence_integrity = 'legacy';
+    let hash_integrity = 'legacy';
+
+    const sequenced = validRecords.filter(r => typeof r.archiveSeq === 'number' && !Number.isNaN(r.archiveSeq));
+    if (sequenced.length === validRecords.length && validRecords.length > 0) {
+      let seqOk = true;
+      for (let j = 0; j < sequenced.length; j++) {
+        const expectedSeq = sequenced[0].archiveSeq + j;
+        if (sequenced[j].archiveSeq !== expectedSeq) {
+          seqOk = false;
+          diagnostics.push({
+            lineNumber: j + 1,
+            error: `SEQUENCE_MISMATCH: expected archiveSeq ${expectedSeq}, got ${sequenced[j].archiveSeq}`
+          });
+          break;
+        }
+      }
+      sequence_integrity = seqOk ? 'monotonic' : 'invalid';
+    } else if (sequenced.length > 0 && sequenced.length < validRecords.length) {
+      sequence_integrity = 'partial_unsequenced';
+    }
+
+    const hashed = validRecords.filter(r => typeof r.recordHash === 'string' && r.recordHash);
+    if (hashed.length === validRecords.length && validRecords.length > 0) {
+      let hashOk = true;
+      for (let j = 0; j < hashed.length; j++) {
+        const rec = hashed[j];
+        const expectedHash = computeCanonicalRecordHash(rec);
+        if (rec.recordHash !== expectedHash) {
+          hashOk = false;
+          diagnostics.push({
+            lineNumber: j + 1,
+            error: `RECORD_HASH_MISMATCH: recordId ${rec.recordId || j}`
+          });
+          break;
+        }
+        if (j === 0) {
+          if (rec.prevHash && rec.prevHash !== 'GENESIS' && rec.archiveSeq === 1) {
+            hashOk = false;
+            diagnostics.push({
+              lineNumber: 1,
+              error: `GENESIS_HASH_MISMATCH: expected GENESIS, got ${rec.prevHash}`
+            });
+            break;
+          }
+        } else {
+          const prevRec = hashed[j - 1];
+          if (rec.prevHash !== prevRec.recordHash) {
+            hashOk = false;
+            diagnostics.push({
+              lineNumber: j + 1,
+              error: `PREV_HASH_CHAIN_BROKEN: at record ${rec.recordId || j}, expected ${prevRec.recordHash}, got ${rec.prevHash}`
+            });
+            break;
+          }
+        }
+      }
+      hash_integrity = hashOk ? 'verified' : 'mismatch';
+    }
+
+    if (hash_integrity === 'mismatch' || sequence_integrity === 'invalid') {
+      integrity = INTEGRITY_STATUS.INVALID;
+      replayStatus = REPLAY_STATUS.INVALID;
+    } else if (corruptLines > 0) {
+      integrity = validCount > 0 ? INTEGRITY_STATUS.PARTIAL : INTEGRITY_STATUS.CORRUPTED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
+    } else if (invalidCount > 0) {
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
+    } else if (hasLegacyAdapter) {
+      // P0-09: 遗留兼容记录平滑加载，但绝不自动赋予 CERTIFIED
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.COMPLETE;
+    } else if (totalLines === 0) {
+      integrity = INTEGRITY_STATUS.CERTIFIED;
+      replayStatus = REPLAY_STATUS.COMPLETE;
+    }
+
+    return {
+      integrity,
+      replayStatus,
+      syntax_integrity,
+      sequence_integrity,
+      hash_integrity,
+      validCount,
+      invalidCount,
+      corruptLines,
+      skippedCount: corruptLines + invalidCount,
+      totalLines,
+      hasLegacyAdapter,
+      diagnostics,
+      records: validRecords
+    };
+  }
+
   /**
    * 评估指定 experiences.jsonl 文件的完整性与认证状态
    * @param {string} archivePath - experiences.jsonl 绝对路径
@@ -280,21 +507,18 @@ class ArchiveIntegrityService {
       const rawLines = content.split('\n');
 
       let totalLines = 0;
-      let validCount = 0;
-      let invalidCount = 0;
       let corruptLines = 0;
-      let hasLegacyAdapter = false;
       const diagnostics = [];
-      const records = [];
+      const parsedRecords = [];
 
       for (let i = 0; i < rawLines.length; i++) {
         const line = rawLines[i].trim();
         if (!line) continue;
         totalLines++;
 
-        let parsed = null;
         try {
-          parsed = JSON.parse(line);
+          const parsed = JSON.parse(line);
+          parsedRecords.push(parsed);
         } catch (err) {
           corruptLines++;
           diagnostics.push({
@@ -303,95 +527,14 @@ class ArchiveIntegrityService {
             message: err.message,
             snippet: line.slice(0, 100)
           });
-          continue;
-        }
-
-        // 检查是否具备遗留转换适配器
-        const { normalizeArchiveRecord } = require('./experience-schema');
-        const norm = normalizeArchiveRecord(parsed);
-
-        if (!norm) {
-          invalidCount++;
-          diagnostics.push({
-            lineNumber: i + 1,
-            error: 'NORMALIZATION_FAILED',
-            snippet: line.slice(0, 100)
-          });
-          continue;
-        }
-
-        if (norm.compatibilityAdapter === 'LegacySchemaAdapter' || norm.sourceSchema) {
-          hasLegacyAdapter = true;
-          if (norm.legacyStatus === 'LEGACY_UNKNOWN') {
-            invalidCount++;
-            diagnostics.push({
-              lineNumber: i + 1,
-              error: 'LEGACY_UNKNOWN_SCHEMA',
-              snippet: line.slice(0, 100)
-            });
-            continue;
-          }
-          const vResult = validateArchiveRecord(norm, { allowLegacy: true });
-          if (!vResult.valid) {
-            invalidCount++;
-            diagnostics.push({
-              lineNumber: i + 1,
-              error: vResult.reason,
-              snippet: line.slice(0, 100)
-            });
-          } else {
-            validCount++;
-            records.push(norm);
-          }
-          continue;
-        }
-
-        // 执行严格原生 Schema 校验 (P0-03 & P0-04)
-        const vResult = validateArchiveRecord(norm);
-        if (!vResult.valid) {
-          invalidCount++;
-          diagnostics.push({
-            lineNumber: i + 1,
-            error: vResult.reason,
-            snippet: line.slice(0, 100)
-          });
-        } else {
-          validCount++;
-          records.push(norm);
         }
       }
 
-      // 判定整体完整性与推演状态 (P0-04, P0-05, P0-09)
-      let integrity = INTEGRITY_STATUS.CERTIFIED;
-      let replayStatus = REPLAY_STATUS.COMPLETE;
-
-      if (corruptLines > 0) {
-        integrity = validCount > 0 ? INTEGRITY_STATUS.PARTIAL : INTEGRITY_STATUS.CORRUPTED;
-        replayStatus = REPLAY_STATUS.PARTIAL;
-      } else if (invalidCount > 0) {
-        integrity = INTEGRITY_STATUS.UNCERTIFIED;
-        replayStatus = REPLAY_STATUS.PARTIAL;
-      } else if (hasLegacyAdapter) {
-        // P0-09: 遗留兼容记录平滑加载，但绝不自动赋予 CERTIFIED
-        integrity = INTEGRITY_STATUS.UNCERTIFIED;
-        replayStatus = REPLAY_STATUS.COMPLETE;
-      } else if (totalLines === 0) {
-        integrity = INTEGRITY_STATUS.CERTIFIED;
-        replayStatus = REPLAY_STATUS.COMPLETE;
-      }
-
-      return {
-        integrity,
-        replayStatus,
-        validCount,
-        invalidCount,
+      return ArchiveIntegrityService.checkRecords(parsedRecords, {
         corruptLines,
-        skippedCount: corruptLines + invalidCount,
-        totalLines,
-        hasLegacyAdapter,
-        diagnostics,
-        records
-      };
+        diagnostics: { skippedCount: corruptLines, errors: diagnostics },
+        totalLines
+      });
     } catch (e) {
       return {
         integrity: INTEGRITY_STATUS.INVALID,
@@ -415,5 +558,6 @@ module.exports = {
   INTEGRITY_STATUS,
   REPLAY_STATUS,
   validateArchiveRecord,
-  ArchiveIntegrityService
+  ArchiveIntegrityService,
+  computeCanonicalRecordHash
 };
