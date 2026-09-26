@@ -401,7 +401,7 @@ node test/archive-event-strictness.test.js # 20 项：v0.9.5.2 Event 来源白�
 node test/legacy-metadata-fabrication.test.js # 30 项：v0.9.5.2 遗留数据元数据严禁伪造（缺 schemaVersion 禁补原生 v1、缺时间戳禁补 Date.now()、缺 windowNo 禁补 1、缺 roundNo 禁补 1、缺 messageId 禁编 UNKNOWN_MESSAGE、全链路端到端防伪）
 node test/research-window-defaults.test.js # 27 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null）
 node test/archive-event-runtime-parity.test.js # 17 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
-node test/research-index-unknown-window.test.js # 21 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0）
+node test/research-index-unknown-window.test.js # 31 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0、IPC 通道防御默认 1 降级）
 node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）
 node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）

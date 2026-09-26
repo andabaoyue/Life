@@ -182,6 +182,82 @@ check('Test F: Unknown Window (null) 在 FullScan 与 Indexed 下均正确检索
 check('Test F: Unknown Window 下 turns 均为 12', fullNull.turns === 12 && idxNull.turns === 12);
 check('Test F: Unknown Window 下 windowNo 均为 null', fullNull.windowNo === null && idxNull.windowNo === null);
 
+// =============================================================================
+// Test G: IPC 边界回归测试 (H-02: research:get-window-rounds 与 research:get-window)
+// =============================================================================
+const { registerResearchIpc } = require('../src/research-ipc');
+
+const ipcCalls = [];
+const mockResearchService = {
+  query: {
+    getWindowRounds(wNo, segIdx) {
+      ipcCalls.push({ method: 'getWindowRounds', wNo, segIdx });
+      return { wNo, segIdx, rounds: [] };
+    },
+    getWindowDetail(wNo) {
+      ipcCalls.push({ method: 'getWindowDetail', wNo });
+      return { wNo, detail: true };
+    }
+  }
+};
+
+const handlers = new Map();
+const fakeIpcMain = {
+  handle(channel, fn) {
+    handlers.set(channel, fn);
+  }
+};
+
+registerResearchIpc(fakeIpcMain, mockResearchService);
+
+const handleGetWindowRounds = handlers.get('research:get-window-rounds');
+const handleGetWindow = handlers.get('research:get-window');
+
+// 1. windowNo = 0 必须保持 0
+ipcCalls.length = 0;
+handleGetWindowRounds({}, { windowNo: 0 });
+check('Test G (IPC rounds): { windowNo: 0 } 必须严格传 0 而非 1', ipcCalls[0].wNo === 0);
+
+ipcCalls.length = 0;
+handleGetWindowRounds({}, 0);
+check('Test G (IPC rounds): 裸传 0 必须严格传 0 而非 1', ipcCalls[0].wNo === 0);
+
+// 2. windowNo = null 必须保持 null / UNKNOWN
+ipcCalls.length = 0;
+handleGetWindowRounds({}, { windowNo: null });
+check('Test G (IPC rounds): { windowNo: null } 必须保持 null 而非 1', ipcCalls[0].wNo === null);
+
+ipcCalls.length = 0;
+handleGetWindowRounds({}, null);
+check('Test G (IPC rounds): 裸传 null 必须保持 null 而非 1', ipcCalls[0].wNo === null);
+
+// 3. windowNo 缺失不得自动变成 1
+ipcCalls.length = 0;
+handleGetWindowRounds({}, {});
+check('Test G (IPC rounds): {} (windowNo 缺失) 必须为 null，不得自动变成 1', ipcCalls[0].wNo === null);
+
+ipcCalls.length = 0;
+handleGetWindowRounds({}, undefined);
+check('Test G (IPC rounds): undefined (windowNo 缺失) 必须为 null，不得自动变成 1', ipcCalls[0].wNo === null);
+
+// 4. 正确的 windowNo = 1 正常传递
+ipcCalls.length = 0;
+handleGetWindowRounds({}, { windowNo: 1 });
+check('Test G (IPC rounds): { windowNo: 1 } 正常传 1', ipcCalls[0].wNo === 1);
+
+// 5. research:get-window 验证
+ipcCalls.length = 0;
+handleGetWindow({}, { windowNo: 0 });
+check('Test G (IPC window): { windowNo: 0 } 必须保持 0', ipcCalls[0].wNo === 0);
+
+ipcCalls.length = 0;
+handleGetWindow({}, { windowNo: null });
+check('Test G (IPC window): { windowNo: null } 必须保持 null', ipcCalls[0].wNo === null);
+
+ipcCalls.length = 0;
+handleGetWindow({}, {});
+check('Test G (IPC window): 空参数 {} 作为 UI 导航默认展示 Window 1', ipcCalls[0].wNo === 1);
+
 try {
   fs.rmSync(dirA, { recursive: true, force: true });
   fs.rmSync(dirD, { recursive: true, force: true });

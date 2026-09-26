@@ -40,8 +40,13 @@ function registerResearchIpc(ipcMain, researchService, options = {}) {
   });
 
   ipcMain.handle('research:get-window-rounds', (e, opts) => {
-    const wNo = (opts && opts.windowNo) || 1;
-    const segIdx = (opts && opts.segmentIndex) !== undefined ? opts.segmentIndex : null;
+    let wNo = null;
+    if (typeof opts === 'number') {
+      wNo = opts;
+    } else if (opts && opts.windowNo !== undefined) {
+      wNo = opts.windowNo;
+    }
+    const segIdx = (opts && opts.segmentIndex !== undefined) ? opts.segmentIndex : null;
     return researchService.query.getWindowRounds(wNo, segIdx);
   });
 
