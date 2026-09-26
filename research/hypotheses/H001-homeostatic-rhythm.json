@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "hypothesisId": "H001",
+  "title": "稳态能量与睡眠压力代理对对白交互节奏的影响",
+  "formalHypothesis": "在引入能量储备（energy）与睡眠压力（restPressure）等内部代理变量及感官门限后，初澜在跨时间窗口的长周期交互中将呈现与纯无状态基线显著不同的交互节奏与自发话题转换率。",
+  "nullHypothesis": "H0: 引入能量与睡眠压力代理变量对初澜的长周期对话节奏、单轮消息长度及话题转换率不产生统计学上的显著差异，其实际表现与基线组纯提示词引导无显著区别。",
+  "falsificationCriteria": "若在连续 5 个窗口的实验中，实验组与基线组在消息长度分布、主动发起的静息倾向差异小于 5%，或所有显著差异均可完全由模型上下文长度膨胀解释，则证伪该假说，接受零假说 H0。",
+  "independentVariables": [
+    "energy",
+    "restPressure",
+    "salienceThreshold"
+  ],
+  "dependentVariables": [
+    "messagePacingDistribution",
+    "voluntaryRestFrequency",
+    "topicTransitionDensity"
+  ],
+  "baselineControlRequirements": "基线组保持 experimentMode = 'baseline'，所有 experimental modules 强制设为 false，确保系统产生零额外状态事件且不对 Prompt 注入任何状态标签。",
+  "counterObservations": [
+    "若实验组行为差异完全来自提示词长度增加而非内部状态驱动，视为虚假显著性",
+    "若初澜在对白中机械复读'我很累'等预设台词，视为剧场化表演污染，实验无效"
+  ]
+}
