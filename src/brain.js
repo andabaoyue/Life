@@ -11,7 +11,7 @@ const { SelfLedger } = require('./self-ledger');
 const { DeferredWriter } = require('./deferred-writer');
 const { ExperiencesArchive } = require('./experiences-archive');
 const { SubjectState } = require('./subject-state');
-const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation } = require('./experience-schema');
+const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation, validateWindowSummary } = require('./experience-schema');
 const { createStateChangeExplanation } = require('./state-change');
 
 const SUMMARY_SYS =
@@ -139,6 +139,65 @@ class Brain {
     // 本地活动追踪器（main 注入）。没注入时整条环境感知链路自动隐身：
     // 逻辑全部写成 `if (tr && ...)`，浏览器预览与单元测试不必造一个 tracker。
     this.tracker = null;
+
+    // 实验遥测与缓存破坏归因底座 (v0.9.6 P0-14 & P0-15)
+    this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
+    this.telemetrySeq = 0;
+    this.pendingCacheBreakReason = null;
+  }
+
+  setWardrobe(nameOrBlock) {
+    if (this.wardrobe && typeof this.wardrobe.applyProposal === 'function') {
+      const wearChanged = this.wardrobe.applyProposal(nameOrBlock);
+      if (wearChanged) {
+        this.memory.wardrobe = this.wardrobe.promptBlock();
+        this.pendingCacheBreakReason = 'wardrobe_change';
+      }
+      return wearChanged;
+    }
+    if (typeof nameOrBlock === 'string') {
+      this.memory.wardrobe = nameOrBlock;
+      this.pendingCacheBreakReason = 'wardrobe_change';
+      return true;
+    }
+    return false;
+  }
+
+  deleteWindow(i) {
+    const res = this.memory ? this.memory.deleteWindow(i) : false;
+    this.pendingCacheBreakReason = 'manual_memory_delete';
+    return res;
+  }
+
+  recordCacheBreak(reason) {
+    this.pendingCacheBreakReason = reason || 'unknown';
+  }
+
+  appendTelemetry(data = {}) {
+    if (!this.dir) return null;
+    try {
+      this.telemetrySeq = (this.telemetrySeq || 0) + 1;
+      const rec = {
+        telemetrySeq: this.telemetrySeq,
+        timestamp: data.timestamp || Date.now(),
+        windowNo: (typeof data.windowNo === 'number' && !Number.isNaN(data.windowNo)) ? data.windowNo : (this.memory ? this.memory.data.windowNo : 1),
+        requestType: data.requestType || 'chat',
+        promptTokens: typeof data.promptTokens === 'number' ? data.promptTokens : 0,
+        promptCacheHitTokens: typeof data.promptCacheHitTokens === 'number' ? data.promptCacheHitTokens : 0,
+        promptCacheMissTokens: typeof data.promptCacheMissTokens === 'number' ? data.promptCacheMissTokens : 0,
+        completionTokens: typeof data.completionTokens === 'number' ? data.completionTokens : 0,
+        cacheHitRate: typeof data.cacheHitRate === 'number' ? data.cacheHitRate : 0,
+        cacheBreakReason: data.cacheBreakReason || null
+      };
+      if (!fs.existsSync(this.dir)) {
+        fs.mkdirSync(this.dir, { recursive: true });
+      }
+      fs.appendFileSync(this.telemetryPath, JSON.stringify(rec) + '\n', 'utf8');
+      return rec;
+    } catch (e) {
+      console.error('[Brain] appendTelemetry failed:', e.message);
+      return null;
+    }
   }
 
   /**
@@ -160,6 +219,8 @@ class Brain {
     const next = tryLoad(this.dir);
     if (!next) return false;
     const apiKey = this.cfg.apiKey;
+    const oldPersona = this.memory ? this.memory.persona : null;
+    const oldWritingMode = this.cfg ? this.cfg.writingMode : null;
     Object.assign(this.cfg, next, { apiKey });
 
     // 1. Memory 的窗口与上下文参数
@@ -169,6 +230,12 @@ class Brain {
     m.keepTail = this.cfg.keepTailMessages;
     m.memoryCap = this.cfg.memoryCapTokens;
     m.persona = systemPersona(this.cfg);
+
+    if (oldPersona !== null && oldPersona !== m.persona) {
+      this.pendingCacheBreakReason = (oldWritingMode !== this.cfg.writingMode)
+        ? 'writing_mode_change'
+        : 'config_prompt_change';
+    }
 
     // 2. SelfLedger 档案参数同步（P1-02）
     if (this.selfLedger) {
@@ -384,7 +451,10 @@ class Brain {
           : id + ' 未生效：' + r.error);
       }
       // 穿着块只在真有事发生时重建一次，不必每条提案都算一遍
-      if (wearChanged) this.memory.wardrobe = this.wardrobe.promptBlock();
+      if (wearChanged) {
+        this.memory.wardrobe = this.wardrobe.promptBlock();
+        this.pendingCacheBreakReason = 'wardrobe_change';
+      }
     }
     const wearNote = wearNotes.join('；') || null;
     this.memory.append('assistant', (clean || text)
@@ -421,19 +491,19 @@ class Brain {
   }
 
   /** 生成本窗口小结并归档 */
-  async closeWindow() {
+  async closeWindow(opts = {}) {
     if (this._closingWindow) {
       return this._closingWindowPromise || false;
     }
     this._closingWindow = true;
-    this._closingWindowPromise = this._closeWindowInternal().finally(() => {
+    this._closingWindowPromise = this._closeWindowInternal(opts).finally(() => {
       this._closingWindow = false;
       this._closingWindowPromise = null;
     });
     return this._closingWindowPromise;
   }
 
-  async _closeWindowInternal() {
+  async _closeWindowInternal(opts = {}) {
     // P0-01: 若检测到 SubjectState 处于 recovery_pending 状态，先执行 Replay 自动恢复
     if (this.subjectState && this.subjectState.recoveryPending) {
       console.warn('[Brain] 检测到 subjectState 处于 recovery_pending 状态，正在执行 Replay 自动恢复...');
@@ -445,7 +515,8 @@ class Brain {
     }
 
     // 先拍快照再调 API：小结要等一两秒，这期间用户可能又发消息进来，
-    const snap = this.memory.windowSnapshot();
+    const closeReason = (opts && opts.closeReason) || (this.memory.data.turnsInWindow >= this.memory.windowTurns ? 'turn_limit' : (this.memory.needsWindowReset() ? 'token_limit' : 'turn_limit'));
+    const snap = this.memory.windowSnapshot({ closeReason });
     if (!snap.items.length) return false;
 
     // P0-2: 若当前窗口已在 Archive 中成功归档且 SubjectState 已恢复/前进，直接推进 Memory 关窗完成幂等收尾
@@ -453,7 +524,7 @@ class Brain {
         this.experiencesArchive.hasWindowArchive(snap.windowNo) &&
         (!this.subjectState || this.subjectState.currentWindowNo > snap.windowNo)) {
       console.warn(`[Brain] 窗口 #${snap.windowNo} 已经归档且状态已前进，直接推进 Memory 关窗完成幂等收尾`);
-      const existing = this.experiencesArchive.getByWindow(snap.windowNo).find(r => r.recordType === 'window_archive' || r.type === 'window_archive');
+      const existing = this.experiencesArchive.getByWindow(snap.windowNo).find(r => r.recordType === 'window_summary' || r.recordType === 'window_archive' || r.type === 'window_archive');
       const p = (existing && existing.payload) || existing || {};
       const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts && p.windowSynthesis.stableUserFacts.join('\n')) || '窗口小结已归档';
       const done = this.memory.closeWindow(summaryText, snap);
@@ -499,10 +570,19 @@ class Brain {
         const rawJson = String(text || '').trim()
           .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
         const parsed = JSON.parse(rawJson);
-        if (parsed && typeof parsed === 'object' && (parsed.windowSynthesis || Array.isArray(parsed.segments))) {
+        if (parsed && typeof parsed === 'object') {
           structured = parsed;
+          const vSummary = validateWindowSummary(structured, {
+            closeReason: snap.closeReason,
+            actualTurnCount: snap.actualTurnCount,
+            targetTurnCount: snap.targetTurnCount
+          });
+          if (!vSummary.valid) {
+            console.error('[Brain] Summary 数据契约校验失败 (Fail-Stop):', vSummary.reason);
+            return false;
+          }
         }
-      } catch {
+      } catch (parseErr) {
         // 模型或测试 mock 返回纯文本小结时优雅降级
       }
 
@@ -710,7 +790,10 @@ class Brain {
         } else {
           archiveSuccess = this.experiencesArchive.appendWindowArchive({
             windowNo: snap.windowNo,
-            turns: this.memory.data.turnsInWindow,
+            targetTurnCount: snap.targetTurnCount || 100,
+            actualTurnCount: snap.actualTurnCount ?? snap.snapshotTurnCount,
+            closeReason: snap.closeReason || 'turn_limit',
+            turns: snap.actualTurnCount ?? snap.snapshotTurnCount,
             messageCount: activeItems.length,
             events,
             observations,
@@ -767,6 +850,24 @@ class Brain {
       if (done) {
         this.stats.compressions++;
         this.saveStats(true);
+        this.pendingCacheBreakReason = 'window_boundary';
+
+        // P0-12: 记录自我投影 (Current Self Projection) 进入因果链
+        if ((this.cfg.recordSelfProjection || (opts && opts.recordSelfProjection)) &&
+            this.experiencesArchive && typeof this.experiencesArchive.appendSelfProjection === 'function') {
+          this.experiencesArchive.appendSelfProjection({
+            windowNo: snap.windowNo,
+            sourceExperienceRecords: [`win-${snap.windowNo}`],
+            sourceStateChanges: stateChanges ? stateChanges.map(sc => sc.stateChangeId || sc.changeId).filter(Boolean) : [],
+            projectionVersion: '1.0',
+            entriesAdded: 0,
+            result: {
+              currentSelfText: this.selfLedger ? this.selfLedger.currentSelfText() : '',
+              totalEntries: this.selfLedger ? this.selfLedger.entries.length : 0
+            }
+          });
+        }
+
         if (this.cfg.selfGrowthEnabled === true)
           await this.growSelf(dialogue, summaryTextForMemory, this.memory.data.windowNo - 1);
       }
@@ -796,6 +897,7 @@ class Brain {
       if (this.shutdownRequested) return false;
       if (!text) return false;
       this.memory.applyMerge(text, plan.keep);
+      this.pendingCacheBreakReason = 'memory_merge';
       this.stats.merges++;
       this.saveStats(true);
       return true;
@@ -820,6 +922,19 @@ class Brain {
       const raw = String(text || '').trim()
         .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
       const added = this.selfLedger.append(JSON.parse(raw), { window });
+      if (added > 0 && this.experiencesArchive && typeof this.experiencesArchive.appendSelfProjection === 'function') {
+        this.experiencesArchive.appendSelfProjection({
+          windowNo: window,
+          sourceExperienceRecords: [`win-${window}`],
+          sourceStateChanges: [],
+          projectionVersion: '1.0',
+          entriesAdded: added,
+          result: {
+            currentSelfText: this.selfLedger.currentSelfText(),
+            totalEntries: this.selfLedger.entries.length
+          }
+        });
+      }
       this.saveStats();
       return added;
     } catch (e) {
@@ -842,6 +957,27 @@ class Brain {
     const out = usage.completion_tokens || 0;
     const price = isPeakHour() ? this.cfg.price.peak : this.cfg.price.valley;
     const c = costOf(usage, price);
+    const hitRateRatio = (hit + miss) ? hit / (hit + miss) : 0;
+
+    let breakReason = null;
+    if (bucket === 'chat') {
+      if (miss > 0) {
+        breakReason = this.pendingCacheBreakReason || (hit === 0 ? 'unknown' : null);
+        this.pendingCacheBreakReason = null;
+      }
+    }
+
+    this.appendTelemetry({
+      timestamp: Date.now(),
+      windowNo: this.memory ? this.memory.data.windowNo : 1,
+      requestType: bucket,
+      promptTokens: usage.prompt_tokens || hit + miss,
+      promptCacheHitTokens: hit,
+      promptCacheMissTokens: miss,
+      completionTokens: out,
+      cacheHitRate: +(hitRateRatio.toFixed(4)),
+      cacheBreakReason: breakReason
+    });
 
     this.stats.history.push({
       t: Date.now(), hit, miss, out, cost: +c.toFixed(6),

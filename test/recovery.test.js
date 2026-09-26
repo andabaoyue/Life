@@ -204,7 +204,7 @@ async function testIdempotentRecoveryAndArchive() {
   // 第二次调用 closeWindow 重试
   const res2 = await brain.closeWindow();
   check('第二次 closeWindow 重试成功', res2 === true);
-  const allArchives = brain.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+  const allArchives = brain.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive' || r.recordType === 'window_summary');
   check('经历归档中窗口 1 window_archive 严格仅有 1 条 (无重复记录)', allArchives.length === 1);
 }
 
@@ -257,7 +257,7 @@ async function testFaultInjectionMatrix() {
     check('Case A.3: 重启后自动从归档 Replay 恢复状态至 Window #2', brainRestart.subjectState.currentWindowNo === 2);
     check('Case A.4: 恢复后特质计算正确演化 (+20)', brainRestart.subjectState.values.quiet_preference === 20);
 
-    const archivesA = brainRestart.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+    const archivesA = brainRestart.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive' || r.recordType === 'window_summary');
     check('Case A.5: 重启恢复未重复制造 window_archive 记录', archivesA.length === 1);
 
     try { fs.rmSync(dirA, { recursive: true, force: true }); } catch {}
@@ -309,7 +309,7 @@ async function testFaultInjectionMatrix() {
 
     // 连续两次触发 closeWindow
     const [p1, p2] = await Promise.all([brainC.closeWindow(), brainC.closeWindow()]);
-    const archivesC = brainC.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+    const archivesC = brainC.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive' || r.recordType === 'window_summary');
     check('Case C.1: 连续调用 closeWindow 经历归档严格仅产生 1 条 window_archive', archivesC.length === 1);
     check('Case C.2: 窗口状态正常收敛', p1 === true || p2 === true);
 
@@ -347,7 +347,7 @@ async function testFaultInjectionMatrix() {
     const resD2 = await brainD.closeWindow();
     check('Case D.2: 再次 closeWindow 成功收尾', resD2 === true);
 
-    const archivesD = brainD.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive');
+    const archivesD = brainD.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'window_archive' || r.recordType === 'window_summary');
     check('Case D.3: 经历归档绝不重复产生 window_archive', archivesD.length === 1);
 
     try { fs.rmSync(dirD, { recursive: true, force: true }); } catch {}

@@ -12,12 +12,31 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { ALLOWED_TRAITS } = require('./subject-state');
 const { validateEvent, ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
 
-// 合法归档记录类型白名单 (P0-03)
+/**
+ * 计算 Canonical Archive Record 哈希 (v0.9.6 P0-06)
+ * 使用严格字段顺序确保序列化确定性。
+ */
+function computeCanonicalRecordHash(rec) {
+  if (!rec || typeof rec !== 'object') return '';
+  const canonicalObj = {
+    archiveSeq: typeof rec.archiveSeq === 'number' ? rec.archiveSeq : null,
+    recordId: rec.recordId || null,
+    recordType: rec.recordType || rec.type || null,
+    windowNo: (typeof rec.windowNo === 'number' && !isNaN(rec.windowNo)) ? rec.windowNo : (rec.windowNo === null ? null : null),
+    timestamp: typeof rec.timestamp === 'number' ? rec.timestamp : null,
+    payload: rec.payload !== undefined ? rec.payload : {},
+    prevHash: rec.prevHash || null
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(canonicalObj), 'utf8').digest('hex');
+}
+
+// 合法归档记录类型白名单 (P0-03 & v0.9.6 P0-12)
 const VALID_RECORD_TYPES = new Set([
   'window_summary',
   'window_archive',
@@ -28,7 +47,8 @@ const VALID_RECORD_TYPES = new Set([
   'interpretation',
   'evidence',
   'evidence_rejected',
-  'state_change'
+  'state_change',
+  'self_projection'
 ]);
 
 // 完整性状态枚举
@@ -246,6 +266,13 @@ function validateArchiveRecord(record, options = {}) {
       break;
     }
 
+    case 'self_projection': {
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_SELF_PROJECTION_PAYLOAD' };
+      }
+      break;
+    }
+
     default:
       return { valid: false, reason: 'UNHANDLED_RECORD_TYPE: ' + recType };
   }
@@ -358,7 +385,71 @@ class ArchiveIntegrityService {
     let integrity = INTEGRITY_STATUS.CERTIFIED;
     let replayStatus = REPLAY_STATUS.COMPLETE;
 
-    if (corruptLines > 0) {
+    let syntax_integrity = corruptLines > 0 ? (validCount > 0 ? 'partial' : 'corrupted') : 'valid';
+    let sequence_integrity = 'legacy';
+    let hash_integrity = 'legacy';
+
+    const sequenced = validRecords.filter(r => typeof r.archiveSeq === 'number' && !Number.isNaN(r.archiveSeq));
+    if (sequenced.length === validRecords.length && validRecords.length > 0) {
+      let seqOk = true;
+      for (let j = 0; j < sequenced.length; j++) {
+        const expectedSeq = sequenced[0].archiveSeq + j;
+        if (sequenced[j].archiveSeq !== expectedSeq) {
+          seqOk = false;
+          diagnostics.push({
+            lineNumber: j + 1,
+            error: `SEQUENCE_MISMATCH: expected archiveSeq ${expectedSeq}, got ${sequenced[j].archiveSeq}`
+          });
+          break;
+        }
+      }
+      sequence_integrity = seqOk ? 'monotonic' : 'invalid';
+    } else if (sequenced.length > 0 && sequenced.length < validRecords.length) {
+      sequence_integrity = 'partial_unsequenced';
+    }
+
+    const hashed = validRecords.filter(r => typeof r.recordHash === 'string' && r.recordHash);
+    if (hashed.length === validRecords.length && validRecords.length > 0) {
+      let hashOk = true;
+      for (let j = 0; j < hashed.length; j++) {
+        const rec = hashed[j];
+        const expectedHash = computeCanonicalRecordHash(rec);
+        if (rec.recordHash !== expectedHash) {
+          hashOk = false;
+          diagnostics.push({
+            lineNumber: j + 1,
+            error: `RECORD_HASH_MISMATCH: recordId ${rec.recordId || j}`
+          });
+          break;
+        }
+        if (j === 0) {
+          if (rec.prevHash && rec.prevHash !== 'GENESIS' && rec.archiveSeq === 1) {
+            hashOk = false;
+            diagnostics.push({
+              lineNumber: 1,
+              error: `GENESIS_HASH_MISMATCH: expected GENESIS, got ${rec.prevHash}`
+            });
+            break;
+          }
+        } else {
+          const prevRec = hashed[j - 1];
+          if (rec.prevHash !== prevRec.recordHash) {
+            hashOk = false;
+            diagnostics.push({
+              lineNumber: j + 1,
+              error: `PREV_HASH_CHAIN_BROKEN: at record ${rec.recordId || j}, expected ${prevRec.recordHash}, got ${rec.prevHash}`
+            });
+            break;
+          }
+        }
+      }
+      hash_integrity = hashOk ? 'verified' : 'mismatch';
+    }
+
+    if (hash_integrity === 'mismatch' || sequence_integrity === 'invalid') {
+      integrity = INTEGRITY_STATUS.INVALID;
+      replayStatus = REPLAY_STATUS.INVALID;
+    } else if (corruptLines > 0) {
       integrity = validCount > 0 ? INTEGRITY_STATUS.PARTIAL : INTEGRITY_STATUS.CORRUPTED;
       replayStatus = REPLAY_STATUS.PARTIAL;
     } else if (invalidCount > 0) {
@@ -376,6 +467,9 @@ class ArchiveIntegrityService {
     return {
       integrity,
       replayStatus,
+      syntax_integrity,
+      sequence_integrity,
+      hash_integrity,
       validCount,
       invalidCount,
       corruptLines,
@@ -464,5 +558,6 @@ module.exports = {
   INTEGRITY_STATUS,
   REPLAY_STATUS,
   validateArchiveRecord,
-  ArchiveIntegrityService
+  ArchiveIntegrityService,
+  computeCanonicalRecordHash
 };

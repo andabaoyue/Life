@@ -259,21 +259,32 @@ class Memory {
    * 若到应用时才算 slice(-keepTail)，会把等待期间新追加的对话一起裁掉，
    * 那些对话既没进小结也不在历史里，等于静默丢失。
    */
-  windowSnapshot() {
+  windowSnapshot(opts = {}) {
     const len = this.data.history.length;
     const keep = Math.min(this.keepTail, len);
     const drop = len - keep;
     const currentWindowNo = this.data.windowNo;
     // Active window items: 属于当前窗口且非 bridge 的真实经历消息（不总结上一窗口桥接的 6 条）
     const activeItems = this.data.history.filter(m => !m.bridge && m.windowNo === currentWindowNo);
-    // keepTail=0 时 drop=len，slice(0,len) 即全部；别写成 slice(0, len-0)
+    const targetTurnCount = this.windowTurns || 100;
+    const snapshotTurnCount = this.data.turnsInWindow;
+    const actualTurnCount = activeItems.filter(m => m.role === 'user' && !m.synthetic).length || snapshotTurnCount;
+    const snapshotActiveMessageIds = activeItems.map(m => m.messageId).filter(Boolean);
+    const closeReason = opts.closeReason || (snapshotTurnCount >= targetTurnCount ? 'turn_limit' : (this.needsWindowReset() ? 'token_limit' : 'turn_limit'));
+
     return {
       items: this.data.history.slice(0, drop),
       activeItems: activeItems.length > 0 ? activeItems : this.data.history.slice(0, drop),
       drop,
       len,
       epoch: this.data.epoch,
-      windowNo: currentWindowNo
+      windowNo: currentWindowNo,
+      snapshotTurnCount,
+      snapshotMessageCount: activeItems.length,
+      snapshotActiveMessageIds,
+      closeReason,
+      targetTurnCount,
+      actualTurnCount
     };
   }
 
@@ -287,9 +298,12 @@ class Memory {
     if (snap.epoch !== this.data.epoch) return false;
 
     const closedWindowNo = this.data.windowNo;
+    const turnsRecorded = (snap && typeof snap.snapshotTurnCount === 'number') ? snap.snapshotTurnCount : this.data.turnsInWindow;
     this.data.windows.push({
       no: closedWindowNo,
-      turns: this.data.turnsInWindow,
+      turns: turnsRecorded,
+      actualTurnCount: (snap && typeof snap.actualTurnCount === 'number') ? snap.actualTurnCount : turnsRecorded,
+      closeReason: (snap && snap.closeReason) || 'turn_limit',
       at: Date.now(),
       text: String(summaryText).trim()
     });

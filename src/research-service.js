@@ -23,6 +23,7 @@ const {
 } = require('./research-export');
 const { SubjectState, DEFAULT_TRAITS, ALLOWED_TRAITS } = require('./subject-state');
 const { normalizeArchiveRecord } = require('./experience-schema');
+const { symmetricRound } = require('./state-change');
 const { validateArchiveRecord, ArchiveIntegrityService } = require('./archive-integrity');
 
 const REPLAY_CHUNK_SIZE = 500;
@@ -355,7 +356,7 @@ class ResearchService {
 
         const deltas = {};
         for (const [trait, sum] of Object.entries(rawDeltas)) {
-          const clamped = Math.max(-maxDelta, Math.min(maxDelta, Math.round(sum)));
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, symmetricRound(sum)));
           if (clamped !== 0) {
             deltas[trait] = clamped;
             const curr = currentValues[trait] ?? 0;

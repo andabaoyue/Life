@@ -1,4 +1,4 @@
-# Life · 初澜 (Chulan) v0.9.5.3
+# Life · 初澜 (Chulan) v0.9.6
 
 Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
 
@@ -405,6 +405,13 @@ node test/research-index-unknown-window.test.js # 31 项：v0.9.5.3 (H-02) 彻�
 node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）
 node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
 node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命实验层核心架构、Schema 契约、基线零干预、内部状态代理、纯函数 Reducer 确定性（100次无漂移与时钟隔离）、数字环周知觉候选界限、证据门禁自传记忆全可信链、睡眠三态分立与零假说门禁
+node test/window-boundary.test.js        # 33 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）
+node test/archive-integrity.test.js       # 37 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）
+node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
+node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
+node test/reducer-symmetry.test.js        # 20 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）
+node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
+node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```
@@ -449,7 +456,14 @@ pip install opencv-contrib-python numpy pillow
 
 ## 版本记录
 
-只记**会影响行为或数据格式**的变化，方便以后回头看哪次动过什么。
+**v0.9.6** — 《初澜数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：
+- **P0-01 ~ P0-04** (窗口边界与指标冻结)：确立 `turn_limit`、`token_limit`、`manual`、`recovery` 四大关窗触发原因；在请求模型小结前由 `windowSnapshot()` 冻结 `snapshotTurnCount`、`targetTurnCount`、`actualTurnCount` 与 `closeReason`，彻底消除异步关窗期间并发对话导致的轮数指标漂移与坏账；Bridge 桥接消息不入小结并严格隔离。
+- **P0-05 ~ P0-07** (严格 5×20 小结契约与 Fail-Stop)：落实 `validateWindowSummary()` 结构契约校验；强制要求 5 个连续分段完整覆盖窗口轮次且无重叠遗漏；小结格式不合法时触发 Fail-Stop 熔断停机，绝对保留历史对话零丢字，零污染写入经历底座。
+- **P0-08 ~ P0-10** (Archive Canonical Schema v1 与哈希链溯源)：`experiences.jsonl` 全量升级为 Canonical Schema v1，引入全局自增单调 `archiveSeq`、强唯一性 `recordId`（`rec-{type}-{seq}-{rand}`）、SHA-256 前向哈希链（`prevHash` -> `recordHash`）与底层 `fsync` 真实物理持久化，实现全链路防篡改与可复盘验证。
+- **P0-11 ~ P0-12** (证据溯源 12 条内生自校验规则)：`SubjectState.verifyEvidence()` 确立 12 条内生检验律，全面拦截跨窗口窜供、合成/生成数据伪造、Bridge 桥接消息污染、角色越权、重复指纹与空引用，筑牢认知所有权防线。
+- **P0-13** (状态转移纯对称整数舍入)：消除 JS 浮点舍入与正负不对称误差，在 `state-change.js`、`SubjectState.reduce()`、`SubjectState.replay()` 及 `ResearchService` 中统一采用无偏对称舍入（`symmetricRound`），保证离线 Replay 演化重放与在线状态推进 100% 绝对一致。
+- **P0-14 ~ P0-15** (当前自我因果投影与实验遥测)：在经历底座增加 `recordType: 'self_projection'` 因果投影记录，与 `Self-Ledger` 保持因果溯源绑定；建立 Append-Only 实验遥测日志 `experiment-telemetry.jsonl`，对 DeepSeek 前缀缓存破坏实现七大类别精准归因。
+- **P0-16 ~ P0-18** (全套不变量攻击测试矩阵与发布门禁)：新增 7 套专用测试套件共 171 项断言，全工程测试套件达 52 套，全部 100% 通过且零回归。
 
 **v0.9.5.3** — Codex Findings Fix（安全漏洞修复与架构一致性收敛）：针对 Codex Independent Audit 提出的 4 个 HIGH 级发现完成专项修复：
 - **H-01** (Archive Event Validation Parity): `src/archive-integrity.js` 统一接入规范级运行时事件校验器 (`validateEvent`)，对 `window_summary.payload.events[]` 及独立 `event` 归档记录实施与运行时完全对齐的强校验；`src/experience-schema.js` 全面禁止 `generated: true` 与 `synthetic: true` 伪造事件，来源空值或非法值坚决拦截并降级 `UNCERTIFIED`。

@@ -76,7 +76,7 @@ check('appendWindowArchive 成功追加完整窗口', r2 && archive.count() === 
 const w1Records = archive.getByWindow(1);
 check('getByWindow(1) 成功筛选出窗口记录',
   w1Records.length === 1 &&
-  (w1Records[0].schemaVersion === 1 ? w1Records[0].recordType === 'window_archive' : w1Records[0].type === 'window_archive') &&
+  (w1Records[0].recordType === 'window_summary' || w1Records[0].recordType === 'window_archive' || w1Records[0].type === 'window_archive') &&
   w1Records[0].windowNo === 1);
 const w1Payload = w1Records[0].payload || w1Records[0];
 check('归档中包含完整的 5 个 segments 与 windowSynthesis',

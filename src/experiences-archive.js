@@ -1,16 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const { wrapArchiveRecord, normalizeArchiveRecord } = require('./experience-schema');
-const { validateArchiveRecord } = require('./archive-integrity');
+const { validateArchiveRecord, computeCanonicalRecordHash } = require('./archive-integrity');
 
 /**
- * Append-Only 原始实验底座：experiences.jsonl
+ * Append-Only 原始实验底座：experiences.jsonl (v0.9.6)
  * 
  * 核心哲学与工程原则：
  * 1. 只追加，永不静默修改，永不覆盖。
  * 2. 永不因 Token 超限或条目上限（maxEntries）被裁剪或删除。
  * 3. 完整保存 5x20 分段经历、Window Synthesis、用户给予、初澜经历与 Provenance 证据。
- * 4. 与模型 Prompt 消费层解耦：Prompt 记忆可以分层压缩，但原始底座永久留存以备实验 Replay 与离线分析。
+ * 4. 严谨因果链：每一条记录具备单调递增 archiveSeq 与 SHA-256 防篡改哈希链（prevHash -> recordHash）。
+ * 5. 严格持久化：每次 append 同步执行 fsync，保障落盘语义。
  */
 class ExperiencesArchive {
   constructor(userDataDir, opts = {}) {
@@ -20,20 +21,63 @@ class ExperiencesArchive {
   }
 
   /**
-   * 追加一条归档记录（JSON 行）。
+   * 获取最近一条已编序的归档记录 (用于衔接 hash chain 与递增 archiveSeq)
+   */
+  getLastSequencedRecord() {
+    const records = this.readAll();
+    for (let i = records.length - 1; i >= 0; i--) {
+      const r = records[i];
+      if (r && typeof r.archiveSeq === 'number' && !Number.isNaN(r.archiveSeq) && r.recordHash) {
+        return r;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 追加一条归档记录（JSON 行）。具备 fsync 持久化保障与因果哈希链。
    */
   append(record) {
     if (!record || typeof record !== 'object') return false;
-    const entry = { ...record };
-    if (!entry.timestamp && !entry.createdAt) {
-      entry.createdAt = Date.now();
+
+    const last = this.getLastSequencedRecord();
+    const defaultSeq = last ? last.archiveSeq + 1 : 1;
+    const defaultRecordId = `rec-${String(defaultSeq).padStart(6, '0')}`;
+    const defaultPrevHash = last ? last.recordHash : 'GENESIS';
+
+    const entry = {
+      ...record,
+      schemaVersion: record.schemaVersion || 1,
+      recordType: record.recordType || record.type || 'window_summary',
+      recordId: record.recordId || defaultRecordId,
+      archiveSeq: typeof record.archiveSeq === 'number' ? record.archiveSeq : defaultSeq,
+      timestamp: (typeof record.timestamp === 'number' && !isNaN(record.timestamp))
+        ? record.timestamp
+        : ((typeof record.createdAt === 'number' && !isNaN(record.createdAt)) ? record.createdAt : Date.now()),
+      windowNo: (typeof record.windowNo === 'number' && !isNaN(record.windowNo))
+        ? record.windowNo
+        : (record.windowNo === null ? null : (record.payload && typeof record.payload.windowNo === 'number' ? record.payload.windowNo : null)),
+      payload: record.payload !== undefined ? record.payload : {},
+      prevHash: record.prevHash !== undefined ? record.prevHash : defaultPrevHash
+    };
+
+    if (!entry.createdAt) entry.createdAt = entry.timestamp;
+    if (!entry.recordHash) {
+      entry.recordHash = computeCanonicalRecordHash(entry);
     }
+
     const line = JSON.stringify(entry) + '\n';
     try {
       if (!fs.existsSync(this.dir)) {
         fs.mkdirSync(this.dir, { recursive: true });
       }
-      fs.appendFileSync(this.path, line, 'utf8');
+      const fd = fs.openSync(this.path, 'a');
+      try {
+        fs.writeSync(fd, line, null, 'utf8');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       return true;
     } catch (e) {
       console.error('[ExperiencesArchive] append failed:', e.message);
@@ -42,24 +86,37 @@ class ExperiencesArchive {
   }
 
   /**
-   * 追加标准封装记录 (v0.9.4 EOI 规范)
+   * 追加标准封装记录 (v0.9.6 Canonical 规范)
    */
-  appendRecord(recordType, windowNo, payload = {}) {
-    const wrapped = wrapArchiveRecord(recordType, windowNo, payload);
+  appendRecord(recordType, windowNo, payload = {}, extra = {}) {
+    const last = this.getLastSequencedRecord();
+    const archiveSeq = typeof extra.archiveSeq === 'number' ? extra.archiveSeq : (last ? last.archiveSeq + 1 : 1);
+    const recordId = extra.recordId || `rec-${String(archiveSeq).padStart(6, '0')}`;
+    const prevHash = extra.prevHash || (last ? last.recordHash : 'GENESIS');
+
+    const wrapped = wrapArchiveRecord(recordType, windowNo, payload, {
+      archiveSeq,
+      recordId,
+      prevHash,
+      timestamp: extra.timestamp
+    });
+    wrapped.recordHash = computeCanonicalRecordHash(wrapped);
+    // 兼容根据 type 或 recordType 检索旧记录的用例
+    if (recordType === 'window_summary' || recordType === 'window_archive') {
+      wrapped.type = 'window_archive';
+    }
     return this.append(wrapped);
   }
 
   /**
-   * 检查指定窗口是否已存在可靠完成的 window_archive 记录 (支持 Canonical v1 与 Legacy)
-   * 严格区分「可靠完成归档」与「存在异常/损坏/伪造记录」。
-   * 坏记录或非法记录绝不能永久阻塞合法归档写入。
+   * 检查指定窗口是否已存在可靠完成的 window_summary / window_archive 记录
    */
   hasWindowArchive(windowNo) {
     if (typeof windowNo !== 'number' || Number.isNaN(windowNo)) return false;
     const records = this.readAll();
     return records.some(r => {
       const type = r.recordType || r.type;
-      if (type !== 'window_archive') return false;
+      if (type !== 'window_archive' && type !== 'window_summary') return false;
       const wNo = (typeof r.windowNo === 'number' && !Number.isNaN(r.windowNo))
         ? r.windowNo
         : (r.payload && typeof r.payload.windowNo === 'number' && !Number.isNaN(r.payload.windowNo) ? r.payload.windowNo : null);
@@ -86,8 +143,7 @@ class ExperiencesArchive {
   }
 
   /**
-   * 归档一个完整窗口的结构化经历与小结 (P0-1: 生产环境直接使用 Canonical Schema v1)
-   * P0-2: Exactly-Once 幂等保证，防止同一 windowNo 被重复归档
+   * 归档一个完整窗口的结构化经历与小结 (v0.9.6 Canonical Schema v1)
    */
   appendWindowArchive(data, opts = {}) {
     if (!data || typeof data !== 'object') return false;
@@ -96,7 +152,7 @@ class ExperiencesArchive {
       : (data.windowNo === null ? null : (data.windowNo !== undefined ? data.windowNo : null));
 
     if (windowNo !== null && !opts.allowDuplicate && this.hasWindowArchive(windowNo)) {
-      console.warn(`[ExperiencesArchive] 窗口 #${windowNo} 已存在 window_archive 记录，跳过重复写入以保证 Exactly-Once 语义`);
+      console.warn(`[ExperiencesArchive] 窗口 #${windowNo} 已存在 window_summary 记录，跳过重复写入以保证 Exactly-Once 语义`);
       return true;
     }
 
@@ -104,6 +160,9 @@ class ExperiencesArchive {
       archiveId: typeof data.archiveId === 'string' && data.archiveId ? data.archiveId : (`arch-w${windowNo}-${Date.now()}`),
       windowId: typeof data.windowId === 'string' && data.windowId ? data.windowId : (`win-${windowNo}`),
       windowNo,
+      targetTurnCount: typeof data.targetTurnCount === 'number' ? data.targetTurnCount : 100,
+      actualTurnCount: (typeof data.actualTurnCount === 'number' && !isNaN(data.actualTurnCount)) ? data.actualTurnCount : ((typeof data.turns === 'number' && !isNaN(data.turns)) ? data.turns : 0),
+      closeReason: data.closeReason || 'turn_limit',
       turns: (typeof data.turns === 'number' && !isNaN(data.turns)) ? data.turns : 0,
       messageCount: (typeof data.messageCount === 'number' && !isNaN(data.messageCount)) ? data.messageCount : 0,
       events: Array.isArray(data.events) ? data.events : [],
@@ -119,7 +178,23 @@ class ExperiencesArchive {
       rawSummaryText: typeof data.rawSummaryText === 'string' ? data.rawSummaryText : ''
     };
 
-    return this.appendRecord('window_archive', windowNo, payload);
+    return this.appendRecord('window_summary', windowNo, payload);
+  }
+
+  /**
+   * 追加 Current Self 投影变更记录 (v0.9.6 P0-12)
+   */
+  appendSelfProjection(data = {}) {
+    const windowNo = typeof data.windowNo === 'number' ? data.windowNo : null;
+    const payload = {
+      projectionVersion: data.projectionVersion || '1.0',
+      sourceExperienceRecords: Array.isArray(data.sourceExperienceRecords) ? data.sourceExperienceRecords : [],
+      sourceStateChanges: Array.isArray(data.sourceStateChanges) ? data.sourceStateChanges : [],
+      entriesAdded: typeof data.entriesAdded === 'number' ? data.entriesAdded : 0,
+      result: data.result || {},
+      timestamp: Date.now()
+    };
+    return this.appendRecord('self_projection', windowNo, payload);
   }
 
   /**

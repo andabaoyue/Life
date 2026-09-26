@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
-const { createStateChange, validateStateChange } = require('./state-change');
+const { createStateChange, validateStateChange, symmetricRound } = require('./state-change');
 const { normalizeArchiveRecord } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
@@ -600,6 +600,71 @@ class SubjectState {
         continue;
       }
 
+      // 3.1 目标窗口匹配强核验 (v0.9.6 P0-07)
+      const targetWindowNo = (typeof windowNo === 'number' && !Number.isNaN(windowNo))
+        ? windowNo
+        : ((opts && typeof opts.windowNo === 'number' && !Number.isNaN(opts.windowNo)) ? opts.windowNo : null);
+      if (targetWindowNo !== null && typeof sourceMsg.windowNo === 'number' && !Number.isNaN(sourceMsg.windowNo) && sourceMsg.windowNo !== targetWindowNo) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'MESSAGE_WINDOW_MISMATCH',
+          windowNo: targetWindowNo,
+          messageWindowNo: sourceMsg.windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.2 Synthetic 消息不具备主体经历资格 (v0.9.6 P0-07)
+      if (sourceMsg.synthetic === true) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'SYNTHETIC_MESSAGE_NOT_ELIGIBLE',
+          windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.3 Bridge 消息仅作前缀缓存桥接，不计入新窗口证据 (v0.9.6 P0-07)
+      if (sourceMsg.bridge === true) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'BRIDGE_MESSAGE_NOT_ELIGIBLE',
+          windowNo,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      // 3.4 消息角色合法性检验 (仅限 user 或 assistant) (v0.9.6 P0-07)
+      if (sourceMsg.role && sourceMsg.role !== 'user' && sourceMsg.role !== 'assistant') {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'INVALID_MESSAGE_ROLE',
+          windowNo,
+          role: sourceMsg.role,
+          trait: cleanTrait,
+          messageId: messageId.trim(),
+          quote: String(quote || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
       // 4. quote 摘录检验（严格要求原文子串匹配）
       if (typeof quote !== 'string' || !quote.trim()) {
         rejected.push({
@@ -748,7 +813,7 @@ class SubjectState {
     const newChanges = [];
 
     for (const [trait, sum] of Object.entries(rawDeltas)) {
-      const clampedDelta = clamp(Math.round(sum), -maxDelta, maxDelta);
+      const clampedDelta = clamp(symmetricRound(sum), -maxDelta, maxDelta);
       if (clampedDelta !== 0) {
         appliedDeltas[trait] = clampedDelta;
         const currentVal = this.data.values[trait] ?? 0;
@@ -873,16 +938,33 @@ class SubjectState {
       'diagnostic',
       'replay_report',
       'internal_log',
-      'audit_log'
+      'audit_log',
+      'self_projection'
     ]);
 
-    // 标准化并按时间戳升序排序
+    // 标准化并按 archiveSeq（优先）或时间戳升序排序 (v0.9.6 P0-05)
     const normalized = [];
+    let hasArchiveSeq = false;
     for (const r of archiveRecords) {
       const norm = normalizeArchiveRecord(r);
-      if (norm) normalized.push(norm);
+      if (norm) {
+        if (typeof norm.archiveSeq === 'number' && !Number.isNaN(norm.archiveSeq)) {
+          hasArchiveSeq = true;
+        }
+        normalized.push(norm);
+      }
     }
-    normalized.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    const ordering = hasArchiveSeq ? 'archive_seq' : 'legacy';
+    if (hasArchiveSeq) {
+      normalized.sort((a, b) => {
+        const seqA = typeof a.archiveSeq === 'number' ? a.archiveSeq : Infinity;
+        const seqB = typeof b.archiveSeq === 'number' ? b.archiveSeq : Infinity;
+        if (seqA !== seqB) return seqA - seqB;
+        return (a.timestamp || 0) - (b.timestamp || 0);
+      });
+    } else {
+      normalized.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    }
 
     for (const record of normalized) {
       const recType = record.recordType || record.type || (record.payload && record.payload.type) || '';
@@ -977,7 +1059,7 @@ class SubjectState {
       const deltas = {};
       const stepChanges = [];
       for (const [trait, sum] of Object.entries(rawDeltas)) {
-        const clampedDelta = clamp(Math.round(sum), -maxDelta, maxDelta);
+        const clampedDelta = clamp(symmetricRound(sum), -maxDelta, maxDelta);
         if (clampedDelta !== 0) {
           deltas[trait] = clampedDelta;
           const curr = currentValues[trait] ?? 0;
@@ -1014,6 +1096,11 @@ class SubjectState {
       replayStatus,
       integrity,
       archiveIntegrity: (integrityReport && integrityReport.integrity) || integrity,
+      syntax_integrity: (integrityReport && integrityReport.syntax_integrity) || (corruptCount > 0 ? 'corrupted' : 'valid'),
+      sequence_integrity: (integrityReport && integrityReport.sequence_integrity) || (hasArchiveSeq ? 'monotonic' : 'legacy'),
+      hash_integrity: (integrityReport && integrityReport.hash_integrity) || (hasArchiveSeq ? 'verified' : 'legacy'),
+      ordering,
+      orderingIntegrity: ordering,
       hasLegacyAdapter: !!(integrityReport && integrityReport.hasLegacyAdapter),
       corruptRecords: corruptCount,
       initialState: { ...initialTraits },
