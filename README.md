@@ -434,6 +434,7 @@ node test/internal-scalar-leak-capture.test.js # 4 项：Phase 4 内部标量防
  node test/experiment-metadata.test.js # 31 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退、observedModel与深冻结）
  node test/repair-regressions.test.js # 12 项：修复回归（完整初始状态快照、watermark/seen/window/recovery/restore adversarial 矩阵、closure/function identity、Dream provenance 交叉引用、损坏 watermark fail-closed 与零内存漂移）
 node test/identity-provenance-fix.test.js # 11 项：定点收尾修复回归（reducer 参数 stepWeight/maxDeltaPerWindow 计入 Initial State Identity 且注入真正作用于执行、Dream Event 溯源禁止全窗口扩大归因：仅归因被证据关联的 Event，无法证明时 sourceEventIds=[] 且 eventProvenanceStatus 如实标记 unavailable）
+node test/initial-state-restore-symmetry.test.js # 16 项：Initial State 恢复对称性回归（canonicalizeExperimentState 认证的 SubjectState 全字段——schemaVersion/updatedAt/windowNo/values/history/stateChanges/seenFingerprints/seenEvidenceIds/recoveryStatus/recoveryPending/recoveryPendingReason/stepWeight/maxDeltaPerWindow 及运行时去重集合 committedFingerprints/committedEvidenceIds——必须由 audit 与 executeTrajectory 共用同一份恢复逻辑 applySubjectInitialState，单字段差异 initialStateEqual=false、注入值真正到达执行对象并参与 evidence 去重与 canalization reduce）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```

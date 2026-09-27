@@ -114,6 +114,30 @@ function hashExperimentState(reg, subjectState) {
   return 'sha256:' + sha256(canonicalStringify(canonicalizeExperimentState(reg, subjectState)));
 }
 
+/**
+ * 将调用方提供的 SubjectState 初始状态完整应用到实例。
+ * audit 核验阶段 (initSub) 与 executeTrajectory 执行阶段共用同一份恢复逻辑，
+ * 保证 canonicalizeExperimentState 认证的状态 = 实际执行使用的状态（恢复对称性）。
+ * 必须同步 data 全部 canonical 字段，以及运行时真正用于去重的
+ * committedFingerprints / committedEvidenceIds 集合（不能只恢复 data.seen* 镜像）。
+ */
+function applySubjectInitialState(subjectState, initial) {
+  if (!subjectState || !initial || typeof initial !== 'object') return subjectState;
+  if (initial.values) {
+    subjectState.data.values = { ...initial.values };
+  }
+  for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds', 'recoveryStatus']) {
+    if (initial[key] !== undefined) subjectState.data[key] = Array.isArray(initial[key]) ? [...initial[key]] : initial[key];
+  }
+  if (Array.isArray(initial.seenFingerprints)) subjectState.committedFingerprints = new Set(initial.seenFingerprints);
+  if (Array.isArray(initial.seenEvidenceIds)) subjectState.committedEvidenceIds = new Set(initial.seenEvidenceIds);
+  if (initial.recoveryPending !== undefined) subjectState.recoveryPending = Boolean(initial.recoveryPending);
+  if (initial.recoveryPendingReason !== undefined) subjectState.recoveryPendingReason = initial.recoveryPendingReason;
+  if (initial.stepWeight !== undefined) subjectState.stepWeight = initial.stepWeight;
+  if (initial.maxDeltaPerWindow !== undefined) subjectState.maxDeltaPerWindow = initial.maxDeltaPerWindow;
+  return subjectState;
+}
+
 function hasUnboundFunctionIdentifier(fn, rawSource) {
   if (/function\s+anonymous\s*\(/.test(rawSource)) return true;
   const declared = new Set(['arguments', 'undefined', 'NaN', 'Infinity', 'Math', 'JSON', 'Number', 'String', 'Boolean', 'Object', 'Array', 'Date', 'RegExp', 'Set', 'Map', 'Error', 'Promise', 'console']);
@@ -432,21 +456,7 @@ function runPathDependencyExperiment(options = {}) {
   const initSubA = new SubjectState(isolatedDirA, {
     experimentModules: effectiveConfigA.experimentModules
   });
-  if (initialStateA?.subjectState) {
-    const initial = initialStateA.subjectState;
-    if (initialStateA.subjectState.values) {
-      initSubA.data.values = { ...initialStateA.subjectState.values };
-    }
-    for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds', 'recoveryStatus']) {
-      if (initial[key] !== undefined) initSubA.data[key] = Array.isArray(initial[key]) ? [...initial[key]] : initial[key];
-    }
-    if (Array.isArray(initial.seenFingerprints)) initSubA.committedFingerprints = new Set(initial.seenFingerprints);
-    if (Array.isArray(initial.seenEvidenceIds)) initSubA.committedEvidenceIds = new Set(initial.seenEvidenceIds);
-    if (initial.recoveryPending !== undefined) initSubA.recoveryPending = Boolean(initial.recoveryPending);
-    if (initial.recoveryPendingReason !== undefined) initSubA.recoveryPendingReason = initial.recoveryPendingReason;
-    if (initial.stepWeight !== undefined) initSubA.stepWeight = initial.stepWeight;
-    if (initial.maxDeltaPerWindow !== undefined) initSubA.maxDeltaPerWindow = initial.maxDeltaPerWindow;
-  }
+  applySubjectInitialState(initSubA, initialStateA?.subjectState);
 
   const initRegB = new InternalRegulationManager(isolatedDirB, {
     enabled: effectiveConfigB.experimentModules?.internalRegulation !== false,
@@ -461,21 +471,7 @@ function runPathDependencyExperiment(options = {}) {
   const initSubB = new SubjectState(isolatedDirB, {
     experimentModules: effectiveConfigB.experimentModules
   });
-  if (initialStateB?.subjectState) {
-    const initial = initialStateB.subjectState;
-    if (initialStateB.subjectState.values) {
-      initSubB.data.values = { ...initialStateB.subjectState.values };
-    }
-    for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds', 'recoveryStatus']) {
-      if (initial[key] !== undefined) initSubB.data[key] = Array.isArray(initial[key]) ? [...initial[key]] : initial[key];
-    }
-    if (Array.isArray(initial.seenFingerprints)) initSubB.committedFingerprints = new Set(initial.seenFingerprints);
-    if (Array.isArray(initial.seenEvidenceIds)) initSubB.committedEvidenceIds = new Set(initial.seenEvidenceIds);
-    if (initial.recoveryPending !== undefined) initSubB.recoveryPending = Boolean(initial.recoveryPending);
-    if (initial.recoveryPendingReason !== undefined) initSubB.recoveryPendingReason = initial.recoveryPendingReason;
-    if (initial.stepWeight !== undefined) initSubB.stepWeight = initial.stepWeight;
-    if (initial.maxDeltaPerWindow !== undefined) initSubB.maxDeltaPerWindow = initial.maxDeltaPerWindow;
-  }
+  applySubjectInitialState(initSubB, initialStateB?.subjectState);
 
   const snapshotA = canonicalizeExperimentState(initRegA, initSubA);
   const snapshotB = canonicalizeExperimentState(initRegB, initSubB);
@@ -583,22 +579,9 @@ function runPathDependencyExperiment(options = {}) {
     const subjectState = new SubjectState(dir || '', {
       experimentModules: effectiveCfg.experimentModules
     });
-    if (initialState?.subjectState) {
-      if (initialState.subjectState.values) {
-        subjectState.data.values = { ...initialState.subjectState.values };
-      }
-      if (initialState.subjectState.history) {
-        subjectState.data.history = [...initialState.subjectState.history];
-      }
-      // 与前置条件核验阶段 (initSub) 保持对称：注入的 reducer 参数必须真正作用于执行，
-      // 否则 initial state identity 认证的值与实际执行值不一致。
-      if (initialState.subjectState.stepWeight !== undefined) {
-        subjectState.stepWeight = initialState.subjectState.stepWeight;
-      }
-      if (initialState.subjectState.maxDeltaPerWindow !== undefined) {
-        subjectState.maxDeltaPerWindow = initialState.subjectState.maxDeltaPerWindow;
-      }
-    }
+    // 与 audit 核验阶段共用同一份恢复逻辑（applySubjectInitialState），
+    // 保证 canonicalizeExperimentState 认证的初始状态与实际执行状态完全一致。
+    applySubjectInitialState(subjectState, initialState?.subjectState);
 
     // 依序执行历史序列事件
     for (const item of sequence) {
