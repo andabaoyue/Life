@@ -34,6 +34,14 @@ jobs:
               with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
                   env.write(f'DESKPET_CHROME={playwright.chromium.executable_path}\n')
           PY
+      - name: Stabilize headless Chromium runner
+        run: |
+          cat > "$RUNNER_TEMP/chromium-ci" <<EOF
+          #!/usr/bin/env bash
+          exec "$DESKPET_CHROME" --disable-dev-shm-usage --disable-gpu "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/chromium-ci"
+          echo "DESKPET_CHROME=$RUNNER_TEMP/chromium-ci" >> "$GITHUB_ENV"
       - name: Install dependencies
         run: npm ci
       - name: Run full test suite
