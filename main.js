@@ -20,13 +20,7 @@ const { registerResearchIpc } = require('./src/research-ipc');
 function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
-  brain.tracker = tracker || null;
-  if (tracker && brain.internalRegulation) {
-    tracker.setInternalRegulation(brain.internalRegulation);
-  }
-  if (tracker && typeof brain.processEnvironmentalPerception === 'function') {
-    tracker.setPerceptionPipeline((raw) => brain.processEnvironmentalPerception(raw));
-  }
+  brain.bindTracker(tracker);
   if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock();
 }
 
@@ -248,15 +242,26 @@ function scheduleProactiveCheck(delayMs) {
 
 function checkAndPushProactive() {
   if (!trigger || !brain || !brain.ready || !win || win.isDestroyed()) return;
+
+  const at = Date.now();
+  const lastAct = tracker ? tracker.lastInteractionAt : at;
+  const idleMs = at - lastAct;
+  const idleMin = Math.floor(idleMs / 60000);
+
+  // Phase 0.5: 桌面挂机事件直连 (带水位线防重复)
+  if (tracker && idleMin >= 10) {
+    tracker.recordIdle(idleMin, at);
+  }
+
   const offer = trigger.evaluate();
   if (offer) {
     win.webContents.send('proactive-offer', offer);
   } else {
-    const at = Date.now();
-    const lastAct = tracker ? tracker.lastInteractionAt : at;
-    const idleRemaining = IDLE_MS - (at - lastAct);
+    const idleRemaining = IDLE_MS - idleMs;
     const nextDelay = idleRemaining > 0 ? idleRemaining : COOLDOWN_MS;
-    scheduleProactiveCheck(Math.max(COOLDOWN_MS, nextDelay));
+    // 挂机检查调度：步长不超过 10 分钟，确保 10、20 分钟阶段性挂机事件能被及时检测
+    const checkDelay = Math.min(Math.max(COOLDOWN_MS, nextDelay), 10 * 60000);
+    scheduleProactiveCheck(checkDelay);
   }
 }
 

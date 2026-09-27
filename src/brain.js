@@ -14,6 +14,7 @@ const { SubjectState } = require('./subject-state');
 const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation, validateWindowSummary } = require('./experience-schema');
 const { createStateChangeExplanation } = require('./state-change');
 const { InternalRegulationManager } = require('./internal-regulation');
+const { createExperimentRunManifest, createWindowExperimentSnapshot } = require('./experiment-run');
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -118,11 +119,6 @@ class Brain {
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
     this.experiencesArchive = new ExperiencesArchive(userDataDir);
-    this.subjectState = new SubjectState(userDataDir, {
-      stepWeight: this.cfg.subjectStateStepWeight,
-      maxDeltaPerWindow: this.cfg.subjectStateMaxDelta,
-      experimentModules: this.cfg.experimentModules
-    });
     this.memory = new Memory(userDataDir, {
       persona: systemPersona(this.cfg),
       windowTurns: this.cfg.windowTurns,
@@ -132,12 +128,36 @@ class Brain {
       experimentModules: this.cfg.experimentModules,
       memoryDynamics: this.cfg.experimentModules?.memoryDynamics
     });
+
+    const currentWinNo = (this.memory.data && typeof this.memory.data.windowNo === 'number')
+      ? this.memory.data.windowNo : 1;
+
+    // Phase 0 / Phase 0.5: 实验 Run 生命周期 Manifest 与当前窗口不可变快照
+    this.runManifest = createExperimentRunManifest({
+      experimentMode: this.cfg.experimentMode,
+      modules: this.cfg.experimentModules,
+      windowNo: currentWinNo
+    });
+    this.currentWindowSnapshot = createWindowExperimentSnapshot(currentWinNo, this.runManifest);
+
+    // 确保内部模块以当前窗口冻结的配置生效
+    this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
+    this.cfg.experimentModules = this.currentWindowSnapshot.modules;
+
+    this.subjectState = new SubjectState(userDataDir, {
+      stepWeight: this.cfg.subjectStateStepWeight,
+      maxDeltaPerWindow: this.cfg.subjectStateMaxDelta,
+      experimentModules: this.currentWindowSnapshot.modules
+    });
+    this.memory.opts.experimentModules = this.currentWindowSnapshot.modules;
+    this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
+
     this.dreamHistory = [];
     this._restoreDreamHistory();
     this._restoreEngramSnapshotFromArchive();
     this.internalRegulation = new InternalRegulationManager(userDataDir, {
-      enabled: Boolean(this.cfg.experimentModules?.internalRegulation),
-      experimentModules: this.cfg.experimentModules
+      enabled: Boolean(this.currentWindowSnapshot.modules?.internalRegulation),
+      experimentModules: this.currentWindowSnapshot.modules
     });
     this._restoreInternalRegulationFromArchive();
 
@@ -199,6 +219,19 @@ class Brain {
   }
 
   /**
+   * 判定指定实验模块在当前窗口快照中是否激活
+   * 
+   * @param {string} moduleName
+   * @returns {boolean}
+   */
+  isExperimentModuleActive(moduleName) {
+    if (this.currentWindowSnapshot && this.currentWindowSnapshot.modules) {
+      return Boolean(this.currentWindowSnapshot.modules[moduleName]);
+    }
+    return Boolean(this.cfg.experimentModules?.[moduleName]);
+  }
+
+  /**
    * 数字环周环境感知与注意力闸门真实生产流水线 (Phase 0.5: P0-2 & DigitalUmwelt -> AttentionGate)
    * 
    * 认识论不变量（Epistemic Invariant）：
@@ -210,7 +243,7 @@ class Brain {
    * @returns {Object|null}
    */
   processEnvironmentalPerception(rawSensorData) {
-    if (!this.cfg.experimentModules?.digitalUmwelt) return null;
+    if (!this.isExperimentModuleActive('digitalUmwelt')) return null;
     const { filterRawTelemetry, processUmweltPerception } = require('./digital-umwelt');
     const { evaluateAttentionGate, assertNotSubjectAcquired } = require('./attention-gate');
 
@@ -220,7 +253,7 @@ class Brain {
     const internalState = {
       values: this.internalRegulation ? this.internalRegulation.getState() : {}
     };
-    const snapshot = {
+    const snapshot = this.currentWindowSnapshot || {
       experimentMode: this.cfg.experimentMode,
       modules: this.cfg.experimentModules
     };
@@ -229,10 +262,10 @@ class Brain {
     if (!candidate) return null;
 
     let gateResult = null;
-    if (this.cfg.experimentModules?.attentionGate) {
+    if (this.isExperimentModuleActive('attentionGate')) {
       gateResult = evaluateAttentionGate(candidate, this.internalRegulation, {
         snapshot,
-        modules: this.cfg.experimentModules
+        modules: snapshot.modules
       });
     } else {
       gateResult = Object.freeze({
@@ -413,7 +446,15 @@ class Brain {
     const apiKey = this.cfg.apiKey;
     const oldPersona = this.memory ? this.memory.persona : null;
     const oldWritingMode = this.cfg ? this.cfg.writingMode : null;
+
+    // Phase 0 / 0.5: 窗口级实验快照冻结不变量。
+    // 当前窗口活跃期间，禁止外部热重载篡改当前窗口的 experimentMode 与 experimentModules。
+    const frozenMode = this.currentWindowSnapshot ? this.currentWindowSnapshot.experimentMode : this.cfg.experimentMode;
+    const frozenModules = this.currentWindowSnapshot ? this.currentWindowSnapshot.modules : this.cfg.experimentModules;
+
     Object.assign(this.cfg, next, { apiKey });
+    this.cfg.experimentMode = frozenMode;
+    this.cfg.experimentModules = frozenModules;
 
     // 1. Memory 的窗口与上下文参数
     const m = this.memory;
@@ -692,11 +733,16 @@ class Brain {
        两个入口都算数：用户明说道晚安，或她自己打出 [state:sleepy]。
        enterSleepMode 内部带守卫，重复触发不会把 sleepStartTime 刷成"刚睡"。 */
     // sleepy 只是模型表达的当下情绪，不等于用户说了晚安。
-    // 只有明确的用户晚安意图才进入全局睡眠，避免下午一句“有点困”关闭主动搭话。
-    if (tr && sleepIntent) {
-      tr.enterSleepMode();
-      if (this.internalRegulation) {
-        this.internalRegulation.updateOnSleep(true, { timestamp: Date.now() });
+    if (sleepIntent) {
+      const sleepAt = Date.now();
+      if (tr) {
+        tr.enterSleepMode(sleepAt);
+        // 若 tracker 未绑定当前 internalRegulation，才由此处兜底更新
+        if (this.internalRegulation && tr.internalRegulation !== this.internalRegulation) {
+          this.internalRegulation.updateOnSleep(true, { timestamp: sleepAt });
+        }
+      } else if (this.internalRegulation) {
+        this.internalRegulation.updateOnSleep(true, { timestamp: sleepAt });
       }
     }
 
@@ -763,6 +809,7 @@ class Brain {
       if (done) {
         this.stats.compressions++;
         this.saveStats(true);
+        this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
       }
       return done;
     }
@@ -978,8 +1025,8 @@ class Brain {
 
         const reduceResult = this.subjectState.reduce(verifiedEvidence, snap.windowNo, {
           stageOnly: true,
-          canalization: this.cfg.experimentModules?.biographicalCanalization,
-          experimentModules: this.cfg.experimentModules
+          canalization: this.isExperimentModuleActive('biographicalCanalization'),
+          experimentModules: this.currentWindowSnapshot ? this.currentWindowSnapshot.modules : this.cfg.experimentModules
         });
         if (reduceResult && Array.isArray(reduceResult.stateChanges)) {
           stateChanges = reduceResult.stateChanges;
@@ -1122,7 +1169,7 @@ class Brain {
         }
 
         // Phase 0.5: 内部调节中枢快照归档 (Internal Regulation Snapshot)
-        if (this.internalRegulation && this.cfg.experimentModules?.internalRegulation === true) {
+        if (this.internalRegulation && this.isExperimentModuleActive('internalRegulation')) {
           try {
             this.internalRegulation.updateOnWindowClose(snap.windowNo, {
               turnsRecorded: snap.actualTurnCount
@@ -1137,7 +1184,7 @@ class Brain {
         }
 
         // v0.9.7: 成本门禁式梦境系统 (Cost-Gated Dream Consolidation)
-        const dreamEnabled = this.cfg.experimentModules?.sleepConsolidation === true;
+        const dreamEnabled = this.isExperimentModuleActive('sleepConsolidation');
         if (dreamEnabled && this.experiencesArchive) {
           try {
             const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
@@ -1191,6 +1238,34 @@ class Brain {
 
         if (this.cfg.selfGrowthEnabled === true)
           await this.growSelf(dialogue, summaryTextForMemory, this.memory.data.windowNo - 1);
+
+        if (done) {
+          // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
+          const diskCfg = tryLoad(this.dir);
+          const nextExp = diskCfg ? sanitize({
+            experimentMode: diskCfg.experimentMode,
+            experimentModules: diskCfg.experimentModules
+          }) : {
+            experimentMode: this.currentWindowSnapshot.experimentMode,
+            experimentModules: this.currentWindowSnapshot.modules
+          };
+
+          this.runManifest = createExperimentRunManifest({
+            experimentMode: nextExp.experimentMode,
+            modules: nextExp.experimentModules,
+            windowNo: this.memory.data.windowNo
+          });
+          this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
+          this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
+          this.cfg.experimentModules = this.currentWindowSnapshot.modules;
+
+          if (this.internalRegulation) {
+            this.internalRegulation.enabled = Boolean(this.currentWindowSnapshot.modules?.internalRegulation);
+          }
+          if (this.memory) {
+            this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
+          }
+        }
       }
       return done;
     } catch (e) {

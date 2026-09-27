@@ -26,7 +26,7 @@ const { ANIMATION_STATES } = require('../src/animation-state');
 const { ActivityTracker } = require('../src/tracker');
 const { ArchiveIntegrityService } = require('../src/archive-integrity');
 const { ExperiencesArchive } = require('../src/experiences-archive');
-const { sanitize } = require('../src/config');
+const { sanitize, DEFAULTS } = require('../src/config');
 const { runPathDependencyExperiment } = require('../src/path-dependency');
 
 let failures = 0;
@@ -372,9 +372,212 @@ check('两路轨迹自主微动作抽取概率产生明确分化',
   pathDepResult.divergence.behaviorDistribution[ANIMATION_STATES.LOOK_AROUND] !== 0);
 
 
-// =========================================================================
-// 总结输出
-// =========================================================================
-console.log('\n' + '='.repeat(50));
-console.log(failures ? `❌ 存在 ${failures} 项失败` : '✅ 全部生产运行时生命动力学闭环测试 PASS！');
-process.exit(failures ? 1 : 0);
+(async () => {
+  // =========================================================================
+  // Test I: Sleep Transition Deduplication & Zero Double-Count
+  // 验证用户晚安意图入睡时仅转移 1 次，多次触发 enterSleepMode 或 updateOnSleep 严格幂等
+  // =========================================================================
+  console.log('\n--- Test I: Sleep Transition Deduplication & Zero Double-Count ---');
+  const dirI = makeTempDir();
+  const cfgI = {
+    ...DEFAULTS,
+    apiKey: 'test-key-mock',
+    experimentMode: 'experimental',
+    experimentModules: { internalRegulation: true }
+  };
+  const brainI = new Brain(dirI, cfgI);
+  const trackerI = new ActivityTracker();
+  brainI.bindTracker(trackerI);
+
+  brainI.api.stream = async (messages, onDelta) => {
+    if (onDelta) onDelta('晚安呀，做个好梦~');
+    return {
+      text: '晚安呀，做个好梦~',
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+    };
+  };
+
+  const histBeforeSleep = brainI.internalRegulation.history.length;
+  await brainI.ask('晚安初澜');
+
+  const sleepTransitions = brainI.internalRegulation.history.filter(h => h.trigger === 'enter_sleep');
+  check('用户晚安意图入睡时 internalRegulation 转移记录恰好增加 1 条（杜绝双重计数）',
+    sleepTransitions.length === 1 && brainI.internalRegulation.history.length === histBeforeSleep + 3
+  );
+
+  const energyAtSleep = brainI.internalRegulation.energy;
+  const histLenAfterSleep = brainI.internalRegulation.history.length;
+
+  // 重复触发 tracker.enterSleepMode
+  const enteredAgain = trackerI.enterSleepMode();
+  check('连续触发 enterSleepMode 保持严格幂等（不产生重复 enter_sleep 转移）',
+    enteredAgain === false &&
+    brainI.internalRegulation.history.length === histLenAfterSleep &&
+    brainI.internalRegulation.energy === energyAtSleep
+  );
+
+  // 直接对已处于睡眠状态的 internalRegulation 再次调用 updateOnSleep(true)
+  const sSleepDup = brainI.internalRegulation.updateOnSleep(true);
+  check('对已入睡实例直接调用 updateOnSleep(true) 幂等返回且不记录转移',
+    brainI.internalRegulation.history.length === histLenAfterSleep &&
+    sSleepDup.isSleeping === true &&
+    sSleepDup.energy === energyAtSleep
+  );
+
+  // 唤醒测试
+  trackerI.wakeUp();
+  const wakeTransitions = brainI.internalRegulation.history.filter(h => h.trigger === 'wake_up');
+  const histLenAfterWake = brainI.internalRegulation.history.length;
+  const wokeAgain = trackerI.wakeUp();
+  check('唤醒事件触发 wake_up 转移一次，重复唤醒保持严格幂等',
+    wakeTransitions.length === 1 &&
+    wokeAgain === false &&
+    brainI.internalRegulation.history.length === histLenAfterWake
+  );
+
+
+  // =========================================================================
+  // Test J: Idle Watermark Threshold Deduplication
+  // 验证桌面挂机事件水位线阶梯过滤，防重复计量
+  // =========================================================================
+  console.log('\n--- Test J: Idle Watermark Threshold Deduplication ---');
+  const dirJ = makeTempDir();
+  const brainJ = new Brain(dirJ, {
+    experimentMode: 'experimental',
+    experimentModules: { internalRegulation: true }
+  });
+  const trackerJ = new ActivityTracker();
+  brainJ.bindTracker(trackerJ);
+
+  const histJ0 = brainJ.internalRegulation.history.length;
+  // 1. 静默未满 10 分钟调用 recordIdle(9)
+  trackerJ.recordIdle(9);
+  check('静默未满 10 分钟调用 recordIdle(9) 不触发状态转移',
+    brainJ.internalRegulation.history.length === histJ0 && trackerJ.lastReportedIdleMin === 0
+  );
+
+  // 2. 首次满 10 分钟
+  trackerJ.recordIdle(10);
+  const histJ1 = brainJ.internalRegulation.history.length;
+  check('首次满 10 分钟调用 recordIdle(10) 触发一次 idle 状态转移',
+    histJ1 === histJ0 + 1 && trackerJ.lastReportedIdleMin === 10
+  );
+
+  // 3. 连续挂机处于相同 10 分钟阶梯 (min=15)
+  trackerJ.recordIdle(15);
+  check('连续挂机处于相同 10 分钟窗口时 (min=15) 受到水位线防重复闸门拦截',
+    brainJ.internalRegulation.history.length === histJ1 && trackerJ.lastReportedIdleMin === 10
+  );
+
+  // 4. 挂机跨越下一个 10 分钟阶梯 (min=20)
+  trackerJ.recordIdle(20);
+  check('挂机跨越下一个 10 分钟阶梯 (min=20) 正常触发第二次转移',
+    brainJ.internalRegulation.history.length === histJ1 + 1 && trackerJ.lastReportedIdleMin === 20
+  );
+
+  // 5. 交互重置
+  trackerJ.record('click');
+  check('用户物理交互重置挂机水位线 (lastReportedIdleMin 回归 0)',
+    trackerJ.lastReportedIdleMin === 0
+  );
+
+
+  // =========================================================================
+  // Test K: Mid-Window Experiment Snapshot Freezing Invariant
+  // 验证窗口生命周期内实验条件不可篡改冻结，关窗轮转后才接纳新配置
+  // =========================================================================
+  console.log('\n--- Test K: Mid-Window Experiment Snapshot Freezing Invariant ---');
+  const dirK = makeTempDir();
+  const cfgK = {
+    ...DEFAULTS,
+    apiKey: 'test-key-mock',
+    experimentMode: 'experimental',
+    experimentModules: {
+      digitalUmwelt: true,
+      attentionGate: true,
+      internalRegulation: true,
+      biographicalCanalization: true,
+      sleepConsolidation: true,
+      memoryDynamics: true
+    }
+  };
+  fs.writeFileSync(path.join(dirK, 'life-config.json'), JSON.stringify(cfgK, null, 2), 'utf8');
+
+  const brainK = new Brain(dirK, cfgK);
+
+  check('Brain 初始化时通过 createWindowExperimentSnapshot 成功生成当前窗口不可变快照',
+    brainK.currentWindowSnapshot !== null &&
+    brainK.currentWindowSnapshot.windowNo === 1 &&
+    brainK.currentWindowSnapshot.modules.attentionGate === true
+  );
+
+  // 模拟外部在活跃窗口期修改 life-config.json，试图关闭 attentionGate 和 internalRegulation
+  const tamperedCfg = {
+    ...cfgK,
+    experimentModules: {
+      ...cfgK.experimentModules,
+      attentionGate: false,
+      internalRegulation: false
+    }
+  };
+  fs.writeFileSync(path.join(dirK, 'life-config.json'), JSON.stringify(tamperedCfg, null, 2), 'utf8');
+
+  // 触发 refreshConfig
+  brainK.refreshConfig();
+
+  check('窗口活跃期间外部热重载配置文件禁止篡改已冻结的 experimentModules',
+    brainK.cfg.experimentModules.attentionGate === true &&
+    brainK.cfg.experimentModules.internalRegulation === true &&
+    brainK.currentWindowSnapshot.modules.attentionGate === true
+  );
+
+  check('活跃窗口中 isExperimentModuleActive 查询结果始终由冻结快照锁定',
+    brainK.isExperimentModuleActive('attentionGate') === true &&
+    brainK.isExperimentModuleActive('internalRegulation') === true
+  );
+
+  // 模拟窗口关闭
+  brainK.memory.data.turnsInWindow = brainK.memory.windowTurns;
+  brainK.api.complete = async () => ({
+    text: JSON.stringify({
+      segments: [
+        { range: '1-20', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] },
+        { range: '21-40', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] },
+        { range: '41-60', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] },
+        { range: '61-80', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] },
+        { range: '81-100', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] }
+      ],
+      windowSynthesis: {
+        stableUserFacts: ['用户是研究员'],
+        subjectExperiences: ['初澜记录了本次实验闭环'],
+        stateChangesSuggested: [],
+        unresolved: []
+      }
+    }),
+    usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }
+  });
+  // 注入足够多的对话消息确保超过 keepTail (6条) 以便 snap.items.length > 0
+  for (let i = 0; i < 4; i++) {
+    brainK.memory.append('user', `测试消息 ${i} 用于推进窗口关闭`);
+    brainK.memory.append('assistant', `收到测试回复 ${i}`);
+  }
+
+  const closedOk = await brainK.closeWindow();
+  check('窗口正式关闭轮转至下一窗口时，新窗口快照成功应用最新实验配置',
+    closedOk === true &&
+    brainK.currentWindowSnapshot.windowNo === 2 &&
+    brainK.currentWindowSnapshot.modules.attentionGate === false &&
+    brainK.isExperimentModuleActive('attentionGate') === false
+  );
+
+
+  // =========================================================================
+  // 总结输出
+  // =========================================================================
+  console.log('\n' + '='.repeat(50));
+  console.log(failures ? `❌ 存在 ${failures} 项失败` : '✅ 全部生产运行时生命动力学闭环测试 PASS！');
+  process.exit(failures ? 1 : 0);
+})().catch(err => {
+  console.error('Test execution failed:', err);
+  process.exit(1);
+});

@@ -61,6 +61,7 @@ class ActivityTracker {
     this.lastPhysicalAt = now;
     this.lastConversationAt = now;
     this.spokenDuringIdle = false;
+    this.lastReportedIdleMin = 0;
 
     /* ---- Phase 0.5: 内部稳态调节中枢与环境知觉流水线接线 ---- */
     this.internalRegulation = opts.internalRegulation || null;
@@ -79,6 +80,7 @@ class ActivityTracker {
   recordUserInput(text, at = this.now()) {
     this.lastUserInputAt = at;
     this.spokenDuringIdle = false;
+    this.lastReportedIdleMin = 0;
     const intent = ActivityTracker.isSleepIntent(String(text || ''));
     if (!intent && this.sleepMode) this.wakeUp(at);
     return intent;
@@ -110,6 +112,7 @@ class ActivityTracker {
     }
     this.lastPhysicalAt = at;
     this.spokenDuringIdle = false;
+    this.lastReportedIdleMin = 0;
     if (this.sleepMode) this.wakeUp(at);
 
     // Phase 0.5 (P0-3): 真实物理事件直接驱动 InternalRegulationManager，无需等待下一次聊天请求
@@ -209,6 +212,7 @@ class ActivityTracker {
     this.lastConversationAt = at;
     this.justWokenUp = false;
     this.wokenUpAt = null;
+    this.lastReportedIdleMin = 0;
     // 那批已经报过了（哪怕是"至少"），被挤掉的事件也追不回来。
     // 从这一刻起的计数是数组里真实存在的条数，所以恢复成精确口径。
     this.countIsLowerBound = false;
@@ -248,22 +252,32 @@ class ActivityTracker {
   }
 
   /**
-   * 记录静默挂机事件 (Phase 0.5: P0-3)
+   * 记录静默挂机事件 (Phase 0.5: P0-3 & 生产防重复计量水位线)
    * 仅在长时间静默触发时进行事件驱动更新，绝无轮询 setInterval 代谢
    */
   recordIdle(idleMin, at = this.now()) {
-    const min = Number.isFinite(idleMin) ? idleMin : Math.max(0, Math.round((at - this.lastInteractionAt) / 60000));
-    if (min >= 10) {
-      if (this.internalRegulation && typeof this.internalRegulation.updateOnActivity === 'function') {
-        this.internalRegulation.updateOnActivity('idle', { idleMin: min, timestamp: at });
-      }
-      if (typeof this.perceptionPipeline === 'function') {
-        this.perceptionPipeline({
-          category: 'environmental_silence',
-          rawIntensity: Math.min(100, min * 3),
-          timestamp: at
-        });
-      }
+    if (this.sleepMode) return;
+
+    const min = Number.isFinite(idleMin) ? Math.floor(idleMin) : Math.max(0, Math.floor((at - this.lastInteractionAt) / 60000));
+    if (min < 10) return;
+
+    // 水位线阈值防重复计量：
+    // 首次达到 10 分钟或每跨越 10 分钟阶梯（min - lastReportedIdleMin >= 10）时触发一次
+    if (this.lastReportedIdleMin > 0 && (min - this.lastReportedIdleMin < 10)) {
+      return;
+    }
+
+    this.lastReportedIdleMin = Math.floor(min / 10) * 10;
+
+    if (this.internalRegulation && typeof this.internalRegulation.updateOnActivity === 'function') {
+      this.internalRegulation.updateOnActivity('idle', { idleMin: min, timestamp: at });
+    }
+    if (typeof this.perceptionPipeline === 'function') {
+      this.perceptionPipeline({
+        category: 'environmental_silence',
+        rawIntensity: Math.min(100, min * 3),
+        timestamp: at
+      });
     }
   }
 }

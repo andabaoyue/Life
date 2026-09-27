@@ -83,6 +83,7 @@ class InternalRegulationManager {
     this.interactionDensity = REGULATION_BOUNDS.interactionDensity.default;
     this.cognitiveLoadProxy = REGULATION_BOUNDS.cognitiveLoadProxy.default;
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
+    this.isSleeping = false;
     this.updatedAt = Date.now();
     this.history = []; // 最近转移事件流水 (上限 50 条)
 
@@ -110,6 +111,7 @@ class InternalRegulationManager {
       salienceThreshold: this.salienceThreshold,
       interactionDensity: this.interactionDensity,
       cognitiveLoadProxy: this.cognitiveLoadProxy,
+      isSleeping: this.isSleeping,
       updatedAt: this.updatedAt
     });
   }
@@ -273,6 +275,12 @@ class InternalRegulationManager {
   updateOnSleep(isSleeping, details = {}) {
     if (!this.enabled) return this.getState();
 
+    const boolSleep = Boolean(isSleeping);
+    if (this.isSleeping === boolSleep) {
+      return this.getState(); // 幂等保护：状态已处于目标睡眠/清醒状态，防止同一入睡/唤醒事件重复计量
+    }
+    this.isSleeping = boolSleep;
+
     const at = Number(details.timestamp || Date.now());
     const prev = {
       energy: this.energy,
@@ -369,6 +377,8 @@ class InternalRegulationManager {
           if (typeof v.interactionDensity === 'number') this.interactionDensity = clamp(v.interactionDensity, REGULATION_BOUNDS.interactionDensity.min, REGULATION_BOUNDS.interactionDensity.max);
           if (typeof v.cognitiveLoadProxy === 'number') this.cognitiveLoadProxy = clamp(v.cognitiveLoadProxy, REGULATION_BOUNDS.cognitiveLoadProxy.min, REGULATION_BOUNDS.cognitiveLoadProxy.max);
           this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
+          if (typeof raw.isSleeping === 'boolean') this.isSleeping = raw.isSleeping;
+          else if (raw.values && typeof raw.values.isSleeping === 'boolean') this.isSleeping = raw.values.isSleeping;
           this.updatedAt = raw.updatedAt || Date.now();
           if (Array.isArray(raw.history)) this.history = raw.history.slice(-50);
           return true;
@@ -393,6 +403,7 @@ class InternalRegulationManager {
         schemaVersion: SCHEMA_VERSION,
         semanticLayer: SEMANTIC_LAYERS.SUBJECT_STATE_PROXY,
         updatedAt: this.updatedAt,
+        isSleeping: this.isSleeping,
         values: {
           energy: this.energy,
           restPressure: this.restPressure,
