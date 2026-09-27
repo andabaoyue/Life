@@ -418,6 +418,7 @@ node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条�
 node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
 node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
 node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
+node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
 node test/decision-log.test.js           # 31 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
 node test/canalization.test.js           # 27 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay）
 node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
@@ -493,7 +494,7 @@ pip install opencv-contrib-python numpy pillow
 - **Dream provenance** 严格保持 `messageId`、`eventId`、`evidenceId` 三个命名空间；缺失层使用 `null`/`[]`，不进行跨类型 fallback，进入归档前对显式 event/evidence 引用执行 cross-reference validation。
 - **Attention watermark** 是 **256-entry bounded FIFO idempotency**，不是无限历史幂等；损坏或空文件进入 fail-closed，写盘失败回滚内存状态。
 - **Archive writer** 是单写者 API 边界：`experiences.jsonl` 的 append 不提供跨进程锁；检测到坏尾、断链、torn line 或非有限数字时 fail-closed，恢复审计写入隔离 sidecar，不续写损坏主链。调用方必须由 Electron single-instance/单 writer 生命周期保证无并发 append。
-- **全量测试套件与不可逆约束门禁**：新增 5 套专用测试套件共 132 项断言，全工程测试套件达 57 套，全部 100% 通过且零回归。
+- **全量测试套件与不可逆约束门禁**：本版本新增 5 套专用测试套件，共 132 项断言；当前测试文件以 `test/` 目录和 `npm test` 实际执行结果为准。
 
 **v0.9.6** — 《初澜数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：
 - **P0-01 ~ P0-04** (窗口边界与指标冻结)：确立 `turn_limit`、`token_limit`、`manual`、`recovery` 四大关窗触发原因；在请求模型小结前由 `windowSnapshot()` 冻结 `snapshotTurnCount`、`targetTurnCount`、`actualTurnCount` 与 `closeReason`，彻底消除异步关窗期间并发对话导致的轮数指标漂移与坏账；Bridge 桥接消息不入小结并严格隔离。
@@ -502,7 +503,7 @@ pip install opencv-contrib-python numpy pillow
 - **P0-11 ~ P0-12** (证据溯源 12 条内生自校验规则)：`SubjectState.verifyEvidence()` 确立 12 条内生检验律，全面拦截跨窗口窜供、合成/生成数据伪造、Bridge 桥接消息污染、角色越权、重复指纹与空引用，筑牢认知所有权防线。
 - **P0-13** (状态转移纯对称整数舍入)：消除 JS 浮点舍入与正负不对称误差，在 `state-change.js`、`SubjectState.reduce()`、`SubjectState.replay()` 及 `ResearchService` 中统一采用无偏对称舍入（`symmetricRound`），保证离线 Replay 演化重放与在线状态推进 100% 绝对一致。
 - **P0-14 ~ P0-15** (当前自我因果投影与实验遥测)：在经历底座增加 `recordType: 'self_projection'` 因果投影记录，与 `Self-Ledger` 保持因果溯源绑定；建立 Append-Only 实验遥测日志 `experiment-telemetry.jsonl`，对 DeepSeek 前缀缓存破坏实现七大类别精准归因。
-- **P0-16 ~ P0-18** (全套不变量攻击测试矩阵与发布门禁)：新增 7 套专用测试套件共 171 项断言，全工程测试套件达 52 套，全部 100% 通过且零回归。
+- **P0-16 ~ P0-18** (全套不变量攻击测试矩阵与发布门禁)：该版本新增 7 套专用测试套件，共 171 项断言；当前测试文件以 `test/` 目录和 `npm test` 实际执行结果为准。
 
 **v0.9.5.3** — Codex Findings Fix（安全漏洞修复与架构一致性收敛）：针对 Codex Independent Audit 提出的 4 个 HIGH 级发现完成专项修复：
 - **H-01** (Archive Event Validation Parity): `src/archive-integrity.js` 统一接入规范级运行时事件校验器 (`validateEvent`)，对 `window_summary.payload.events[]` 及独立 `event` 归档记录实施与运行时完全对齐的强校验；`src/experience-schema.js` 全面禁止 `generated: true` 与 `synthetic: true` 伪造事件，来源空值或非法值坚决拦截并降级 `UNCERTIFIED`。

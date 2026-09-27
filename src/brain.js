@@ -196,8 +196,30 @@ class Brain {
 
     // 实验遥测与缓存破坏归因底座 (v0.9.6 P0-14 & P0-15)
     this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
-    this.telemetrySeq = 0;
+    this.telemetrySeq = this.restoreTelemetrySequence();
     this.pendingCacheBreakReason = null;
+  }
+
+  restoreTelemetrySequence() {
+    if (!this.telemetryPath || !fs.existsSync(this.telemetryPath)) return 0;
+    let lastSeq = 0;
+    try {
+      for (const line of fs.readFileSync(this.telemetryPath, 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line);
+          if (record && Number.isInteger(record.telemetrySeq) && record.telemetrySeq > 0) {
+            lastSeq = record.telemetrySeq;
+          }
+        } catch {
+          // Append-only telemetry：坏行不回写、不修补、不伪造序号。
+        }
+      }
+    } catch (e) {
+      console.warn('[Brain] telemetrySeq 恢复失败，保持 0:', e.message);
+      return 0;
+    }
+    return lastSeq;
   }
 
   bindBehaviorScheduler(scheduler) {
@@ -888,6 +910,8 @@ class Brain {
 
       // 尝试解析 5×20 + Window Synthesis 结构化 JSON
       let structured = null;
+      let summaryEpistemicStatus = 'CERTIFIED';
+      let summaryFailureReason = null;
       try {
         const rawJson = String(text || '').trim()
           .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
@@ -905,7 +929,9 @@ class Brain {
           }
         }
       } catch (parseErr) {
-        // 模型或测试 mock 返回纯文本小结时优雅降级
+        // 保全纯文本，但明确标记为不可认证的非结构化摘要。
+        summaryEpistemicStatus = 'UNCERTIFIED';
+        summaryFailureReason = 'NON_JSON_SUMMARY';
       }
 
       let summaryTextForMemory = text;
@@ -1037,23 +1063,7 @@ class Brain {
           allEvidence.push(...syn.stateChangesSuggested);
         }
       } else {
-        // 纯文本降级分支
-        if (events.length > 0) {
-          const obs = createObservation({
-            eventIds: events.slice(0, 5).map(e => e.eventId),
-            type: 'plain_text_stream',
-            content: '纯文本交互记录',
-            confidence: 1.0,
-            source: 'dialogue_stream'
-          });
-          observations.push(obs);
-          interpretations.push(createInterpretation({
-            observationIds: [obs.observationId],
-            content: '对日常对话的持续感知',
-            confidence: 0.5,
-            perspective: 'chulan'
-          }));
-        }
+        // 纯文本仅作为原始保全材料，不自动升级为 Observation、Interpretation 或 Evidence。
         syn = { stableUserFacts: [text], subjectExperiences: [] };
       }
 
@@ -1136,7 +1146,10 @@ class Brain {
             explanations,
             rawSummaryText: text,
             generationContext: summaryGenerationContext,
-            sourceMessageRange
+            sourceMessageRange,
+            epistemicStatus: summaryEpistemicStatus,
+            structuredSummaryAvailable: Boolean(structured),
+            summaryFailureReason
           });
         }
       } else {

@@ -58,6 +58,9 @@ class ResearchService {
 
     this.snapshot = null;
     this.activeTasks = new Map();
+    this.completedTaskMetadata = new Map();
+    this.taskRetentionMs = Number.isFinite(options.taskRetentionMs)
+      ? Math.max(0, options.taskRetentionMs) : 5 * 60 * 1000;
     this.refreshSnapshot();
   }
 
@@ -136,7 +139,10 @@ class ResearchService {
 
   getReplayTaskStatus(taskId) {
     const task = this.activeTasks.get(taskId);
-    if (!task) return null;
+    if (!task) {
+      const retained = this.completedTaskMetadata.get(taskId);
+      return retained ? { ...retained } : null;
+    }
     return {
       taskId: task.taskId,
       status: task.status,
@@ -146,8 +152,36 @@ class ResearchService {
       percent: task.percent,
       cancelled: task.cancelled,
       result: task.result,
-      error: task.error
+      error: task.error,
+      completedAt: task.completedAt || null
     };
+  }
+
+  cleanupReplayTasks(options = {}) {
+    const now = typeof options === 'number' ? options : (options.now || Date.now());
+    const retentionMs = typeof options === 'object' && Number.isFinite(options.retentionMs)
+      ? Math.max(0, options.retentionMs) : this.taskRetentionMs;
+    let removed = 0;
+    for (const [taskId, task] of this.activeTasks) {
+      if (!['completed', 'cancelled', 'failed'].includes(task.status)) continue;
+      const terminalAt = task.completedAt || task.finishedAt || now;
+      if (now - terminalAt < retentionMs) continue;
+      this.completedTaskMetadata.set(taskId, {
+        taskId: task.taskId,
+        status: task.status,
+        stage: task.stage,
+        currentWindow: task.currentWindow,
+        totalWindows: task.totalWindows,
+        percent: task.percent,
+        cancelled: task.cancelled,
+        result: task.result,
+        error: task.error,
+        completedAt: terminalAt
+      });
+      this.activeTasks.delete(taskId);
+      removed++;
+    }
+    return removed;
   }
 
   cancelReplayTask(taskId) {
@@ -157,6 +191,7 @@ class ResearchService {
       task.cancelled = true;
       task.status = 'cancelled';
       task.stage = 'cancelled';
+      task.completedAt = Date.now();
       return true;
     }
     return false;
@@ -184,6 +219,7 @@ class ResearchService {
         stateChanges: [],
         finalState: { ...DEFAULT_TRAITS }
       };
+      task.completedAt = Date.now();
       return;
     }
 
@@ -248,6 +284,7 @@ class ResearchService {
         if (task.cancelled) {
           task.status = 'cancelled';
           task.stage = 'cancelled';
+          task.completedAt = Date.now();
           return;
         }
 
@@ -394,6 +431,7 @@ class ResearchService {
           if (task.cancelled) {
             task.status = 'cancelled';
             task.stage = 'cancelled';
+            task.completedAt = Date.now();
             return;
           }
         }
@@ -434,11 +472,13 @@ class ResearchService {
       task.stage = 'completed';
       task.status = 'completed';
       task.percent = 100;
+      task.completedAt = Date.now();
     } catch (e) {
       console.error('[ResearchService] Replay 异常:', e.message);
       task.status = 'failed';
       task.stage = 'failed';
       task.error = e.message;
+      task.completedAt = Date.now();
     }
   }
 

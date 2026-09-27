@@ -347,7 +347,10 @@ class ExperiencesArchive {
       rejectedEvidence: Array.isArray(data.rejectedEvidence) ? data.rejectedEvidence : [],
       stateChanges: Array.isArray(data.stateChanges) ? data.stateChanges : [],
       explanations: Array.isArray(data.explanations) ? data.explanations : [],
-      rawSummaryText: typeof data.rawSummaryText === 'string' ? data.rawSummaryText : ''
+      rawSummaryText: typeof data.rawSummaryText === 'string' ? data.rawSummaryText : '',
+      epistemicStatus: data.epistemicStatus || 'CERTIFIED',
+      structuredSummaryAvailable: data.structuredSummaryAvailable !== false,
+      summaryFailureReason: data.summaryFailureReason || null
     };
     if (data.generationContext && typeof data.generationContext === 'object') {
       payload.generationContext = data.generationContext;

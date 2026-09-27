@@ -21,16 +21,18 @@ const {
 const { resolveGitCommit } = require('./experiment-metadata');
 
 let cachedPkgVersion = null;
-function getPackageVersion() {
-  if (cachedPkgVersion) return cachedPkgVersion;
+function getPackageVersion(packagePath = path.join(__dirname, '..', 'package.json')) {
+  const defaultPath = path.join(__dirname, '..', 'package.json');
+  if (packagePath === defaultPath && cachedPkgVersion) return cachedPkgVersion;
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
     if (pkg && pkg.version) {
-      cachedPkgVersion = String(pkg.version);
-      return cachedPkgVersion;
+      const version = String(pkg.version);
+      if (packagePath === defaultPath) cachedPkgVersion = version;
+      return version;
     }
   } catch {}
-  return '0.9.7';
+  return null;
 }
 
 /**
@@ -91,7 +93,7 @@ function createExperimentRunManifest(options = {}) {
     experimentMode: mode,
     modules: Object.freeze(activeModules),
     initialWindowNo: typeof options.windowNo === 'number' ? options.windowNo : 1,
-    lifeVersion: String(options.lifeVersion || getPackageVersion()),
+    lifeVersion: options.lifeVersion != null ? String(options.lifeVersion) : getPackageVersion(),
     gitCommit: String(options.gitCommit || resolveGitCommit()),
     label: String(options.label || ''),
     createdAt: nowIso,
@@ -202,5 +204,6 @@ module.exports = {
   createExperimentRunManifest,
   createWindowExperimentSnapshot,
   validateExperimentSnapshot,
-  isBaselineMode
+  isBaselineMode,
+  getPackageVersion
 };

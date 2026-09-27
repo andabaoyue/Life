@@ -602,6 +602,10 @@ class ArchiveIntegrityService {
     // P1-02: 深度引用一致性（引用目标不存在/无法证明 → 绝不认证，也绝不补造）
     const relationships = validateRecordRelationships(validRecords);
     const relationship_integrity = relationships.status;
+    const explicitlyUncertified = validRecords.some(rec => {
+      const payload = rec && rec.payload;
+      return payload && payload.epistemicStatus === 'UNCERTIFIED';
+    });
 
     let syntax_integrity = corruptLines > 0 ? (validCount > 0 ? 'partial' : 'corrupted') : 'valid';
     let sequence_integrity = 'legacy';
@@ -677,6 +681,9 @@ class ArchiveIntegrityService {
     } else if (invalidCount > 0) {
       integrity = INTEGRITY_STATUS.UNCERTIFIED;
       replayStatus = REPLAY_STATUS.PARTIAL;
+    } else if (explicitlyUncertified) {
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.COMPLETE;
     } else if (hasLegacyAdapter) {
       // P0-09: 遗留兼容记录平滑加载，但绝不自动赋予 CERTIFIED
       integrity = INTEGRITY_STATUS.UNCERTIFIED;
