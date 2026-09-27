@@ -20,6 +20,8 @@ const obsFn = function (ctx) {
   s.data.values.obs_scBefore = beforeCount;
   s.data.values.obs_recoveryFlag = (s.data.recoveryStatus === 'RECOVERY_PENDING' && s.recoveryPending && s.recoveryPendingReason === 'R-provided') ? 1 : 0;
   s.data.values.obs_schemaFlag = (s.data.schemaVersion === 99 && s.data.updatedAt === 123456) ? 1 : 0;
+  s.data.values.obs_runtimeRecovery = s.recoveryStatus;
+  s.data.values.obs_snapFlag = s.formatSnapshot().indexOf('social_willingness=42') >= 0 ? 1 : 0;
   const dup = s.verifyEvidence([{ evidenceId: 'ev-dup', trait: 'quiet_preference', direction: 1, strength: 1 }], [], 1);
   s.data.values.obs_dupRejected = dup.rejected.length > 0 && dup.rejected[0].reason === 'DUPLICATE_EVIDENCE_ID' ? 1 : 0;
   s.reduce([{ evidenceId: 'ev-run-1', trait: 'quiet_preference', direction: 1, strength: 1 }], undefined, { canalization: false });
@@ -28,10 +30,22 @@ const obsFn = function (ctx) {
   s.data.values.obs_delta = s.data.values.quiet_preference;
 };
 
+// 严格对称场景观测：同时读取 runtime recoveryStatus / data.recoveryStatus / formatSnapshot / data.windowNo / values
+const obsFn2 = function (ctx) {
+  const s = ctx.subjectState;
+  const snap = s.formatSnapshot();
+  const vals = s.values;
+  s.data.values.obs2_runtimeRecovery = s.recoveryStatus;
+  s.data.values.obs2_dataRecovery = s.data.recoveryStatus;
+  s.data.values.obs2_windowNo = s.data.windowNo;
+  s.data.values.obs2_trait = vals.social_willingness;
+  s.data.values.obs2_snapFlag = snap.indexOf('social_willingness=42') >= 0 ? 1 : 0;
+};
+
 function fullInit() {
   return {
     subjectState: {
-      values: { quiet_preference: 0 },
+      values: { quiet_preference: 0, social_willingness: 42 },
       history: [{ windowNo: 1, tag: 'h-provided' }],
       stateChanges: [{ id: 'sc-provided' }],
       seenFingerprints: ['fp-provided'],
@@ -115,5 +129,40 @@ console.log('PASS: canalization 场景 reduce 使用注入 windowNo=5 与 stepWe
 assert.strictEqual(r2.preconditions.initialStateEqual, true, '认证阶段应认证注入状态');
 assert.strictEqual(typeof obs.obs_windowNo, 'number', '执行对象可观测状态已对齐认证状态');
 console.log('PASS: 旧反例不再出现（audit 认证状态 == execute 执行状态）');
+
+// ---------- 收口 A：runtime recoveryStatus 与 data.recoveryStatus 对称恢复 ----------
+assert.strictEqual(obs.obs_runtimeRecovery, 'RECOVERY_PENDING', 'runtime recoveryStatus 必须与认证初始状态一致');
+console.log('PASS: runtime recoveryStatus 与 data.recoveryStatus 对称恢复');
+
+// ---------- 收口 B：恢复后 frozenSnapshot 已刷新，formatSnapshot 可见注入初始值 ----------
+assert.strictEqual(obs.obs_snapFlag, 1, 'formatSnapshot 必须反映注入初始值而非 constructor 默认旧状态');
+console.log('PASS: formatSnapshot 反映注入初始值（frozenSnapshot 已刷新）');
+
+// ---------- 严格对称场景：A/B 相同 initialState，五处 runtime 观测全部与认证状态一致 ----------
+const strictInit = () => ({
+  subjectState: {
+    values: { social_willingness: 42 },
+    windowNo: 5,
+    recoveryStatus: 'RECOVERY_PENDING',
+    recoveryPending: true,
+    recoveryPendingReason: 'R-provided'
+  }
+});
+const r3 = runPathDependencyExperiment({
+  sequenceA: [obsFn2], sequenceB: [obsFn2], config: cfg,
+  initialStateA: strictInit(), initialStateB: strictInit(),
+  clock: { now: () => 1000 }
+});
+assert.strictEqual(r3.valid, true, `严格对称实验应有效: ${r3.reason || ''}`);
+assert.strictEqual(r3.preconditions.initialStateEqual, true);
+const o2 = r3.trajectoryA.subjectState;
+assert.strictEqual(o2.obs2_runtimeRecovery, 'RECOVERY_PENDING', '严格对称: runtime recoveryStatus 必须与认证一致');
+assert.strictEqual(o2.obs2_dataRecovery, 'RECOVERY_PENDING', '严格对称: data.recoveryStatus 必须与认证一致');
+console.log('PASS: 严格对称 recoveryStatus（runtime+data）与认证一致');
+assert.strictEqual(o2.obs2_windowNo, 5, '严格对称: data.windowNo 必须与认证一致');
+assert.strictEqual(o2.obs2_trait, 42, '严格对称: values 注入 trait 必须与认证一致');
+console.log('PASS: 严格对称 data.windowNo 与 values 与认证一致');
+assert.strictEqual(o2.obs2_snapFlag, 1, '严格对称: formatSnapshot 必须含注入初始值');
+console.log('PASS: 严格对称 formatSnapshot 含注入初始值');
 
 console.log('all initial-state-restore-symmetry tests passed');

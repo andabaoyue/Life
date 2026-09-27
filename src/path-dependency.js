@@ -126,8 +126,13 @@ function applySubjectInitialState(subjectState, initial) {
   if (initial.values) {
     subjectState.data.values = { ...initial.values };
   }
-  for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds', 'recoveryStatus']) {
+  for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds']) {
     if (initial[key] !== undefined) subjectState.data[key] = Array.isArray(initial[key]) ? [...initial[key]] : initial[key];
+  }
+  if (initial.recoveryStatus !== undefined) {
+    // recoveryStatus 有 runtime / data 两个镜像字段（commit、recoverFromPending 均成对维护），必须同步恢复
+    subjectState.data.recoveryStatus = initial.recoveryStatus;
+    subjectState.recoveryStatus = initial.recoveryStatus;
   }
   if (Array.isArray(initial.seenFingerprints)) subjectState.committedFingerprints = new Set(initial.seenFingerprints);
   if (Array.isArray(initial.seenEvidenceIds)) subjectState.committedEvidenceIds = new Set(initial.seenEvidenceIds);
@@ -135,6 +140,8 @@ function applySubjectInitialState(subjectState, initial) {
   if (initial.recoveryPendingReason !== undefined) subjectState.recoveryPendingReason = initial.recoveryPendingReason;
   if (initial.stepWeight !== undefined) subjectState.stepWeight = initial.stepWeight;
   if (initial.maxDeltaPerWindow !== undefined) subjectState.maxDeltaPerWindow = initial.maxDeltaPerWindow;
+  // 恢复完成后刷新冻结快照，避免 formatSnapshot() 残留 constructor 阶段的默认旧状态
+  subjectState.updateSnapshot();
   return subjectState;
 }
 
