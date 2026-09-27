@@ -164,7 +164,8 @@ class DeepSeek {
       const j = await res.json();
       return {
         text: (j.choices?.[0]?.message?.content || '').trim(),
-        usage: j.usage || {}
+        usage: j.usage || {},
+        observedModel: (typeof j.model === 'string' && j.model.trim()) ? j.model.trim() : null
       };
     } catch (err) {
       if (err.message === 'request timeout') {
@@ -206,6 +207,7 @@ class DeepSeek {
     let streamError = null;
     let full = '';
     let usage = {};
+    let observedModel = null;
 
     try {
       const res = await this.raw({
@@ -231,6 +233,9 @@ class DeepSeek {
         if (payload === '[DONE]') return;
         let j;
         try { j = JSON.parse(payload); } catch { return; }
+        if (typeof j.model === 'string' && j.model.trim()) {
+          observedModel = j.model.trim();
+        }
         // OpenAI 兼容服务在流内报错时 HTTP 仍是 200，错误只出现在某一条 data 里
         // （余额耗尽、限速、内容审核拦截）。不接住的话它会连同半截回复一起被
         // 当成"成功"，最后只报一句"返回空内容"，真实原因永久丢失。
@@ -328,7 +333,7 @@ class DeepSeek {
         streamError.partial = full;
         throw streamError;
       }
-      return { text: full, usage };
+      return { text: full, usage, observedModel };
     } catch (outerErr) {
       if (reader) {
         try { await reader.cancel(); } catch {}

@@ -34,7 +34,7 @@ check('ENGINEERING-DECISION-LOG.md 真实存在', fs.existsSync(logPath));
 const content = fs.readFileSync(logPath, 'utf8');
 check('决策账本内容充足非空 (> 1000 字节)', content.length > 1000, `当前长度: ${content.length}`);
 
-// 2. 七项已决决策完整性检查
+// 2. 十项已决决策完整性检查 (D-001 ~ D-010)
 const requiredDecisions = [
   { id: 'D-001', name: '不实现连续后台基础代谢' },
   { id: 'D-002', name: '不采用人类 24h 昼夜节律作为默认生命周期' },
@@ -42,7 +42,10 @@ const requiredDecisions = [
   { id: 'D-004', name: 'Dream 不得直接改变 SubjectState' },
   { id: 'D-005', name: '遗忘不删除历史' },
   { id: 'D-006', name: 'Memory Dynamics 零 API 调用保证' },
-  { id: 'D-007', name: '发育景观采用经历依赖塑性衰减' }
+  { id: 'D-007', name: '发育景观采用经历依赖塑性衰减' },
+  { id: 'D-008', name: '内部短时调节与长期人格特质的双轨分离' },
+  { id: 'D-009', name: '生产运行时统一权威接线与因果闭环规范' },
+  { id: 'D-010', name: '实验条件元数据绑定与证据事实核验铁律' }
 ];
 
 for (const d of requiredDecisions) {

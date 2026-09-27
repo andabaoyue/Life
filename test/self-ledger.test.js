@@ -106,6 +106,47 @@ const mockMessages = new Map([
   check('verifyGrowthEvidence 非法角色消息拦截', res.ok === false && res.reason === 'INVALID_MESSAGE_ROLE');
 }
 
+// 16.1 sourceType 与角色兼容性：USER 引用 assistant 消息拦截 (P1-4)
+{
+  const res = verifyGrowthEvidence({
+    sourceType: 'USER',
+    messageIds: ['m-002'],
+    quote: '安静看雨'
+  }, mockMessages, 3);
+  check('verifyGrowthEvidence USER 引用 assistant 角色拦截', res.ok === false && res.reason === 'ROLE_SOURCE_TYPE_MISMATCH');
+}
+
+// 16.2 sourceType 与角色兼容性：EXPERIENCE 引用 user 消息拦截 (P1-4)
+{
+  const res = verifyGrowthEvidence({
+    sourceType: 'EXPERIENCE',
+    messageIds: ['m-001'],
+    quote: '安静地看雨'
+  }, mockMessages, 3);
+  check('verifyGrowthEvidence EXPERIENCE 引用 user 角色拦截', res.ok === false && res.reason === 'ROLE_SOURCE_TYPE_MISMATCH');
+}
+
+// 16.3 sourceType 与角色兼容性：EXPERIENCE 引用 assistant 消息通过 (P1-4)
+{
+  const res = verifyGrowthEvidence({
+    sourceType: 'EXPERIENCE',
+    messageIds: ['m-002'],
+    quote: '安静看雨',
+    confidence: 0.9
+  }, mockMessages, 3);
+  check('verifyGrowthEvidence EXPERIENCE 引用 assistant 消息核验通过', res.ok === true && res.evidence.verification === 'VERIFIED');
+}
+
+// 16.4 先验来源 (MODEL_PRIOR / INNATE) 携带 messageIds 强拦截 (P1-4)
+{
+  const res = verifyGrowthEvidence({
+    sourceType: 'MODEL_PRIOR',
+    messageIds: ['m-001'],
+    quote: '安静地看雨'
+  }, mockMessages, 3);
+  check('verifyGrowthEvidence MODEL_PRIOR 挂载 messageId 拦截', res.ok === false && res.reason === 'PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID');
+}
+
 // 17. append with meta.verify: 合法条目入账并附带 generationContext
 {
   const vLedger = new SelfLedger(fs.mkdtempSync(path.join(os.tmpdir(), 'verify-ledger-')));

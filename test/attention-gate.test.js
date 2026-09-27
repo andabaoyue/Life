@@ -16,9 +16,14 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const { evaluateAttentionGate, assertNotSubjectAcquired, ATTENTION_STATUS } = require('../src/attention-gate');
 const { filterRawTelemetry, evaluateSalience, containsLeakedRawData } = require('../src/digital-umwelt');
 const { SCHEMA_VERSION, SEMANTIC_LAYERS, PERCEPTION_STATUS } = require('../src/experiment-types');
+const { InternalRegulationManager } = require('../src/internal-regulation');
+const { SubjectState } = require('../src/subject-state');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -136,6 +141,48 @@ const pipelineCandidate = {
 const pipelineGateRes = evaluateAttentionGate(pipelineCandidate, calmReg);
 check('管道知觉候选成功穿越注意力闸门', pipelineGateRes.status === ATTENTION_STATUS.ATTENDED);
 check('全流程端到端绝对不包含操作系统物理裸信息 (containsLeakedRawData=false)', !containsLeakedRawData(pipelineGateRes));
+
+// 11. 下游瞬时消费者与稳态闭环验证 (P1-1: updateOnAttention & ATTENDED ≠ SUBJECT_ACQUIRED)
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'attention-downstream-test-'));
+  const regMgr = new InternalRegulationManager(tmpDir);
+  const subjectState = new SubjectState(tmpDir);
+  const initialArousal = regMgr.arousal;
+  const initialTraits = { ...subjectState.values };
+
+  // 11.1 ATTENDED 刺激产生瞬时唤醒度上升
+  regMgr.updateOnAttention(strongRes);
+  check('ATTENDED 选通事件被 InternalRegulationManager 摄入并微调唤醒度',
+    regMgr.arousal > initialArousal,
+    `init=${initialArousal}, next=${regMgr.arousal}`
+  );
+  check('ATTENDED 刺激绝对不造成 SubjectState 任何特质变化 (ATTENDED ≠ SUBJECT_ACQUIRED)',
+    JSON.stringify(subjectState.values) === JSON.stringify(initialTraits)
+  );
+
+  // 11.2 IGNORED 刺激不产生任何内部状态变动
+  const currentArousal = regMgr.arousal;
+  regMgr.updateOnAttention(weakRes);
+  check('IGNORED 刺激被 updateOnAttention 忽略，内部状态保持不变',
+    regMgr.arousal === currentArousal
+  );
+
+  // 11.3 DEFERRED 刺激不产生状态变动
+  regMgr.updateOnAttention(overloadRes);
+  check('DEFERRED 刺激被 updateOnAttention 忽略，内部状态保持不变',
+    regMgr.arousal === currentArousal
+  );
+
+  // 11.4 基线模式隔离验证：disabled / baseline 模式下 updateOnAttention 保持恒定
+  const baseRegMgr = new InternalRegulationManager(tmpDir, { enabled: false });
+  const baseStateBefore = baseRegMgr.getState();
+  baseRegMgr.updateOnAttention(strongRes);
+  const baseStateAfter = baseRegMgr.getState();
+  check('基线隔离模式下 updateOnAttention 绝对不产生任何状态变动',
+    baseStateBefore.arousal === baseStateAfter.arousal &&
+    baseStateBefore.cognitiveLoadProxy === baseStateAfter.cognitiveLoadProxy
+  );
+}
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

@@ -59,9 +59,22 @@ function check(name, cond, extra) {
     hashes.persona.startsWith('sha256:') &&
     hashes.creativeSkill === 'not_enabled'
   );
+
+  const hashesWithSkill = collectPromptHashes({
+    persona: '人设模板',
+    creativeSkill: 'DS 写作技能完整正文'
+  });
+  check('collectPromptHashes 写作模式开启时包含 creativeSkill 哈希',
+    hashesWithSkill.creativeSkill.startsWith('sha256:')
+  );
+
+  const hashesUnavailable = collectPromptHashes({ persona: '' });
+  check('collectPromptHashes 缺失 persona 时标为 unavailable 而非虚假通过',
+    hashesUnavailable.persona === 'unavailable'
+  );
 }
 
-// 2. buildGenerationContext 字段契约与不可变性
+// 2. buildGenerationContext 字段契约、observedModel 与深度冷冻性
 {
   const ctx = buildGenerationContext({
     kind: 'summary',
@@ -72,6 +85,7 @@ function check(name, cond, extra) {
       experimentMode: 'experimental',
       experimentModules: { memoryDynamics: true }
     },
+    observedModel: 'deepseek-chat-202409',
     promptHashes: { summary: hashPrompt('test') },
     sampling: { temperature: 0.2, maxTokens: 900 },
     sourceWindowNo: 1,
@@ -82,9 +96,22 @@ function check(name, cond, extra) {
   check('buildGenerationContext 包含指定 schemaVersion', ctx.metaSchemaVersion === META_SCHEMA_VERSION);
   check('buildGenerationContext 包含生成类型', ctx.kind === 'summary');
   check('buildGenerationContext 模型与端点正确绑定', ctx.modelName === 'deepseek-chat' && ctx.endpoint === 'https://api.deepseek.com');
+  check('buildGenerationContext observedModel 真实捕获', ctx.observedModel === 'deepseek-chat-202409');
   check('buildGenerationContext 采样参数绑定', ctx.sampling.temperature === 0.2 && ctx.sampling.maxTokens === 900);
   check('buildGenerationContext 来源消息范围绑定', ctx.sourceMessageRange.firstMessageId === 'm-001' && ctx.sourceMessageRange.messageCount === 20);
-  check('buildGenerationContext 对象冻结不可篡改', Object.isFrozen(ctx));
+  check('buildGenerationContext 顶层对象冻结不可篡改', Object.isFrozen(ctx));
+  check('buildGenerationContext 嵌套 sampling 对象深冻结', Object.isFrozen(ctx.sampling));
+  check('buildGenerationContext 嵌套 promptHashes 对象深冻结', Object.isFrozen(ctx.promptHashes));
+  check('buildGenerationContext 嵌套 sourceMessageRange 对象深冻结', Object.isFrozen(ctx.sourceMessageRange));
+  check('buildGenerationContext 嵌套 modules 对象深冻结', Object.isFrozen(ctx.modules));
+
+  let tamperFailed = false;
+  try {
+    ctx.sampling.temperature = 0.99;
+  } catch {
+    tamperFailed = true;
+  }
+  check('严格模式下试图篡改嵌套 sampling 抛出异常', tamperFailed || ctx.sampling.temperature === 0.2);
 }
 
 // 3. buildGenerationContext 支持 startId/endId 别名
@@ -100,7 +127,7 @@ function check(name, cond, extra) {
   );
 }
 
-// 4. validateGenerationContext 校验
+// 4. validateGenerationContext 强契约校验
 {
   const validCtx = buildGenerationContext({ kind: 'merge' });
   const v1 = validateGenerationContext(validCtx);
@@ -114,6 +141,19 @@ function check(name, cond, extra) {
 
   const v4 = validateGenerationContext(null); // 可选兼容：null/undefined 允许但 present: false
   check('validateGenerationContext 允许空值兼容旧记录', v4.valid === true && v4.present === false);
+
+  const baseCtx = buildGenerationContext({ kind: 'summary' });
+  const v5 = validateGenerationContext({
+    ...baseCtx,
+    sampling: 'invalid-string'
+  });
+  check('validateGenerationContext 拦截非法 sampling', v5.valid === false && v5.reason === 'GENERATION_CONTEXT_INVALID_SAMPLING');
+
+  const v6 = validateGenerationContext({
+    ...baseCtx,
+    promptHashes: 'invalid-string'
+  });
+  check('validateGenerationContext 拦截非法 promptHashes', v6.valid === false && v6.reason === 'GENERATION_CONTEXT_INVALID_PROMPT_HASHES');
 }
 
 // 5. getGenerationContext 提取

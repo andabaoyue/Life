@@ -7,6 +7,8 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const {
   SCHEMA_VERSION,
@@ -16,6 +18,20 @@ const {
   PROVENANCE_SOURCE_KINDS,
   DEFAULT_EXPERIMENT_MODULES
 } = require('./experiment-types');
+const { resolveGitCommit } = require('./experiment-metadata');
+
+let cachedPkgVersion = null;
+function getPackageVersion() {
+  if (cachedPkgVersion) return cachedPkgVersion;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    if (pkg && pkg.version) {
+      cachedPkgVersion = String(pkg.version);
+      return cachedPkgVersion;
+    }
+  } catch {}
+  return '0.9.7';
+}
 
 /**
  * 创建实验 Run Manifest
@@ -28,8 +44,8 @@ const {
  * @param {string} [options.experimentMode='baseline']
  * @param {Object} [options.modules={}]
  * @param {number} [options.windowNo=1]
- * @param {string} [options.lifeVersion='0.9.5.3']
- * @param {string} [options.gitCommit='unknown']
+ * @param {string} [options.lifeVersion]
+ * @param {string} [options.gitCommit]
  * @param {string} [options.label='']
  * @returns {Readonly<Object>}
  */
@@ -69,8 +85,8 @@ function createExperimentRunManifest(options = {}) {
     experimentMode: mode,
     modules: Object.freeze(activeModules),
     initialWindowNo: typeof options.windowNo === 'number' ? options.windowNo : 1,
-    lifeVersion: String(options.lifeVersion || '0.9.5.3'),
-    gitCommit: String(options.gitCommit || 'unknown'),
+    lifeVersion: String(options.lifeVersion || getPackageVersion()),
+    gitCommit: String(options.gitCommit || resolveGitCommit()),
     label: String(options.label || ''),
     createdAt: nowIso,
     provenance: Object.freeze({

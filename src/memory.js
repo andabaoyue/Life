@@ -31,6 +31,32 @@ const SCHEMA_VERSION = 1;
 
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/g;
 
+/**
+ * 记忆重新激活日常高频词与虚词停用词表（P1-3）
+ * 杜绝日常口语词汇（如“今天天气”、“我们可以”）误唤醒休眠记忆
+ */
+const CHINESE_STOPWORDS = new Set([
+  '这个', '那个', '什么', '怎么', '怎样', '为什么', '可以', '可能', '应该', '觉得',
+  '知道', '现在', '如果', '但是', '然后', '因为', '所以', '虽然', '而且', '或者',
+  '以及', '对于', '关于', '我们', '你们', '他们', '她们', '它们', '自己',
+  '时候', '地方', '东西', '事情', '一点', '一些', '非常', '十分', '比较', '更加',
+  '已经', '正在', '将要', '开始', '结束', '出现', '没有', '不是', '就是', '还是',
+  '这样', '那样', '这里', '那里', '如何', '一起', '一样', '一直', '今天',
+  '明天', '昨天', '刚刚', '刚才', '其实', '真的', '感觉', '看起来', '听起来',
+  '今天天气', '我们可以', '不知道', '收着那枚', '聊聊吗', '好不好', '有没有'
+]);
+
+function isStopwordOrNoise(str) {
+  if (!str || str.length < 2) return true;
+  if (CHINESE_STOPWORDS.has(str)) return true;
+  if (str.length === 4) {
+    const part1 = str.slice(0, 2);
+    const part2 = str.slice(2, 4);
+    if (CHINESE_STOPWORDS.has(part1) && CHINESE_STOPWORDS.has(part2)) return true;
+  }
+  return false;
+}
+
 /** 粗估 token：中文约 1 字 1 token，其余约 3.5 字符 1 token */
 function estimateTokens(text) {
   if (!text) return 0;
@@ -130,7 +156,8 @@ class Memory {
    * 关联线索重新激活 (Contextual Reactivation)
    * 检查用户输入是否包含休眠记忆 (DORMANT) 的特征关键词/语义片段；
    * 若命中，则唤醒该记忆痕迹，重置未召回跨度，使其脱离 DORMANT 态并重新进入 Prompt。
-   * 零 API 成本，纯本地关键词关联。
+   * 零 API 成本，纯本地关键词关联（P1-3）。
+   * 增加停用词过滤与最小有效词长限制（纯中文子串长 >= 5 或有效 token 词长 >= 3），避免日常高频词误唤醒。
    */
   reactivateByContext(userText, currentWindow) {
     if (!this.engramManager || !userText || typeof userText !== 'string') return [];
@@ -146,39 +173,53 @@ class Memory {
       if (w && typeof w.no === 'number') winMap.set(w.no, w.text || '');
     }
 
+    // 分词/分句提取候选词（按标点与空白切分）
+    const rawSegments = text.split(/[\s\p{P}\p{S}]+/gu).map(s => s.trim()).filter(Boolean);
+    const candidateTokens = [];
+
+    for (const seg of rawSegments) {
+      const lowerSeg = seg.toLowerCase();
+      // 纯英文/数字标识符处理
+      if (/^[a-z0-9_-]+$/i.test(lowerSeg)) {
+        if (lowerSeg.length >= 3 && !CHINESE_STOPWORDS.has(lowerSeg)) {
+          candidateTokens.push(lowerSeg);
+        }
+        continue;
+      }
+      // 中文/混合字符处理：提取有效 token（词长 >= 3 且非高频停用词）
+      if (lowerSeg.length >= 3 && !isStopwordOrNoise(lowerSeg)) {
+        if (lowerSeg.length <= 12) {
+          candidateTokens.push(lowerSeg);
+        }
+      }
+      // 滑动窗口提取 3~5 字子串，过滤停用词与日常口语杂音
+      for (let len = 3; len <= 5; len++) {
+        if (lowerSeg.length >= len) {
+          for (let i = 0; i <= lowerSeg.length - len; i++) {
+            const sub = lowerSeg.slice(i, i + len);
+            if (!isStopwordOrNoise(sub)) {
+              candidateTokens.push(sub);
+            }
+          }
+        }
+      }
+    }
+
+    const uniqueTokens = Array.from(new Set(candidateTokens));
+    if (uniqueTokens.length === 0) return [];
+
     for (const trace of dormantTraces) {
       const winNo = trace.sourceWindowNo || trace.createdWindow;
       const winText = winMap.get(winNo);
       if (!winText) continue;
 
-      const cleanText = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ');
-      const words = cleanText.split(/\s+/).filter(w => w.length >= 2);
-
-      let matched = false;
       const lowerWin = winText.toLowerCase();
+      let matched = false;
 
-      for (const w of words) {
-        if (w.length >= 3 && lowerWin.includes(w)) {
+      for (const tok of uniqueTokens) {
+        if (lowerWin.includes(tok)) {
           matched = true;
           break;
-        }
-      }
-
-      if (!matched) {
-        let matchCount = 0;
-        for (const w of words) {
-          if (lowerWin.includes(w)) matchCount++;
-        }
-        if (matchCount >= 2) matched = true;
-      }
-
-      if (!matched && text.length >= 4) {
-        for (let i = 0; i <= text.length - 4; i++) {
-          const sub = text.slice(i, i + 4).toLowerCase();
-          if (lowerWin.includes(sub)) {
-            matched = true;
-            break;
-          }
         }
       }
 
@@ -293,13 +334,27 @@ class Memory {
     let s = this.persona;
     if (this.data.windows.length) {
       let activeWindows = this.data.windows;
+      let dormantNos = new Set();
+      let fadingNos = new Set();
+
       if (this.engramManager) {
-        const dormantNos = new Set(this.engramManager.getDormantTraces().map(t => t.sourceWindowNo));
+        dormantNos = new Set(this.engramManager.getDormantTraces().map(t => t.sourceWindowNo));
+        fadingNos = new Set(this.engramManager.getFadingTraces().map(t => t.sourceWindowNo));
         activeWindows = this.data.windows.filter(w => !dormantNos.has(w.no));
       }
+
       if (activeWindows.length) {
         const mem = activeWindows
-          .map(w => (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text)
+          .map(w => {
+            const isFading = this.engramManager && fadingNos.has(w.no);
+            if (isFading) {
+              const tag = w.early ? '【早期（渐褪）】' : `【第${w.no}段（渐褪）】`;
+              const text = (w.text && w.text.length > 60) ? (w.text.slice(0, 60) + '...') : (w.text || '');
+              return tag + text;
+            }
+            const tag = w.early ? '【早期】' : `【第${w.no}段】`;
+            return tag + (w.text || '');
+          })
           .join('\n');
         s += '\n\n【你与此前的记忆】\n' + mem;
       }

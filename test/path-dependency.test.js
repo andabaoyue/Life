@@ -28,6 +28,7 @@ const { BehaviorScheduler } = require('../src/behavior-scheduler');
 const { SubjectState } = require('../src/subject-state');
 const { SelfLedger, calculateRevisionPressure } = require('../src/self-ledger');
 const { ANIMATION_STATES } = require('../src/animation-state');
+const { runPathDependencyExperiment } = require('../src/path-dependency');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -226,6 +227,56 @@ const baseS1 = baseReg.getState();
 check('基线隔离模式下无论施加何种输入序列，内部状态恒定保持基线不变',
   baseS0.energy === baseS1.energy && baseS0.restPressure === baseS1.restPressure && baseS0.arousal === baseS1.arousal
 );
+
+// ==========================================
+// 5. runPathDependencyExperiment 全 4 维分化与判定接口 (P0-4)
+// ==========================================
+{
+  const expDirA = makeTempDir();
+  const expDirB = makeTempDir();
+
+  const seqA = [
+    { type: 'activity', activityKind: 'poke', payload: { count: 5 } },
+    { type: 'sleep', isAsleep: true },
+    { type: 'sleep', isAsleep: false },
+    { type: 'interaction', payload: { role: 'user', messageLength: 100 } }
+  ];
+
+  const seqB = [
+    { type: 'interaction', payload: { role: 'user', messageLength: 100 } },
+    { type: 'sleep', isAsleep: true },
+    { type: 'sleep', isAsleep: false },
+    { type: 'activity', activityKind: 'poke', payload: { count: 5 } }
+  ];
+
+  const result = runPathDependencyExperiment({
+    sequenceA: seqA,
+    sequenceB: seqB,
+    userDataDirA: expDirA,
+    userDataDirB: expDirB,
+    probeStimulus: { category: 'environmental_probe', salience: 42, intensity: 45 }
+  });
+
+  check('runPathDependencyExperiment 确立路径依赖判定', result.pathDependencyEstablished === true);
+  check('包含 4 维分化指标: internalRegulation', result.divergence.internalRegulation && typeof result.divergence.internalRegulation.energyDelta === 'number');
+  check('包含 4 维分化指标: behaviorDistribution', result.divergence.behaviorDistribution && typeof result.divergence.behaviorDistribution === 'object');
+  check('包含 4 维分化指标: attentionDivergence', typeof result.divergence.attentionDivergence === 'boolean');
+  check('包含 4 维分化指标: subjectState', result.divergence.subjectState && typeof result.divergence.subjectState === 'object');
+
+  // 基线隔离模式：全模块关闭时不确立路径依赖
+  const baseResult = runPathDependencyExperiment({
+    sequenceA: seqA,
+    sequenceB: seqB,
+    config: { experimentModules: { internalRegulation: false, biographicalCanalization: false } }
+  });
+  check('基线模式下路径依赖判定不成立 (pathDependencyEstablished = false)',
+    baseResult.pathDependencyEstablished === false
+  );
+  check('基线模式下 internalRegulation 各分量 Delta 全为 0',
+    baseResult.divergence.internalRegulation.energyDelta === 0 &&
+    baseResult.divergence.internalRegulation.arousalDelta === 0
+  );
+}
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

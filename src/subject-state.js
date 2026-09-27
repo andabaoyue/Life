@@ -3,7 +3,7 @@ const path = require('path');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { createStateChange, validateStateChange, symmetricRound } = require('./state-change');
-const { normalizeArchiveRecord, checkMessageReference, checkQuoteInMessage } = require('./experience-schema');
+const { normalizeArchiveRecord, checkMessageReference, checkQuoteInMessage, PRIOR_SOURCE_TYPES } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
 
@@ -581,12 +581,28 @@ class SubjectState {
         continue;
       }
 
-      // 3. messageId 检查（P0-2: 复用 experience-schema.checkMessageReference 单一事实来源）
+      // 3. messageId 检查（P0-2 & P1-4: 复用 experience-schema.checkMessageReference 单一事实来源）
       // 3.1 目标窗口匹配强核验 (v0.9.6 P0-07)
       const targetWindowNo = (typeof windowNo === 'number' && !Number.isNaN(windowNo))
         ? windowNo
         : ((opts && typeof opts.windowNo === 'number' && !Number.isNaN(opts.windowNo)) ? opts.windowNo : null);
-      const refCheck = checkMessageReference(messageId, msgMap, targetWindowNo);
+
+      const st = (item.sourceType || item.source) ? String(item.sourceType || item.source).trim().toUpperCase() : null;
+      if (st && PRIOR_SOURCE_TYPES.has(st) && messageId) {
+        rejected.push({
+          evidenceId,
+          status: 'rejected',
+          reason: 'PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID',
+          windowNo,
+          trait: cleanTrait,
+          sourceType: st,
+          messageId: String(messageId || ''),
+          createdAt: Date.now()
+        });
+        continue;
+      }
+
+      const refCheck = checkMessageReference(messageId, msgMap, targetWindowNo, { sourceType: st });
       if (!refCheck.ok) {
         const rej = {
           evidenceId,
@@ -600,6 +616,11 @@ class SubjectState {
         };
         if (refCheck.reason === 'MESSAGE_WINDOW_MISMATCH') rej.messageWindowNo = refCheck.messageWindowNo;
         if (refCheck.reason === 'INVALID_MESSAGE_ROLE') rej.role = refCheck.role;
+        if (refCheck.reason === 'ROLE_SOURCE_TYPE_MISMATCH') {
+          rej.role = refCheck.role;
+          rej.sourceType = refCheck.sourceType;
+        }
+        if (refCheck.reason === 'PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID') rej.sourceType = refCheck.sourceType;
         rejected.push(rej);
         continue;
       }

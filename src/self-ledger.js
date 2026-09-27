@@ -3,7 +3,7 @@ const path = require('path');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { migrate } = require('./migration');
-const { checkMessageReference, checkQuoteInMessage } = require('./experience-schema');
+const { checkMessageReference, checkQuoteInMessage, PRIOR_SOURCE_TYPES } = require('./experience-schema');
 
 /**
  * 初澜生命档案：原始成长证据（本地持久化）与 Current Self（运行投影）分离。
@@ -63,14 +63,20 @@ function normalizeEvidenceList(raw, at, window) {
 function verifyGrowthEvidence(rawEvidence, msgMap, targetWindowNo) {
   const x = rawEvidence && typeof rawEvidence === 'object' ? rawEvidence : null;
   if (!x) return { ok: false, reason: 'INVALID_OBJECT' };
+  const st = x.sourceType ? String(x.sourceType).trim().toUpperCase() : null;
   const ids = Array.isArray(x.messageIds)
     ? x.messageIds.filter(id => Number.isInteger(id) || (typeof id === 'string' && id.trim()))
     : [];
+
+  if (st && PRIOR_SOURCE_TYPES.has(st) && ids.length > 0) {
+    return { ok: false, reason: 'PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID' };
+  }
+
   if (!ids.length) return { ok: false, reason: 'MISSING_MESSAGE_ID' };
   const windowNo = Number.isInteger(targetWindowNo) ? targetWindowNo : null;
   const referenced = [];
   for (const rawId of ids) {
-    const ref = checkMessageReference(String(rawId), msgMap, windowNo);
+    const ref = checkMessageReference(String(rawId), msgMap, windowNo, { sourceType: st });
     if (!ref.ok) return { ok: false, reason: ref.reason };
     referenced.push(ref.message);
   }

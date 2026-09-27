@@ -383,7 +383,7 @@ node test/creative-mode.check.js # 7 项：创作 Skill（DS Skill）加载、�
 node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
 node test/deferred-writer.test.js # 8 项：脏标记、防抖延迟合并写盘、同步 flush、写失败保持 dirty、unref 定时器
 node test/migration.test.js       # 17 项：通用数据迁移、版本号升序执行、缺少迁移函数报错、版本防回退、自定义版本字段名
-node test/self-ledger.test.js   # 27 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线
+node test/self-ledger.test.js   # 31 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线、sourceType与角色语义兼容核验
 node test/agent_interfaces.test.js # 6 项：能力白名单、默认 deny、行动提案、审计日志和 Mock 禁止执行
 node test/animation-controller.test.js # 30 项：自然动画控制器、60fps 驱动循环、状态转移、多图层独立物理摆动、Poke 动力学与打断机制
 node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸/眨眼/打哈欠/伸懒腰权重分发、打断与状态互斥、确定性覆盖
@@ -417,17 +417,17 @@ node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条�
 node test/reducer-symmetry.test.js        # 20 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）
 node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
 node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
-node test/decision-log.test.js           # 25 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-007 七大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档）
+node test/decision-log.test.js           # 31 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
 node test/canalization.test.js           # 27 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay）
-node test/memory-dynamics.test.js         # 27 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化与上下文重新激活）
+node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
 node test/dream-gate.test.js             # 30 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性）
 node test/dream-synthesis.test.js        # 23 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环）
 node test/lifecycle-wiring.test.js    # 47 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量）
 node test/internal-regulation.test.js # 23 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空）
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
-node test/attention-gate.test.js      # 18 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御）
-node test/path-dependency.test.js     # 13 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存）
-node test/experiment-metadata.test.js # 21 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退）
+node test/attention-gate.test.js      # 23 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离）
+node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
+node test/experiment-metadata.test.js # 31 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退、observedModel与深冻结）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```

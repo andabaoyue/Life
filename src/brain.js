@@ -117,6 +117,7 @@ class Brain {
       console.warn(`[Brain] Provider Policy 检查未通过: ${policyCheck.error}`);
     }
     this.api = new DeepSeek(this.cfg);
+    this.persona = PERSONA;
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
     this.experiencesArchive = new ExperiencesArchive(userDataDir);
@@ -287,6 +288,11 @@ class Brain {
     this.recentPerceptions.push(record);
     if (this.recentPerceptions.length > 50) {
       this.recentPerceptions.shift();
+    }
+
+    // P1-1: Attention 瞬时非人格化下游调节信号闭环 (ATTENDED ≠ SUBJECT_ACQUIRED)
+    if (gateResult && gateResult.status === 'ATTENDED' && this.internalRegulation && typeof this.internalRegulation.updateOnAttention === 'function') {
+      this.internalRegulation.updateOnAttention(gateResult, { timestamp: record.timestamp });
     }
 
     return record;
@@ -835,9 +841,19 @@ class Brain {
     }).join('\n');
 
     try {
+      const { text, usage, observedModel } = await this.api.complete(
+        [{ role: 'system', content: SUMMARY_SYS },
+         { role: 'user', content: '【对话】\n' + dialogue }],
+        { maxTokens: 900, temperature: 0.2 }
+      );
+      this.track(usage, true, 'summary');
+      if (this.shutdownRequested) return false;
+      if (!text) return false;
+
       const summaryPromptHashes = collectPromptHashes({
         summary: SUMMARY_SYS,
-        persona: this.persona || '',
+        persona: PERSONA,
+        creativeSkill: this.cfg.writingMode ? CREATIVE_SKILL : null,
         growth: GROWTH_SYS,
         merge: MERGE_SYS
       });
@@ -855,17 +871,9 @@ class Brain {
         sampling: { maxTokens: 900, temperature: 0.2 },
         sourceWindowNo: snap.windowNo,
         sourceMessageRange,
+        observedModel,
         generator: 'llm'
       });
-
-      const { text, usage } = await this.api.complete(
-        [{ role: 'system', content: SUMMARY_SYS },
-         { role: 'user', content: '【对话】\n' + dialogue }],
-        { maxTokens: 900, temperature: 0.2 }
-      );
-      this.track(usage, true, 'summary');
-      if (this.shutdownRequested) return false;
-      if (!text) return false;
 
       // 尝试解析 5×20 + Window Synthesis 结构化 JSON
       let structured = null;
@@ -1315,7 +1323,7 @@ class Brain {
       (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text).join('\n');
 
     try {
-      const { text, usage } = await this.api.complete(
+      const { text, usage, observedModel } = await this.api.complete(
         [{ role: 'system', content: MERGE_SYS },
          { role: 'user', content: body }],
         { maxTokens: 400, temperature: 0.2 }
@@ -1330,10 +1338,12 @@ class Brain {
         promptHashes: collectPromptHashes({
           merge: MERGE_SYS,
           summary: SUMMARY_SYS,
-          persona: this.persona || '',
+          persona: PERSONA,
+          creativeSkill: this.cfg.writingMode ? CREATIVE_SKILL : null,
           growth: GROWTH_SYS
         }),
         sampling: { maxTokens: 400, temperature: 0.2 },
+        observedModel,
         generator: 'llm'
       });
 
@@ -1352,7 +1362,7 @@ class Brain {
   async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;
-      const { text, usage } = await this.api.complete(
+      const { text, usage, observedModel } = await this.api.complete(
         [{ role: 'system', content: GROWTH_SYS },
          { role: 'user', content: '【窗口小结】\n' + summary + '\n【窗口对话】\n' + dialogue }],
         { maxTokens: 420, temperature: 0.15 }
@@ -1366,7 +1376,8 @@ class Brain {
       const growthPromptHashes = collectPromptHashes({
         growth: GROWTH_SYS,
         summary: SUMMARY_SYS,
-        persona: this.persona || '',
+        persona: PERSONA,
+        creativeSkill: this.cfg.writingMode ? CREATIVE_SKILL : null,
         merge: MERGE_SYS
       });
 
@@ -1377,6 +1388,7 @@ class Brain {
         sampling: { maxTokens: 420, temperature: 0.15 },
         sourceWindowNo: window,
         sourceMessageRange: opts.sourceMessageRange || null,
+        observedModel,
         generator: 'llm'
       });
 

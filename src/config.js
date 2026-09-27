@@ -31,6 +31,8 @@ const DEFAULTS = {
   // 官方 API 模型名。V4.1 Flash 对应的就是 deepseek-flash，
   // 写成 deepseek-v4.1-flash 可能报模型不存在，以你控制台看到的为准。
   model: 'deepseek-flash',
+  // 实验标签/用户配置模型版本标识（如 'v3', 'r1', 'unavailable'），不是自动发现的真实版本
+  modelVersion: 'unavailable',
 
   /* ---- 记忆窗口 ----
      V4.1 Flash 上下文上限 1M token，所以窗口大小不是模型限制，
@@ -132,6 +134,7 @@ function sanitize(raw = {}) {
     provider,
     credentialType,
     model: typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : DEFAULTS.model,
+    modelVersion: typeof raw.modelVersion === 'string' && raw.modelVersion.trim() ? raw.modelVersion.trim() : DEFAULTS.modelVersion,
     windowTurns: finiteInt(raw.windowTurns, DEFAULTS.windowTurns, 1, 100000),
     windowMaxTokens: finiteInt(raw.windowMaxTokens, DEFAULTS.windowMaxTokens, 256, 10000000),
     keepTailMessages: finiteInt(raw.keepTailMessages, DEFAULTS.keepTailMessages, 0, 1000),

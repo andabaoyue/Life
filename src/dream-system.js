@@ -25,6 +25,7 @@
 
 const crypto = require('crypto');
 const { MEMORY_EPISTEMIC_STATUS } = require('./experiment-types');
+const { buildGenerationContext, collectPromptHashes } = require('./experiment-metadata');
 
 const DEFAULT_DREAM_CONFIG = Object.freeze({
   // 第一道：本地认知门禁阈值
@@ -284,6 +285,33 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const dreamId = `dream-w${windowNo}-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const outputHash = sha256(content);
 
+    const observedModel = res.observedModel || (apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'));
+    const modelVersion = (apiClient.cfg && apiClient.cfg.modelVersion) || options.modelVersion || 'unavailable';
+
+    const dreamPromptHashes = collectPromptHashes({
+      persona: options.persona || context.persona || null,
+      creativeSkill: options.creativeSkill || context.creativeSkill || null,
+      dream: promptHash
+    });
+
+    const generationContext = buildGenerationContext({
+      kind: 'dream',
+      windowNo,
+      sampling: {
+        temperature: cfg.dreamTemperature,
+        maxTokens: cfg.dreamMaxTokens
+      },
+      promptHashes: dreamPromptHashes,
+      observedModel,
+      modelVersion,
+      modules: options.experimentModules || context.experimentModules || {},
+      sourceMessageRange: {
+        startMessageId: (context.sourceEventIds && context.sourceEventIds[0]) ? String(context.sourceEventIds[0]) : 'unknown',
+        endMessageId: (context.sourceEventIds && context.sourceEventIds[context.sourceEventIds.length - 1]) ? String(context.sourceEventIds[context.sourceEventIds.length - 1]) : 'unknown',
+        count: Array.isArray(context.sourceEventIds) ? context.sourceEventIds.length : (context.dayResidues ? context.dayResidues.length : 0)
+      }
+    });
+
     const dreamPayload = {
       dreamId,
       windowNo,
@@ -301,7 +329,10 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},
       dreamModel: apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'),
+      observedModel,
+      modelVersion,
       provider: 'deepseek',
+      generationContext,
       generatedAt: now,
       metadata: {
         model: apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'),
@@ -317,6 +348,9 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       timestamp: now,
       epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
       payload: dreamPayload,
+      generationContext,
+      observedModel,
+      modelVersion,
       usage: res.usage || null,
       content,
       narrative: content,

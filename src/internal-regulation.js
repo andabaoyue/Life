@@ -267,6 +267,47 @@ class InternalRegulationManager {
   }
 
   /**
+   * 事件驱动更新：注意选通摄入 (Attention Attended Event / P1-1)
+   *
+   * 认识论与动力学边界（Decision D-001 & D-008）：
+   * 1. ATTENDED 仅作为即时认知刺激，短暂提升神经唤醒度与认知负荷代理。
+   * 2. 严禁由此将知觉内容直接升级为 SubjectState 人格或自传记忆（ATTENDED ≠ SUBJECT_ACQUIRED）。
+   * 3. 唤醒度上升后，_computeSalienceThreshold 将动态调节后续知觉选通门限，
+   *    同时经由 BehaviorScheduler 倾斜微动作分布（如唤醒度高时更多东张西望）。
+   * 4. baseline 模式或未启用时不产生状态变化。
+   *
+   * @param {Object} gateResult AttentionGate.evaluatePerception() 产物
+   * @param {Object} [details={}]
+   */
+  updateOnAttention(gateResult, details = {}) {
+    if (!this.enabled || !gateResult || typeof gateResult !== 'object') return this.getState();
+    if (gateResult.status !== 'ATTENDED' || !gateResult.attended) return this.getState();
+
+    const at = Number(details.timestamp || Date.now());
+    const salience = Number(gateResult.salience || 40);
+    const prev = {
+      energy: this.energy,
+      restPressure: this.restPressure,
+      arousal: this.arousal,
+      interactionDensity: this.interactionDensity,
+      cognitiveLoadProxy: this.cognitiveLoadProxy
+    };
+
+    const deltas = {};
+    // 依据显著性温和微调唤醒度（+1 ~ +8）
+    const arousalBump = Math.max(1, Math.min(8, Math.round(salience * 0.1)));
+    deltas.arousal = arousalBump;
+    deltas.cognitiveLoadProxy = +1;
+
+    this.arousal = clamp(this.arousal + deltas.arousal, REGULATION_BOUNDS.arousal.min, REGULATION_BOUNDS.arousal.max);
+    this.cognitiveLoadProxy = clamp(this.cognitiveLoadProxy + deltas.cognitiveLoadProxy, REGULATION_BOUNDS.cognitiveLoadProxy.min, REGULATION_BOUNDS.cognitiveLoadProxy.max);
+
+    this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
+    this._recordTransition('attention_attended', deltas, prev, at);
+    return this.getState();
+  }
+
+  /**
    * 事件驱动更新：入睡与唤醒 (Sleep / Wake Consolidation)
    * 
    * @param {boolean} isSleeping true 表示入睡，false 表示唤醒

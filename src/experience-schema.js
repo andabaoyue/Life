@@ -448,19 +448,82 @@ function validateWindowSummary(summaryObj, options = {}) {
 }
 
 /**
- * P0-2: 消息引用核验（单一事实来源）
+ * P1-4: SourceType 与 Message Role 语义兼容性规范
+ *
+ * 1. USER: 仅允许 'user' 角色
+ * 2. EXPERIENCE / SELF_INFERRED / MODEL_INTERPRETATION: 仅允许 'assistant' 角色
+ * 3. OBSERVATION / PROGRAM_OBSERVATION: 允许 'user' 或 'assistant'
+ * 4. INNATE / MODEL_PRIOR / RUNTIME: 先验来源，严禁挂载具体 messageId (PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID)
+ */
+const SOURCE_TYPE_ROLE_COMPATIBILITY = Object.freeze({
+  USER: Object.freeze(['user']),
+  EXPERIENCE: Object.freeze(['assistant']),
+  SELF_INFERRED: Object.freeze(['assistant']),
+  OBSERVATION: Object.freeze(['user', 'assistant']),
+  PROGRAM_OBSERVATION: Object.freeze(['user', 'assistant']),
+  MODEL_INTERPRETATION: Object.freeze(['assistant']),
+  INNATE: Object.freeze([]),
+  MODEL_PRIOR: Object.freeze([]),
+  RUNTIME: Object.freeze([])
+});
+
+const PRIOR_SOURCE_TYPES = new Set(['INNATE', 'MODEL_PRIOR', 'RUNTIME']);
+
+/**
+ * 校验 SourceType 与 Message Role 兼容性 (P1-4)
+ */
+function validateSourceTypeCompatibility(sourceType, role, hasMessageId = true) {
+  if (!sourceType || typeof sourceType !== 'string') return { valid: true };
+  const cleanType = sourceType.trim().toUpperCase();
+
+  if (PRIOR_SOURCE_TYPES.has(cleanType)) {
+    if (hasMessageId) {
+      return { valid: false, reason: 'PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID', sourceType: cleanType };
+    }
+    return { valid: true };
+  }
+
+  const allowed = SOURCE_TYPE_ROLE_COMPATIBILITY[cleanType];
+  if (allowed && role) {
+    const cleanRole = String(role).trim().toLowerCase();
+    if (!allowed.includes(cleanRole)) {
+      return {
+        valid: false,
+        reason: 'ROLE_SOURCE_TYPE_MISMATCH',
+        sourceType: cleanType,
+        role: cleanRole,
+        allowedRoles: [...allowed]
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * P0-2 & P1-4: 消息引用核验（单一事实来源）
  *
  * 供 SubjectState.verifyEvidence 与 SelfLedger.verifyGrowthEvidence 共享，
  * 遵循严格的 Provenance 判定链：
  *   MISSING_MESSAGE_ID / MESSAGE_ID_NOT_FOUND / MESSAGE_WINDOW_MISMATCH /
- *   SYNTHETIC_MESSAGE_NOT_ELIGIBLE / BRIDGE_MESSAGE_NOT_ELIGIBLE / INVALID_MESSAGE_ROLE
+ *   SYNTHETIC_MESSAGE_NOT_ELIGIBLE / BRIDGE_MESSAGE_NOT_ELIGIBLE / INVALID_MESSAGE_ROLE /
+ *   PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID / ROLE_SOURCE_TYPE_MISMATCH
  *
  * @param {*} messageId 待查消息 ID
  * @param {Map|Object} msgMap 消息映射池 (messageId -> message)
  * @param {number|null} targetWindowNo 目标窗口号 (null 表示不限制窗口)
- * @returns {{ok: true, messageId: string, message: Object} | {ok: false, reason: string, messageId?: string, messageWindowNo?: number, role?: string}}
+ * @param {Object|string} [options={}] 可选配置或直接传入 sourceType
+ * @returns {{ok: true, messageId: string, message: Object} | {ok: false, reason: string, messageId?: string, messageWindowNo?: number, role?: string, sourceType?: string}}
  */
-function checkMessageReference(messageId, msgMap, targetWindowNo = null) {
+function checkMessageReference(messageId, msgMap, targetWindowNo = null, options = {}) {
+  const sourceType = typeof options === 'string'
+    ? options
+    : (options && options.sourceType ? options.sourceType : null);
+
+  if (sourceType && PRIOR_SOURCE_TYPES.has(String(sourceType).trim().toUpperCase())) {
+    return { ok: false, reason: 'PRIOR_SOURCE_CANNOT_HAVE_MESSAGE_ID', messageId: String(messageId || ''), sourceType: String(sourceType).trim().toUpperCase() };
+  }
+
   if (typeof messageId !== 'string' || !messageId.trim()) {
     return { ok: false, reason: 'MISSING_MESSAGE_ID' };
   }
@@ -486,6 +549,14 @@ function checkMessageReference(messageId, msgMap, targetWindowNo = null) {
   if (message.role && message.role !== 'user' && message.role !== 'assistant') {
     return { ok: false, reason: 'INVALID_MESSAGE_ROLE', messageId: id, role: message.role };
   }
+
+  if (sourceType) {
+    const comp = validateSourceTypeCompatibility(sourceType, message.role, true);
+    if (!comp.valid) {
+      return { ok: false, reason: comp.reason, messageId: id, role: message.role, sourceType: comp.sourceType };
+    }
+  }
+
   return { ok: true, messageId: id, message };
 }
 
@@ -512,6 +583,9 @@ module.exports = {
   ALLOWED_EVENT_TYPES,
   ALLOWED_EVENT_SOURCES,
   PROHIBITED_EVENT_SOURCES,
+  SOURCE_TYPE_ROLE_COMPATIBILITY,
+  PRIOR_SOURCE_TYPES,
+  validateSourceTypeCompatibility,
   checkMessageReference,
   checkQuoteInMessage,
   isEligibleSubjectEvent,

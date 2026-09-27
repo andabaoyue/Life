@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { ALLOWED_TRAITS } = require('./subject-state');
 const { validateEvent, ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
+const { validateGenerationContext } = require('./experiment-metadata');
 
 const SCHEMA_VERSION = 1;
 
@@ -123,6 +124,15 @@ function validateArchiveRecord(record, options = {}) {
   }
   if (record.generated === true || payload.generated === true) {
     return { valid: false, reason: 'GENERATED_EVENT_PROHIBITED' };
+  }
+
+  // 1.1 实验生成条件元数据契约核验 (若存在则强校验，缺失则历史兼容允许)
+  const targetGenCtx = payload.generationContext !== undefined ? payload.generationContext : record.generationContext;
+  if (targetGenCtx !== undefined && targetGenCtx !== null) {
+    const vGen = validateGenerationContext(targetGenCtx);
+    if (!vGen.valid) {
+      return { valid: false, reason: 'INVALID_GENERATION_CONTEXT: ' + vGen.reason, details: vGen };
+    }
   }
 
   // 2. 类型专属 Schema 核验

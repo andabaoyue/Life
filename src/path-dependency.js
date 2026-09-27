@@ -12,13 +12,12 @@
  *    - 面临的最终探测环境（Probe Environment）严格相同；
  *    - 模型基质与超参数配置严格相同。
  * 2. 多维因果观测比较（Comprehensive Trajectory Metrics）：
- *    必须同时在 6 个核心维度比较轨迹响应：
+ *    当前阶段 (Phase 0.5) 实现了 4 个核心维度的轨迹分化计算：
  *    a) Internal Regulation（短时生理稳态）
  *    b) Behavior Distribution（自主微动作倾向）
  *    c) Attention Result（环境刺激注意力过滤）
  *    d) SubjectState（长期人格发展与渠道化深度）
- *    e) Memory Accessibility（记忆痕迹动力学与可及性）
- *    f) Self Revision（自我假说反思与证伪压力）
+ *    注：Memory Accessibility 与 Self Revision 为后续扩展规划维度。
  * 3. 确定性与可复现性（Deterministic Replay）：
  *    整个实验框架在给定历史序列时具有 100% 确定性，可完全离线回放。
  */
@@ -30,7 +29,6 @@ const { InternalRegulationManager } = require('./internal-regulation');
 const { BehaviorScheduler } = require('./behavior-scheduler');
 const { SubjectState } = require('./subject-state');
 const { evaluateAttentionGate } = require('./attention-gate');
-const { calculateRevisionPressure } = require('./self-ledger');
 
 /**
  * 运行标准两路路径依赖对照实验
@@ -112,7 +110,7 @@ function runPathDependencyExperiment(options = {}) {
   const trajectoryA = executeTrajectory(sequenceA, userDataDirA);
   const trajectoryB = executeTrajectory(sequenceB, userDataDirB);
 
-  // 计算多维分化指标
+  // 计算多维分化指标 (4D Divergence: InternalRegulation, Behavior, Attention, SubjectState)
   const regDiff = {
     energyDelta: trajectoryA.internalRegulation.energy - trajectoryB.internalRegulation.energy,
     restPressureDelta: trajectoryA.internalRegulation.restPressure - trajectoryB.internalRegulation.restPressure,
@@ -125,8 +123,24 @@ function runPathDependencyExperiment(options = {}) {
     behaviorDiff[key] = Number((trajectoryA.behaviorDistribution[key] - trajectoryB.behaviorDistribution[key]).toFixed(4));
   }
 
+  const subjectStateDiff = {};
+  const allTraits = new Set([
+    ...Object.keys(trajectoryA.subjectState || {}),
+    ...Object.keys(trajectoryB.subjectState || {})
+  ]);
+  for (const trait of allTraits) {
+    const valA = trajectoryA.subjectState?.[trait] ?? 0;
+    const valB = trajectoryB.subjectState?.[trait] ?? 0;
+    subjectStateDiff[trait] = Number((valA - valB).toFixed(4));
+  }
+
   const hasRegDivergence = regDiff.energyDelta !== 0 || regDiff.restPressureDelta !== 0 || regDiff.arousalDelta !== 0;
   const hasBehaviorDivergence = Object.values(behaviorDiff).some(d => Math.abs(d) > 0.001);
+  const hasAttentionDivergence = trajectoryA.attentionResult.status !== trajectoryB.attentionResult.status ||
+                                trajectoryA.attentionResult.attended !== trajectoryB.attentionResult.attended;
+  const hasSubjectStateDivergence = Object.values(subjectStateDiff).some(d => Math.abs(d) > 0.0001);
+
+  const pathDependencyEstablished = hasRegDivergence || hasBehaviorDivergence || hasAttentionDivergence || hasSubjectStateDivergence;
 
   return Object.freeze({
     schemaVersion: SCHEMA_VERSION,
@@ -135,10 +149,10 @@ function runPathDependencyExperiment(options = {}) {
     divergence: {
       internalRegulation: regDiff,
       behaviorDistribution: behaviorDiff,
-      attentionDivergence: trajectoryA.attentionResult.status !== trajectoryB.attentionResult.status ||
-                           trajectoryA.attentionResult.attended !== trajectoryB.attentionResult.attended
+      attentionDivergence: hasAttentionDivergence,
+      subjectState: subjectStateDiff
     },
-    pathDependencyEstablished: hasRegDivergence || hasBehaviorDivergence
+    pathDependencyEstablished
   });
 }
 
