@@ -118,13 +118,20 @@ function hasUnboundFunctionIdentifier(fn, rawSource) {
     const name = p.trim().replace(/=.*$/, '').trim();
     if (/^[A-Za-z_$][\w$]*$/.test(name)) declared.add(name);
   }
+  if (params) {
+    for (const m of String(params[1] || params[2] || '').matchAll(/[A-Za-z_$][\w$]*/g)) {
+      if (m[0] !== 'async') declared.add(m[0]);
+    }
+  }
   const fnName = rawSource.match(/^function\s+([A-Za-z_$][\w$]*)/);
   if (fnName) declared.add(fnName[1]);
   for (const m of rawSource.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
-  for (const m of rawSource.replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '').matchAll(/[A-Za-z_$][\w$]*/g)) {
+  const sourceForIdentifiers = rawSource.replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '');
+  for (const m of sourceForIdentifiers.matchAll(/[A-Za-z_$][\w$]*/g)) {
     const word = m[0];
-    const before = rawSource[m.index - 1];
-    if (before === '.' || declared.has(word) || /^(if|else|return|const|let|var|function|async|true|false|null|new|typeof|instanceof|this)$/.test(word)) continue;
+    const before = sourceForIdentifiers[m.index - 1];
+    const after = sourceForIdentifiers[m.index + word.length];
+    if (before === '.' || after === ':' || declared.has(word) || /^(if|else|return|const|let|var|function|async|true|false|null|new|typeof|instanceof|this|for)$/.test(word)) continue;
     if (/^(ctx|reg|scheduler|subjectState|clock)$/.test(word)) continue;
     if (/^(exports|require|module|process|Buffer)$/.test(word)) return true;
     // Identifiers not known to be parameters/globals are closure captures.
