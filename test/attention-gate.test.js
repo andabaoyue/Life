@@ -176,11 +176,38 @@ check('全流程端到端绝对不包含操作系统物理裸信息 (containsLea
   // 11.4 基线模式隔离验证：disabled / baseline 模式下 updateOnAttention 保持恒定
   const baseRegMgr = new InternalRegulationManager(tmpDir, { enabled: false });
   const baseStateBefore = baseRegMgr.getState();
-  baseRegMgr.updateOnAttention(strongRes);
+  baseRegMgr.updateOnAttention(strongRes, { eventId: 'evt-base-1' });
   const baseStateAfter = baseRegMgr.getState();
   check('基线隔离模式下 updateOnAttention 绝对不产生任何状态变动',
     baseStateBefore.arousal === baseStateAfter.arousal &&
     baseStateBefore.cognitiveLoadProxy === baseStateAfter.cognitiveLoadProxy
+  );
+
+  // 11.5 Watermark 去重：同一 eventId 重复提交幂等守恒
+  const arousalBeforeEvent = regMgr.arousal;
+  const cogLoadBeforeEvent = regMgr.cognitiveLoadProxy;
+  regMgr.updateOnAttention(strongRes, { eventId: 'evt-watermark-1' });
+  const arousalAfterFirst = regMgr.arousal;
+  const cogLoadAfterFirst = regMgr.cognitiveLoadProxy;
+  check('新 eventId 首次消费正常微调唤醒度与认知负荷代理',
+    arousalAfterFirst > arousalBeforeEvent && cogLoadAfterFirst > cogLoadBeforeEvent
+  );
+
+  // 重复提交相同 eventId
+  regMgr.updateOnAttention(strongRes, { eventId: 'evt-watermark-1' });
+  check('同一 eventId 第二次提交被 Watermark 拦截，arousal 保持不变',
+    regMgr.arousal === arousalAfterFirst
+  );
+  check('同一 eventId 第二次提交被 Watermark 拦截，cognitiveLoadProxy 保持不变',
+    regMgr.cognitiveLoadProxy === cogLoadAfterFirst
+  );
+
+  // 11.6 Watermark 容量上限滑动窗口测试
+  for (let i = 0; i < 300; i++) {
+    regMgr.updateOnAttention(strongRes, { eventId: `evt-bulk-${i}` });
+  }
+  check('Watermark 消费集合大小受上限严格约束 (<= 256)',
+    regMgr.consumedAttentionEvents.size <= 256
   );
 }
 

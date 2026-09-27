@@ -149,24 +149,28 @@
 
 ## 五、自动化测试与全量门禁检验结果
 
-执行全量文档与回归门禁：
+本次提交前在本地执行全量文档一致性与回归门禁：
 ```bash
 node test/docs.test.js
 ```
 
-### 检验摘要
-- **总测试套件数：** 58 个独立测试套件
+### 检验摘要与口径说明
+- **测试套件统计口径说明：**
+  - **58 套件口径：** 为 Phase 0.5 早期演化与数字生命动力学专项测试子集；
+  - **63 / 64 套件口径：** 为 README 当前完整的全量测试入口清单（由 `test/docs.test.js` 逐一提取并执行）。在第三阶段提交时为 63 项测试入口，随后引入前置条件门禁测试 `test/path-dependency-preconditions.test.js` 后扩展为 64 项。
 - **执行结果：** **100% 通过（PASS），0 项失败（FAIL），0 项错误（ERROR）**
+- **验证证据说明：** GitHub 仓库当前尚未配置云端 CI Workflow（commit status = 0, workflow runs = 0），所有“全部通过”判定均以提交前在开发环境真实执行 `node test/docs.test.js` 的完整控制台输出为实证依据。
 - **关键专项测试表现：**
   - `test/docs.test.js`：门禁全绿，所有声称文件存在，所有声称项数完全匹配
   - `test/experiment-metadata.test.js`：31 项全部通过
   - `test/self-ledger.test.js`：31 项全部通过
   - `test/decision-log.test.js`：31 项全部通过
   - `test/memory-dynamics.test.js`：32 项全部通过
-  - `test/attention-gate.test.js`：23 项全部通过
+  - `test/attention-gate.test.js`：27 项全部通过
   - `test/path-dependency.test.js`：20 项全部通过
+  - `test/path-dependency-preconditions.test.js`：18 项全部通过
   - `test/dream-gate.test.js`：30 项全部通过
-  - `test/dream-synthesis.test.js`：23 项全部通过
+  - `test/dream-synthesis.test.js`：34 项全部通过
   - `test/lifecycle-wiring.test.js`：47 项全部通过
   - `test/internal-regulation.test.js`：23 项全部通过
   - `test/regulation-behavior.test.js`：16 项全部通过

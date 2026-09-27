@@ -21,8 +21,10 @@
 const {
   extractDayResidues,
   buildDreamSynthesisPrompt,
-  synthesizeDream
+  synthesizeDream,
+  canonicalizePromptMessages
 } = require('../src/dream-system');
+const { hashPrompt } = require('../src/experiment-metadata');
 const { MEMORY_EPISTEMIC_STATUS } = require('../src/experiment-types');
 const { SubjectState } = require('../src/subject-state');
 const os = require('os');
@@ -94,7 +96,7 @@ function check(name, cond, extra) {
   check('windowNo 准确对齐', dreamRecord.windowNo === 7);
   check('包含有效的 dreamId', typeof dreamRecord.dreamId === 'string' && dreamRecord.dreamId.startsWith('dream-w7-'));
   check('epistemicStatus 为 DREAM_GENERATED_ARTIFACT', dreamRecord.epistemicStatus === MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT);
-  check('包含 SHA-256 promptHash', typeof dreamRecord.promptHash === 'string' && dreamRecord.promptHash.length === 64);
+  check('包含 SHA-256 promptHash', typeof dreamRecord.promptHash === 'string' && dreamRecord.promptHash.startsWith('sha256:') && dreamRecord.promptHash.length === 71);
   check('包含 SHA-256 outputHash', typeof dreamRecord.outputHash === 'string' && dreamRecord.outputHash.length === 64);
   check('内容保留完整的象征性叙述', dreamRecord.content.includes('发报机'));
 
@@ -152,6 +154,105 @@ function check(name, cond, extra) {
   check('完整性分析服务判定梦境记录为 CERTIFIED (无破坏/无降级)', intReport.integrity === INTEGRITY_STATUS.CERTIFIED);
 
   try { fs.rmSync(testArchiveDir, { recursive: true, force: true }); } catch {}
+
+  // -------------------------------------------------------------
+  // 7. Dream Provenance 升级专项测试 (P0-1, P0-2, P0-3)
+  // -------------------------------------------------------------
+  // 7.1 API 返回 observedModel 时真实记录
+  const clientWithObserved = {
+    cfg: { model: 'deepseek-chat', provider: 'deepseek', baseURL: 'https://api.deepseek.com' },
+    complete: async () => ({
+      text: '梦境测试文本',
+      usage: {},
+      observedModel: 'deepseek-chat-202509'
+    })
+  };
+  const dreamWithObserved = await synthesizeDream(
+    clientWithObserved,
+    [{ role: 'user', content: 'test prompt' }],
+    { windowNo: 9 }
+  );
+  check('API 返回 observedModel 时 dreamRecord 真实记录',
+    dreamWithObserved.observedModel === 'deepseek-chat-202509'
+  );
+  check('API 返回 observedModel 时 generationContext 真实记录',
+    dreamWithObserved.generationContext.observedModel === 'deepseek-chat-202509'
+  );
+
+  // 7.2 API 不返回 observedModel 时绝不回退到 cfg.model
+  const clientWithoutObserved = {
+    cfg: { model: 'deepseek-chat', provider: 'deepseek', baseURL: 'https://api.deepseek.com' },
+    complete: async () => ({
+      text: '梦境测试文本',
+      usage: {}
+    })
+  };
+  const dreamNoObserved = await synthesizeDream(
+    clientWithoutObserved,
+    [{ role: 'user', content: 'test prompt' }],
+    { windowNo: 10 }
+  );
+  check('API 未返回 observedModel 时标记为 unavailable',
+    dreamNoObserved.observedModel === 'unavailable'
+  );
+  check('API 未返回 observedModel 时 generationContext 标记为 unavailable',
+    dreamNoObserved.generationContext.observedModel === 'unavailable'
+  );
+  check('绝不拿 cfg.model 冒充 observedModel',
+    dreamNoObserved.observedModel !== 'deepseek-chat' &&
+    dreamNoObserved.generationContext.observedModel !== 'deepseek-chat'
+  );
+
+  // 7.3 Dream Prompt Hash 不允许二次哈希
+  const testMessages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'usr' }];
+  const expectedCanonical = canonicalizePromptMessages(testMessages);
+  const expectedHash = hashPrompt(expectedCanonical);
+  const dreamHashRecord = await synthesizeDream(
+    clientWithObserved,
+    testMessages,
+    { windowNo: 11 }
+  );
+  check('dreamRecord.promptHash 与 generationContext.promptHashes.dream 完全相等',
+    dreamHashRecord.promptHash === dreamHashRecord.generationContext.promptHashes.dream
+  );
+  check('dreamRecord.promptHash 直接等于 canonical prompt 的 hashPrompt 指纹 (无二次哈希)',
+    dreamHashRecord.promptHash === expectedHash
+  );
+  check('禁止 SHA256(SHA256(prompt)) 二次哈希',
+    dreamHashRecord.promptHash !== hashPrompt(expectedHash)
+  );
+
+  // 7.4 Provider 动态捕获 (不再硬编码)
+  check('显式配置 provider 时 generationContext 正确捕获',
+    dreamWithObserved.generationContext.provider === 'deepseek'
+  );
+
+  // 非 DeepSeek endpoint 测试
+  const customClient = {
+    cfg: { model: 'custom-model', baseURL: 'https://api.custom-ai.org/v1' },
+    complete: async () => ({ text: 'custom dream', usage: {} })
+  };
+  const customDream = await synthesizeDream(
+    customClient,
+    [{ role: 'user', content: 'custom' }],
+    { windowNo: 12 }
+  );
+  check('非 deepseek endpoint 且无 provider 时不硬编码为 deepseek',
+    customDream.generationContext.provider !== 'deepseek'
+  );
+
+  // 无任何 provider/baseURL 时为 unavailable
+  const bareClient = {
+    complete: async () => ({ text: 'bare dream', usage: {} })
+  };
+  const bareDream = await synthesizeDream(
+    bareClient,
+    [{ role: 'user', content: 'bare' }],
+    { windowNo: 13 }
+  );
+  check('无配置时 provider 判定为 unavailable',
+    bareDream.generationContext.provider === 'unavailable'
+  );
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

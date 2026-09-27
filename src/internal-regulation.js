@@ -86,6 +86,8 @@ class InternalRegulationManager {
     this.isSleeping = false;
     this.updatedAt = Date.now();
     this.history = []; // 最近转移事件流水 (上限 50 条)
+    this.consumedAttentionEvents = new Set(); // 注意力事件消费 Watermark 去重集合
+    this.maxConsumedAttentionEvents = 256;
 
     this.load();
   }
@@ -282,6 +284,19 @@ class InternalRegulationManager {
   updateOnAttention(gateResult, details = {}) {
     if (!this.enabled || !gateResult || typeof gateResult !== 'object') return this.getState();
     if (gateResult.status !== 'ATTENDED' || !gateResult.attended) return this.getState();
+
+    // 稳定事件标识与 Watermark 去重（同一事件只消费一次，幂等守恒）
+    const eventId = details.eventId || details.perceptionId || details.watermarkId || gateResult.eventId || gateResult.perceptionId;
+    if (eventId) {
+      if (this.consumedAttentionEvents.has(eventId)) {
+        return this.getState();
+      }
+      this.consumedAttentionEvents.add(eventId);
+      if (this.consumedAttentionEvents.size > this.maxConsumedAttentionEvents) {
+        const first = this.consumedAttentionEvents.values().next().value;
+        this.consumedAttentionEvents.delete(first);
+      }
+    }
 
     const at = Number(details.timestamp || Date.now());
     const salience = Number(gateResult.salience || 40);

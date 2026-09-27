@@ -24,43 +24,288 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const { SCHEMA_VERSION } = require('./experiment-types');
 const { InternalRegulationManager } = require('./internal-regulation');
 const { BehaviorScheduler } = require('./behavior-scheduler');
 const { SubjectState } = require('./subject-state');
 const { evaluateAttentionGate } = require('./attention-gate');
 
+function sha256(text) {
+  return crypto.createHash('sha256').update(String(text || ''), 'utf8').digest('hex');
+}
+
+function canonicalStringify(obj) {
+  if (obj === null || typeof obj !== 'object') {
+    return JSON.stringify(obj);
+  }
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(canonicalStringify).join(',') + ']';
+  }
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalStringify(obj[k])).join(',') + '}';
+}
+
+function normalizeState(obj) {
+  if (!obj || typeof obj !== 'object') return {};
+  const sorted = {};
+  for (const k of Object.keys(obj).sort()) {
+    if (!['updatedAt', 'timestamp', 'lastUpdated', 't'].includes(k)) {
+      sorted[k] = obj[k];
+    }
+  }
+  return sorted;
+}
+
+function canonicalizeEvent(item) {
+  if (!item) return '';
+  if (typeof item === 'function') {
+    return JSON.stringify({ type: 'function', name: item.name || 'anonymous' });
+  }
+  if (typeof item === 'object') {
+    const clean = {
+      type: item.type || 'unknown'
+    };
+    if (item.activityKind !== undefined) clean.activityKind = item.activityKind;
+    if (item.isAsleep !== undefined) clean.isAsleep = Boolean(item.isAsleep);
+    if (item.windowNo !== undefined) clean.windowNo = item.windowNo;
+
+    if (item.payload && typeof item.payload === 'object') {
+      clean.payload = {};
+      for (const k of Object.keys(item.payload).sort()) {
+        if (!['t', 'timestamp', 'id', 'uuid', 'eventId', 'runId', '_id'].includes(k)) {
+          clean.payload[k] = item.payload[k];
+        }
+      }
+    }
+
+    if (Array.isArray(item.evidenceList)) {
+      clean.evidenceList = item.evidenceList.map(ev => ({
+        trait: ev.trait,
+        direction: ev.direction,
+        strength: ev.strength,
+        quote: ev.quote,
+        sourceType: ev.sourceType,
+        sourceWindow: ev.sourceWindow
+      })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    }
+
+    return canonicalStringify(clean);
+  }
+  return String(item);
+}
+
+function canonicalizeConfig(cfg = {}) {
+  const clean = {
+    experimentMode: cfg.experimentMode || 'enabled',
+    experimentModules: normalizeState(cfg.experimentModules || {})
+  };
+  return canonicalStringify(clean);
+}
+
+function canonicalizeProbe(probe = {}) {
+  const clean = {
+    category: probe.category || 'environmental_probe',
+    salience: Number(probe.salience ?? 42),
+    intensity: Number(probe.intensity ?? 45)
+  };
+  return canonicalStringify(clean);
+}
+
 /**
  * 运行标准两路路径依赖对照实验
  * 
+ * 强制执行五大前置条件核验 (Preconditions Audit)：
+ * 1. 初始状态严格相同 (Initial State Identity)
+ * 2. 事件 Multiset 完全一致 (Event Set Multiset Identity)
+ * 3. 实验配置一致 (Config Identity)
+ * 4. 探测环境一致 (Probe Identity)
+ * 5. 生成完整审计快照 (Preconditions Audit)
+ *
  * @param {Object} options
  * @param {Array<Function|Object>} options.sequenceA 实验组 A 历史事件序列
  * @param {Array<Function|Object>} options.sequenceB 实验组 B 历史事件序列
  * @param {Object} [options.probeStimulus] 最终一致的环境探测刺激
+ * @param {Object} [options.probeStimulusA] 探测刺激 A (若显式传入用于一致性校验)
+ * @param {Object} [options.probeStimulusB] 探测刺激 B (若显式传入用于一致性校验)
  * @param {Object} [options.config={}] 实验配置 (支持 experimentModules)
+ * @param {Object} [options.configA] 配置 A (若显式传入用于一致性校验)
+ * @param {Object} [options.configB] 配置 B (若显式传入用于一致性校验)
  * @param {string} [options.userDataDirA] 隔离测试目录 A
  * @param {string} [options.userDataDirB] 隔离测试目录 B
+ * @param {Object} [options.initialStateA] 显式初始状态 A
+ * @param {Object} [options.initialStateB] 显式初始状态 B
+ * @param {boolean} [options.throwOnError=false] 是否在前置条件不满足时抛出异常
  * @returns {Readonly<Object>}
  */
 function runPathDependencyExperiment(options = {}) {
   const {
     sequenceA = [],
     sequenceB = [],
-    probeStimulus = { category: 'environmental_probe', salience: 42, intensity: 45 },
+    probeStimulus,
+    probeStimulusA,
+    probeStimulusB,
     config = {},
+    configA,
+    configB,
     userDataDirA,
-    userDataDirB
+    userDataDirB,
+    initialStateA,
+    initialStateB,
+    throwOnError = false
   } = options;
 
-  function executeTrajectory(sequence, dir) {
-    const reg = new InternalRegulationManager(dir || '', {
-      enabled: config.experimentModules?.internalRegulation !== false,
-      experimentModules: config.experimentModules
+  const effectiveConfigA = configA || config || {};
+  const effectiveConfigB = configB || config || {};
+
+  const effectiveProbeA = probeStimulusA || probeStimulus || { category: 'environmental_probe', salience: 42, intensity: 45 };
+  const effectiveProbeB = probeStimulusB || probeStimulus || { category: 'environmental_probe', salience: 42, intensity: 45 };
+
+  // 1. 初始状态前置条件核验 (Initial State Identity)
+  const initRegA = new InternalRegulationManager(userDataDirA || '', {
+    enabled: effectiveConfigA.experimentModules?.internalRegulation !== false,
+    experimentModules: effectiveConfigA.experimentModules
+  });
+  if (initialStateA?.internalRegulation) {
+    Object.assign(initRegA, initialStateA.internalRegulation);
+    if (typeof initialStateA.internalRegulation.arousal === 'number') {
+      initRegA.salienceThreshold = initRegA._computeSalienceThreshold(initRegA.arousal);
+    }
+  }
+  const initSubA = new SubjectState(userDataDirA || '', {
+    experimentModules: effectiveConfigA.experimentModules
+  });
+  if (initialStateA?.subjectState) {
+    if (initialStateA.subjectState.values) {
+      initSubA.data.values = { ...initialStateA.subjectState.values };
+    }
+    if (initialStateA.subjectState.history) {
+      initSubA.data.history = [...initialStateA.subjectState.history];
+    }
+  }
+
+  const initRegB = new InternalRegulationManager(userDataDirB || '', {
+    enabled: effectiveConfigB.experimentModules?.internalRegulation !== false,
+    experimentModules: effectiveConfigB.experimentModules
+  });
+  if (initialStateB?.internalRegulation) {
+    Object.assign(initRegB, initialStateB.internalRegulation);
+    if (typeof initialStateB.internalRegulation.arousal === 'number') {
+      initRegB.salienceThreshold = initRegB._computeSalienceThreshold(initRegB.arousal);
+    }
+  }
+  const initSubB = new SubjectState(userDataDirB || '', {
+    experimentModules: effectiveConfigB.experimentModules
+  });
+  if (initialStateB?.subjectState) {
+    if (initialStateB.subjectState.values) {
+      initSubB.data.values = { ...initialStateB.subjectState.values };
+    }
+    if (initialStateB.subjectState.history) {
+      initSubB.data.history = [...initialStateB.subjectState.history];
+    }
+  }
+
+  const snapshotA = {
+    internalRegulation: normalizeState(initRegA.getState()),
+    subjectState: {
+      values: normalizeState(initSubA.values),
+      history: Array.isArray(initSubA.data?.history) ? initSubA.data.history : []
+    }
+  };
+  const snapshotB = {
+    internalRegulation: normalizeState(initRegB.getState()),
+    subjectState: {
+      values: normalizeState(initSubB.values),
+      history: Array.isArray(initSubB.data?.history) ? initSubB.data.history : []
+    }
+  };
+
+  const initHashA = 'sha256:' + sha256(JSON.stringify(snapshotA));
+  const initHashB = 'sha256:' + sha256(JSON.stringify(snapshotB));
+  const initialStateEqual = (initHashA === initHashB);
+
+  // 2. 事件 Multiset 完全一致核验 (Event Set Multiset Identity)
+  const eventSetA = sequenceA.map(canonicalizeEvent).sort();
+  const eventSetB = sequenceB.map(canonicalizeEvent).sort();
+  const eventSetHashA = 'sha256:' + sha256(JSON.stringify(eventSetA));
+  const eventSetHashB = 'sha256:' + sha256(JSON.stringify(eventSetB));
+  const eventMultisetEqual = (eventSetHashA === eventSetHashB);
+
+  // 3. 实验配置一致性核验 (Config Identity)
+  const configHashA = 'sha256:' + sha256(canonicalizeConfig(effectiveConfigA));
+  const configHashB = 'sha256:' + sha256(canonicalizeConfig(effectiveConfigB));
+  const configEqual = (configHashA === configHashB);
+
+  // 4. Probe Stimulus 一致性核验 (Probe Identity)
+  const probeHashA = 'sha256:' + sha256(canonicalizeProbe(effectiveProbeA));
+  const probeHashB = 'sha256:' + sha256(canonicalizeProbe(effectiveProbeB));
+  const probeEqual = (probeHashA === probeHashB);
+
+  // 综合前置条件判定
+  let reason = null;
+  if (!initialStateEqual) {
+    reason = 'PATH_EXPERIMENT_INITIAL_STATE_MISMATCH';
+  } else if (!eventMultisetEqual) {
+    reason = 'PATH_EXPERIMENT_EVENT_SET_MISMATCH';
+  } else if (!configEqual) {
+    reason = 'PATH_EXPERIMENT_CONFIG_MISMATCH';
+  } else if (!probeEqual) {
+    reason = 'PATH_EXPERIMENT_PROBE_MISMATCH';
+  }
+
+  const preconditions = {
+    valid: Boolean(!reason),
+    initialStateEqual,
+    eventMultisetEqual,
+    configEqual,
+    probeEqual,
+    initialStateHash: initHashA,
+    eventSetHashA,
+    eventSetHashB,
+    configHash: configHashA,
+    probeHash: probeHashA
+  };
+  if (!initialStateEqual) preconditions.initialStateHashB = initHashB;
+  if (!configEqual) preconditions.configHashB = configHashB;
+  if (!probeEqual) preconditions.probeHashB = probeHashB;
+
+  if (!preconditions.valid) {
+    preconditions.reason = reason;
+    if (throwOnError) {
+      throw new Error(reason);
+    }
+    return Object.freeze({
+      valid: false,
+      reason,
+      pathDependencyEstablished: false,
+      preconditions
     });
+  }
+
+  function executeTrajectory(sequence, dir, effectiveCfg, initialState, probe) {
+    const reg = new InternalRegulationManager(dir || '', {
+      enabled: effectiveCfg.experimentModules?.internalRegulation !== false,
+      experimentModules: effectiveCfg.experimentModules
+    });
+    if (initialState?.internalRegulation) {
+      Object.assign(reg, initialState.internalRegulation);
+      if (typeof initialState.internalRegulation.arousal === 'number') {
+        reg.salienceThreshold = reg._computeSalienceThreshold(reg.arousal);
+      }
+    }
     const scheduler = new BehaviorScheduler({ internalRegulation: reg });
     const subjectState = new SubjectState(dir || '', {
-      experimentModules: config.experimentModules
+      experimentModules: effectiveCfg.experimentModules
     });
+    if (initialState?.subjectState) {
+      if (initialState.subjectState.values) {
+        subjectState.data.values = { ...initialState.subjectState.values };
+      }
+      if (initialState.subjectState.history) {
+        subjectState.data.history = [...initialState.subjectState.history];
+      }
+    }
 
     // 依序执行历史序列事件
     for (const item of sequence) {
@@ -75,8 +320,8 @@ function runPathDependencyExperiment(options = {}) {
           reg.updateOnSleep(Boolean(item.isAsleep), item.payload || {});
         } else if (item.type === 'evidence' && Array.isArray(item.evidenceList)) {
           subjectState.reduce(item.evidenceList, item.windowNo || 1, {
-            canalization: config.experimentModules?.biographicalCanalization !== false,
-            experimentModules: config.experimentModules
+            canalization: effectiveCfg.experimentModules?.biographicalCanalization !== false,
+            experimentModules: effectiveCfg.experimentModules
           });
         }
       }
@@ -90,13 +335,13 @@ function runPathDependencyExperiment(options = {}) {
     // 面对一致的环境刺激执行注意力闸门测试
     const candidate = {
       schemaVersion: SCHEMA_VERSION,
-      category: probeStimulus.category || 'general_stimulus',
-      salience: probeStimulus.salience || 42,
-      intensity: probeStimulus.intensity || 45,
+      category: probe.category || 'general_stimulus',
+      salience: probe.salience || 42,
+      intensity: probe.intensity || 45,
       subjectAccessible: false
     };
     const attentionResult = evaluateAttentionGate(candidate, reg, {
-      modules: config.experimentModules
+      modules: effectiveCfg.experimentModules
     });
 
     return {
@@ -107,8 +352,8 @@ function runPathDependencyExperiment(options = {}) {
     };
   }
 
-  const trajectoryA = executeTrajectory(sequenceA, userDataDirA);
-  const trajectoryB = executeTrajectory(sequenceB, userDataDirB);
+  const trajectoryA = executeTrajectory(sequenceA, userDataDirA, effectiveConfigA, initialStateA, effectiveProbeA);
+  const trajectoryB = executeTrajectory(sequenceB, userDataDirB, effectiveConfigB, initialStateB, effectiveProbeB);
 
   // 计算多维分化指标 (4D Divergence: InternalRegulation, Behavior, Attention, SubjectState)
   const regDiff = {
@@ -143,7 +388,9 @@ function runPathDependencyExperiment(options = {}) {
   const pathDependencyEstablished = hasRegDivergence || hasBehaviorDivergence || hasAttentionDivergence || hasSubjectStateDivergence;
 
   return Object.freeze({
+    valid: true,
     schemaVersion: SCHEMA_VERSION,
+    preconditions,
     trajectoryA,
     trajectoryB,
     divergence: {
@@ -157,5 +404,8 @@ function runPathDependencyExperiment(options = {}) {
 }
 
 module.exports = {
-  runPathDependencyExperiment
+  runPathDependencyExperiment,
+  canonicalizeEvent,
+  canonicalizeConfig,
+  canonicalizeProbe
 };

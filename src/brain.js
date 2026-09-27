@@ -290,9 +290,26 @@ class Brain {
       this.recentPerceptions.shift();
     }
 
+    // 稳定事件标识与 Watermark 提取
+    let eventId = null;
+    if (rawSensorData && typeof rawSensorData === 'object') {
+      if (typeof rawSensorData.eventId === 'string' && rawSensorData.eventId.trim()) {
+        eventId = rawSensorData.eventId.trim();
+      } else if (typeof rawSensorData.perceptionId === 'string' && rawSensorData.perceptionId.trim()) {
+        eventId = rawSensorData.perceptionId.trim();
+      } else if (rawSensorData.t || rawSensorData.timestamp) {
+        const timeVal = rawSensorData.t || rawSensorData.timestamp;
+        const sourceVal = rawSensorData.source || rawSensorData.type || '';
+        const crypto = require('crypto');
+        eventId = 'fp:' + crypto.createHash('sha256')
+          .update(`${candidate.category}|${candidate.salience}|${candidate.intensity}|${sourceVal}|${timeVal}`, 'utf8')
+          .digest('hex').slice(0, 32);
+      }
+    }
+
     // P1-1: Attention 瞬时非人格化下游调节信号闭环 (ATTENDED ≠ SUBJECT_ACQUIRED)
     if (gateResult && gateResult.status === 'ATTENDED' && this.internalRegulation && typeof this.internalRegulation.updateOnAttention === 'function') {
-      this.internalRegulation.updateOnAttention(gateResult, { timestamp: record.timestamp });
+      this.internalRegulation.updateOnAttention(gateResult, { eventId, timestamp: record.timestamp });
     }
 
     return record;

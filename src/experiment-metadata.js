@@ -112,7 +112,8 @@ function collectPromptHashes(texts = {}) {
       : 'not_enabled'
   };
   if (texts.dream && typeof texts.dream === 'string' && texts.dream.trim()) {
-    hashes.dream = hashPrompt(texts.dream.trim());
+    const d = texts.dream.trim();
+    hashes.dream = d.startsWith('sha256:') ? d : hashPrompt(d);
   }
   return hashes;
 }

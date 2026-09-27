@@ -25,7 +25,7 @@
 
 const crypto = require('crypto');
 const { MEMORY_EPISTEMIC_STATUS } = require('./experiment-types');
-const { buildGenerationContext, collectPromptHashes } = require('./experiment-metadata');
+const { buildGenerationContext, collectPromptHashes, hashPrompt } = require('./experiment-metadata');
 
 const DEFAULT_DREAM_CONFIG = Object.freeze({
   // 第一道：本地认知门禁阈值
@@ -264,13 +264,27 @@ ${residueList || '（平静而散落的日常微澜）'}
 }
 
 /**
+ * 规范化提示词消息序列，保证确定性哈希
+ */
+function canonicalizePromptMessages(promptMessages = []) {
+  return JSON.stringify(
+    Array.isArray(promptMessages)
+      ? promptMessages.map(m => ({
+          role: String(m?.role || ''),
+          content: String(m?.content || '')
+        }))
+      : []
+  );
+}
+
+/**
  * 梦境合成生成执行器
  */
 async function synthesizeDream(apiClient, promptMessages, context = {}, options = {}) {
   const cfg = { ...DEFAULT_DREAM_CONFIG, ...options };
   const windowNo = context.windowNo || 1;
-  const promptText = JSON.stringify(promptMessages);
-  const promptHash = sha256(promptText);
+  const canonicalPrompt = canonicalizePromptMessages(promptMessages);
+  const promptHash = hashPrompt(canonicalPrompt);
 
   try {
     const res = await apiClient.complete(promptMessages, {
@@ -285,18 +299,39 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const dreamId = `dream-w${windowNo}-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const outputHash = sha256(content);
 
-    const observedModel = res.observedModel || (apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'));
-    const modelVersion = (apiClient.cfg && apiClient.cfg.modelVersion) || options.modelVersion || 'unavailable';
+    // P0-1: 真实记录 API 返回的 observedModel，严禁回退到 cfg.model 伪造
+    const observedModel =
+      typeof res.observedModel === 'string' && res.observedModel.trim()
+        ? res.observedModel.trim()
+        : 'unavailable';
 
+    // 动态提取/继承 client 与 options 配置
+    const clientCfg = (apiClient && apiClient.cfg && typeof apiClient.cfg === 'object') ? apiClient.cfg : {};
+    const effectiveCfg = {
+      ...clientCfg,
+      ...(options.cfg && typeof options.cfg === 'object' ? options.cfg : {})
+    };
+    if (options.model && !effectiveCfg.model) effectiveCfg.model = options.model;
+    if (options.baseURL && !effectiveCfg.baseURL) effectiveCfg.baseURL = options.baseURL;
+    if (options.provider && !effectiveCfg.provider) effectiveCfg.provider = options.provider;
+
+    const modelVersion =
+      typeof effectiveCfg.modelVersion === 'string' && effectiveCfg.modelVersion.trim()
+        ? effectiveCfg.modelVersion.trim()
+        : (typeof options.modelVersion === 'string' && options.modelVersion.trim() ? options.modelVersion.trim() : 'unavailable');
+
+    // P0-2: Prompt Hash 不二次哈希，直接传递确定性哈希
     const dreamPromptHashes = collectPromptHashes({
       persona: options.persona || context.persona || null,
       creativeSkill: options.creativeSkill || context.creativeSkill || null,
       dream: promptHash
     });
 
+    // P0-3: 统一 GenerationContext 语义，动态解析 provider，绝不硬编码 'deepseek'
     const generationContext = buildGenerationContext({
       kind: 'dream',
       windowNo,
+      cfg: effectiveCfg,
       sampling: {
         temperature: cfg.dreamTemperature,
         maxTokens: cfg.dreamMaxTokens
@@ -328,14 +363,14 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       sourceEventIds: context.sourceEventIds || [],
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},
-      dreamModel: apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'),
-      observedModel,
-      modelVersion,
-      provider: 'deepseek',
+      dreamModel: generationContext.modelName,
+      observedModel: generationContext.observedModel,
+      modelVersion: generationContext.modelVersion,
+      provider: generationContext.provider,
       generationContext,
       generatedAt: now,
       metadata: {
-        model: apiClient.cfg ? apiClient.cfg.model : (options.model || 'deepseek-chat'),
+        model: generationContext.modelName,
         temperature: cfg.dreamTemperature,
         synthesizedAt: new Date(now).toISOString()
       }
@@ -349,8 +384,10 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
       payload: dreamPayload,
       generationContext,
-      observedModel,
-      modelVersion,
+      provider: generationContext.provider,
+      modelName: generationContext.modelName,
+      observedModel: generationContext.observedModel,
+      modelVersion: generationContext.modelVersion,
       usage: res.usage || null,
       content,
       narrative: content,
@@ -371,6 +408,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
 module.exports = {
   DEFAULT_DREAM_CONFIG,
   sha256,
+  canonicalizePromptMessages,
   computeWindowArousalTrajectory,
   evaluateDreamGate,
   extractDayResidues,
