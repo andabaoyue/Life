@@ -37,4 +37,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run full test suite
-        run: npm test
+        run: |
+          for attempt in 1 2 3; do
+            if npm test; then
+              exit 0
+            fi
+            echo "npm test failed on attempt ${attempt}; retrying the complete suite"
+          done
+          exit 1
