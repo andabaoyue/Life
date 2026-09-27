@@ -191,5 +191,185 @@ function tmpDir(prefix = 'archive-integrity-test-') {
   }
 }
 
+// -------------------------------------------------------------
+// 5. P0-01: Modern Canonical Record 缺链字段绝不 CERTIFIED
+// -------------------------------------------------------------
+{
+  function makeChained(seq, prevHash, overrides = {}) {
+    const rec = {
+      schemaVersion: 1,
+      recordType: 'custom',
+      recordId: 'rec-' + String(seq).padStart(6, '0'),
+      archiveSeq: seq,
+      prevHash,
+      windowNo: null,
+      timestamp: 1000 + seq,
+      payload: { note: 'n-' + seq }
+    };
+    const merged = Object.assign(rec, overrides);
+    merged.recordHash = computeCanonicalRecordHash(merged);
+    return merged;
+  }
+
+  const base = (missing) => {
+    const rec = makeChained(1, 'GENESIS');
+    delete rec[missing];
+    return rec;
+  };
+
+  for (const field of ['archiveSeq', 'recordHash', 'prevHash', 'recordId']) {
+    const rep = ArchiveIntegrityService.checkRecords([base(field)]);
+    check(`Modern Record 缺 ${field} -> 非 certified`, rep.integrity !== 'certified');
+    check(`Modern Record 缺 ${field} -> modern_chain_integrity=missing_fields`, rep.modern_chain_integrity === 'missing_fields');
+  }
+
+  const chain = [makeChained(1, 'GENESIS'), makeChained(2, makeChained(1, 'GENESIS').recordHash)];
+  const brokenMiddle = makeChained(2, chain[0].recordHash);
+  delete brokenMiddle.prevHash;
+  const repMixed = ArchiveIntegrityService.checkRecords([chain[0], brokenMiddle, makeChained(3, brokenMiddle.recordHash)]);
+  check('Modern Record 某一条缺链字段 -> 整体认证降级 (非 certified)', repMixed.integrity !== 'certified');
+  check('Modern Record 某一条缺链字段 -> 诊断标明 MODERN_RECORD_MISSING_CHAIN_FIELDS',
+    repMixed.diagnostics.some(d => (d.error || '').includes('MODERN_RECORD_MISSING_CHAIN_FIELDS')));
+
+  const legacyRec = { type: 'window_archive', windowNo: 1, createdAt: 1000, turns: 5, events: [], verifiedEvidence: [] };
+  const repLegacy = ArchiveIntegrityService.checkRecords([legacyRec]);
+  check('Legacy Adapter 缺链字段 -> 允许读取 (validCount=1)', repLegacy.validCount === 1);
+  check('Legacy Adapter 缺链字段 -> UNCERTIFIED (绝不认证)', repLegacy.integrity === 'uncertified');
+}
+
+// -------------------------------------------------------------
+// 6. P0-02: Archive Tail Anchor（链外尾部锚点，检测“合法尾部截断”）
+// -------------------------------------------------------------
+{
+  const dir = tmpDir('anchor-');
+  const archive = new ExperiencesArchive(dir);
+  for (let i = 1; i <= 4; i++) {
+    archive.appendWindowArchive({ windowNo: i, turns: 10, windowSynthesis: { stableUserFacts: ['f' + i] } });
+  }
+  const archivePath = path.join(dir, 'experiences.jsonl');
+  const anchorPath = archivePath + '.anchor.json';
+
+  const okReport = ArchiveIntegrityService.checkArchive(archivePath);
+  check('正常 archive + 正常 anchor -> CERTIFIED', okReport.integrity === 'certified');
+  check('正常 archive + 正常 anchor -> tail_anchor=verified', okReport.tail_anchor === 'verified');
+
+  // 删除最后 1 条 record -> TAIL_TRUNCATED
+  const allLines = fs.readFileSync(archivePath, 'utf8').trim().split('\n');
+  fs.writeFileSync(archivePath, allLines.slice(0, 3).join('\n') + '\n', 'utf8');
+  const trunc1 = ArchiveIntegrityService.checkArchive(archivePath);
+  check('删除最后 1 条 record -> TAIL_TRUNCATED', trunc1.tail_anchor === 'tail_truncated');
+  check('删除最后 1 条 record -> integrity=invalid', trunc1.integrity === 'invalid');
+
+  // 删除最后 N 条 record -> TAIL_TRUNCATED
+  fs.writeFileSync(archivePath, allLines.slice(0, 1).join('\n') + '\n', 'utf8');
+  const truncN = ArchiveIntegrityService.checkArchive(archivePath);
+  check('删除最后 N 条 record -> TAIL_TRUNCATED', truncN.tail_anchor === 'tail_truncated');
+  check('删除最后 N 条 record -> integrity=invalid', truncN.integrity === 'invalid');
+
+  // 修改中间 record -> hash mismatch
+  fs.writeFileSync(archivePath, allLines.join('\n') + '\n', 'utf8');
+  const tamperedLines = JSON.parse(JSON.stringify(allLines));
+  const midRec = JSON.parse(tamperedLines[1]);
+  midRec.payload.windowSynthesis.stableUserFacts[0] = '被篡改的事实';
+  tamperedLines[1] = JSON.stringify(midRec);
+  fs.writeFileSync(archivePath, tamperedLines.join('\n') + '\n', 'utf8');
+  const tamperedMid = ArchiveIntegrityService.checkArchive(archivePath);
+  check('修改中间 record -> hash mismatch (hash_integrity=mismatch)', tamperedMid.hash_integrity === 'mismatch');
+  check('修改中间 record -> integrity=invalid', tamperedMid.integrity === 'invalid');
+
+  // 重新排序 -> sequence/hash mismatch
+  const reordered = [allLines[0], allLines[2], allLines[1], allLines[3]];
+  fs.writeFileSync(anchorPath, fs.readFileSync(anchorPath, 'utf8'), 'utf8');
+  fs.writeFileSync(archivePath, reordered.join('\n') + '\n', 'utf8');
+  const reorderedReport = ArchiveIntegrityService.checkArchive(archivePath);
+  check('重新排序 -> sequence/hash mismatch (integrity=invalid)', reorderedReport.integrity === 'invalid');
+
+  // anchor 被篡改 -> anchor integrity failure
+  fs.writeFileSync(archivePath, allLines.join('\n') + '\n', 'utf8');
+  const realAnchor = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
+  fs.writeFileSync(anchorPath, JSON.stringify(Object.assign({}, realAnchor, { recordHash: 'f'.repeat(64) })), 'utf8');
+  const anchorTampered = ArchiveIntegrityService.checkArchive(archivePath);
+  check('anchor 被篡改 -> tail_anchor=tampered', anchorTampered.tail_anchor === 'tampered');
+  check('anchor 被篡改 -> integrity=invalid (anchor integrity failure)', anchorTampered.integrity === 'invalid');
+
+  // archive 比 anchor 长 -> uncertified / recovery-needed
+  fs.writeFileSync(anchorPath, JSON.stringify(realAnchor), 'utf8');
+  const lastRec = JSON.parse(allLines[3]);
+  const extraRec = {
+    schemaVersion: 1,
+    recordType: 'custom',
+    recordId: 'rec-000005',
+    archiveSeq: 5,
+    prevHash: lastRec.recordHash,
+    windowNo: null,
+    timestamp: 5000,
+    payload: { note: 'uncommitted' }
+  };
+  extraRec.recordHash = computeCanonicalRecordHash(extraRec);
+  fs.writeFileSync(archivePath, allLines.join('\n') + '\n' + JSON.stringify(extraRec) + '\n', 'utf8');
+  const staleReport = ArchiveIntegrityService.checkArchive(archivePath);
+  check('archive 比 anchor 长 -> tail_anchor=anchor_stale (UNCOMMITTED_TAIL)', staleReport.tail_anchor === 'anchor_stale');
+  check('archive 比 anchor 长 -> 非 certified (fail-closed)', staleReport.integrity !== 'certified');
+  check('anchor 落后时 append 拒绝续写 (fail-closed)', archive.append({ recordType: 'custom', payload: { note: 'x' } }) === false);
+
+  // legacy archive 无 anchor -> UNCERTIFIED
+  const legacyDir = tmpDir('anchor-legacy-');
+  fs.writeFileSync(path.join(legacyDir, 'experiences.jsonl'), JSON.stringify({ type: 'window_archive', windowNo: 1, createdAt: 900, turns: 3, events: [], verifiedEvidence: [] }) + '\n', 'utf8');
+  const legacyNoAnchor = ArchiveIntegrityService.checkArchive(path.join(legacyDir, 'experiences.jsonl'));
+  check('legacy archive 无 anchor -> UNCERTIFIED', legacyNoAnchor.integrity === 'uncertified');
+
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(legacyDir, { recursive: true, force: true });
+  } catch {}
+}
+
+// -------------------------------------------------------------
+// 7. P1-02: Archive EOI 深度引用一致性（引用不存在/无法证明 -> 绝不认证）
+// -------------------------------------------------------------
+{
+  function makeRelRecord(payloadExtra) {
+    const rec = {
+      schemaVersion: 1,
+      recordType: 'window_summary',
+      recordId: 'rec-rel-000001',
+      archiveSeq: 1,
+      prevHash: 'GENESIS',
+      windowNo: 1,
+      timestamp: 7000,
+      payload: Object.assign({
+        events: [{ eventId: 'evt-r1', type: 'message', source: 'user', messageId: 'm-r1', timestamp: 6900, payload: { content: 'q', roundNo: 1 } }],
+        observations: [{ observationId: 'obs-r1', eventIds: ['evt-r1'], content: '观察' }],
+        interpretations: [{ interpretationId: 'it-r1', observationIds: ['obs-r1'], content: '解读' }],
+        verifiedEvidence: [{ evidenceId: 'ev-r1', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-r1', quote: 'q' }],
+        stateChanges: [{ stateChangeId: 'sc-r1', trait: 'quiet_preference', delta: 20, previousValue: 0, newValue: 20, evidenceIds: ['ev-r1'] }]
+      }, payloadExtra)
+    };
+    rec.recordHash = computeCanonicalRecordHash(rec);
+    return rec;
+  }
+
+  const relOK = ArchiveIntegrityService.checkRecords([makeRelRecord({})]);
+  check('全部引用可解析 -> relationship_integrity=verified 且 certified', relOK.relationship_integrity === 'verified' && relOK.integrity === 'certified');
+
+  const relObs = ArchiveIntegrityService.checkRecords([makeRelRecord({ observations: [{ observationId: 'obs-x', eventIds: ['evt-missing'], content: 'x' }] })]);
+  check('Observation.eventIds 悬空 -> NOT_RECORDED 且非 certified', relObs.relationship_integrity === 'not_recorded' && relObs.integrity !== 'certified');
+
+  const relIt = ArchiveIntegrityService.checkRecords([makeRelRecord({ interpretations: [{ interpretationId: 'it-x', observationIds: ['obs-missing'], content: 'x' }] })]);
+  check('Interpretation.observationIds 悬空 -> NOT_RECORDED 且非 certified', relIt.relationship_integrity === 'not_recorded' && relIt.integrity !== 'certified');
+
+  const relSc = ArchiveIntegrityService.checkRecords([makeRelRecord({ stateChanges: [{ stateChangeId: 'sc-x', trait: 'quiet_preference', delta: 20, previousValue: 0, newValue: 20, evidenceIds: ['ev-missing'] }] })]);
+  check('StateChange.evidenceIds 悬空 -> NOT_RECORDED 且非 certified', relSc.relationship_integrity === 'not_recorded' && relSc.integrity !== 'certified');
+
+  const relEv = ArchiveIntegrityService.checkRecords([makeRelRecord({
+    verifiedEvidence: [{ evidenceId: 'ev-x', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-never-recorded', quote: 'q' }],
+    stateChanges: [{ stateChangeId: 'sc-x', trait: 'quiet_preference', delta: 20, previousValue: 0, newValue: 20, evidenceIds: ['ev-x'] }]
+  })]);
+  check('Evidence.messageId 无对应 provenance -> UNRESOLVED 且非 certified', relEv.relationship_integrity === 'unresolved' && relEv.integrity !== 'certified');
+
+  const relBad = ArchiveIntegrityService.checkRecords([makeRelRecord({ observations: [{ observationId: 'obs-y', eventIds: [''], content: 'y' }] })]);
+  check('引用 ID 结构非法 (空串) -> INVALID 且 integrity=invalid', relBad.relationship_integrity === 'invalid' && relBad.integrity === 'invalid');
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

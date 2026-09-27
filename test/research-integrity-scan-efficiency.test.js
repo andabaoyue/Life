@@ -49,9 +49,11 @@ async function runTests() {
       evidenceIndex: {}
     }), 'utf8');
 
-    // 构造 100 个 Windows 的合法归档
+    // 构造 100 个 Windows 的合法归档（P0-01: 完整链字段；P0-02: Tail Anchor）
+    const { computeCanonicalRecordHash } = require('../src/archive-integrity');
     const lines = [];
     const WINDOW_COUNT = 100;
+    let prevHash = 'GENESIS';
     for (let w = 1; w <= WINDOW_COUNT; w++) {
       const rec = wrapArchiveRecord('window_summary', w, {
         windowNo: w,
@@ -73,10 +75,25 @@ async function runTests() {
           strength: 0.5
         }],
         stateChanges: []
+      }, {
+        archiveSeq: w,
+        recordId: `rec-${String(w).padStart(6, '0')}`,
+        prevHash,
+        timestamp: 1000 + w * 10
       });
+      rec.recordHash = computeCanonicalRecordHash(rec);
+      prevHash = rec.recordHash;
       lines.push(JSON.stringify(rec));
     }
     fs.writeFileSync(archivePath, lines.join('\n') + '\n', 'utf8');
+    const lastScanRec = JSON.parse(lines[lines.length - 1]);
+    fs.writeFileSync(archivePath + '.anchor.json', JSON.stringify({
+      schemaVersion: 1,
+      archiveSeq: lastScanRec.archiveSeq,
+      recordId: lastScanRec.recordId,
+      recordHash: lastScanRec.recordHash,
+      updatedAt: Date.now()
+    }), 'utf8');
 
     const query = new ResearchQuery(testDir);
 

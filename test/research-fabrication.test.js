@@ -84,8 +84,10 @@ const rec1 = {
   }
 };
 
-fs.writeFileSync(archivePath, JSON.stringify(rec1) + '\n', 'utf8');
 fs.writeFileSync(statePath, JSON.stringify({ windowNo: 2, values: { ...DEFAULT_TRAITS } }), 'utf8');
+// P0-01/P0-02: 现代归档经 Canonical 写入路径生成链字段与 Tail Anchor
+const { ExperiencesArchive } = require('../src/experiences-archive');
+new ExperiencesArchive(dir).append(rec1);
 
 const index = new ResearchIndex(archivePath);
 const query = new ResearchQuery(dir, { index });

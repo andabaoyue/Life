@@ -151,5 +151,75 @@ function tmpDir(prefix = 'reducer-symmetry-test-') {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+// -------------------------------------------------------------
+// P0-03: StateChange 深度语义一致性（数量一致 ≠ 因果一致）
+// -------------------------------------------------------------
+{
+  const { canonicalizeStateChange } = require('../src/subject-state');
+  const mkSc = (over = {}) => Object.assign({
+    stateChangeId: 'sc-000001',
+    changeId: 'sc-000001',
+    windowNo: 1,
+    trait: 'quiet_preference',
+    previousValue: 0,
+    delta: 20,
+    newValue: 20,
+    evidenceIds: ['ev-1'],
+    roundingMode: 'symmetric',
+    baseStepWeight: 20,
+    effectiveStepWeight: 20,
+    plasticityMultiplier: 1,
+    reducer: { stepWeight: 20, baseStepWeight: 20, effectiveStepWeight: 20, plasticityMultiplier: 1, maxDelta: 50, roundingMode: 'symmetric' },
+    createdAt: 1000
+  }, over);
+
+  const baseValues = { quiet_preference: 20 };
+  const mkReport = (stateChanges, integrity = 'certified') => ({
+    finalState: { ...baseValues },
+    nextWindowNo: 2,
+    acceptedEvidenceIds: ['ev-1'],
+    stateChanges,
+    integrity,
+    replayStatus: 'complete'
+  });
+  const mkPersisted = (stateChanges) => ({
+    values: { ...baseValues },
+    windowNo: 2,
+    seenEvidenceIds: ['ev-1'],
+    stateChanges
+  });
+  const run = (pSc, rSc, integrity) => SubjectState.checkConsistency(mkPersisted(pSc), mkReport(rSc, integrity));
+
+  const c1 = run([mkSc()], [mkSc()]);
+  check('P0-03 完全相同 -> PASS (match & certified)', c1.match === true && c1.stateChangesMatch === true && c1.certified === true && c1.status === 'PASS');
+
+  const c2 = run([mkSc()], [mkSc({ stateChangeId: 'sc-replay-9', changeId: 'sc-replay-9', createdAt: 9999 })]);
+  check('P0-03 仅 stateChangeId/createdAt 不同 -> PASS（Replay 可用新确定性 ID）', c2.match === true && c2.certified === true);
+
+  const c3 = run([mkSc()], [mkSc({ delta: 21 })]);
+  check('P0-03 仅 delta 不同 -> MISMATCH', c3.match === false && c3.stateChangesMatch === false && c3.stateChangeDiffs.length > 0);
+
+  const c4 = run([mkSc()], [mkSc({ previousValue: -1 })]);
+  check('P0-03 仅 previousValue 不同 -> MISMATCH', c4.match === false && c4.stateChangesMatch === false);
+
+  const c5 = run([mkSc()], [mkSc({ newValue: 21 })]);
+  check('P0-03 仅 newValue 不同 -> MISMATCH', c5.match === false && c5.stateChangesMatch === false);
+
+  const c6 = run([mkSc()], [mkSc({ evidenceIds: ['ev-2'] })]);
+  check('P0-03 仅 evidenceIds 不同 -> MISMATCH', c6.match === false && c6.stateChangesMatch === false);
+
+  const c7 = run([mkSc()], [mkSc({ reducer: { stepWeight: 15, baseStepWeight: 20, effectiveStepWeight: 20, plasticityMultiplier: 1, maxDelta: 50, roundingMode: 'symmetric' } })]);
+  check('P0-03 仅 reducer 参数不同 -> MISMATCH', c7.match === false && c7.stateChangesMatch === false);
+
+  const scA = mkSc({ stateChangeId: 'sc-a', trait: 'quiet_preference', evidenceIds: ['ev-1'] });
+  const scB = mkSc({ stateChangeId: 'sc-b', trait: 'vitality', evidenceIds: ['ev-2'] });
+  const c8 = run([scA, scB], [scB, scA]);
+  check('P0-03 顺序不同 -> MISMATCH（StateChange 顺序属于因果轨迹）', c8.match === false && c8.stateChangesMatch === false);
+
+  const c9 = run([mkSc()], [mkSc()], 'uncertified');
+  check('P0-03 match=true 但 replay integrity=uncertified -> certified=false (NOT_CERTIFIED)',
+    c9.match === true && c9.certified === false && c9.status === 'NOT_CERTIFIED');
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

@@ -184,13 +184,19 @@ async function testB_AsyncReplay() {
   const archivePath = path.join(dir, 'experiences.jsonl');
 
   const lines = [];
+  const { ExperiencesArchive } = require('../src/experiences-archive');
+  const archiveWriter = new ExperiencesArchive(dir);
   for (let w = 1; w <= 5; w++) {
-    lines.push(JSON.stringify({
+    // P0-01/P0-02: 现代记录带完整链字段与 Tail Anchor；P1-02: messageId 有真实 Event provenance
+    archiveWriter.append({
       schemaVersion: 1,
       recordType: 'window_summary',
       windowNo: w,
       timestamp: w * 1000,
       payload: {
+        events: [
+          { eventId: `evt-${w}`, type: 'message', source: 'user', messageId: `m-${w}`, timestamp: w * 1000, payload: { content: `q-${w}`, roundNo: w } }
+        ],
         verifiedEvidence: [
           { evidenceId: `ev-${w}`, trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: `m-${w}`, quote: `q-${w}` }
         ],
@@ -199,9 +205,8 @@ async function testB_AsyncReplay() {
           { stateChangeId: `sc-${w}`, trait: 'quiet_preference', delta: 10, previousValue: (w - 1) * 10, newValue: w * 10, reducer: { stepWeight: 20, maxDelta: 50 } }
         ]
       }
-    }));
+    });
   }
-  fs.writeFileSync(archivePath, lines.join('\n') + '\n', 'utf8');
 
   const service = new ResearchService(dir);
 
@@ -536,7 +541,10 @@ function testG_Export() {
   check('Full Bundle 包含 state-changes.json', !!bundleResult.files['state-changes.json']);
 
   const meta = JSON.parse(bundleResult.files['metadata.json']);
-  check('metadata.json 标明 appVersion=0.9.5.3', meta.appVersion === '0.9.5.3');
+  // P1-01: Export Bundle 版本声明与当前 Life Version 一致（唯一来源 package.json）
+  const pkgVersion = require('../package.json').version;
+  check('metadata.json 标明 appVersion 与 package.json 当前版本一致', meta.appVersion === pkgVersion);
+  check('Export Bundle 与当前 Life Version 一致', meta.appVersion === pkgVersion && typeof meta.appVersion === 'string' && meta.appVersion.trim().length > 0);
   check('metadata.json 包含 exportTimestamp', typeof meta.exportTimestamp === 'number');
 
   check('导出目录中成功落地真实文件', fs.existsSync(path.join(exportTargetDir, 'metadata.json')));

@@ -34,7 +34,12 @@ function report(status, title, detail = '') {
 }
 
 console.log('====================================================');
-console.log('       Life (初澜) v0.9.7 发布包资源完整性自动化检查     ');
+{
+  // P1-05: 版本描述统一以 package.json 为当前软件版本唯一来源，不硬编码
+  let _bannerVersion = 'unknown';
+  try { _bannerVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version; } catch {}
+  console.log(`       Life (初澜) v${_bannerVersion} 发布包资源完整性自动化检查     `);
+}
 console.log('====================================================\n');
 
 /* 1. JS 语法检查 */
@@ -297,6 +302,18 @@ function checkPackageLock() {
       report('WARN', '依赖版本对齐', `package.json (${pkg.name}@${pkg.version}) 与 package-lock.json (${lock.name}@${lock.version}) 元数据存在差异`);
     } else {
       report('PASS', '环境依赖锁定', `package-lock.json 存在且与 package.json 对齐 (${lock.name}@${lock.version}, lockfileVersion=${lock.lockfileVersion})`);
+    }
+    // P1-01/P1-05: 版本唯一来源 —— Research Export 的 appVersion 必须等于 package.json.version
+    try {
+      const { getAppVersion } = require('../src/research-export');
+      const appVer = getAppVersion();
+      if (appVer === pkg.version) {
+        report('PASS', '版本唯一来源', `research-export.getAppVersion() 与 package.json (${pkg.version}) 一致，无旧版本硬编码`);
+      } else {
+        report('FAIL', '版本唯一来源', `research-export.getAppVersion() (${appVer}) ≠ package.json (${pkg.version})，存在旧版本硬编码`);
+      }
+    } catch (e) {
+      report('FAIL', '版本唯一来源检查错误', e.message);
     }
   } catch (e) {
     report('FAIL', '环境锁定解析错误', e.message);

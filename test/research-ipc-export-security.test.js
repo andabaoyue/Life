@@ -96,7 +96,7 @@ async function runTests() {
 
     const memRes2 = await exportHandler({}, { type: 'full', format: 'json' });
     check('内存 Full Bundle 导出成功返回文件集合', memRes2 && memRes2.metadata && memRes2.files && memRes2.files['metadata.json']);
-    check('Bundle 元数据包含 v0.9.5.3 版本标记', memRes2.metadata.appVersion === '0.9.5.3');
+    check('Bundle 元数据 appVersion 与当前 Life Version (package.json) 一致', memRes2.metadata.appVersion === require('../package.json').version);
 
     // -------------------------------------------------------------------------
     // 场景 3: 磁盘模式 - 对话框取消

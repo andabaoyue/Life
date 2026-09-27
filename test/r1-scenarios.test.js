@@ -792,6 +792,8 @@ function testR2_PersistentEvidenceDedup() {
   const archive = new ExperiencesArchive(dirReplay);
   archive.appendRecord('window_summary', 1, {
     reducer: { stepWeight: 20, maxDelta: 50 },
+    // P1-02: Evidence 的 messageId 必须有真实消息/Event provenance
+    events: [{ eventId: 'evt-e2c-1', type: 'message', source: 'user', messageId: resCall1.verified[0].messageId, timestamp: 1000, payload: { content: resCall1.verified[0].quote || 'q', roundNo: 1 } }],
     verifiedEvidence: [resCall1.verified[0]],
     stateChanges: [{ trait: 'quiet_preference', delta: 10, previousValue: 0, newValue: 10, reducer: { stepWeight: 20, maxDelta: 50 } }]
   });
@@ -968,6 +970,8 @@ function testR2_FullConsistencyAndStartupRecovery() {
   // 写入 Window 1 归档与未决 recovery_event
   archive.appendRecord('window_summary', 1, {
     reducer: { stepWeight: 20, maxDelta: 50 },
+    // P1-02: Evidence 的 messageId 必须有真实消息/Event provenance
+    events: [{ eventId: 'evt-fc-1', type: 'message', source: 'user', messageId: 'm-fc-1', timestamp: 500, payload: { content: '哲思时刻', roundNo: 1 } }],
     verifiedEvidence: [
       { evidenceId: 'ev-fc-1', messageId: 'm-fc-1', quote: '哲思时刻', trait: 'philosophical_curiosity', direction: 1, strength: 1.0, fingerprint: 'm-fc-1:哲思时刻:philosophical_curiosity:1' }
     ],

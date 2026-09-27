@@ -16,6 +16,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { ArchiveIntegrityService, INTEGRITY_STATUS, REPLAY_STATUS } = require('../src/archive-integrity');
+const { ExperiencesArchive } = require('../src/experiences-archive');
 const { ResearchQuery } = require('../src/research-query');
 const { SubjectState, DEFAULT_TRAITS } = require('../src/subject-state');
 
@@ -50,7 +51,10 @@ const validRec1 = {
   payload: {
     turns: 100,
     messageCount: 200,
-    events: [],
+    events: [
+      // Evidence 的 messageId 必须有真实消息/Event provenance（P1-02 引用一致性）
+      { eventId: 'evt-clean-1', type: 'message', source: 'user', messageId: 'm-1', timestamp: 900, payload: { content: 'q', roundNo: 1 } }
+    ],
     verifiedEvidence: [
       { evidenceId: 'ev-clean-1', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-1', quote: 'q' }
     ],
@@ -58,7 +62,8 @@ const validRec1 = {
     stateChanges: []
   }
 };
-fs.writeFileSync(cleanArchive, JSON.stringify(validRec1) + '\n', 'utf8');
+// P0-01/P0-02: 现代归档必须经 Canonical 写入路径生成链字段与 Tail Anchor
+new ExperiencesArchive(cleanDir).append(validRec1);
 fs.writeFileSync(cleanState, JSON.stringify({ windowNo: 1, values: { ...DEFAULT_TRAITS } }), 'utf8');
 
 const cleanReport = ArchiveIntegrityService.checkArchive(cleanArchive);
@@ -75,7 +80,8 @@ check('ResearchQuery.getWindowDetail 对纯净归档报告 CERTIFIED', cleanQuer
 // 3. 包含 JSON 损坏行的归档测试 (Fail-Stop 与防虚假认证)
 const corruptDir = tmpDir('corrupt-');
 const corruptArchive = path.join(corruptDir, 'experiences.jsonl');
-fs.writeFileSync(corruptArchive, JSON.stringify(validRec1) + '\nMALFORMED_JSON_LINE_HERE\n', 'utf8');
+new ExperiencesArchive(corruptDir).append(validRec1);
+fs.appendFileSync(corruptArchive, 'MALFORMED_JSON_LINE_HERE\n', 'utf8');
 
 const corruptReport = ArchiveIntegrityService.checkArchive(corruptArchive);
 check('包含坏行时完整性判定为 partial', corruptReport.integrity === INTEGRITY_STATUS.PARTIAL);

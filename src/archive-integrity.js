@@ -74,6 +74,154 @@ const REPLAY_STATUS = {
 };
 
 /**
+ * P0-01: 判定归档记录是否为明确的 Legacy 适配记录。
+ * 只有经 LegacySchemaAdapter 明确标记的旧数据才允许缺少 Canonical 链字段。
+ */
+function isLegacyAdaptedRecord(record) {
+  return !!record && (record.compatibilityAdapter === 'LegacySchemaAdapter'
+    || record.schemaOrigin === 'legacy-adapted'
+    || !!record.sourceSchema);
+}
+
+/**
+ * P0-01: Modern Canonical Record 必须强制具备完整链字段集：
+ * schemaVersion, recordId, archiveSeq, prevHash, recordHash, recordType, payload, timestamp。
+ * 任一缺失都不允许认证为 CERTIFIED（缺链字段 ≠ Legacy）。
+ * @returns {string[]} 缺失字段名列表（空数组 = 完整）
+ */
+function findModernChainFieldDefects(record) {
+  if (!record || typeof record !== 'object') return ['record'];
+  if (isLegacyAdaptedRecord(record)) return [];
+  const missing = [];
+  if (typeof record.schemaVersion !== 'number' || record.schemaVersion < 1) missing.push('schemaVersion');
+  if (typeof record.recordId !== 'string' || !record.recordId.trim()) missing.push('recordId');
+  if (!Number.isInteger(record.archiveSeq) || record.archiveSeq < 1) missing.push('archiveSeq');
+  if (typeof record.prevHash !== 'string' || !record.prevHash.trim()) missing.push('prevHash');
+  if (typeof record.recordHash !== 'string' || !record.recordHash.trim()) missing.push('recordHash');
+  if (typeof record.recordType !== 'string' || !record.recordType.trim()) missing.push('recordType');
+  if (!record.payload || typeof record.payload !== 'object' || Array.isArray(record.payload)) missing.push('payload');
+  const ts = record.timestamp ?? record.createdAt;
+  if (!Number.isFinite(ts) || ts <= 0) missing.push('timestamp');
+  return missing;
+}
+
+/**
+ * P1-02: Archive 层深度引用一致性校验（绝不因 ID 长得像真的就认证，也绝不补造引用目标）。
+ * 校验关系：
+ *   Observation.eventIds      → 必须存在对应 Event
+ *   Interpretation.observationIds → 必须存在对应 Observation
+ *   StateChange.evidenceIds   → 必须存在于 verified Evidence 集合
+ *   Evidence.messageId        → 必须能找到对应真实消息/Event provenance
+ * 状态区分（绝不混同，绝不伪造补全）：
+ *   NOT_RECORDED: 引用目标在归档中不存在（引用悬空）
+ *   UNRESOLVED:   引用存在但来源无法证明（如 Evidence.messageId 无对应消息/事件溯源）
+ *   INVALID:      引用字段结构非法（空串/非字符串）
+ * @returns {{ status: string, defects: Array }}
+ */
+function validateRecordRelationships(records) {
+  const eventIds = new Set();
+  const messageIds = new Set();
+  const observationIds = new Set();
+  const verifiedEvidenceIds = new Set();
+
+  const addEvent = (evt) => {
+    if (!evt || typeof evt !== 'object') return;
+    const id = evt.eventId || (evt.payload && evt.payload.eventId);
+    if (typeof id === 'string' && id.trim()) eventIds.add(id);
+    const mid = evt.messageId || (evt.payload && evt.payload.messageId);
+    if (typeof mid === 'string' && mid.trim()) messageIds.add(mid);
+  };
+  const addObservation = (o) => {
+    if (!o || typeof o !== 'object') return;
+    const id = o.observationId || (o.payload && o.payload.observationId);
+    if (typeof id === 'string' && id.trim()) observationIds.add(id);
+  };
+  const addEvidence = (ev) => {
+    if (!ev || typeof ev !== 'object') return;
+    const id = ev.evidenceId || (ev.payload && ev.payload.evidenceId);
+    if (typeof id === 'string' && id.trim()) verifiedEvidenceIds.add(id);
+  };
+
+  // 1. 建立全归档实体索引（跨记录、跨窗口）
+  for (const rec of records) {
+    const p = (rec && rec.payload) || {};
+    if (rec.recordType === 'event') addEvent(p);
+    if (Array.isArray(p.events)) p.events.forEach(addEvent);
+    if (rec.recordType === 'observation') addObservation(p);
+    if (Array.isArray(p.observations)) p.observations.forEach(addObservation);
+    if (rec.recordType === 'evidence') addEvidence(p);
+    if (Array.isArray(p.verifiedEvidence)) p.verifiedEvidence.forEach(addEvidence);
+  }
+
+  const defects = [];
+  const checkIdList = (ids, targetSet, relation, recordRef) => {
+    if (ids === undefined || ids === null) return;
+    if (!Array.isArray(ids)) {
+      defects.push({ status: 'INVALID', relation, recordRef, detail: 'REFERENCE_LIST_NOT_ARRAY' });
+      return;
+    }
+    for (const id of ids) {
+      if (typeof id !== 'string' || !id.trim()) {
+        defects.push({ status: 'INVALID', relation, recordRef, reference: id, detail: 'REFERENCE_ID_MALFORMED' });
+      } else if (!targetSet.has(id)) {
+        defects.push({ status: 'NOT_RECORDED', relation, recordRef, reference: id, detail: 'REFERENCE_TARGET_NOT_FOUND' });
+      }
+    }
+  };
+
+  // 2. 逐记录关系核验
+  for (const rec of records) {
+    const p = (rec && rec.payload) || {};
+    const recordRef = rec.recordId || rec.archiveSeq || null;
+
+    if (rec.recordType === 'observation') {
+      checkIdList(p.eventIds, eventIds, 'observation->event', recordRef);
+    }
+    if (Array.isArray(p.observations)) {
+      for (const o of p.observations) {
+        if (o && typeof o === 'object') checkIdList(o.eventIds, eventIds, 'observation->event', recordRef);
+      }
+    }
+
+    if (rec.recordType === 'interpretation') {
+      checkIdList(p.observationIds, observationIds, 'interpretation->observation', recordRef);
+    }
+    if (Array.isArray(p.interpretations)) {
+      for (const it of p.interpretations) {
+        if (it && typeof it === 'object') checkIdList(it.observationIds, observationIds, 'interpretation->observation', recordRef);
+      }
+    }
+
+    const checkStateChangeRefs = (sc) => {
+      if (sc && typeof sc === 'object') checkIdList(sc.evidenceIds, verifiedEvidenceIds, 'state_change->evidence', recordRef);
+    };
+    if (rec.recordType === 'state_change') checkStateChangeRefs(p);
+    if (Array.isArray(p.stateChanges)) p.stateChanges.forEach(checkStateChangeRefs);
+
+    const checkEvidenceProvenance = (ev, ref) => {
+      if (!ev || typeof ev !== 'object') return;
+      const mid = ev.messageId;
+      if (mid === undefined || mid === null) return;
+      if (typeof mid !== 'string' || !mid.trim()) {
+        defects.push({ status: 'INVALID', relation: 'evidence->message', recordRef: ref, reference: mid, detail: 'MESSAGE_ID_MALFORMED' });
+      } else if (!messageIds.has(mid)) {
+        defects.push({ status: 'UNRESOLVED', relation: 'evidence->message', recordRef: ref, reference: mid, detail: 'MESSAGE_PROVENANCE_UNRESOLVED' });
+      }
+    };
+    if (rec.recordType === 'evidence') checkEvidenceProvenance(p, recordRef);
+    if (Array.isArray(p.verifiedEvidence)) {
+      for (const ev of p.verifiedEvidence) checkEvidenceProvenance(ev, recordRef);
+    }
+  }
+
+  let status = 'verified';
+  if (defects.some(d => d.status === 'INVALID')) status = 'invalid';
+  else if (defects.some(d => d.status === 'NOT_RECORDED')) status = 'not_recorded';
+  else if (defects.some(d => d.status === 'UNRESOLVED')) status = 'unresolved';
+  return { status, defects };
+}
+
+/**
  * 严格校验单条归档记录 (P0-03 & P0-04)
  * @param {Object} record - 待校验记录
  * @returns {{ valid: boolean, reason?: string, details?: any }}
@@ -436,6 +584,25 @@ class ArchiveIntegrityService {
     let integrity = INTEGRITY_STATUS.CERTIFIED;
     let replayStatus = REPLAY_STATUS.COMPLETE;
 
+    // P0-01: Modern Canonical Record 缺链字段不允许认证（缺链字段 ≠ Legacy）
+    const modernChainDefects = [];
+    for (let i = 0; i < validRecords.length; i++) {
+      const missing = findModernChainFieldDefects(validRecords[i]);
+      if (missing.length > 0) {
+        modernChainDefects.push({ lineNumber: i + 1, recordId: validRecords[i].recordId || null, missing });
+        diagnostics.push({
+          lineNumber: i + 1,
+          error: `MODERN_RECORD_MISSING_CHAIN_FIELDS: ${missing.join(', ')}`,
+          recordId: validRecords[i].recordId || null
+        });
+      }
+    }
+    const modern_chain_integrity = modernChainDefects.length > 0 ? 'missing_fields' : (validRecords.length > 0 ? 'verified' : 'not_applicable');
+
+    // P1-02: 深度引用一致性（引用目标不存在/无法证明 → 绝不认证，也绝不补造）
+    const relationships = validateRecordRelationships(validRecords);
+    const relationship_integrity = relationships.status;
+
     let syntax_integrity = corruptLines > 0 ? (validCount > 0 ? 'partial' : 'corrupted') : 'valid';
     let sequence_integrity = 'legacy';
     let hash_integrity = 'legacy';
@@ -497,9 +664,13 @@ class ArchiveIntegrityService {
       hash_integrity = hashOk ? 'verified' : 'mismatch';
     }
 
-    if (hash_integrity === 'mismatch' || sequence_integrity === 'invalid') {
+    if (hash_integrity === 'mismatch' || sequence_integrity === 'invalid' || relationship_integrity === 'invalid') {
       integrity = INTEGRITY_STATUS.INVALID;
       replayStatus = REPLAY_STATUS.INVALID;
+    } else if (modernChainDefects.length > 0) {
+      // P0-01: 现代记录缺链字段 → 绝不 CERTIFIED
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
     } else if (corruptLines > 0) {
       integrity = validCount > 0 ? INTEGRITY_STATUS.PARTIAL : INTEGRITY_STATUS.CORRUPTED;
       replayStatus = REPLAY_STATUS.PARTIAL;
@@ -510,6 +681,10 @@ class ArchiveIntegrityService {
       // P0-09: 遗留兼容记录平滑加载，但绝不自动赋予 CERTIFIED
       integrity = INTEGRITY_STATUS.UNCERTIFIED;
       replayStatus = REPLAY_STATUS.COMPLETE;
+    } else if (relationship_integrity !== 'verified') {
+      // P1-02: 引用悬空 (NOT_RECORDED) / 来源无法证明 (UNRESOLVED) → 绝不 CERTIFIED
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
     } else if (totalLines === 0) {
       integrity = INTEGRITY_STATUS.CERTIFIED;
       replayStatus = REPLAY_STATUS.COMPLETE;
@@ -521,6 +696,9 @@ class ArchiveIntegrityService {
       syntax_integrity,
       sequence_integrity,
       hash_integrity,
+      modern_chain_integrity,
+      relationship_integrity,
+      relationshipDefects: relationships.defects,
       validCount,
       invalidCount,
       corruptLines,
@@ -585,11 +763,13 @@ class ArchiveIntegrityService {
         }
       }
 
-      return ArchiveIntegrityService.checkRecords(parsedRecords, {
+      const report = ArchiveIntegrityService.checkRecords(parsedRecords, {
         corruptLines,
         diagnostics: { skippedCount: corruptLines, errors: diagnostics },
         totalLines
       });
+      // P0-02: Tail Anchor 校验（链外锚点证明当前尾部是最近一次已确认的可信尾部）
+      return ArchiveIntegrityService._applyTailAnchorCheck(report, targetFile, parsedRecords);
     } catch (e) {
       return {
         integrity: INTEGRITY_STATUS.INVALID,
@@ -607,6 +787,104 @@ class ArchiveIntegrityService {
   }
 }
 
+/**
+ * P0-02: Tail Anchor 校验（链外锚点，不参与 record hash chain，避免循环依赖）。
+ * anchor 存于 experiences.jsonl.anchor.json，证明当前 archive 尾部未被“合法截断”。
+ * 状态：
+ *   verified      锚点与实际链尾一致
+ *   not_recorded  无锚点（空归档可读；有现代链尾则绝不能 CERTIFIED）
+ *   tail_truncated 实际尾部早于锚点（尾部被截断）→ INVALID fail-closed
+ *   anchor_stale  实际尾部晚于锚点（未提交尾部 / 锚点更新失败）→ UNCERTIFIED fail-closed
+ *   tampered      锚点与链尾 recordId/recordHash 不一致（锚点或尾部被篡改）→ INVALID
+ *   invalid       锚点文件损坏 / 结构非法 → INVALID
+ */
+ArchiveIntegrityService._applyTailAnchorCheck = function (report, archiveFilePath, parsedRecords) {
+  const anchorPath = archiveFilePath + '.anchor.json';
+  const chained = (parsedRecords || [])
+    .filter(r => r && typeof r === 'object' && Number.isFinite(r.archiveSeq) && typeof r.recordHash === 'string' && r.recordHash)
+    .sort((a, b) => a.archiveSeq - b.archiveSeq);
+  const actualTail = chained.length > 0 ? chained[chained.length - 1] : null;
+
+  let anchorPresent = false;
+  let anchor = null;
+  let anchorCorrupt = false;
+  if (fs.existsSync(anchorPath)) {
+    anchorPresent = true;
+    try {
+      anchor = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
+    } catch {
+      anchorCorrupt = true;
+    }
+  }
+
+  const result = Object.assign({}, report, { tail_anchor: 'verified', anchor_diagnostics: [] });
+  const shapeOk = !!anchor && typeof anchor === 'object'
+    && Number.isInteger(anchor.archiveSeq) && anchor.archiveSeq >= 1
+    && typeof anchor.recordId === 'string' && anchor.recordId.trim()
+    && typeof anchor.recordHash === 'string' && anchor.recordHash.trim();
+
+  if (!actualTail) {
+    if (anchorPresent) {
+      // 锚点声称存在链尾但归档中无任何链记录：尾部被截断或锚点伪造
+      result.tail_anchor = (anchorCorrupt || !shapeOk) ? 'invalid' : 'tail_truncated';
+      result.anchor_diagnostics.push({ error: 'TAIL_ANCHOR_WITHOUT_CHAINED_TAIL' });
+      result.integrity = INTEGRITY_STATUS.INVALID;
+      result.replayStatus = REPLAY_STATUS.INVALID;
+    } else {
+      result.tail_anchor = 'not_recorded';
+    }
+    return result;
+  }
+
+  if (!anchorPresent) {
+    // 现代链尾存在但无链外锚点：无法证明尾部完整，绝不 CERTIFIED
+    result.tail_anchor = 'not_recorded';
+    result.anchor_diagnostics.push({ error: 'TAIL_ANCHOR_NOT_RECORDED' });
+    if (result.integrity === INTEGRITY_STATUS.CERTIFIED) {
+      result.integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      result.replayStatus = REPLAY_STATUS.PARTIAL;
+    }
+    return result;
+  }
+
+  if (anchorCorrupt || !shapeOk) {
+    result.tail_anchor = 'invalid';
+    result.anchor_diagnostics.push({ error: 'TAIL_ANCHOR_CORRUPTED' });
+    result.integrity = INTEGRITY_STATUS.INVALID;
+    result.replayStatus = REPLAY_STATUS.INVALID;
+    return result;
+  }
+
+  if (anchor.archiveSeq > actualTail.archiveSeq) {
+    result.tail_anchor = 'tail_truncated';
+    result.anchor_diagnostics.push({ error: `TAIL_TRUNCATED: anchor archiveSeq ${anchor.archiveSeq} > actual tail ${actualTail.archiveSeq}` });
+    result.integrity = INTEGRITY_STATUS.INVALID;
+    result.replayStatus = REPLAY_STATUS.INVALID;
+    return result;
+  }
+
+  if (anchor.archiveSeq < actualTail.archiveSeq) {
+    result.tail_anchor = 'anchor_stale';
+    result.anchor_diagnostics.push({ error: `ANCHOR_STALE: anchor archiveSeq ${anchor.archiveSeq} < actual tail ${actualTail.archiveSeq}` });
+    if (result.integrity === INTEGRITY_STATUS.CERTIFIED) {
+      result.integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      result.replayStatus = REPLAY_STATUS.PARTIAL;
+    }
+    return result;
+  }
+
+  if (anchor.recordHash !== actualTail.recordHash || anchor.recordId !== actualTail.recordId) {
+    result.tail_anchor = 'tampered';
+    result.anchor_diagnostics.push({ error: 'TAIL_ANCHOR_MISMATCH: anchor 与实际链尾 recordId/recordHash 不一致' });
+    result.integrity = INTEGRITY_STATUS.INVALID;
+    result.replayStatus = REPLAY_STATUS.INVALID;
+    return result;
+  }
+
+  result.tail_anchor = 'verified';
+  return result;
+};
+
 module.exports = {
   SCHEMA_VERSION,
   VALID_RECORD_TYPES,
@@ -614,5 +892,8 @@ module.exports = {
   REPLAY_STATUS,
   validateArchiveRecord,
   ArchiveIntegrityService,
-  computeCanonicalRecordHash
+  computeCanonicalRecordHash,
+  isLegacyAdaptedRecord,
+  findModernChainFieldDefects,
+  validateRecordRelationships
 };

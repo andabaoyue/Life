@@ -33,15 +33,25 @@ function tmpDir(prefix = 'replay-cancel-test-') {
   const statePath = path.join(dir, 'subject-state.json');
 
   // 构建 3000 条有效记录 (跨越 6 个 CHUNK_SIZE=500 边界)
+  // P0-01/P0-02: 现代记录必须带完整链字段，且必须有 Tail Anchor 证明尾部完整
+  const { computeCanonicalRecordHash } = require('../src/archive-integrity');
   const TOTAL_RECORDS = 3000;
   const lines = [];
+  let prevHash = 'GENESIS';
   for (let i = 1; i <= TOTAL_RECORDS; i++) {
-    lines.push(JSON.stringify({
+    const rec = {
       schemaVersion: 1,
       recordType: 'window_summary',
+      recordId: `rec-${String(i).padStart(6, '0')}`,
+      archiveSeq: i,
+      prevHash,
       windowNo: i,
       timestamp: 10000 + i * 100,
       payload: {
+        events: [
+          // P1-02: Evidence 的 messageId 必须有真实消息/Event provenance
+          { eventId: `evt-chunk-${i}`, type: 'message', source: 'user', messageId: `m-${i}`, timestamp: 10000 + i * 100, payload: { content: `q-${i}`, roundNo: 1 } }
+        ],
         verifiedEvidence: [
           {
             evidenceId: `ev-chunk-${i}`,
@@ -55,9 +65,20 @@ function tmpDir(prefix = 'replay-cancel-test-') {
         rejectedEvidence: [],
         stateChanges: []
       }
-    }));
+    };
+    rec.recordHash = computeCanonicalRecordHash(rec);
+    prevHash = rec.recordHash;
+    lines.push(JSON.stringify(rec));
   }
   fs.writeFileSync(archivePath, lines.join('\n') + '\n', 'utf8');
+  const lastRec = JSON.parse(lines[lines.length - 1]);
+  fs.writeFileSync(archivePath + '.anchor.json', JSON.stringify({
+    schemaVersion: 1,
+    archiveSeq: lastRec.archiveSeq,
+    recordId: lastRec.recordId,
+    recordHash: lastRec.recordHash,
+    updatedAt: Date.now()
+  }), 'utf8');
   fs.writeFileSync(statePath, JSON.stringify({ windowNo: TOTAL_RECORDS, values: { ...DEFAULT_TRAITS } }), 'utf8');
 
   const service = new ResearchService(dir);

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { wrapArchiveRecord, normalizeArchiveRecord } = require('./experience-schema');
-const { validateArchiveRecord, computeCanonicalRecordHash } = require('./archive-integrity');
+const { validateArchiveRecord, computeCanonicalRecordHash, isLegacyAdaptedRecord, findModernChainFieldDefects } = require('./archive-integrity');
 
 /**
  * Append-Only 原始实验底座：experiences.jsonl (v0.9.6)
@@ -34,10 +34,22 @@ class ExperiencesArchive {
       // 但新链从 1 开始，后续一旦进入现代链则不允许再混写旧尾部。
       for (const record of records) {
         const normalized = normalizeArchiveRecord(record) || record;
+        // P0-01: 只有明确 Legacy 适配记录才允许缺链字段；
+        // 现代记录缺链字段 → fail closed，不续写、不静默补全。
+        if (!isLegacyAdaptedRecord(normalized) && findModernChainFieldDefects(normalized).length > 0) {
+          return { valid: false, reason: 'ARCHIVE_MODERN_RECORD_MISSING_CHAIN_FIELDS' };
+        }
         const validation = validateArchiveRecord(normalized, { allowLegacy: true });
         if (!validation.valid) return { valid: false, reason: `ARCHIVE_LEGACY_PREFIX_INVALID:${validation.reason}` };
       }
       return { valid: true, last: null, legacyPrefix: true };
+    }
+    // P0-01: 现代记录缺链字段（无论是否混排）→ fail closed
+    for (const record of records) {
+      const normalized = normalizeArchiveRecord(record) || record;
+      if (!isLegacyAdaptedRecord(normalized) && findModernChainFieldDefects(normalized).length > 0) {
+        return { valid: false, reason: 'ARCHIVE_MODERN_RECORD_MISSING_CHAIN_FIELDS' };
+      }
     }
     if (records.some(r => r.archiveSeq === undefined || r.recordHash === undefined)) {
       return { valid: false, reason: 'ARCHIVE_TAIL_MIXED_LEGACY_AND_CHAINED' };
@@ -67,7 +79,58 @@ class ExperiencesArchive {
       }
       previous = record;
     }
+    // P0-02: Tail Anchor 校验——现代链尾必须与链外锚点一致，否则 fail-closed 不续写
+    if (previous) {
+      const anchorState = this._readTailAnchor();
+      if (!anchorState.present) return { valid: false, reason: 'ARCHIVE_ANCHOR_MISSING' };
+      if (anchorState.corrupt) return { valid: false, reason: 'ARCHIVE_ANCHOR_CORRUPTED' };
+      const a = anchorState.anchor;
+      if (!a || a.archiveSeq !== previous.archiveSeq || a.recordHash !== previous.recordHash || a.recordId !== previous.recordId) {
+        return { valid: false, reason: 'ARCHIVE_ANCHOR_MISMATCH' };
+      }
+    }
     return { valid: true, last: previous };
+  }
+
+  /** P0-02: 读取链外尾部锚点 (experiences.jsonl.anchor.json) */
+  _readTailAnchor() {
+    const anchorPath = this.path + '.anchor.json';
+    if (!fs.existsSync(anchorPath)) return { present: false, anchor: null, corrupt: false };
+    try {
+      return { present: true, anchor: JSON.parse(fs.readFileSync(anchorPath, 'utf8')), corrupt: false };
+    } catch {
+      return { present: true, anchor: null, corrupt: true };
+    }
+  }
+
+  /**
+   * P0-02: 更新链外尾部锚点（先写临时文件并 fsync，再原子 rename）。
+   * anchor 不参与 record hash chain，避免循环依赖。
+   */
+  _updateTailAnchor(entry) {
+    const anchorPath = this.path + '.anchor.json';
+    const anchor = {
+      schemaVersion: 1,
+      archiveSeq: entry.archiveSeq,
+      recordId: entry.recordId,
+      recordHash: entry.recordHash,
+      updatedAt: Date.now()
+    };
+    try {
+      const tmpPath = anchorPath + '.tmp';
+      const fd = fs.openSync(tmpPath, 'w');
+      try {
+        fs.writeSync(fd, JSON.stringify(anchor), null, 'utf8');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmpPath, anchorPath);
+      return true;
+    } catch (e) {
+      console.error('[ExperiencesArchive] tail anchor 更新失败:', e.message);
+      return false;
+    }
   }
 
   getLastSequencedRecord() {
@@ -160,6 +223,13 @@ class ExperiencesArchive {
         fs.fsyncSync(fd);
       } finally {
         fs.closeSync(fd);
+      }
+      // P0-02: 归档写入成功后更新链外 Tail Anchor 并 fsync。
+      // anchor 更新失败绝不伪装成完整成功：不反向覆盖 archive，
+      // 由 checkArchive 判定 ANCHOR_STALE/UNCOMMITTED_TAIL 进入 UNCERTIFIED/recovery 状态。
+      if (!this._updateTailAnchor(entry)) {
+        console.error('[ExperiencesArchive] append: archive 已落盘但 tail anchor 更新失败，进入 UNCERTIFIED/recovery 状态（绝不伪装成功）');
+        return false;
       }
       return true;
     } catch (e) {

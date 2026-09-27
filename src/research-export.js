@@ -10,11 +10,21 @@
  *    - Trajectory: window,trait,previous,delta,newValue
  *    - StateChanges: stateChangeId,windowNo,trait,previousValue,delta,newValue,evidenceIds,timestamp
  *    - Evidence: evidenceId,messageId,quote,trait,direction,strength,status,reason,fingerprint
- * 4. Full Research Bundle 附带元数据 metadata.json (schemaVersion, appVersion=0.9.5, exportTimestamp)。
+ * 4. Full Research Bundle 附带元数据 metadata.json (schemaVersion, appVersion=当前软件版本, exportTimestamp)。
+ *    appVersion 唯一来源为 package.json（getAppVersion()），禁止任何第二份版本常量。
  */
 
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * 当前软件版本唯一来源：package.json (P1-01)
+ * 运行版本与导出实验产物声明版本必须一致，禁止硬编码旧版本。
+ */
+function getAppVersion() {
+  const pkg = require('../package.json');
+  return pkg.version;
+}
 
 function escapeCsvCell(val) {
   if (val === null || val === undefined) return '';
@@ -105,7 +115,7 @@ function exportFullResearchBundle(researchQuery, options = {}) {
 
   const metadata = {
     schemaVersion: 1,
-    appVersion: '0.9.5.3',
+    appVersion: getAppVersion(),
     archiveSchemaVersion: 1,
     subjectStateSchemaVersion: 1,
     exportTimestamp: Date.now()
@@ -154,6 +164,7 @@ function exportFullResearchBundle(researchQuery, options = {}) {
 }
 
 module.exports = {
+  getAppVersion,
   exportStateTrajectory,
   exportStateChanges,
   exportEvidence,

@@ -507,7 +507,17 @@ class ResearchQuery {
           rNo = e.turnNo;
         }
 
-        const role = p.role || (e.source === 'assistant' ? 'assistant' : 'user');
+        // P1-03: role 显式映射，UNKNOWN 绝不伪造成 user。
+        // role=user→user; role=assistant→assistant; role 缺失→仅当 source 可证明时继承
+        // (source=assistant→assistant, source=user→user)，其余 source (activity-tracker /
+        // desktop-motion / lifecycle 等) → null (UNKNOWN)。
+        let role = null;
+        if (p.role === 'user' || p.role === 'assistant') {
+          role = p.role;
+        } else if (p.role === undefined || p.role === null || p.role === '') {
+          if (e.source === 'assistant') role = 'assistant';
+          else if (e.source === 'user') role = 'user';
+        }
         const content = p.content != null ? p.content : (typeof e.content === 'string' ? e.content : null);
 
         let bridge = null;
@@ -551,8 +561,20 @@ class ResearchQuery {
 
         if (role === 'user') {
           item.userMessage = msgObj;
-        } else {
+        } else if (role === 'assistant') {
           item.assistantMessage = msgObj;
+        } else {
+          // UNKNOWN role: 绝不塞进 user/assistant 消息位伪造身份，进入 UNRESOLVED 桶如实保留
+          unresolvedEvents.push({
+            roundNo: rNo,
+            segmentIndex: Math.floor((rNo - 1) / 20) + 1,
+            status: 'UNRESOLVED',
+            bridge,
+            tag: 'UNKNOWN_ROLE',
+            userMessage: null,
+            assistantMessage: null,
+            message: msgObj
+          });
         }
       }
     }

@@ -190,7 +190,9 @@ check('Test E: Archive validateArchiveRecord 认证合法事件归档', vArchive
 
 const dirE = tmpDir('parity-e-');
 const archiveE = path.join(dirE, 'experiences.jsonl');
-fs.writeFileSync(archiveE, JSON.stringify(summaryValid) + '\n', 'utf8');
+// P0-01/P0-02: 现代归档经 Canonical 写入路径生成链字段与 Tail Anchor
+const { ExperiencesArchive } = require('../src/experiences-archive');
+new ExperiencesArchive(dirE).append(summaryValid);
 const reportE = ArchiveIntegrityService.checkArchive(archiveE);
 check('Test E: 纯合法事件归档正常获得 CERTIFIED 认证', reportE.integrity === INTEGRITY_STATUS.CERTIFIED);
 try { fs.rmSync(dirE, { recursive: true, force: true }); } catch {}

@@ -1172,18 +1172,36 @@ class SubjectState {
       : true;
 
     const pChanges = persistedState ? (persistedState.stateChanges || (persistedState.data && persistedState.data.stateChanges)) : undefined;
-    const stateChangesMatch = (Array.isArray(pChanges) && replayReport && Array.isArray(replayReport.stateChanges))
-      ? pChanges.length === replayReport.stateChanges.length
-      : true;
+    // P0-03: 数量一致 ≠ 因果一致。StateChange 必须做 canonical 语义深比较
+    //（windowNo/trait/previousValue/delta/newValue/evidenceIds/reducer），顺序属于因果轨迹。
+    let stateChangesMatch = true;
+    const stateChangeDiffs = [];
+    if (Array.isArray(pChanges) && replayReport && Array.isArray(replayReport.stateChanges)) {
+      const pCanon = pChanges.map(canonicalizeStateChange);
+      const rCanon = replayReport.stateChanges.map(canonicalizeStateChange);
+      if (pCanon.length !== rCanon.length) {
+        stateChangesMatch = false;
+        stateChangeDiffs.push({ index: -1, reason: 'LENGTH_MISMATCH', persisted: pCanon.length, replayed: rCanon.length });
+      }
+      const maxLen = Math.min(pCanon.length, rCanon.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (!deepEqualCanonical(pCanon[i], rCanon[i])) {
+          stateChangesMatch = false;
+          stateChangeDiffs.push({ index: i, reason: 'SEMANTIC_MISMATCH', persisted: pCanon[i], replayed: rCanon[i] });
+        }
+      }
+    }
 
     const match = diffs.length === 0 && windowNoMatch && acceptedEvidenceMatch && stateChangesMatch;
-    const isCertified = replayReport ? replayReport.integrity !== 'uncertified' : true;
+    // P0-03: certified 只有在 match === true 且 replay integrity === 'certified' 时成立
+    const isCertified = replayReport ? replayReport.integrity === 'certified' : true;
 
     return {
       match,
       windowNoMatch,
       acceptedEvidenceMatch,
       stateChangesMatch,
+      stateChangeDiffs,
       certified: match && isCertified,
       status: (match && isCertified) ? 'PASS' : (match && !isCertified ? 'NOT_CERTIFIED' : 'MISMATCH'),
       integrity: replayReport ? replayReport.integrity : 'certified',
@@ -1193,4 +1211,54 @@ class SubjectState {
   }
 }
 
-module.exports = { SubjectState, DEFAULT_TRAITS, ALLOWED_TRAITS, normalizeQuote };
+/**
+ * P0-03: StateChange 规范化语义快照（纯函数）
+ * 语义一致性比较字段：windowNo / trait / previousValue / delta / newValue /
+ * evidenceIds (排序后) / reducer (stepWeight, baseStepWeight, effectiveStepWeight,
+ * plasticityMultiplier, maxDelta, roundingMode)。
+ * stateChangeId / changeId / createdAt 不作为一致性条件（Replay 可用新的确定性 ID）。
+ */
+function canonicalizeStateChange(sc) {
+  const reducer = (sc && sc.reducer && typeof sc.reducer === 'object' && !Array.isArray(sc.reducer)) ? sc.reducer : {};
+  const pick = (...vals) => {
+    for (const v of vals) {
+      if (v !== undefined && v !== null) return v;
+    }
+    return null;
+  };
+  return {
+    windowNo: (sc && Number.isFinite(sc.windowNo)) ? sc.windowNo : null,
+    trait: String((sc && sc.trait) || '').trim(),
+    previousValue: (sc && Number.isFinite(sc.previousValue)) ? sc.previousValue : null,
+    delta: (sc && Number.isFinite(sc.delta)) ? sc.delta : null,
+    newValue: (sc && Number.isFinite(sc.newValue)) ? sc.newValue : null,
+    evidenceIds: Array.isArray(sc && sc.evidenceIds) ? [...sc.evidenceIds].map(v => String(v)).sort() : [],
+    reducer: {
+      stepWeight: pick(reducer.stepWeight, sc && sc.stepWeight, sc && sc.effectiveStepWeight),
+      baseStepWeight: pick(reducer.baseStepWeight, sc && sc.baseStepWeight),
+      effectiveStepWeight: pick(reducer.effectiveStepWeight, sc && sc.effectiveStepWeight),
+      plasticityMultiplier: pick(reducer.plasticityMultiplier, sc && sc.plasticityMultiplier),
+      maxDelta: pick(reducer.maxDelta),
+      roundingMode: pick(reducer.roundingMode, sc && sc.roundingMode)
+    }
+  };
+}
+
+/** 结构深度相等（canonical 形态间的确定性比较） */
+function deepEqualCanonical(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((x, i) => deepEqualCanonical(x, b[i]));
+  }
+  if (typeof a === 'object') {
+    const ka = Object.keys(a).sort();
+    const kb = Object.keys(b).sort();
+    if (ka.length !== kb.length || ka.some((k, i) => k !== kb[i])) return false;
+    return ka.every(k => deepEqualCanonical(a[k], b[k]));
+  }
+  return false;
+}
+
+module.exports = { SubjectState, DEFAULT_TRAITS, ALLOWED_TRAITS, normalizeQuote, canonicalizeStateChange };
