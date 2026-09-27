@@ -418,6 +418,9 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
         ? context.sourceEvidenceIds
         : (Array.isArray(context.verifiedEvidence) ? context.verifiedEvidence.map(e => e.evidenceId).filter(Boolean) : []),
       sourceEventIds: Array.isArray(context.sourceEventIds) ? context.sourceEventIds : [],
+      eventProvenanceStatus: typeof context.eventProvenanceStatus === 'string' && context.eventProvenanceStatus.trim()
+        ? context.eventProvenanceStatus.trim()
+        : (Array.isArray(context.sourceEventIds) && context.sourceEventIds.length > 0 ? 'evidence_linked' : 'unavailable'),
       sourceMessageRange: resolvedSourceMessageRange,
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},
@@ -453,6 +456,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       outputHash,
       sourceEvidenceIds: dreamPayload.sourceEvidenceIds,
       sourceEventIds: dreamPayload.sourceEventIds,
+      eventProvenanceStatus: dreamPayload.eventProvenanceStatus,
       sourceMessageRange: dreamPayload.sourceMessageRange,
       dayResidues: context.dayResidues || [],
       gateMetrics: context.gateMetrics || {},

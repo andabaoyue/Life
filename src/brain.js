@@ -1304,7 +1304,12 @@ class Brain {
               const dreamRecord = await synthesizeDream(this.api, dreamPrompt, {
                 windowNo: snap.windowNo,
                 sourceEvidenceIds,
-                sourceEventIds: sourceEventIds.length > 0 ? sourceEventIds : events.map(e => e.eventId),
+                sourceEventIds,
+                // 无法证明 Event 来源时严禁扩大归因（不把整个窗口 events 算作梦境来源），
+                // 显式标记 provenance 状态，供归档与研究层如实区分。
+                eventProvenanceStatus: sourceEventIds.length > 0
+                  ? 'evidence_linked'
+                  : (events.length > 0 ? 'unavailable' : 'no_window_events'),
                 sourceMessageRange,
                 sourceEvents: events,
                 sourceEvidence: evList,

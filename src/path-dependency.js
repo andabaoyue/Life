@@ -101,7 +101,11 @@ function canonicalizeExperimentState(reg, subjectState) {
       recoveryStatus: data.recoveryStatus || (subjectState && subjectState.recoveryStatus),
       recoveryPending: Boolean(subjectState && subjectState.recoveryPending),
       recoveryPendingReason: subjectState && subjectState.recoveryPendingReason,
-      // reducer 配置由 config identity 单独认证，不重复计入 initial state。
+      // reducer 参数 (stepWeight / maxDeltaPerWindow) 经 initialState.subjectState 注入并直接决定
+      // reduce() 增量与单窗口变动限额，属于实验初始状态的一部分，必须计入 initial state identity。
+      // （config identity 不接受这两个字段，无法替它们背书。）
+      stepWeight: subjectState && typeof subjectState.stepWeight === 'number' ? subjectState.stepWeight : null,
+      maxDeltaPerWindow: subjectState && typeof subjectState.maxDeltaPerWindow === 'number' ? subjectState.maxDeltaPerWindow : null,
     }
   });
 }
@@ -585,6 +589,14 @@ function runPathDependencyExperiment(options = {}) {
       }
       if (initialState.subjectState.history) {
         subjectState.data.history = [...initialState.subjectState.history];
+      }
+      // 与前置条件核验阶段 (initSub) 保持对称：注入的 reducer 参数必须真正作用于执行，
+      // 否则 initial state identity 认证的值与实际执行值不一致。
+      if (initialState.subjectState.stepWeight !== undefined) {
+        subjectState.stepWeight = initialState.subjectState.stepWeight;
+      }
+      if (initialState.subjectState.maxDeltaPerWindow !== undefined) {
+        subjectState.maxDeltaPerWindow = initialState.subjectState.maxDeltaPerWindow;
       }
     }
 
