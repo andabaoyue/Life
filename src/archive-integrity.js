@@ -29,8 +29,8 @@ function computeCanonicalRecordHash(rec) {
     archiveSeq: typeof rec.archiveSeq === 'number' ? rec.archiveSeq : null,
     recordId: rec.recordId || null,
     recordType: rec.recordType || rec.type || null,
-    windowNo: (typeof rec.windowNo === 'number' && !isNaN(rec.windowNo)) ? rec.windowNo : (rec.windowNo === null ? null : null),
-    timestamp: typeof rec.timestamp === 'number' ? rec.timestamp : null,
+    windowNo: Number.isFinite(rec.windowNo) ? rec.windowNo : (rec.windowNo === null ? null : null),
+    timestamp: Number.isFinite(rec.timestamp) ? rec.timestamp : null,
     payload: rec.payload !== undefined ? rec.payload : {},
     prevHash: rec.prevHash || null
   };
@@ -105,20 +105,20 @@ function validateArchiveRecord(record, options = {}) {
     return { valid: false, reason: 'MISSING_OR_INVALID_PAYLOAD' };
   }
 
-  const ts = record.timestamp || record.createdAt;
+  const ts = record.timestamp ?? record.createdAt;
   if (!options.allowLegacy || !isLegacy) {
-    if (typeof ts !== 'number' || ts <= 0 || isNaN(ts)) {
+    if (!Number.isFinite(ts) || ts <= 0) {
       return { valid: false, reason: 'MISSING_OR_INVALID_TIMESTAMP' };
     }
 
     const wNo = record.windowNo;
     const requiresWindowNo = (recType === 'window_summary' || recType === 'window_archive');
     if (requiresWindowNo) {
-      if (typeof wNo !== 'number' || wNo < 0 || isNaN(wNo)) {
+      if (!Number.isFinite(wNo) || wNo < 0) {
         return { valid: false, reason: 'MISSING_OR_INVALID_WINDOW_NO' };
       }
     } else {
-      if (wNo !== null && (typeof wNo !== 'number' || wNo < 0 || isNaN(wNo))) {
+      if (wNo !== null && (!Number.isFinite(wNo) || wNo < 0)) {
         return { valid: false, reason: 'MISSING_OR_INVALID_WINDOW_NO' };
       }
     }
@@ -268,7 +268,7 @@ function validateArchiveRecord(record, options = {}) {
       if (typeof payload.trait !== 'string' || !ALLOWED_TRAITS.has(payload.trait.trim())) {
         return { valid: false, reason: 'STATE_CHANGE_INVALID_TRAIT: ' + payload.trait };
       }
-      if (typeof payload.delta !== 'number' || isNaN(payload.delta)) {
+      if (!Number.isFinite(payload.delta)) {
         return { valid: false, reason: 'STATE_CHANGE_INVALID_DELTA' };
       }
       break;

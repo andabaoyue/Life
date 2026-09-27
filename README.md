@@ -428,10 +428,11 @@ node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自�
 node test/attention-gate.test.js      # 33 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重）
 node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
 node test/path-dependency-preconditions.test.js # 45 项：Phase 0.5 路径依赖实验受控前置条件门禁（初始状态同一性、事件Multiset完全一致、函数事件可审计签名与不可审计裸函数拦截、实验配置一致、探测刺激一致、受控审计凭证完整性、确定性重放与throwOnError契约、对抗未知字段拒绝与语义负载保真）
-node test/archive-write-gate.test.js # 27 项：Phase 4 归档硬写门禁与防篡改防伪造（F-10 / User Constraint #3，拒绝伪造 archiveSeq、prevHash、recordHash、非法类型与损坏 payload，文件尾部损坏自愈与底座纯净保护）
+ node test/archive-write-gate.test.js # 29 项：Phase 4 归档硬写门禁与防篡改防伪造（F-10 / User Constraint #3，拒绝伪造 archiveSeq、prevHash、recordHash、非法类型与损坏 payload，文件尾部损坏 fail-closed 与底座纯净保护）
 node test/dream-provenance.test.js # 11 项：Phase 4 梦境溯源字段语义分立与确定性注入（F-11/F-15/F-16，messageId ≠ eventId ≠ evidenceId 严格分离、生成时钟注入与确定性 ID 生成器、门禁显式时钟）
 node test/internal-scalar-leak-capture.test.js # 4 项：Phase 4 内部标量防线端到端请求捕获与零泄漏（F-08，注入罕见浮点哨兵与私有属性名，全域拦截扫描发往 LLM 的完整 messages，严谨证实内部标量零进入主体层）
-node test/experiment-metadata.test.js # 31 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退、observedModel与深冻结）
+ node test/experiment-metadata.test.js # 31 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退、observedModel与深冻结）
+ node test/repair-regressions.test.js # 12 项：修复回归（完整初始状态快照、watermark/seen/window/recovery/restore adversarial 矩阵、closure/function identity、Dream provenance 交叉引用、损坏 watermark fail-closed 与零内存漂移）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```
@@ -481,6 +482,14 @@ pip install opencv-contrib-python numpy pillow
 - **沃丁顿发育景观与经历依赖塑性衰减 (`src/canalization.js`)**：提出数字发育可塑性衰减模型 $\eta(W) = \frac{\eta_0}{1 + \gamma \ln(1 + W)}$；随窗口累积平滑衰减状态步长权重；划分幼态期（JUVENILE）、发育期（DEVELOPMENTAL）与稳定个体化期（STABILIZED）；历史参数（`baseStepWeight`、`effectiveStepWeight`、`plasticityMultiplier`）强一致性落盘于 `StateChange`，保证离线 Replay 100% 确定性；Baseline 模式塑性乘子严格恒为 1.0。
 - **零 API 成本记忆动力学与突触修剪 (`src/memory-dynamics.js` & `src/memory.js`)**：基于改进型艾宾浩斯幂律方程 $S(W) = \text{clamp}\left(\frac{S_0 \cdot (1 + \beta \ln(1 + \text{retrievals}))}{(1 + \lambda \Delta W)^\alpha}, 0, 1\right)$（$\beta=0.15, \lambda=0.10, \alpha=1.15$）实现纯本地代数衰减；建立 `ACTIVE`（活跃）、`FADING`（渐褪）、`DORMANT`（休眠）三级流转；经历归档 `experiences.jsonl` 永不物理删除，休眠记忆仅静默移出 Prompt 节省上下文；`Memory.save()/load()` 与 `Brain` 实现双层冷启动持久化，跨进程重启遗忘状态零丢失；实现 `reactivateByContext()` 关联线索重新激活，用户对话命中特征词元时零 API 成本自动唤醒休眠印痕重回 Prompt 上下文。
 - **成本门禁式弗洛伊德梦境系统 (`src/dream-system.js` & `src/brain.js`)**：梦境决非定时无意义轮询，建立双重门禁机制——第一道本地认知张力门禁（通过 `computeWindowArousalTrajectory` 依据真实消息节奏与证据极性计算 5 分段唤醒度，接通情绪方差 $\ge 15.0$、尖峰跃迁 $\ge 25.0$、多重特质冲突分值 $\ge 0.75$ 与新异度 `noveltyScore` $\ge 0.8$）与第二道成本防护门禁（窗口间隔 $\ge 3$ 且 24 小时硬顶 2 次，冷启动自动从归档恢复 `dreamHistory` 防御重启绕过）；生成产物严格遵循 Canonical Schema v1 封装 `payload.dreamId` 与 `payload.epistemicStatus`，通过 `ArchiveIntegrityService` CERTIFIED 认证，绝对禁止直接修改 `SubjectState`；具备 Fail-Safe 容灾机制，梦境失败永不阻塞关窗主流程。
+
+### 实验可信度边界（v0.9.7 修复后）
+
+- **Initial State Identity** 由 `canonicalizeExperimentState()` / `hashExperimentState()` 统一定义，包含会影响轨迹的 regulation history、attention watermark、SubjectState window/stateChanges/evidence 去重集合与 recovery 状态；纯时间 transport metadata 排除。真实 `userDataDir` restore 状态仍以读取到的持久化内容为准。
+- **Function Event Identity** 只接受可从实际函数源码派生且可比对的签名；调用方声明的 `eventSignature` 必须等于派生签名，native/bound/closure 等无法证明等价的函数拒绝。未对 record-level 或 byte-level 输出作无条件确定性承诺；目前承诺范围是注入时钟/身份生成器后的 state-level replay。
+- **Dream provenance** 严格保持 `messageId`、`eventId`、`evidenceId` 三个命名空间；缺失层使用 `null`/`[]`，不进行跨类型 fallback，进入归档前对显式 event/evidence 引用执行 cross-reference validation。
+- **Attention watermark** 是 **256-entry bounded FIFO idempotency**，不是无限历史幂等；损坏或空文件进入 fail-closed，写盘失败回滚内存状态。
+- **Archive writer** 是单写者 API 边界：`experiences.jsonl` 的 append 不提供跨进程锁；检测到坏尾、断链、torn line 或非有限数字时 fail-closed，恢复审计写入隔离 sidecar，不续写损坏主链。调用方必须由 Electron single-instance/单 writer 生命周期保证无并发 append。
 - **全量测试套件与不可逆约束门禁**：新增 5 套专用测试套件共 132 项断言，全工程测试套件达 57 套，全部 100% 通过且零回归。
 
 **v0.9.6** — 《初澜数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：

@@ -287,6 +287,21 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
   const promptHash = hashPrompt(canonicalPrompt);
 
   try {
+    const sourceEvidenceIds = Array.isArray(context.sourceEvidenceIds) ? context.sourceEvidenceIds : [];
+    const sourceEventIds = Array.isArray(context.sourceEventIds) ? context.sourceEventIds : [];
+    if (sourceEvidenceIds.some(id => typeof id !== 'string' || !id.trim()) ||
+        sourceEventIds.some(id => typeof id !== 'string' || !id.trim())) {
+      throw new Error('INVALID_DREAM_PROVENANCE_ID');
+    }
+    if (Array.isArray(context.sourceEvidence)) {
+      const known = new Set(context.sourceEvidence.map(e => e && e.evidenceId).filter(Boolean));
+      if (sourceEvidenceIds.some(id => !known.has(id))) throw new Error('DREAM_EVIDENCE_CROSS_REFERENCE_FAILED');
+    }
+    if (Array.isArray(context.sourceEvents)) {
+      const known = new Set(context.sourceEvents.map(e => e && e.eventId).filter(Boolean));
+      if (sourceEventIds.some(id => !known.has(id))) throw new Error('DREAM_EVENT_CROSS_REFERENCE_FAILED');
+    }
+
     const res = await apiClient.complete(promptMessages, {
       maxTokens: cfg.dreamMaxTokens,
       temperature: cfg.dreamTemperature
@@ -366,12 +381,8 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
         count: msgIds.length
       };
     } else {
-      // 遗留兼容分支：仅在无任何 message 溯源信息时回退
-      resolvedSourceMessageRange = {
-        startMessageId: (context.sourceEventIds && context.sourceEventIds[0]) ? String(context.sourceEventIds[0]) : 'unknown',
-        endMessageId: (context.sourceEventIds && context.sourceEventIds[context.sourceEventIds.length - 1]) ? String(context.sourceEventIds[context.sourceEventIds.length - 1]) : 'unknown',
-        count: Array.isArray(context.sourceEventIds) ? context.sourceEventIds.length : (context.dayResidues ? context.dayResidues.length : 0)
-      };
+      // 缺少 message provenance 时保持 null，绝不把 eventId/evidenceId 冒充 messageId。
+      resolvedSourceMessageRange = null;
     }
 
     // P0-3: 统一 GenerationContext 语义，动态解析 provider，绝不硬编码 'deepseek'

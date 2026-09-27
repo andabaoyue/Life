@@ -19,7 +19,8 @@
  *    d) SubjectState（长期人格发展与渠道化深度）
  *    注：Memory Accessibility 与 Self Revision 为后续扩展规划维度。
  * 3. 确定性与可复现性（Deterministic Replay）：
- *    整个实验框架在给定历史序列时具有 100% 确定性，可完全离线回放。
+ *    状态级轨迹在显式注入时钟与身份生成器时可离线回放；记录级/字节级
+ *    确定性不由本接口默认承诺。
  */
 
 'use strict';
@@ -64,6 +65,74 @@ function normalizeState(obj) {
   return sorted;
 }
 
+/**
+ * 实验初始状态的单一 canonical 来源。
+ * 只排除纯 transport 时间字段；会影响 reducer、门禁或事件消费的状态必须保留。
+ */
+function canonicalizeExperimentState(reg, subjectState) {
+  const regState = reg && typeof reg === 'object' ? {
+    energy: reg.energy,
+    restPressure: reg.restPressure,
+    arousal: reg.arousal,
+    salienceThreshold: reg.salienceThreshold,
+    interactionDensity: reg.interactionDensity,
+    cognitiveLoadProxy: reg.cognitiveLoadProxy,
+    isSleeping: Boolean(reg.isSleeping),
+    history: Array.isArray(reg.history) ? reg.history : [],
+    consumedAttentionEvents: reg.consumedAttentionEvents instanceof Set
+      ? Array.from(reg.consumedAttentionEvents).sort()
+      : Array.isArray(reg.consumedAttentionEvents) ? [...reg.consumedAttentionEvents].sort() : []
+  } : {};
+  const data = subjectState && subjectState.data ? subjectState.data : {};
+  return normalizeState({
+    internalRegulation: regState,
+    subjectState: {
+      schemaVersion: data.schemaVersion,
+      windowNo: data.windowNo,
+      values: data.values,
+      history: data.history,
+      stateChanges: data.stateChanges,
+      seenFingerprints: subjectState && subjectState.committedFingerprints instanceof Set
+        ? Array.from(subjectState.committedFingerprints).sort()
+        : data.seenFingerprints,
+      seenEvidenceIds: subjectState && subjectState.committedEvidenceIds instanceof Set
+        ? Array.from(subjectState.committedEvidenceIds).sort()
+        : data.seenEvidenceIds,
+      recoveryStatus: data.recoveryStatus || (subjectState && subjectState.recoveryStatus),
+      recoveryPending: Boolean(subjectState && subjectState.recoveryPending),
+      recoveryPendingReason: subjectState && subjectState.recoveryPendingReason,
+      // reducer 配置由 config identity 单独认证，不重复计入 initial state。
+    }
+  });
+}
+
+function hashExperimentState(reg, subjectState) {
+  return 'sha256:' + sha256(canonicalStringify(canonicalizeExperimentState(reg, subjectState)));
+}
+
+function hasUnboundFunctionIdentifier(fn, rawSource) {
+  if (/function\s+anonymous\s*\(/.test(rawSource)) return true;
+  const declared = new Set(['arguments', 'undefined', 'NaN', 'Infinity', 'Math', 'JSON', 'Number', 'String', 'Boolean', 'Object', 'Array', 'Date', 'RegExp', 'Set', 'Map', 'Error', 'Promise', 'console']);
+  const params = rawSource.match(/^(?:async\s*)?(?:function[^ (]*\s*)?\(([^)]*)\)|^(?:async\s*)?([A-Za-z_$][\w$]*)\s*=>/);
+  if (params) for (const p of String(params[1] || params[2] || '').split(',')) {
+    const name = p.trim().replace(/=.*$/, '').trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(name)) declared.add(name);
+  }
+  const fnName = rawSource.match(/^function\s+([A-Za-z_$][\w$]*)/);
+  if (fnName) declared.add(fnName[1]);
+  for (const m of rawSource.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
+  for (const m of rawSource.replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '').matchAll(/[A-Za-z_$][\w$]*/g)) {
+    const word = m[0];
+    const before = rawSource[m.index - 1];
+    if (before === '.' || declared.has(word) || /^(if|else|return|const|let|var|function|async|true|false|null|new|typeof|instanceof|this)$/.test(word)) continue;
+    if (/^(ctx|reg|scheduler|subjectState|clock)$/.test(word)) continue;
+    if (/^(exports|require|module|process|Buffer)$/.test(word)) return true;
+    // Identifiers not known to be parameters/globals are closure captures.
+    return true;
+  }
+  return false;
+}
+
 function canonicalizeEvent(item) {
   if (!item) return '';
   if (typeof item === 'function') {
@@ -75,12 +144,12 @@ function canonicalizeEvent(item) {
     // 代码体源码签名规范化
     const rawSource = typeof item.toString === 'function' ? item.toString().trim() : '';
     const isNative = !rawSource || rawSource.includes('[native code]');
-    const sourceSignature = (!isNative && rawSource.length > 0)
+    const sourceSignature = (!isNative && rawSource.length > 0 && !hasUnboundFunctionIdentifier(item, rawSource))
       ? 'body:' + sha256(rawSource.replace(/\s+/g, ' '))
       : null;
 
-    // 无法证明等价性的裸函数事件（如 native/bound 函数且无显式签名），直接标记不可审计
-    if (!explicitSignature && !sourceSignature) {
+    // 无法从真实源码推导的函数（native/bound/closure）直接拒绝。
+    if (!sourceSignature) {
       return canonicalStringify({
         type: 'unverifiable_function',
         name: item.name || 'anonymous',
@@ -89,14 +158,23 @@ function canonicalizeEvent(item) {
       });
     }
 
+    // eventSignature 只是声明，必须与真实源码派生值完全一致，不能成为调用者自证身份。
+    if (explicitSignature && explicitSignature !== sourceSignature) {
+      return canonicalStringify({
+        type: 'unverifiable_function',
+        name: item.name || 'anonymous',
+        unverifiable: true,
+        reason: 'DECLARED_SIGNATURE_MISMATCH'
+      });
+    }
     const eventName = (typeof item.eventName === 'string' && item.eventName.trim())
       ? item.eventName.trim()
-      : (explicitSignature ? explicitSignature : (item.name || 'anonymous'));
+      : (item.name || 'anonymous');
 
     return canonicalStringify({
       type: 'function',
       name: eventName,
-      signature: explicitSignature || sourceSignature
+      signature: sourceSignature
     });
   }
   if (typeof item === 'object') {
@@ -344,12 +422,19 @@ function runPathDependencyExperiment(options = {}) {
     experimentModules: effectiveConfigA.experimentModules
   });
   if (initialStateA?.subjectState) {
+    const initial = initialStateA.subjectState;
     if (initialStateA.subjectState.values) {
       initSubA.data.values = { ...initialStateA.subjectState.values };
     }
-    if (initialStateA.subjectState.history) {
-      initSubA.data.history = [...initialStateA.subjectState.history];
+    for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds', 'recoveryStatus']) {
+      if (initial[key] !== undefined) initSubA.data[key] = Array.isArray(initial[key]) ? [...initial[key]] : initial[key];
     }
+    if (Array.isArray(initial.seenFingerprints)) initSubA.committedFingerprints = new Set(initial.seenFingerprints);
+    if (Array.isArray(initial.seenEvidenceIds)) initSubA.committedEvidenceIds = new Set(initial.seenEvidenceIds);
+    if (initial.recoveryPending !== undefined) initSubA.recoveryPending = Boolean(initial.recoveryPending);
+    if (initial.recoveryPendingReason !== undefined) initSubA.recoveryPendingReason = initial.recoveryPendingReason;
+    if (initial.stepWeight !== undefined) initSubA.stepWeight = initial.stepWeight;
+    if (initial.maxDeltaPerWindow !== undefined) initSubA.maxDeltaPerWindow = initial.maxDeltaPerWindow;
   }
 
   const initRegB = new InternalRegulationManager(isolatedDirB, {
@@ -366,31 +451,26 @@ function runPathDependencyExperiment(options = {}) {
     experimentModules: effectiveConfigB.experimentModules
   });
   if (initialStateB?.subjectState) {
+    const initial = initialStateB.subjectState;
     if (initialStateB.subjectState.values) {
       initSubB.data.values = { ...initialStateB.subjectState.values };
     }
-    if (initialStateB.subjectState.history) {
-      initSubB.data.history = [...initialStateB.subjectState.history];
+    for (const key of ['schemaVersion', 'updatedAt', 'windowNo', 'history', 'stateChanges', 'seenFingerprints', 'seenEvidenceIds', 'recoveryStatus']) {
+      if (initial[key] !== undefined) initSubB.data[key] = Array.isArray(initial[key]) ? [...initial[key]] : initial[key];
     }
+    if (Array.isArray(initial.seenFingerprints)) initSubB.committedFingerprints = new Set(initial.seenFingerprints);
+    if (Array.isArray(initial.seenEvidenceIds)) initSubB.committedEvidenceIds = new Set(initial.seenEvidenceIds);
+    if (initial.recoveryPending !== undefined) initSubB.recoveryPending = Boolean(initial.recoveryPending);
+    if (initial.recoveryPendingReason !== undefined) initSubB.recoveryPendingReason = initial.recoveryPendingReason;
+    if (initial.stepWeight !== undefined) initSubB.stepWeight = initial.stepWeight;
+    if (initial.maxDeltaPerWindow !== undefined) initSubB.maxDeltaPerWindow = initial.maxDeltaPerWindow;
   }
 
-  const snapshotA = {
-    internalRegulation: normalizeState(initRegA.getState()),
-    subjectState: {
-      values: normalizeState(initSubA.values),
-      history: Array.isArray(initSubA.data?.history) ? initSubA.data.history : []
-    }
-  };
-  const snapshotB = {
-    internalRegulation: normalizeState(initRegB.getState()),
-    subjectState: {
-      values: normalizeState(initSubB.values),
-      history: Array.isArray(initSubB.data?.history) ? initSubB.data.history : []
-    }
-  };
+  const snapshotA = canonicalizeExperimentState(initRegA, initSubA);
+  const snapshotB = canonicalizeExperimentState(initRegB, initSubB);
 
-  const initHashA = 'sha256:' + sha256(JSON.stringify(snapshotA));
-  const initHashB = 'sha256:' + sha256(JSON.stringify(snapshotB));
+  const initHashA = hashExperimentState(initRegA, initSubA);
+  const initHashB = hashExperimentState(initRegB, initSubB);
   const initialStateEqual = (initHashA === initHashB);
 
   // 2. 事件 Multiset 完全一致核验 (Event Set Multiset Identity)
@@ -606,5 +686,7 @@ module.exports = {
   runPathDependencyExperiment,
   canonicalizeEvent,
   canonicalizeConfig,
-  canonicalizeProbe
+  canonicalizeProbe,
+  canonicalizeExperimentState,
+  hashExperimentState
 };

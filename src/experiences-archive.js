@@ -12,6 +12,8 @@ const { validateArchiveRecord, computeCanonicalRecordHash } = require('./archive
  * 3. 完整保存 5x20 分段经历、Window Synthesis、用户给予、初澜经历与 Provenance 证据。
  * 4. 严谨因果链：每一条记录具备单调递增 archiveSeq 与 SHA-256 防篡改哈希链（prevHash -> recordHash）。
  * 5. 严格持久化：每次 append 同步执行 fsync，保障落盘语义。
+ * 6. 并发边界：本类是单写者 API，不提供跨进程 file lock；正式调用方必须在
+ *    Electron single-instance/单 writer 生命周期内串行调用 append。
  */
 class ExperiencesArchive {
   constructor(userDataDir, opts = {}) {
@@ -20,25 +22,57 @@ class ExperiencesArchive {
     this.opts = opts;
   }
 
-  /**
-   * 获取最近一条已编序的归档记录 (用于衔接 hash chain 与递增 archiveSeq)
-   * 严格核验链尾真实性，绝不盲目信任被破坏或篡改的残留尾部
-   */
-  getLastSequencedRecord() {
-    const records = this.readAll();
-    for (let i = records.length - 1; i >= 0; i--) {
-      const r = records[i];
-      if (r && typeof r.archiveSeq === 'number' && !Number.isNaN(r.archiveSeq) && r.recordHash) {
-        const expectedHash = computeCanonicalRecordHash(r);
-        if (r.recordHash === expectedHash) {
-          const v = validateArchiveRecord(r, { allowLegacy: true });
-          if (v.valid) {
-            return r;
-          }
-        }
-      }
+  /** 校验整个物理链尾；坏尾不能被跳过后继续追加。 */
+  _getValidatedAppendState() {
+    const { records, diagnostics } = this.readAllWithDiagnostics();
+    if (diagnostics.skippedCount > 0) {
+      return { valid: false, reason: 'ARCHIVE_TAIL_SYNTAX_CORRUPTED' };
     }
-    return null;
+    const hasSequenced = records.some(r => r && (r.archiveSeq !== undefined || r.recordHash !== undefined));
+    if (!hasSequenced && records.length > 0) {
+      // 旧版本可能只有 recordType/payload，没有链字段。保留其可读性，
+      // 但新链从 1 开始，后续一旦进入现代链则不允许再混写旧尾部。
+      for (const record of records) {
+        const normalized = normalizeArchiveRecord(record) || record;
+        const validation = validateArchiveRecord(normalized, { allowLegacy: true });
+        if (!validation.valid) return { valid: false, reason: `ARCHIVE_LEGACY_PREFIX_INVALID:${validation.reason}` };
+      }
+      return { valid: true, last: null, legacyPrefix: true };
+    }
+    if (records.some(r => r.archiveSeq === undefined || r.recordHash === undefined)) {
+      return { valid: false, reason: 'ARCHIVE_TAIL_MIXED_LEGACY_AND_CHAINED' };
+    }
+    let previous = null;
+    for (const record of records) {
+      const validation = validateArchiveRecord(record, { allowLegacy: true });
+      if (!validation.valid) {
+        return { valid: false, reason: `ARCHIVE_TAIL_SCHEMA_INVALID:${validation.reason}` };
+      }
+      if (!Number.isFinite(record.archiveSeq) || !Number.isInteger(record.archiveSeq) || record.archiveSeq < 1) {
+        return { valid: false, reason: 'ARCHIVE_TAIL_SEQUENCE_INVALID' };
+      }
+      if (typeof record.recordHash !== 'string' || !record.recordHash) {
+        return { valid: false, reason: 'ARCHIVE_TAIL_HASH_MISSING' };
+      }
+      if (record.recordHash !== computeCanonicalRecordHash(record)) {
+        return { valid: false, reason: 'ARCHIVE_TAIL_HASH_MISMATCH' };
+      }
+      const expectedSeq = previous ? previous.archiveSeq + 1 : 1;
+      const expectedPrevHash = previous ? previous.recordHash : 'GENESIS';
+      if (record.archiveSeq !== expectedSeq) {
+        return { valid: false, reason: 'ARCHIVE_TAIL_SEQUENCE_BROKEN' };
+      }
+      if (record.prevHash !== expectedPrevHash) {
+        return { valid: false, reason: 'ARCHIVE_TAIL_PREV_HASH_BROKEN' };
+      }
+      previous = record;
+    }
+    return { valid: true, last: previous };
+  }
+
+  getLastSequencedRecord() {
+    const state = this._getValidatedAppendState();
+    return state.valid ? (state.last || null) : null;
   }
 
   /**
@@ -52,7 +86,12 @@ class ExperiencesArchive {
   append(record) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
 
-    const last = this.getLastSequencedRecord();
+    const appendState = this._getValidatedAppendState();
+    if (!appendState.valid) {
+      console.error(`[ExperiencesArchive] append rejected: existing archive tail is not trustworthy (${appendState.reason})`);
+      return false;
+    }
+    const last = appendState.last || null;
     const defaultSeq = last ? last.archiveSeq + 1 : 1;
     const defaultRecordId = `rec-${String(defaultSeq).padStart(6, '0')}`;
     const defaultPrevHash = last ? last.recordHash : 'GENESIS';
@@ -79,12 +118,12 @@ class ExperiencesArchive {
       recordType: record.recordType || record.type || 'window_summary',
       recordId: record.recordId || defaultRecordId,
       archiveSeq: defaultSeq,
-      timestamp: (typeof record.timestamp === 'number' && !isNaN(record.timestamp))
+      timestamp: Number.isFinite(record.timestamp)
         ? record.timestamp
-        : ((typeof record.createdAt === 'number' && !isNaN(record.createdAt)) ? record.createdAt : Date.now()),
-      windowNo: (typeof record.windowNo === 'number' && !isNaN(record.windowNo))
+        : (Number.isFinite(record.createdAt) ? record.createdAt : Date.now()),
+      windowNo: Number.isFinite(record.windowNo)
         ? record.windowNo
-        : (record.windowNo === null ? null : (record.payload && typeof record.payload.windowNo === 'number' ? record.payload.windowNo : null)),
+        : (record.windowNo === null ? null : (record.payload && Number.isFinite(record.payload.windowNo) ? record.payload.windowNo : null)),
       payload: (record.payload !== undefined && record.payload !== null && typeof record.payload === 'object' && !Array.isArray(record.payload))
         ? record.payload
         : (record.payload !== undefined ? record.payload : {}),
@@ -149,7 +188,26 @@ class ExperiencesArchive {
     if (recordType === 'window_summary' || recordType === 'window_archive') {
       wrapped.type = 'window_archive';
     }
-    return this.append(wrapped);
+    const written = this.append(wrapped);
+    if (!written && recordType === 'recovery_event') {
+      // 主链损坏时禁止续写；恢复事实仍需可审计，因此写入隔离侧车。
+      return this.appendRecoveryAudit(wrapped);
+    }
+    return written;
+  }
+
+  appendRecoveryAudit(record) {
+    const auditPath = this.path + '.recovery-audit.jsonl';
+    try {
+      if (!fs.existsSync(this.dir)) fs.mkdirSync(this.dir, { recursive: true });
+      const fd = fs.openSync(auditPath, 'a');
+      try { fs.writeSync(fd, JSON.stringify({ ...record, recoveryAudit: true }) + '\n', null, 'utf8'); fs.fsyncSync(fd); }
+      finally { fs.closeSync(fd); }
+      return true;
+    } catch (e) {
+      console.error('[ExperiencesArchive] recovery audit sidecar write failed:', e.message);
+      return false;
+    }
   }
 
   /**
@@ -258,6 +316,14 @@ class ExperiencesArchive {
    */
   readAll() {
     const res = this.readAllWithDiagnostics();
+    const auditPath = this.path + '.recovery-audit.jsonl';
+    if (fs.existsSync(auditPath)) {
+      try {
+        for (const line of fs.readFileSync(auditPath, 'utf8').split('\n')) {
+          if (line.trim()) res.records.push(JSON.parse(line));
+        }
+      } catch {}
+    }
     return res.records;
   }
 

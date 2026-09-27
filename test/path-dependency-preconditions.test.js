@@ -186,7 +186,7 @@ const evtDrag = { type: 'activity', activityKind: 'drag', payload: { distance: 1
   );
 }
 
-// 12. 具备显式实验签名或相同源码实现的函数事件放行
+// 12. 相同源码实现可放行；伪造显式实验签名必须拒绝
 {
   const fn1 = function customAction(ctx) { return 1; };
   const fn2 = function customAction(ctx) { return 1; };
@@ -198,7 +198,7 @@ const evtDrag = { type: 'activity', activityKind: 'drag', payload: { distance: 1
     res.valid === true && res.preconditions.eventMultisetEqual === true
   );
 
-  // 显式 eventSignature
+  // 显式 eventSignature 不能覆盖真实源码身份
   const sigFnA = (ctx) => 1;
   sigFnA.eventSignature = 'sig:custom_action_v1';
   const sigFnB = (ctx) => 2;
@@ -207,8 +207,8 @@ const evtDrag = { type: 'activity', activityKind: 'drag', payload: { distance: 1
     sequenceA: [sigFnA, evtPoke],
     sequenceB: [evtPoke, sigFnB]
   });
-  check('显式声明相同 eventSignature 的函数事件正常放行',
-    resSig.valid === true && resSig.preconditions.eventMultisetEqual === true
+  check('显式声明相同但与源码不符的 eventSignature 被拒绝',
+    resSig.valid === false && resSig.reason === 'PATH_EXPERIMENT_UNVERIFIABLE_FUNCTION_EVENT'
   );
 }
 

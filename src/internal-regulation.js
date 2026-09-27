@@ -91,6 +91,8 @@ class InternalRegulationManager {
     // 超过 256 时最早的 ID 按 FIFO 淘汰（Bounded Idempotency，保障内存可控与持久化边界）。
     this.consumedAttentionEvents = new Set();
     this.maxConsumedAttentionEvents = 256;
+    this.persistenceHealthy = true;
+    this.persistenceError = null;
 
     this.load();
   }
@@ -286,6 +288,7 @@ class InternalRegulationManager {
    */
   updateOnAttention(gateResult, details = {}) {
     if (!this.enabled || !gateResult || typeof gateResult !== 'object') return this.getState();
+    if (!this.persistenceHealthy) return this.getState();
     if (gateResult.status !== 'ATTENDED' || !gateResult.attended) return this.getState();
 
     // 稳定事件标识与 Watermark 去重（仅对具备真实稳定标识的事件消费并持久化，幂等守恒）
@@ -318,6 +321,14 @@ class InternalRegulationManager {
       }
     }
 
+    const before = {
+      arousal: this.arousal,
+      cognitiveLoadProxy: this.cognitiveLoadProxy,
+      salienceThreshold: this.salienceThreshold,
+      updatedAt: this.updatedAt,
+      history: this.history.slice(),
+      consumedAttentionEvents: new Set(this.consumedAttentionEvents)
+    };
     const at = Number(details.timestamp || Date.now());
     const salience = Number(gateResult.salience || 40);
     const prev = {
@@ -339,7 +350,15 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition('attention_attended', deltas, prev, at);
-    this.save();
+    if (!this.save()) {
+      this.arousal = before.arousal;
+      this.cognitiveLoadProxy = before.cognitiveLoadProxy;
+      this.salienceThreshold = before.salienceThreshold;
+      this.updatedAt = before.updatedAt;
+      this.history = before.history;
+      this.consumedAttentionEvents = before.consumedAttentionEvents;
+      return this.getState();
+    }
     return this.getState();
   }
 
@@ -463,9 +482,14 @@ class InternalRegulationManager {
           }
           return true;
         }
+        this.persistenceHealthy = false;
+        this.persistenceError = 'INVALID_PERSISTED_STATE_SHAPE';
+        return false;
       }
     } catch (e) {
-      console.warn('[InternalRegulation] 加载失败，回退默认值:', e.message);
+      this.persistenceHealthy = false;
+      this.persistenceError = e.message;
+      console.warn('[InternalRegulation] 加载失败，进入 fail-closed:', e.message);
     }
     return false;
   }

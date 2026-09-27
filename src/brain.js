@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Memory } = require('./memory');
 const { DeepSeek, isPeakHour, costOf } = require('./deepseek');
 const { PERSONA } = require('./persona');
@@ -914,13 +915,16 @@ class Brain {
       // P0-01 & P0-03: 程序仅为当前窗口的真实交互消息签发 Event (严格排除 System Prompt、Bridge 桥接、Synthetic 与内部调试)
       const events = [];
       const eventIdsSet = new Set();
-      for (const m of activeItems) {
+      for (const [eventIndex, m] of activeItems.entries()) {
         if (!isEligibleSubjectEvent(m)) {
           continue;
         }
 
+        const eventId = 'evt-' + crypto.createHash('sha256')
+          .update(JSON.stringify({ windowNo: snap.windowNo, eventIndex, source: m.role || 'user', content: m.content || '' }), 'utf8')
+          .digest('hex').slice(0, 24);
         const evt = createEvent({
-          eventId: 'evt-' + m.messageId.replace(/^m-/, ''),
+          eventId,
           type: 'message',
           timestamp: m.t || Date.now(),
           windowNo: snap.windowNo,
@@ -1271,8 +1275,6 @@ class Brain {
                   const matchingEvt = events.find(e => e.messageId === ev.messageId);
                   if (matchingEvt) {
                     sourceEventIds.push(matchingEvt.eventId);
-                  } else {
-                    sourceEventIds.push('evt-' + String(ev.messageId).replace(/^m-/, ''));
                   }
                 }
               }
@@ -1304,6 +1306,8 @@ class Brain {
                 sourceEvidenceIds,
                 sourceEventIds: sourceEventIds.length > 0 ? sourceEventIds : events.map(e => e.eventId),
                 sourceMessageRange,
+                sourceEvents: events,
+                sourceEvidence: evList,
                 verifiedEvidence: evList,
                 dayResidues: residues,
                 gateMetrics: gateResult.metrics,

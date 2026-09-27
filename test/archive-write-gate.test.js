@@ -211,7 +211,7 @@ console.log('--- Test Suite: Archive Write Gate (F-10) ---');
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
-// 9. getLastSequencedRecord() 鉴伪能力验证（忽略磁盘尾部非法损坏行）
+// 9. getLastSequencedRecord() 鉴伪能力验证（坏尾 fail-closed，不回退续写）
 {
   const dir = tmpDir();
   const archive = new ExperiencesArchive(dir);
@@ -235,10 +235,11 @@ console.log('--- Test Suite: Archive Write Gate (F-10) ---');
   }) + '\n';
   fs.appendFileSync(archive.path, forgedLine, 'utf8');
 
-  // getLastSequencedRecord 不应把这行伪造行认作链尾
+  // getLastSequencedRecord 不应把这行伪造行认作链尾，也不能回退到旧头
   const headAfterTamper = archive.getLastSequencedRecord();
-  check('文件尾部被非法写入篡改行时，getLastSequencedRecord 拒绝假尾部并安全回退到真实第 1 条',
-    headAfterTamper && headAfterTamper.archiveSeq === 1 && headAfterTamper.recordHash === validRec.recordHash);
+  check('文件尾部被非法写入篡改行时，getLastSequencedRecord fail-closed', headAfterTamper === null);
+  check('坏尾存在时 append 也被 fail-closed 拒绝', archive.appendRecord('diagnostic', 1, { afterTamper: true }) === false);
+  check('坏尾拒绝不会追加新记录', archive.readAllWithDiagnostics().diagnostics.totalLines === 2);
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
