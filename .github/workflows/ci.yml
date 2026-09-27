@@ -24,6 +24,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip playwright
           python -m playwright install --with-deps chromium
+      - name: Select Playwright Chromium for UI test
+        run: |
+          python - <<'PY'
+          import os
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as playwright:
+              with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+                  env.write(f'DESKPET_CHROME={playwright.chromium.executable_path}\n')
+          PY
       - name: Install dependencies
         run: npm ci
       - name: Run full test suite
