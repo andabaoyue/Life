@@ -315,9 +315,7 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
 现在过期或伪造（`kind` 不认识、`at` 不是数字）一律 `{ok:false, declined:true}`，
 而渲染端遇 `declined` 时连那条空的「初澜：」记录节点都摘掉 —— 这一轮真的当没发生过。
 
-**主动搭话不写进 history。** 触发理由是程序说的话，不是用户说的话；以 `user` 角色存进
-长期记忆等于让她以后把程序提示当成你说过的话记得。用 `buildWithEphemeralUser()`
-只在装配请求时拼上去。也不靠事后 `rollback(1)` 补救（v0.7 那次 abort 抢跑就是那个形状）。
+**主动搭话作为 synthetic 消息落入 history 保卫前缀缓存，但严格排除于主体经历证据之外。** 触发理由是程序生成的瞬时感知，不是用户原话。为了在下一轮完整复用「主动触发 + 模型回复」的 DeepSeek 前缀缓存块，主动搭话以 `{ synthetic: true, source: 'proactive' }` 写入 history；但在关窗小结与主体经历归档中，`isEligibleSubjectEvent()` 与 `cleanContentForSummary()` 会将其明确标记或剥离，严防程序提示伪装为用户发言或主体经历证据。
 
 两处按语义写的判据值得记一下：`poke` **豁免**"刚互动过 90 秒内保持安静"这条闸门 ——
 被戳本身就是"现在方便"的意思，第一版拿它挡连戳，把 poke 这条路整个饿死了；
@@ -385,7 +383,7 @@ node test/creative-mode.check.js # 7 项：创作 Skill（DS Skill）加载、�
 node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
 node test/deferred-writer.test.js # 8 项：脏标记、防抖延迟合并写盘、同步 flush、写失败保持 dirty、unref 定时器
 node test/migration.test.js       # 17 项：通用数据迁移、版本号升序执行、缺少迁移函数报错、版本防回退、自定义版本字段名
-node test/self-ledger.test.js   # 9 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置
+node test/self-ledger.test.js   # 27 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线
 node test/agent_interfaces.test.js # 6 项：能力白名单、默认 deny、行动提案、审计日志和 Mock 禁止执行
 node test/animation-controller.test.js # 30 项：自然动画控制器、60fps 驱动循环、状态转移、多图层独立物理摆动、Poke 动力学与打断机制
 node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸/眨眼/打哈欠/伸懒腰权重分发、打断与状态互斥、确定性覆盖
@@ -429,6 +427,7 @@ node test/internal-regulation.test.js # 23 项：Phase 0.5 内部状态调节中
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
 node test/attention-gate.test.js      # 18 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御）
 node test/path-dependency.test.js     # 13 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存）
+node test/experiment-metadata.test.js # 21 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 ```
@@ -476,7 +475,7 @@ pip install opencv-contrib-python numpy pillow
 **v0.9.7** — 《生命动力学第一迭代：梦境、遗忘与发育景观》（Life Dynamics: Dreams, Forgetting, and Epigenetic Landscape）：在 v0.9.6 严格窗口边界与因果证据底座之上，引入低成本、内生性的生命动力学机制，坚守 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 本体论边界与工程不可逆约束（D-001 ～ D-007）：
 - **工程架构决策账本 (`research/ENGINEERING-DECISION-LOG.md`)**：确立 D-001 ~ D-007 七大已决决策（SETTLED DECISION）；彻底封杀后台连续代谢 Tick（严禁 `setInterval` 扣除 energy/arousal）；坚决拒绝人类中心主义 24h 昼夜节律牢笼；确立关系时间（Relational Temporality），只有主体经历互动时生命历程才真正流逝。
 - **沃丁顿发育景观与经历依赖塑性衰减 (`src/canalization.js`)**：提出数字发育可塑性衰减模型 $\eta(W) = \frac{\eta_0}{1 + \gamma \ln(1 + W)}$；随窗口累积平滑衰减状态步长权重；划分幼态期（JUVENILE）、发育期（DEVELOPMENTAL）与稳定个体化期（STABILIZED）；历史参数（`baseStepWeight`、`effectiveStepWeight`、`plasticityMultiplier`）强一致性落盘于 `StateChange`，保证离线 Replay 100% 确定性；Baseline 模式塑性乘子严格恒为 1.0。
-- **零 API 成本记忆动力学与突触修剪 (`src/memory-dynamics.js` & `src/memory.js`)**：基于艾宾浩斯幂律 $S(W) = S_0 \cdot (1 + \Delta W)^{-d}$ 实现纯本地代数衰减；建立 `ACTIVE`（活跃）、`FADING`（渐褪）、`DORMANT`（休眠）三级流转；经历归档 `experiences.jsonl` 永不物理删除，休眠记忆仅静默移出 Prompt 节省上下文；`Memory.save()/load()` 与 `Brain` 实现双层冷启动持久化，跨进程重启遗忘状态零丢失；实现 `reactivateByContext()` 关联线索重新激活，用户对话命中特征词元时零 API 成本自动唤醒休眠印痕重回 Prompt 上下文。
+- **零 API 成本记忆动力学与突触修剪 (`src/memory-dynamics.js` & `src/memory.js`)**：基于改进型艾宾浩斯幂律方程 $S(W) = \text{clamp}\left(\frac{S_0 \cdot (1 + \beta \ln(1 + \text{retrievals}))}{(1 + \lambda \Delta W)^\alpha}, 0, 1\right)$（$\beta=0.15, \lambda=0.10, \alpha=1.15$）实现纯本地代数衰减；建立 `ACTIVE`（活跃）、`FADING`（渐褪）、`DORMANT`（休眠）三级流转；经历归档 `experiences.jsonl` 永不物理删除，休眠记忆仅静默移出 Prompt 节省上下文；`Memory.save()/load()` 与 `Brain` 实现双层冷启动持久化，跨进程重启遗忘状态零丢失；实现 `reactivateByContext()` 关联线索重新激活，用户对话命中特征词元时零 API 成本自动唤醒休眠印痕重回 Prompt 上下文。
 - **成本门禁式弗洛伊德梦境系统 (`src/dream-system.js` & `src/brain.js`)**：梦境决非定时无意义轮询，建立双重门禁机制——第一道本地认知张力门禁（通过 `computeWindowArousalTrajectory` 依据真实消息节奏与证据极性计算 5 分段唤醒度，接通情绪方差 $\ge 15.0$、尖峰跃迁 $\ge 25.0$、多重特质冲突分值 $\ge 0.75$ 与新异度 `noveltyScore` $\ge 0.8$）与第二道成本防护门禁（窗口间隔 $\ge 3$ 且 24 小时硬顶 2 次，冷启动自动从归档恢复 `dreamHistory` 防御重启绕过）；生成产物严格遵循 Canonical Schema v1 封装 `payload.dreamId` 与 `payload.epistemicStatus`，通过 `ArchiveIntegrityService` CERTIFIED 认证，绝对禁止直接修改 `SubjectState`；具备 Fail-Safe 容灾机制，梦境失败永不阻塞关窗主流程。
 - **全量测试套件与不可逆约束门禁**：新增 5 套专用测试套件共 132 项断言，全工程测试套件达 57 套，全部 100% 通过且零回归。
 

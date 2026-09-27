@@ -3,7 +3,7 @@ const path = require('path');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { createStateChange, validateStateChange, symmetricRound } = require('./state-change');
-const { normalizeArchiveRecord } = require('./experience-schema');
+const { normalizeArchiveRecord, checkMessageReference, checkQuoteInMessage } = require('./experience-schema');
 
 const SCHEMA_VERSION = 1;
 
@@ -581,122 +581,41 @@ class SubjectState {
         continue;
       }
 
-      // 3. messageId 检查
-      if (typeof messageId !== 'string' || !messageId.trim()) {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'MISSING_MESSAGE_ID',
-          windowNo,
-          trait: cleanTrait,
-          quote: String(quote || ''),
-          createdAt: Date.now()
-        });
-        continue;
-      }
-      const sourceMsg = msgMap.get(messageId.trim());
-      if (!sourceMsg) {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'MESSAGE_ID_NOT_FOUND',
-          windowNo,
-          trait: cleanTrait,
-          messageId: messageId.trim(),
-          quote: String(quote || ''),
-          createdAt: Date.now()
-        });
-        continue;
-      }
-
+      // 3. messageId 检查（P0-2: 复用 experience-schema.checkMessageReference 单一事实来源）
       // 3.1 目标窗口匹配强核验 (v0.9.6 P0-07)
       const targetWindowNo = (typeof windowNo === 'number' && !Number.isNaN(windowNo))
         ? windowNo
         : ((opts && typeof opts.windowNo === 'number' && !Number.isNaN(opts.windowNo)) ? opts.windowNo : null);
-      if (targetWindowNo !== null && typeof sourceMsg.windowNo === 'number' && !Number.isNaN(sourceMsg.windowNo) && sourceMsg.windowNo !== targetWindowNo) {
-        rejected.push({
+      const refCheck = checkMessageReference(messageId, msgMap, targetWindowNo);
+      if (!refCheck.ok) {
+        const rej = {
           evidenceId,
           status: 'rejected',
-          reason: 'MESSAGE_WINDOW_MISMATCH',
-          windowNo: targetWindowNo,
-          messageWindowNo: sourceMsg.windowNo,
+          reason: refCheck.reason,
+          windowNo: refCheck.reason === 'MESSAGE_WINDOW_MISMATCH' ? targetWindowNo : windowNo,
           trait: cleanTrait,
-          messageId: messageId.trim(),
+          messageId: String((refCheck.messageId || messageId) || ''),
           quote: String(quote || ''),
           createdAt: Date.now()
-        });
+        };
+        if (refCheck.reason === 'MESSAGE_WINDOW_MISMATCH') rej.messageWindowNo = refCheck.messageWindowNo;
+        if (refCheck.reason === 'INVALID_MESSAGE_ROLE') rej.role = refCheck.role;
+        rejected.push(rej);
         continue;
       }
+      const sourceMsg = refCheck.message;
 
-      // 3.2 Synthetic 消息不具备主体经历资格 (v0.9.6 P0-07)
-      if (sourceMsg.synthetic === true) {
+      // 4. quote 摘录检验（P0-2: 复用 checkQuoteInMessage；严格要求原文子串匹配）
+      const quoteCheck = checkQuoteInMessage(quote, sourceMsg);
+      if (!quoteCheck.ok) {
         rejected.push({
           evidenceId,
           status: 'rejected',
-          reason: 'SYNTHETIC_MESSAGE_NOT_ELIGIBLE',
+          reason: quoteCheck.reason,
           windowNo,
           trait: cleanTrait,
-          messageId: messageId.trim(),
-          quote: String(quote || ''),
-          createdAt: Date.now()
-        });
-        continue;
-      }
-
-      // 3.3 Bridge 消息仅作前缀缓存桥接，不计入新窗口证据 (v0.9.6 P0-07)
-      if (sourceMsg.bridge === true) {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'BRIDGE_MESSAGE_NOT_ELIGIBLE',
-          windowNo,
-          trait: cleanTrait,
-          messageId: messageId.trim(),
-          quote: String(quote || ''),
-          createdAt: Date.now()
-        });
-        continue;
-      }
-
-      // 3.4 消息角色合法性检验 (仅限 user 或 assistant) (v0.9.6 P0-07)
-      if (sourceMsg.role && sourceMsg.role !== 'user' && sourceMsg.role !== 'assistant') {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'INVALID_MESSAGE_ROLE',
-          windowNo,
-          role: sourceMsg.role,
-          trait: cleanTrait,
-          messageId: messageId.trim(),
-          quote: String(quote || ''),
-          createdAt: Date.now()
-        });
-        continue;
-      }
-
-      // 4. quote 摘录检验（严格要求原文子串匹配）
-      if (typeof quote !== 'string' || !quote.trim()) {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'MISSING_QUOTE',
-          windowNo,
-          trait: cleanTrait,
-          messageId: messageId.trim(),
-          createdAt: Date.now()
-        });
-        continue;
-      }
-      const rawContent = String(sourceMsg.content || '');
-      if (!rawContent.includes(quote.trim())) {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'QUOTE_NOT_IN_SOURCE_MESSAGE',
-          windowNo,
-          trait: cleanTrait,
-          messageId: messageId.trim(),
-          quote: quote.trim(),
+          messageId: String((refCheck.messageId || messageId) || ''),
+          ...(quoteCheck.reason === 'QUOTE_NOT_IN_SOURCE_MESSAGE' ? { quote: String(quote || '').trim() } : {}),
           createdAt: Date.now()
         });
         continue;

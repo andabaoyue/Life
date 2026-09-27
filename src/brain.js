@@ -15,6 +15,7 @@ const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, v
 const { createStateChangeExplanation } = require('./state-change');
 const { InternalRegulationManager } = require('./internal-regulation');
 const { createExperimentRunManifest, createWindowExperimentSnapshot } = require('./experiment-run');
+const { buildGenerationContext, collectPromptHashes } = require('./experiment-metadata');
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -834,6 +835,29 @@ class Brain {
     }).join('\n');
 
     try {
+      const summaryPromptHashes = collectPromptHashes({
+        summary: SUMMARY_SYS,
+        persona: this.persona || '',
+        growth: GROWTH_SYS,
+        merge: MERGE_SYS
+      });
+
+      const sourceMessageRange = {
+        firstMessageId: activeItems[0] ? activeItems[0].messageId : null,
+        lastMessageId: activeItems[activeItems.length - 1] ? activeItems[activeItems.length - 1].messageId : null,
+        messageCount: activeItems.length
+      };
+
+      const summaryGenerationContext = buildGenerationContext({
+        kind: 'summary',
+        cfg: this.cfg,
+        promptHashes: summaryPromptHashes,
+        sampling: { maxTokens: 900, temperature: 0.2 },
+        sourceWindowNo: snap.windowNo,
+        sourceMessageRange,
+        generator: 'llm'
+      });
+
       const { text, usage } = await this.api.complete(
         [{ role: 'system', content: SUMMARY_SYS },
          { role: 'user', content: '【对话】\n' + dialogue }],
@@ -1088,7 +1112,9 @@ class Brain {
             rejectedEvidence,
             stateChanges,
             explanations,
-            rawSummaryText: text
+            rawSummaryText: text,
+            generationContext: summaryGenerationContext,
+            sourceMessageRange
           });
         }
       } else {
@@ -1129,6 +1155,7 @@ class Brain {
         return false;
       }
 
+      snap.generationContext = summaryGenerationContext;
       const done = this.memory.closeWindow(summaryTextForMemory, snap);
       if (done) {
         this.stats.compressions++;
@@ -1147,7 +1174,8 @@ class Brain {
             result: {
               currentSelfText: this.selfLedger ? this.selfLedger.currentSelfText() : '',
               totalEntries: this.selfLedger ? this.selfLedger.entries.length : 0
-            }
+            },
+            generationContext: summaryGenerationContext
           });
         }
 
@@ -1237,7 +1265,10 @@ class Brain {
         }
 
         if (this.cfg.selfGrowthEnabled === true)
-          await this.growSelf(dialogue, summaryTextForMemory, this.memory.data.windowNo - 1);
+          await this.growSelf(dialogue, summaryTextForMemory, snap.windowNo, {
+            msgMap,
+            sourceMessageRange
+          });
 
         if (done) {
           // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
@@ -1292,7 +1323,21 @@ class Brain {
       this.track(usage, true, 'merge');
       if (this.shutdownRequested) return false;
       if (!text) return false;
-      this.memory.applyMerge(text, plan.keep);
+
+      const mergeGenCtx = buildGenerationContext({
+        kind: 'merge',
+        cfg: this.cfg,
+        promptHashes: collectPromptHashes({
+          merge: MERGE_SYS,
+          summary: SUMMARY_SYS,
+          persona: this.persona || '',
+          growth: GROWTH_SYS
+        }),
+        sampling: { maxTokens: 400, temperature: 0.2 },
+        generator: 'llm'
+      });
+
+      this.memory.applyMerge(text, plan.keep, { generationContext: mergeGenCtx });
       this.pendingCacheBreakReason = 'memory_merge';
       this.stats.merges++;
       this.saveStats(true);
@@ -1304,7 +1349,7 @@ class Brain {
   }
 
   /** 低频主体成长检查点：只在窗口小结成功后调用一次。 */
-  async growSelf(dialogue, summary, window) {
+  async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;
       const { text, usage } = await this.api.complete(
@@ -1317,7 +1362,38 @@ class Brain {
       this.stats.growthCalls = (this.stats.growthCalls || 0) + 1;
       const raw = String(text || '').trim()
         .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-      const added = this.selfLedger.append(JSON.parse(raw), { window });
+
+      const growthPromptHashes = collectPromptHashes({
+        growth: GROWTH_SYS,
+        summary: SUMMARY_SYS,
+        persona: this.persona || '',
+        merge: MERGE_SYS
+      });
+
+      const growthGenCtx = buildGenerationContext({
+        kind: 'growth',
+        cfg: this.cfg,
+        promptHashes: growthPromptHashes,
+        sampling: { maxTokens: 420, temperature: 0.15 },
+        sourceWindowNo: window,
+        sourceMessageRange: opts.sourceMessageRange || null,
+        generator: 'llm'
+      });
+
+      const rejected = [];
+      const appendMeta = {
+        window,
+        generation: growthGenCtx,
+        rejected
+      };
+      if (opts.msgMap) {
+        appendMeta.verify = {
+          msgMap: opts.msgMap,
+          windowNo: window
+        };
+      }
+
+      const added = this.selfLedger.append(JSON.parse(raw), appendMeta);
       if (added > 0 && this.experiencesArchive && typeof this.experiencesArchive.appendSelfProjection === 'function') {
         this.experiencesArchive.appendSelfProjection({
           windowNo: window,
@@ -1328,7 +1404,9 @@ class Brain {
           result: {
             currentSelfText: this.selfLedger.currentSelfText(),
             totalEntries: this.selfLedger.entries.length
-          }
+          },
+          generationContext: growthGenCtx,
+          rejectedEvidence: rejected
         });
       }
       this.saveStats();

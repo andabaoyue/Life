@@ -177,6 +177,12 @@ class ExperiencesArchive {
       explanations: Array.isArray(data.explanations) ? data.explanations : [],
       rawSummaryText: typeof data.rawSummaryText === 'string' ? data.rawSummaryText : ''
     };
+    if (data.generationContext && typeof data.generationContext === 'object') {
+      payload.generationContext = data.generationContext;
+    }
+    if (data.sourceMessageRange && typeof data.sourceMessageRange === 'object') {
+      payload.sourceMessageRange = data.sourceMessageRange;
+    }
 
     return this.appendRecord('window_summary', windowNo, payload);
   }
@@ -194,6 +200,12 @@ class ExperiencesArchive {
       result: data.result || {},
       timestamp: Date.now()
     };
+    if (data.generationContext && typeof data.generationContext === 'object') {
+      payload.generationContext = data.generationContext;
+    }
+    if (Array.isArray(data.rejectedEvidence)) {
+      payload.rejectedEvidence = data.rejectedEvidence;
+    }
     return this.appendRecord('self_projection', windowNo, payload);
   }
 

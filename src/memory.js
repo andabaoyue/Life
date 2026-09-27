@@ -394,14 +394,18 @@ class Memory {
 
     const closedWindowNo = this.data.windowNo;
     const turnsRecorded = (snap && typeof snap.snapshotTurnCount === 'number') ? snap.snapshotTurnCount : this.data.turnsInWindow;
-    this.data.windows.push({
+    const winObj = {
       no: closedWindowNo,
       turns: turnsRecorded,
       actualTurnCount: (snap && typeof snap.actualTurnCount === 'number') ? snap.actualTurnCount : turnsRecorded,
       closeReason: (snap && snap.closeReason) || 'turn_limit',
       at: Date.now(),
       text: String(summaryText).trim()
-    });
+    };
+    if (snap && snap.generationContext && typeof snap.generationContext === 'object') {
+      winObj.generationContext = snap.generationContext;
+    }
+    this.data.windows.push(winObj);
 
     if (this.engramManager) {
       this.engramManager.registerTrace({
@@ -485,9 +489,13 @@ class Memory {
     return { old: ws.slice(0, split), keep: ws.slice(split) };
   }
 
-  applyMerge(mergedText, keptWindows) {
+  applyMerge(mergedText, keptWindows, meta = {}) {
+    const earlyObj = { no: 0, early: true, at: Date.now(), text: String(mergedText).trim() };
+    if (meta && meta.generationContext && typeof meta.generationContext === 'object') {
+      earlyObj.generationContext = meta.generationContext;
+    }
     this.data.windows = [
-      { no: 0, early: true, at: Date.now(), text: String(mergedText).trim() },
+      earlyObj,
       ...keptWindows
     ];
     this.save(true);

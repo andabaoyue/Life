@@ -3,6 +3,7 @@ const path = require('path');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { migrate } = require('./migration');
+const { checkMessageReference, checkQuoteInMessage } = require('./experience-schema');
 
 /**
  * 初澜生命档案：原始成长证据（本地持久化）与 Current Self（运行投影）分离。
@@ -26,21 +27,76 @@ function sourceType(value) {
 }
 function evidence(raw, fallbackAt, fallbackWindow) {
   if (typeof raw === 'string') {
-    return { sourceType: 'MODEL_INTERPRETATION', window: fallbackWindow, messageIds: [], quote: cleanText(raw), at: fallbackAt, confidence: 0.5 };
+    return { sourceType: 'MODEL_INTERPRETATION', window: fallbackWindow, messageIds: [], quote: cleanText(raw), at: fallbackAt, confidence: 0.5, verification: 'UNVERIFIED' };
   }
   const x = raw || {};
   return {
     sourceType: sourceType(x.sourceType),
     window: Number.isInteger(x.window) ? x.window : fallbackWindow,
-    messageIds: Array.isArray(x.messageIds) ? x.messageIds.filter(Number.isInteger).slice(0, 20) : [],
+    messageIds: Array.isArray(x.messageIds)
+      ? x.messageIds.filter(id => Number.isInteger(id) || (typeof id === 'string' && id.trim())).slice(0, 20)
+      : [],
     quote: cleanText(x.quote || x.text),
     at: Number.isFinite(x.at) ? x.at : fallbackAt,
-    confidence: Number.isFinite(x.confidence) ? Math.max(0, Math.min(1, x.confidence)) : 0.5
+    confidence: Number.isFinite(x.confidence) ? Math.max(0, Math.min(1, x.confidence)) : 0.5,
+    verification: x.verification === 'VERIFIED' ? 'VERIFIED' : 'UNVERIFIED'
   };
 }
 function normalizeEvidenceList(raw, at, window) {
   const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
   return list.map(x => evidence(x, at, window)).filter(x => x.quote || x.sourceType === 'PROGRAM_OBSERVATION').slice(0, 4);
+}
+
+/**
+ * 成长证据事实核验（复用 experience-schema 的 provenance 核心原语，
+ * 与 SubjectState.verifyEvidence 同一套判据，不另立第二套规则）。
+ *
+ * 核验内容：
+ *   1. messageIds 非空且每个 ID 在消息池中真实存在（MISSING_MESSAGE_ID / MESSAGE_ID_NOT_FOUND）
+ *   2. 引用消息属于目标窗口（MESSAGE_WINDOW_MISMATCH）
+ *   3. synthetic / bridge / 非法角色消息不得作为成长证据（SYNTHETIC_/BRIDGE_MESSAGE_NOT_ELIGIBLE / INVALID_MESSAGE_ROLE）
+ *   4. quote 必须是某条引用消息的字面子串（MISSING_QUOTE / QUOTE_NOT_IN_SOURCE_MESSAGE）
+ *   5. quote 所属消息确实属于目标窗口（第 2 步保证）
+ *
+ * @returns {{ok: true, evidence: Object} | {ok: false, reason: string}}
+ */
+function verifyGrowthEvidence(rawEvidence, msgMap, targetWindowNo) {
+  const x = rawEvidence && typeof rawEvidence === 'object' ? rawEvidence : null;
+  if (!x) return { ok: false, reason: 'INVALID_OBJECT' };
+  const ids = Array.isArray(x.messageIds)
+    ? x.messageIds.filter(id => Number.isInteger(id) || (typeof id === 'string' && id.trim()))
+    : [];
+  if (!ids.length) return { ok: false, reason: 'MISSING_MESSAGE_ID' };
+  const windowNo = Number.isInteger(targetWindowNo) ? targetWindowNo : null;
+  const referenced = [];
+  for (const rawId of ids) {
+    const ref = checkMessageReference(String(rawId), msgMap, windowNo);
+    if (!ref.ok) return { ok: false, reason: ref.reason };
+    referenced.push(ref.message);
+  }
+  const quote = typeof x.quote === 'string' ? x.quote.trim() : '';
+  if (!quote) return { ok: false, reason: 'MISSING_QUOTE' };
+  let quoteOk = false;
+  for (const msg of referenced) {
+    const q = checkQuoteInMessage(quote, msg);
+    if (q.ok) { quoteOk = true; break; }
+  }
+  if (!quoteOk) return { ok: false, reason: 'QUOTE_NOT_IN_SOURCE_MESSAGE' };
+  const verifiedWindow = (typeof referenced[0].windowNo === 'number' && !Number.isNaN(referenced[0].windowNo))
+    ? referenced[0].windowNo
+    : (windowNo != null ? windowNo : (Number.isInteger(x.window) ? x.window : 0));
+  return {
+    ok: true,
+    evidence: {
+      sourceType: sourceType(x.sourceType),
+      window: verifiedWindow,
+      messageIds: ids.map(id => (Number.isInteger(id) ? id : String(id).trim())).slice(0, 20),
+      quote: quote.slice(0, MAX_TEXT),
+      at: Number.isFinite(x.at) ? x.at : 0,
+      confidence: Number.isFinite(x.confidence) ? Math.max(0, Math.min(1, x.confidence)) : 0.5,
+      verification: 'VERIFIED'
+    }
+  };
 }
 /**
  * 计算假说反思/证伪压力与有效置信度 (Decision D-005 & Phase 0.5)
@@ -88,6 +144,9 @@ function normalizeEntry(raw = {}, index = 0) {
     at, window, trait, support, oppose,
     evidence: fallbackEvidence
   };
+  if (raw.generation && typeof raw.generation === 'object') {
+    entry.generation = { ...raw.generation };
+  }
   const metrics = calculateRevisionPressure(entry);
   entry.revisionPressure = metrics.revisionPressure;
   entry.confidence = metrics.confidence;
@@ -179,12 +238,52 @@ class SelfLedger {
     this.writer.flush();
   }
 
+  /**
+   * 追加成长条目。
+   * meta.generation  — 绑定生成元数据（随条目持久化，绝不入 prompt）
+   * meta.verify      — 事实核验上下文 { msgMap, windowNo }。
+   *                    提供时，每个 support/oppose 证据都必须通过 provenance 原语核验，
+   *                    非法证据被剥离，meta.rejected 收集拒绝原因；
+   *                    无合法证据的条目被整条拒绝，绝不伪造。
+   * meta.rejected    — 接收被拒绝条目/证据原因的可选数组
+   */
   append(entries, meta = {}) {
     const at = Number.isFinite(meta.at) ? meta.at : Date.now();
     const window = Number.isInteger(meta.window) ? meta.window : 0;
-    const added = (Array.isArray(entries) ? entries : [entries])
-      .map((x, i) => normalizeEntry({ ...x, at: x && x.at || at,
-        window: x && x.window !== undefined ? x.window : window }, i))
+    const rawList = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
+    const rejected = Array.isArray(meta.rejected) ? meta.rejected : [];
+
+    const prepared = [];
+    for (const x of rawList) {
+      if (!meta.verify) {
+        prepared.push({ ...x, at: (x && x.at) || at, window: (x && x.window !== undefined) ? x.window : window });
+        continue;
+      }
+      const verifyWindow = Number.isInteger(meta.verify.windowNo) ? meta.verify.windowNo : window;
+      const clean = { ...x, at: (x && x.at) || at, window: verifyWindow, support: [], oppose: [], evidence: '' };
+      for (const [channel, list] of [['support', x && x.support], ['oppose', x && x.oppose]]) {
+        const src = Array.isArray(list) ? list : (list ? [list] : []);
+        for (const ev of src.slice(0, 4)) {
+          const res = verifyGrowthEvidence(ev, meta.verify.msgMap, verifyWindow);
+          if (res.ok) clean[channel].push(res.evidence);
+          else rejected.push({ entry: cleanText(x && x.trait), channel, reason: res.reason, evidence: ev });
+        }
+      }
+      if (!clean.support.length && !clean.oppose.length) {
+        rejected.push({ entry: cleanText(x && x.trait), channel: 'entry', reason: 'NO_VERIFIABLE_EVIDENCE', evidence: null });
+        continue;
+      }
+      prepared.push(clean);
+    }
+
+    const added = prepared
+      .map((x, i) => {
+        const entry = normalizeEntry(x, i);
+        if (entry && meta.generation && typeof meta.generation === 'object') {
+          entry.generation = { ...meta.generation };
+        }
+        return entry;
+      })
       .filter(Boolean);
     if (!added.length) return 0;
     this.entries.push(...added);
@@ -273,4 +372,4 @@ class SelfLedger {
   list() { return this.entries.map((e, i) => ({ index: i, ...e })); }
 }
 
-module.exports = { SelfLedger, normalizeEntry, calculateRevisionPressure, SOURCE_TYPES, SCHEMA_VERSION };
+module.exports = { SelfLedger, normalizeEntry, calculateRevisionPressure, verifyGrowthEvidence, SOURCE_TYPES, SCHEMA_VERSION };

@@ -447,11 +447,73 @@ function validateWindowSummary(summaryObj, options = {}) {
   return { valid: true };
 }
 
+/**
+ * P0-2: 消息引用核验（单一事实来源）
+ *
+ * 供 SubjectState.verifyEvidence 与 SelfLedger.verifyGrowthEvidence 共享，
+ * 遵循严格的 Provenance 判定链：
+ *   MISSING_MESSAGE_ID / MESSAGE_ID_NOT_FOUND / MESSAGE_WINDOW_MISMATCH /
+ *   SYNTHETIC_MESSAGE_NOT_ELIGIBLE / BRIDGE_MESSAGE_NOT_ELIGIBLE / INVALID_MESSAGE_ROLE
+ *
+ * @param {*} messageId 待查消息 ID
+ * @param {Map|Object} msgMap 消息映射池 (messageId -> message)
+ * @param {number|null} targetWindowNo 目标窗口号 (null 表示不限制窗口)
+ * @returns {{ok: true, messageId: string, message: Object} | {ok: false, reason: string, messageId?: string, messageWindowNo?: number, role?: string}}
+ */
+function checkMessageReference(messageId, msgMap, targetWindowNo = null) {
+  if (typeof messageId !== 'string' || !messageId.trim()) {
+    return { ok: false, reason: 'MISSING_MESSAGE_ID' };
+  }
+  const id = messageId.trim();
+  let map = msgMap;
+  if (map && !(map instanceof Map) && typeof map === 'object') {
+    map = new Map(Object.entries(map));
+  }
+  const message = (map instanceof Map) ? map.get(id) : null;
+  if (!message) {
+    return { ok: false, reason: 'MESSAGE_ID_NOT_FOUND', messageId: id };
+  }
+  if (targetWindowNo !== null && typeof message.windowNo === 'number' && !Number.isNaN(message.windowNo)
+      && message.windowNo !== targetWindowNo) {
+    return { ok: false, reason: 'MESSAGE_WINDOW_MISMATCH', messageId: id, messageWindowNo: message.windowNo };
+  }
+  if (message.synthetic === true) {
+    return { ok: false, reason: 'SYNTHETIC_MESSAGE_NOT_ELIGIBLE', messageId: id };
+  }
+  if (message.bridge === true) {
+    return { ok: false, reason: 'BRIDGE_MESSAGE_NOT_ELIGIBLE', messageId: id };
+  }
+  if (message.role && message.role !== 'user' && message.role !== 'assistant') {
+    return { ok: false, reason: 'INVALID_MESSAGE_ROLE', messageId: id, role: message.role };
+  }
+  return { ok: true, messageId: id, message };
+}
+
+/**
+ * P0-2: 摘录字面子串核验（单一事实来源）
+ *
+ * @param {*} quote 摘录文本
+ * @param {Object} message 原始消息对象
+ * @returns {{ok: true, quote: string} | {ok: false, reason: string}}
+ */
+function checkQuoteInMessage(quote, message) {
+  if (typeof quote !== 'string' || !quote.trim()) {
+    return { ok: false, reason: 'MISSING_QUOTE' };
+  }
+  const rawContent = String((message && message.content) || '');
+  if (!rawContent.includes(quote.trim())) {
+    return { ok: false, reason: 'QUOTE_NOT_IN_SOURCE_MESSAGE' };
+  }
+  return { ok: true, quote: quote.trim() };
+}
+
 module.exports = {
   SCHEMA_VERSION,
   ALLOWED_EVENT_TYPES,
   ALLOWED_EVENT_SOURCES,
   PROHIBITED_EVENT_SOURCES,
+  checkMessageReference,
+  checkQuoteInMessage,
   isEligibleSubjectEvent,
   createEvent,
   validateEvent,
@@ -464,3 +526,4 @@ module.exports = {
   normalizeArchiveRecord,
   validateWindowSummary
 };
+

@@ -136,3 +136,22 @@
   4. **数字环周与注意力闸门认识论防线（Perception Candidate & Attention Invariant）：** 真实物理刺激经四级漏斗进入 `DigitalUmwelt` 生成知觉候选，再经 `AttentionGate` 进行显著性门限过滤；严格恪守 `subjectAccessible = false` 与 `ATTENDED ≠ SUBJECT_ACQUIRED`，绝不越级篡改主体状态或自传记忆。
   5. **冷启动恢复历史事实优先原则（History Precedence on Cold Restart）：** 系统冷启动按照 `Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection` 严格顺序恢复；经历归档快照的真实历史事实严格优先于默认初始状态。
 
+---
+
+## Decision D-010: 实验条件元数据绑定与证据事实核验铁律 (Generation Context Binding & Growth Provenance Enforcement)
+
+- **状态：** `SETTLED DECISION`
+- **生效版本：** Phase 2 (v0.9.8)
+- **决策内容：**
+  1. **实验条件元数据绑定（Generation Context Binding）：** 所有模型生成产物（窗口小结 `window_summary`、成长账本条目 `self_ledger`、长期记忆合并 `window_merge`）必须绑定完整的生成条件元数据（`kind`、`modelName`、`modelVersion`、`gitCommit`、`sampling`、`promptHashes`、`sourceMessageRange`），随记录持久化落盘于经历归档与账本中。
+  2. **前缀缓存纯洁性铁律（Prefix Cache Purity Invariant）：** 动态实验条件元数据绝对不拼入 `systemText()`（persona、wardrobe、window.text），确保 DeepSeek KV 稳定前缀缓存完全不受动态元数据变化的影响。
+  3. **历史真实性铁律（No Fabrication）：** 旧记录缺失元数据时，显式标记为 `unavailable` / `NOT_RECORDED`，严禁用当前环境配置伪造历史事实。
+  4. **成长证据单一事实来源核验（Single Source of Truth Growth Provenance）：** `SelfLedger.append()` 与 `Brain.growSelf()` 必须复用 `experience-schema` 的 provenance 原语进行端到端事实核验，非法/捏造/跨窗口/合成/桥接证据一律拒绝并记录入 `rejectedEvidence`，无合法证据条目整条被拒，绝不篡改历史。
+- **立论依据与哲学假设：**
+  1. **科学可复现性（Scientific Reproducibility）：** 任何实验结论必须能够追溯到其精确的生成条件（当时的 Prompt 模板哈希、采样温度、模型版本与代码 commit），否则演化观察无法被独立同行审计和复现。
+  2. **认识论诚实（Epistemic Honesty）：** 缺失的数据就是缺失的数据，标记 `NOT_RECORDED` 是科学的真实，用当前运行环境去回填历史则是伪造。
+- **执行规则：**
+  - `src/experiment-metadata.js` 统一实现纯代数元数据生成与校验；
+  - `Brain.closeWindow`、`Brain.growSelf`、`Brain.mergeMemory` 全量接入；
+  - `SelfLedger` 启用强事实核验与 `rejected` 追踪。
+
