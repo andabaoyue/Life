@@ -290,20 +290,13 @@ class Brain {
       this.recentPerceptions.shift();
     }
 
-    // 稳定事件标识与 Watermark 提取
+    // 稳定事件标识与 Watermark 提取（仅当输入明确携带稳定事件标识时记录，绝不使用粗糙哈希误去重无标识的相继刺激）
     let eventId = null;
     if (rawSensorData && typeof rawSensorData === 'object') {
       if (typeof rawSensorData.eventId === 'string' && rawSensorData.eventId.trim()) {
         eventId = rawSensorData.eventId.trim();
       } else if (typeof rawSensorData.perceptionId === 'string' && rawSensorData.perceptionId.trim()) {
         eventId = rawSensorData.perceptionId.trim();
-      } else if (rawSensorData.t || rawSensorData.timestamp) {
-        const timeVal = rawSensorData.t || rawSensorData.timestamp;
-        const sourceVal = rawSensorData.source || rawSensorData.type || '';
-        const crypto = require('crypto');
-        eventId = 'fp:' + crypto.createHash('sha256')
-          .update(`${candidate.category}|${candidate.salience}|${candidate.intensity}|${sourceVal}|${timeVal}`, 'utf8')
-          .digest('hex').slice(0, 32);
       }
     }
 

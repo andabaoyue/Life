@@ -157,5 +157,60 @@ const evtDrag = { type: 'activity', activityKind: 'drag', payload: { distance: 1
   check('throwOnError 成功拦截异常', threw === true);
 }
 
+// 10. 函数事件审计：两个同名但实现不同的函数被明确拦截 (Event Multiset Mismatch)
+{
+  function stepA(ctx) { if (ctx && ctx.reg) ctx.reg.energy = 50; }
+  function stepB(ctx) { if (ctx && ctx.reg) ctx.reg.restPressure = 50; }
+  Object.defineProperty(stepB, 'name', { value: 'stepA' });
+
+  const res = runPathDependencyExperiment({
+    sequenceA: [stepA, evtPoke],
+    sequenceB: [evtPoke, stepB]
+  });
+  check('同名但不同实现的函数事件未通过等价性校验，被明确拦截',
+    res.valid === false && res.reason === 'PATH_EXPERIMENT_EVENT_SET_MISMATCH'
+  );
+  check('函数事件不匹配时 eventMultisetEqual=false',
+    res.preconditions && res.preconditions.eventMultisetEqual === false
+  );
+}
+
+// 11. 无法证明等价性的裸函数（如 native 函数无显式签名）被直接拒绝
+{
+  const res = runPathDependencyExperiment({
+    sequenceA: [Math.sin, evtPoke],
+    sequenceB: [evtPoke, Math.sin]
+  });
+  check('无法证明等价性的裸 native 函数事件被明确拒绝',
+    res.valid === false && res.reason === 'PATH_EXPERIMENT_UNVERIFIABLE_FUNCTION_EVENT'
+  );
+}
+
+// 12. 具备显式实验签名或相同源码实现的函数事件放行
+{
+  const fn1 = function customAction(ctx) { return 1; };
+  const fn2 = function customAction(ctx) { return 1; };
+  const res = runPathDependencyExperiment({
+    sequenceA: [fn1, evtPoke],
+    sequenceB: [evtPoke, fn2]
+  });
+  check('源码实现相同的函数事件通过签名比对并正常放行',
+    res.valid === true && res.preconditions.eventMultisetEqual === true
+  );
+
+  // 显式 eventSignature
+  const sigFnA = (ctx) => 1;
+  sigFnA.eventSignature = 'sig:custom_action_v1';
+  const sigFnB = (ctx) => 2;
+  sigFnB.eventSignature = 'sig:custom_action_v1';
+  const resSig = runPathDependencyExperiment({
+    sequenceA: [sigFnA, evtPoke],
+    sequenceB: [evtPoke, sigFnB]
+  });
+  check('显式声明相同 eventSignature 的函数事件正常放行',
+    resSig.valid === true && resSig.preconditions.eventMultisetEqual === true
+  );
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

@@ -285,8 +285,25 @@ class InternalRegulationManager {
     if (!this.enabled || !gateResult || typeof gateResult !== 'object') return this.getState();
     if (gateResult.status !== 'ATTENDED' || !gateResult.attended) return this.getState();
 
-    // 稳定事件标识与 Watermark 去重（同一事件只消费一次，幂等守恒）
-    const eventId = details.eventId || details.perceptionId || details.watermarkId || gateResult.eventId || gateResult.perceptionId;
+    // 稳定事件标识与 Watermark 去重（仅对具备真实稳定标识的事件消费并持久化，幂等守恒）
+    // 注意：若无明确稳定标识，严禁通过简单内容哈希将合法相继发生的不同刺激误去重
+    let eventId = null;
+    if (details && typeof details === 'object' && ('eventId' in details || 'perceptionId' in details)) {
+      if (typeof details.eventId === 'string' && details.eventId.trim()) {
+        eventId = details.eventId.trim();
+      } else if (typeof details.perceptionId === 'string' && details.perceptionId.trim()) {
+        eventId = details.perceptionId.trim();
+      }
+    } else {
+      if (typeof details?.watermarkId === 'string' && details.watermarkId.trim()) {
+        eventId = details.watermarkId.trim();
+      } else if (typeof gateResult.eventId === 'string' && gateResult.eventId.trim()) {
+        eventId = gateResult.eventId.trim();
+      } else if (typeof gateResult.perceptionId === 'string' && gateResult.perceptionId.trim()) {
+        eventId = gateResult.perceptionId.trim();
+      }
+    }
+
     if (eventId) {
       if (this.consumedAttentionEvents.has(eventId)) {
         return this.getState();
@@ -319,6 +336,7 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition('attention_attended', deltas, prev, at);
+    this.save();
     return this.getState();
   }
 
@@ -437,6 +455,9 @@ class InternalRegulationManager {
           else if (raw.values && typeof raw.values.isSleeping === 'boolean') this.isSleeping = raw.values.isSleeping;
           this.updatedAt = raw.updatedAt || Date.now();
           if (Array.isArray(raw.history)) this.history = raw.history.slice(-50);
+          if (Array.isArray(raw.consumedAttentionEvents)) {
+            this.consumedAttentionEvents = new Set(raw.consumedAttentionEvents.slice(-this.maxConsumedAttentionEvents));
+          }
           return true;
         }
       }
@@ -468,6 +489,7 @@ class InternalRegulationManager {
           interactionDensity: this.interactionDensity,
           cognitiveLoadProxy: this.cognitiveLoadProxy
         },
+        consumedAttentionEvents: Array.from(this.consumedAttentionEvents).slice(-this.maxConsumedAttentionEvents),
         history: this.history
       };
       writeJsonAtomic(this.path, data);

@@ -209,6 +209,52 @@ check('全流程端到端绝对不包含操作系统物理裸信息 (containsLea
   check('Watermark 消费集合大小受上限严格约束 (<= 256)',
     regMgr.consumedAttentionEvents.size <= 256
   );
+
+  // 11.7 Watermark 持久化与跨重启严格幂等测试
+  const persistTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'attention-persist-test-'));
+  const inst1 = new InternalRegulationManager(persistTmpDir);
+  inst1.updateOnAttention(strongRes, { eventId: 'evt-restart-watermark-100' });
+  const rawDisk = JSON.parse(fs.readFileSync(path.join(persistTmpDir, 'internal-regulation.json'), 'utf8'));
+  check('Watermark 消费事件集合持久化写入磁盘文件',
+    Array.isArray(rawDisk.consumedAttentionEvents) &&
+    rawDisk.consumedAttentionEvents.includes('evt-restart-watermark-100')
+  );
+
+  // 重启：构造全新实例从同一目录加载
+  const inst2 = new InternalRegulationManager(persistTmpDir);
+  check('重启后全新实例正确恢复已消费的 Watermark 集合',
+    inst2.consumedAttentionEvents.has('evt-restart-watermark-100') === true
+  );
+  const arousalBeforeReplay = inst2.arousal;
+  const cogLoadBeforeReplay = inst2.cognitiveLoadProxy;
+  inst2.updateOnAttention(strongRes, { eventId: 'evt-restart-watermark-100' });
+  check('重启后重复提交相同 eventId 严格保持幂等，绝不发生二次状态漂移',
+    inst2.arousal === arousalBeforeReplay && inst2.cognitiveLoadProxy === cogLoadBeforeReplay
+  );
+
+  // 11.8 缺乏 eventId / perceptionId 的连续感知事件不发生误去重 (No False Deduplication)
+  const instNoId = new InternalRegulationManager(persistTmpDir);
+  const anonymousCandidate = {
+    category: 'touch_stimulus',
+    qualitativeDescriptor: 'gentle_poke',
+    salience: 60,
+    perceptionStatus: PERCEPTION_STATUS.CANDIDATE,
+    subjectAccessible: false
+  };
+  const anonymousGateRes = evaluateAttentionGate(anonymousCandidate, calmReg);
+  const a0 = instNoId.arousal;
+  instNoId.updateOnAttention(anonymousGateRes); // 缺乏 eventId 首次刺激
+  const a1 = instNoId.arousal;
+  check('缺乏 eventId 的注意力刺激正常被摄入微调状态', a1 > a0);
+
+  instNoId.updateOnAttention(anonymousGateRes); // 缺乏 eventId 第二次相继刺激
+  const a2 = instNoId.arousal;
+  check('缺乏 eventId 的连续注意力刺激绝不被粗糙哈希误去重，正常二次响应', a2 > a1);
+
+  // 显式传入 eventId: null 同样不进行误去重
+  instNoId.updateOnAttention(strongRes, { eventId: null });
+  const a3 = instNoId.arousal;
+  check('显式未带 eventId 的感知事件正常连续响应', a3 > a2);
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

@@ -60,7 +60,37 @@ function normalizeState(obj) {
 function canonicalizeEvent(item) {
   if (!item) return '';
   if (typeof item === 'function') {
-    return JSON.stringify({ type: 'function', name: item.name || 'anonymous' });
+    // 显式提取受控实验签名
+    const explicitSignature = (typeof item.eventSignature === 'string' && item.eventSignature.trim())
+      ? item.eventSignature.trim()
+      : ((typeof item.signature === 'string' && item.signature.trim()) ? item.signature.trim() : null);
+
+    // 代码体源码签名规范化
+    const rawSource = typeof item.toString === 'function' ? item.toString().trim() : '';
+    const isNative = !rawSource || rawSource.includes('[native code]');
+    const sourceSignature = (!isNative && rawSource.length > 0)
+      ? 'body:' + sha256(rawSource.replace(/\s+/g, ' '))
+      : null;
+
+    // 无法证明等价性的裸函数事件（如 native/bound 函数且无显式签名），直接标记不可审计
+    if (!explicitSignature && !sourceSignature) {
+      return canonicalStringify({
+        type: 'unverifiable_function',
+        name: item.name || 'anonymous',
+        unverifiable: true,
+        token: crypto.randomBytes(8).toString('hex')
+      });
+    }
+
+    const eventName = (typeof item.eventName === 'string' && item.eventName.trim())
+      ? item.eventName.trim()
+      : (explicitSignature ? explicitSignature : (item.name || 'anonymous'));
+
+    return canonicalStringify({
+      type: 'function',
+      name: eventName,
+      signature: explicitSignature || sourceSignature
+    });
   }
   if (typeof item === 'object') {
     const clean = {
@@ -244,7 +274,11 @@ function runPathDependencyExperiment(options = {}) {
 
   // 综合前置条件判定
   let reason = null;
-  if (!initialStateEqual) {
+  const hasUnverifiableFunction = eventSetA.some(s => s.includes('"unverifiable_function"')) ||
+                                  eventSetB.some(s => s.includes('"unverifiable_function"'));
+  if (hasUnverifiableFunction) {
+    reason = 'PATH_EXPERIMENT_UNVERIFIABLE_FUNCTION_EVENT';
+  } else if (!initialStateEqual) {
     reason = 'PATH_EXPERIMENT_INITIAL_STATE_MISMATCH';
   } else if (!eventMultisetEqual) {
     reason = 'PATH_EXPERIMENT_EVENT_SET_MISMATCH';
