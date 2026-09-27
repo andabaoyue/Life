@@ -769,8 +769,14 @@ with sync_playwright() as p:
                 top:r.top,bottom:r.bottom,left:r.left,right:r.right,
                 h:r.height,vh:innerHeight,vw:innerWidth};})()""")
     check("极端贴边也能弹出菜单（不是靠运气）", not mrect["hidden"])
-    check("菜单高度实测约 272px（Gemini 估的 245 偏小）",
-          240 <= mrect["h"] <= 285, "h=%s" % round(mrect["h"]))
+    # 9 项菜单跨平台布局契约 (C-08 审计收口)：
+    # #menu padding: 4px*2 = 8px; 9 个菜单项各 padding: 7px*2 = 14px，font-size: 12.5px。
+    # 字体行高 (line-height: normal) 因系统字体引擎而异：
+    # - Windows (Segoe UI / 微软雅黑): line-height ≈ 16.5px -> 单项高 ≈ 30.5px -> 总高 ≈ 282px (实测 272~285px)
+    # - Linux Headless CI (DejaVu/FreeSans): line-height ≈ 19.6px -> 单项高 ≈ 33.6px -> 总高 ≈ 310px (实测 295~315px)
+    # v0.9.5 新增「实验观测/复盘」使菜单项由 8 项扩充至 9 项，合法渲染区间严格界定为 [260px, 315px]，拒绝无界放宽
+    check("9 项菜单高度符合跨平台字体渲染布局契约 [260px, 315px]",
+          260 <= mrect["h"] <= 315, "h=%s" % round(mrect["h"]))
     check("菜单下沿不出窗口", mrect["bottom"] <= mrect["vh"] + 1,
           "bottom=%s vh=%s" % (round(mrect["bottom"]), mrect["vh"]))
     check("菜单右沿不出窗口", mrect["right"] <= mrect["vw"] + 1,

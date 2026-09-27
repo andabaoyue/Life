@@ -171,7 +171,7 @@ function evaluateDreamGate(opts = {}) {
   }
 
   // 24小时频次硬顶约束 (显式时间注入，绝不隐式依赖系统时刻漂移)
-  const now = typeof opts.now === 'number' ? opts.now : (typeof opts.timestamp === 'number' ? opts.timestamp : Date.now());
+  const now = typeof opts.now === 'number' ? opts.now : (typeof opts.timestamp === 'number' ? opts.timestamp : (opts.clock && typeof opts.clock.now === 'function' ? opts.clock.now() : Date.now()));
   const oneDayAgo = now - 24 * 60 * 60 * 1000;
   const recentDreamCount = dreamHistory.filter(d => (d.generatedAt || d.timestamp || 0) >= oneDayAgo).length;
   if (recentDreamCount >= cfg.maximumDreamCallsPer24h) {
@@ -295,8 +295,25 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const content = String(res.text || '').trim();
     if (!content) return null;
 
-    const now = typeof options.now === 'number' ? options.now : Date.now();
-    const dreamId = `dream-w${windowNo}-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const now = typeof options.now === 'number'
+      ? options.now
+      : (typeof context.now === 'number'
+        ? context.now
+        : ((options.clock && typeof options.clock.now === 'function')
+          ? options.clock.now()
+          : ((context.clock && typeof context.clock.now === 'function')
+            ? context.clock.now()
+            : Date.now())));
+
+    const idSuffix = (typeof options.idGenerator === 'function')
+      ? options.idGenerator('dream')
+      : ((typeof context.idGenerator === 'function')
+        ? context.idGenerator('dream')
+        : (context.dreamIdSuffix || options.dreamIdSuffix || Math.random().toString(36).slice(2, 6)));
+
+    const dreamId = (options.dreamId || context.dreamId)
+      ? (options.dreamId || context.dreamId)
+      : `dream-w${windowNo}-${now.toString(36)}-${idSuffix}`;
     const outputHash = sha256(content);
 
     // P0-1: 真实记录 API 返回的 observedModel，严禁回退到 cfg.model 伪造
@@ -327,6 +344,36 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       dream: promptHash
     });
 
+    // F-11 Provenance 修复：严谨区分 messageRange、sourceEventIds 与 sourceEvidenceIds
+    let resolvedSourceMessageRange = null;
+    if (context.sourceMessageRange && typeof context.sourceMessageRange === 'object') {
+      resolvedSourceMessageRange = {
+        startMessageId: String(context.sourceMessageRange.startMessageId || 'unknown'),
+        endMessageId: String(context.sourceMessageRange.endMessageId || 'unknown'),
+        count: typeof context.sourceMessageRange.count === 'number' ? context.sourceMessageRange.count : 0
+      };
+    } else if (Array.isArray(context.sourceMessageIds) && context.sourceMessageIds.length > 0) {
+      resolvedSourceMessageRange = {
+        startMessageId: String(context.sourceMessageIds[0]),
+        endMessageId: String(context.sourceMessageIds[context.sourceMessageIds.length - 1]),
+        count: context.sourceMessageIds.length
+      };
+    } else if (Array.isArray(context.verifiedEvidence) && context.verifiedEvidence.length > 0) {
+      const msgIds = context.verifiedEvidence.map(e => e.messageId).filter(Boolean);
+      resolvedSourceMessageRange = {
+        startMessageId: msgIds[0] ? String(msgIds[0]) : 'unknown',
+        endMessageId: msgIds[msgIds.length - 1] ? String(msgIds[msgIds.length - 1]) : 'unknown',
+        count: msgIds.length
+      };
+    } else {
+      // 遗留兼容分支：仅在无任何 message 溯源信息时回退
+      resolvedSourceMessageRange = {
+        startMessageId: (context.sourceEventIds && context.sourceEventIds[0]) ? String(context.sourceEventIds[0]) : 'unknown',
+        endMessageId: (context.sourceEventIds && context.sourceEventIds[context.sourceEventIds.length - 1]) ? String(context.sourceEventIds[context.sourceEventIds.length - 1]) : 'unknown',
+        count: Array.isArray(context.sourceEventIds) ? context.sourceEventIds.length : (context.dayResidues ? context.dayResidues.length : 0)
+      };
+    }
+
     // P0-3: 统一 GenerationContext 语义，动态解析 provider，绝不硬编码 'deepseek'
     const generationContext = buildGenerationContext({
       kind: 'dream',
@@ -340,11 +387,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       observedModel,
       modelVersion,
       modules: options.experimentModules || context.experimentModules || {},
-      sourceMessageRange: {
-        startMessageId: (context.sourceEventIds && context.sourceEventIds[0]) ? String(context.sourceEventIds[0]) : 'unknown',
-        endMessageId: (context.sourceEventIds && context.sourceEventIds[context.sourceEventIds.length - 1]) ? String(context.sourceEventIds[context.sourceEventIds.length - 1]) : 'unknown',
-        count: Array.isArray(context.sourceEventIds) ? context.sourceEventIds.length : (context.dayResidues ? context.dayResidues.length : 0)
-      }
+      sourceMessageRange: resolvedSourceMessageRange
     });
 
     const dreamPayload = {
@@ -360,7 +403,11 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       dayResidues: context.dayResidues || [],
       narrative: content,
       content,
-      sourceEventIds: context.sourceEventIds || [],
+      sourceEvidenceIds: Array.isArray(context.sourceEvidenceIds)
+        ? context.sourceEvidenceIds
+        : (Array.isArray(context.verifiedEvidence) ? context.verifiedEvidence.map(e => e.evidenceId).filter(Boolean) : []),
+      sourceEventIds: Array.isArray(context.sourceEventIds) ? context.sourceEventIds : [],
+      sourceMessageRange: resolvedSourceMessageRange,
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},
       dreamModel: generationContext.modelName,
@@ -393,7 +440,9 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       narrative: content,
       promptHash,
       outputHash,
-      sourceEventIds: context.sourceEventIds || [],
+      sourceEvidenceIds: dreamPayload.sourceEvidenceIds,
+      sourceEventIds: dreamPayload.sourceEventIds,
+      sourceMessageRange: dreamPayload.sourceMessageRange,
       dayResidues: context.dayResidues || [],
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},

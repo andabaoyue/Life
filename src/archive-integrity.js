@@ -43,6 +43,7 @@ const VALID_RECORD_TYPES = new Set([
   'window_archive',
   'recovery_event',
   'diagnostic',
+  'custom',
   'event',
   'observation',
   'interpretation',
@@ -111,8 +112,15 @@ function validateArchiveRecord(record, options = {}) {
     }
 
     const wNo = record.windowNo;
-    if (typeof wNo !== 'number' || wNo < 0 || isNaN(wNo)) {
-      return { valid: false, reason: 'MISSING_OR_INVALID_WINDOW_NO' };
+    const requiresWindowNo = (recType === 'window_summary' || recType === 'window_archive');
+    if (requiresWindowNo) {
+      if (typeof wNo !== 'number' || wNo < 0 || isNaN(wNo)) {
+        return { valid: false, reason: 'MISSING_OR_INVALID_WINDOW_NO' };
+      }
+    } else {
+      if (wNo !== null && (typeof wNo !== 'number' || wNo < 0 || isNaN(wNo))) {
+        return { valid: false, reason: 'MISSING_OR_INVALID_WINDOW_NO' };
+      }
     }
   }
 
@@ -274,8 +282,9 @@ function validateArchiveRecord(record, options = {}) {
       break;
     }
 
+    case 'custom':
     case 'diagnostic': {
-      // 容许诊断记录任意结构化 payload
+      // 容许诊断记录与自定义测试记录任意结构化 payload
       break;
     }
 
@@ -529,7 +538,11 @@ class ArchiveIntegrityService {
    * @returns {Object} 完整性报告
    */
   static checkArchive(archivePath) {
-    if (!archivePath || !fs.existsSync(archivePath)) {
+    let targetFile = archivePath;
+    if (targetFile && fs.existsSync(targetFile) && fs.statSync(targetFile).isDirectory()) {
+      targetFile = path.join(targetFile, 'experiences.jsonl');
+    }
+    if (!targetFile || !fs.existsSync(targetFile)) {
       return {
         integrity: INTEGRITY_STATUS.INVALID,
         replayStatus: REPLAY_STATUS.INVALID,
@@ -539,7 +552,7 @@ class ArchiveIntegrityService {
         skippedCount: 0,
         totalLines: 0,
         hasLegacyAdapter: false,
-        diagnostics: [{ lineNumber: 0, error: 'ARCHIVE_FILE_NOT_FOUND', path: archivePath }],
+        diagnostics: [{ lineNumber: 0, error: 'ARCHIVE_FILE_NOT_FOUND', path: targetFile }],
         records: []
       };
     }

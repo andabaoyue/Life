@@ -86,7 +86,10 @@ class InternalRegulationManager {
     this.isSleeping = false;
     this.updatedAt = Date.now();
     this.history = []; // 最近转移事件流水 (上限 50 条)
-    this.consumedAttentionEvents = new Set(); // 注意力事件消费 Watermark 去重集合
+    // 注意力事件消费 Watermark 去重集合 (F-13: 有界滑动窗口幂等，非全历史无界幂等)
+    // 语义界定：在最近 256 个消费事件范围内提供持久化幂等保障；
+    // 超过 256 时最早的 ID 按 FIFO 淘汰（Bounded Idempotency，保障内存可控与持久化边界）。
+    this.consumedAttentionEvents = new Set();
     this.maxConsumedAttentionEvents = 256;
 
     this.load();

@@ -1257,9 +1257,54 @@ class Brain {
             if (gateResult && gateResult.allowDream) {
               const residues = extractDayResidues(snap.activeItems || [], verifiedEvidence || []);
               const dreamPrompt = buildDreamSynthesisPrompt(residues, snap.windowNo);
+
+              // F-11: 严谨三层 Provenance 分离 (evidenceId ≠ eventId ≠ messageId)
+              const evList = verifiedEvidence || [];
+              const sourceEvidenceIds = evList.map(e => e.evidenceId).filter(Boolean);
+
+              // 提取关联的客观 Event IDs
+              const sourceEventIds = [];
+              for (const ev of evList) {
+                if (ev.eventId) {
+                  sourceEventIds.push(ev.eventId);
+                } else if (ev.messageId) {
+                  const matchingEvt = events.find(e => e.messageId === ev.messageId);
+                  if (matchingEvt) {
+                    sourceEventIds.push(matchingEvt.eventId);
+                  } else {
+                    sourceEventIds.push('evt-' + String(ev.messageId).replace(/^m-/, ''));
+                  }
+                }
+              }
+
+              // 提取原始交互消息范围
+              const windowActiveItems = snap.activeItems || [];
+              let sourceMessageRange = null;
+              if (windowActiveItems.length > 0) {
+                const firstMsg = windowActiveItems[0];
+                const lastMsg = windowActiveItems[windowActiveItems.length - 1];
+                sourceMessageRange = {
+                  startMessageId: firstMsg.messageId || String(firstMsg.id || 'unknown'),
+                  endMessageId: lastMsg.messageId || String(lastMsg.id || 'unknown'),
+                  count: windowActiveItems.length
+                };
+              } else if (evList.length > 0) {
+                const evMsgIds = evList.map(e => e.messageId).filter(Boolean);
+                if (evMsgIds.length > 0) {
+                  sourceMessageRange = {
+                    startMessageId: evMsgIds[0],
+                    endMessageId: evMsgIds[evMsgIds.length - 1],
+                    count: evMsgIds.length
+                  };
+                }
+              }
+
               const dreamRecord = await synthesizeDream(this.api, dreamPrompt, {
                 windowNo: snap.windowNo,
-                sourceEventIds: (verifiedEvidence || []).map(e => e.evidenceId).filter(Boolean),
+                sourceEvidenceIds,
+                sourceEventIds: sourceEventIds.length > 0 ? sourceEventIds : events.map(e => e.eventId),
+                sourceMessageRange,
+                verifiedEvidence: evList,
                 dayResidues: residues,
                 gateMetrics: gateResult.metrics,
                 gateThresholds: gateResult.thresholds

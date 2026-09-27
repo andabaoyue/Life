@@ -74,8 +74,14 @@ function createExperimentRunManifest(options = {}) {
     }
   }
 
-  const runId = `expr-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-  const nowIso = new Date().toISOString();
+  const nowMs = typeof options.now === 'number'
+    ? options.now
+    : (options.clock && typeof options.clock.now === 'function' ? options.clock.now() : Date.now());
+  const nowIso = options.nowIso || new Date(nowMs).toISOString();
+  const idSuffix = typeof options.idGenerator === 'function'
+    ? options.idGenerator('run')
+    : (options.idSuffix || crypto.randomBytes(4).toString('hex'));
+  const runId = options.runId || `expr-${nowMs}-${idSuffix}`;
 
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
@@ -105,9 +111,10 @@ function createExperimentRunManifest(options = {}) {
  * 
  * @param {number} windowNo
  * @param {Object} runManifest
+ * @param {Object} [options={}]
  * @returns {Readonly<Object>}
  */
-function createWindowExperimentSnapshot(windowNo, runManifest) {
+function createWindowExperimentSnapshot(windowNo, runManifest, options = {}) {
   if (typeof windowNo !== 'number' || windowNo < 0) {
     throw new Error(`Invalid windowNo: ${windowNo}. Must be non-negative integer.`);
   }
@@ -115,8 +122,14 @@ function createWindowExperimentSnapshot(windowNo, runManifest) {
     throw new Error('Valid experiment runManifest is required to create window snapshot.');
   }
 
-  const snapshotId = `snap-${runManifest.experimentRunId}-w${windowNo}-${crypto.randomBytes(3).toString('hex')}`;
-  const nowIso = new Date().toISOString();
+  const nowMs = typeof options.now === 'number'
+    ? options.now
+    : (options.clock && typeof options.clock.now === 'function' ? options.clock.now() : Date.now());
+  const nowIso = options.nowIso || new Date(nowMs).toISOString();
+  const idSuffix = typeof options.idGenerator === 'function'
+    ? options.idGenerator('snapshot')
+    : (options.idSuffix || crypto.randomBytes(3).toString('hex'));
+  const snapshotId = options.snapshotId || `snap-${runManifest.experimentRunId}-w${windowNo}-${idSuffix}`;
 
   const snapshot = {
     schemaVersion: SCHEMA_VERSION,

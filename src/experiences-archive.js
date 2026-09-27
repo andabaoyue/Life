@@ -22,13 +22,20 @@ class ExperiencesArchive {
 
   /**
    * 获取最近一条已编序的归档记录 (用于衔接 hash chain 与递增 archiveSeq)
+   * 严格核验链尾真实性，绝不盲目信任被破坏或篡改的残留尾部
    */
   getLastSequencedRecord() {
     const records = this.readAll();
     for (let i = records.length - 1; i >= 0; i--) {
       const r = records[i];
       if (r && typeof r.archiveSeq === 'number' && !Number.isNaN(r.archiveSeq) && r.recordHash) {
-        return r;
+        const expectedHash = computeCanonicalRecordHash(r);
+        if (r.recordHash === expectedHash) {
+          const v = validateArchiveRecord(r, { allowLegacy: true });
+          if (v.valid) {
+            return r;
+          }
+        }
       }
     }
     return null;
@@ -36,34 +43,71 @@ class ExperiencesArchive {
 
   /**
    * 追加一条归档记录（JSON 行）。具备 fsync 持久化保障与因果哈希链。
+   * 严格 Schema 与防篡改哈希写门禁（F-10 / User Constraint #3）：
+   * 1. 显式传入 archiveSeq 若不等于预期序号直接拒绝；
+   * 2. 显式传入 prevHash 若不等于上一条 recordHash 直接拒绝；
+   * 3. 显式传入 recordHash 若与 Canonical 计算哈希不一致直接拒绝；
+   * 4. 必须先通过 validateArchiveRecord() 校验，绝不向磁盘写入坏记录。
    */
   append(record) {
-    if (!record || typeof record !== 'object') return false;
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
 
     const last = this.getLastSequencedRecord();
     const defaultSeq = last ? last.archiveSeq + 1 : 1;
     const defaultRecordId = `rec-${String(defaultSeq).padStart(6, '0')}`;
     const defaultPrevHash = last ? last.recordHash : 'GENESIS';
 
+    // 1. 序列号守门：若调用方显式传入 archiveSeq，必须与根据已有链计算出的下一个合法序号完全一致
+    if (record.archiveSeq !== undefined && record.archiveSeq !== null) {
+      if (record.archiveSeq !== defaultSeq) {
+        console.error(`[ExperiencesArchive] append rejected: invalid or forged archiveSeq (expected ${defaultSeq}, got ${record.archiveSeq})`);
+        return false;
+      }
+    }
+
+    // 2. 前驱哈希守门：若调用方显式传入 prevHash，必须与上一条记录的 recordHash 完全一致
+    if (record.prevHash !== undefined && record.prevHash !== null) {
+      if (record.prevHash !== defaultPrevHash) {
+        console.error(`[ExperiencesArchive] append rejected: invalid or forged prevHash (expected ${defaultPrevHash}, got ${record.prevHash})`);
+        return false;
+      }
+    }
+
     const entry = {
       ...record,
       schemaVersion: record.schemaVersion || 1,
       recordType: record.recordType || record.type || 'window_summary',
       recordId: record.recordId || defaultRecordId,
-      archiveSeq: typeof record.archiveSeq === 'number' ? record.archiveSeq : defaultSeq,
+      archiveSeq: defaultSeq,
       timestamp: (typeof record.timestamp === 'number' && !isNaN(record.timestamp))
         ? record.timestamp
         : ((typeof record.createdAt === 'number' && !isNaN(record.createdAt)) ? record.createdAt : Date.now()),
       windowNo: (typeof record.windowNo === 'number' && !isNaN(record.windowNo))
         ? record.windowNo
         : (record.windowNo === null ? null : (record.payload && typeof record.payload.windowNo === 'number' ? record.payload.windowNo : null)),
-      payload: record.payload !== undefined ? record.payload : {},
-      prevHash: record.prevHash !== undefined ? record.prevHash : defaultPrevHash
+      payload: (record.payload !== undefined && record.payload !== null && typeof record.payload === 'object' && !Array.isArray(record.payload))
+        ? record.payload
+        : (record.payload !== undefined ? record.payload : {}),
+      prevHash: defaultPrevHash
     };
 
     if (!entry.createdAt) entry.createdAt = entry.timestamp;
-    if (!entry.recordHash) {
-      entry.recordHash = computeCanonicalRecordHash(entry);
+
+    // 3. 当前记录哈希守门：若调用方显式传入 recordHash，必须与重新计算的 Canonical 哈希完全一致
+    const computedHash = computeCanonicalRecordHash(entry);
+    if (record.recordHash !== undefined && record.recordHash !== null) {
+      if (record.recordHash !== computedHash) {
+        console.error(`[ExperiencesArchive] append rejected: recordHash mismatch (expected ${computedHash}, got ${record.recordHash})`);
+        return false;
+      }
+    }
+    entry.recordHash = computedHash;
+
+    // 4. Schema 强校验：必须在写盘前通过 validateArchiveRecord()，严禁“先写盘后报错”污染实验底座
+    const validation = validateArchiveRecord(entry, { allowLegacy: true });
+    if (!validation.valid) {
+      console.error(`[ExperiencesArchive] append rejected: schema validation failed (${validation.reason})`);
+      return false;
     }
 
     const line = JSON.stringify(entry) + '\n';

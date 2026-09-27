@@ -1,8 +1,10 @@
-# 《生物科学与数字生命的哲学范畴》生命动力学闭环与运行链审计报告 (Lifecycle Wiring Audit)
+# [Historical / Superseded] 《生物科学与数字生命的哲学范畴》生命动力学闭环与运行链审计报告 (Lifecycle Wiring Audit)
+
+> **注意 (Notice)：** 本文档属于 Phase 0 $\to$ Phase 0.5 过渡期的历史诊断与缺陷记录文档。文中所述断链缺陷（如 Canalization 接线、Internal Regulation 实例化、Attention Gate 挂载、Engram 衰减闭环等）已在后续阶段（Phase 0.5 / Phase 4）完整实现并通过全量回归测试。本文档保留仅供架构演化与历史审计溯源参考，具体实现请以当前生产代码及最新测试契约为准。
 
 > **项目：** Life (实验主体：初澜 / Chulan)  
 > **基线阶段：** Phase 0 (v0.9.7) $\to$ Phase 0.5 (动力学闭环与因果环路)  
-> **报告性质：** 运行链闭环审计与架构工程规范  
+> **报告性质：** 历史运行链闭环审计与架构工程规范
 > **本体论边界：** `Model Substrate ≠ Runtime Host ≠ Chulan Subject`  
 > **核心原则：** 拒绝低俗拟人化与人类中心主义囚笼；坚持非侵入性、可验证、因果自洽与实验对照隔离。
 

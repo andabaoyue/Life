@@ -153,13 +153,30 @@ function buildGenerationContext(opts = {}) {
     ? {
         firstMessageId: opts.sourceMessageRange.firstMessageId != null
           ? String(opts.sourceMessageRange.firstMessageId)
-          : (opts.sourceMessageRange.startId != null ? String(opts.sourceMessageRange.startId) : UNAVAILABLE),
+          : (opts.sourceMessageRange.startMessageId != null
+            ? String(opts.sourceMessageRange.startMessageId)
+            : (opts.sourceMessageRange.startId != null ? String(opts.sourceMessageRange.startId) : UNAVAILABLE)),
         lastMessageId: opts.sourceMessageRange.lastMessageId != null
           ? String(opts.sourceMessageRange.lastMessageId)
-          : (opts.sourceMessageRange.endId != null ? String(opts.sourceMessageRange.endId) : UNAVAILABLE),
+          : (opts.sourceMessageRange.endMessageId != null
+            ? String(opts.sourceMessageRange.endMessageId)
+            : (opts.sourceMessageRange.endId != null ? String(opts.sourceMessageRange.endId) : UNAVAILABLE)),
+        startMessageId: opts.sourceMessageRange.startMessageId != null
+          ? String(opts.sourceMessageRange.startMessageId)
+          : (opts.sourceMessageRange.firstMessageId != null
+            ? String(opts.sourceMessageRange.firstMessageId)
+            : (opts.sourceMessageRange.startId != null ? String(opts.sourceMessageRange.startId) : UNAVAILABLE)),
+        endMessageId: opts.sourceMessageRange.endMessageId != null
+          ? String(opts.sourceMessageRange.endMessageId)
+          : (opts.sourceMessageRange.lastMessageId != null
+            ? String(opts.sourceMessageRange.lastMessageId)
+            : (opts.sourceMessageRange.endId != null ? String(opts.sourceMessageRange.endId) : UNAVAILABLE)),
         messageCount: Number.isInteger(opts.sourceMessageRange.messageCount)
           ? opts.sourceMessageRange.messageCount
-          : (Number.isInteger(opts.sourceMessageRange.count) ? opts.sourceMessageRange.count : null)
+          : (Number.isInteger(opts.sourceMessageRange.count) ? opts.sourceMessageRange.count : null),
+        count: Number.isInteger(opts.sourceMessageRange.count)
+          ? opts.sourceMessageRange.count
+          : (Number.isInteger(opts.sourceMessageRange.messageCount) ? opts.sourceMessageRange.messageCount : null)
       }
     : null;
 

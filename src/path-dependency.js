@@ -24,6 +24,9 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const { SCHEMA_VERSION } = require('./experiment-types');
 const { InternalRegulationManager } = require('./internal-regulation');
@@ -48,10 +51,14 @@ function canonicalStringify(obj) {
 
 function normalizeState(obj) {
   if (!obj || typeof obj !== 'object') return {};
+  if (Array.isArray(obj)) {
+    return obj.map(item => (typeof item === 'object' && item !== null ? normalizeState(item) : item));
+  }
   const sorted = {};
   for (const k of Object.keys(obj).sort()) {
     if (!['updatedAt', 'timestamp', 'lastUpdated', 't'].includes(k)) {
-      sorted[k] = obj[k];
+      const val = obj[k];
+      sorted[k] = (typeof val === 'object' && val !== null) ? normalizeState(val) : val;
     }
   }
   return sorted;
@@ -100,13 +107,18 @@ function canonicalizeEvent(item) {
     if (item.isAsleep !== undefined) clean.isAsleep = Boolean(item.isAsleep);
     if (item.windowNo !== undefined) clean.windowNo = item.windowNo;
 
+    // 区分语义 payload 与 transport ID：
+    // transport ID: 't', 'timestamp', 'id', 'uuid', 'runId', '_id', 'traceId', 'spanId' (传输临时标识)
+    // 真正影响实验语义的字段全部保留并严格参与比较
     if (item.payload && typeof item.payload === 'object') {
       clean.payload = {};
       for (const k of Object.keys(item.payload).sort()) {
-        if (!['t', 'timestamp', 'id', 'uuid', 'eventId', 'runId', '_id'].includes(k)) {
+        if (!['t', 'timestamp', 'id', 'uuid', 'runId', '_id', 'traceId', 'spanId'].includes(k)) {
           clean.payload[k] = item.payload[k];
         }
       }
+    } else if (item.payload !== undefined) {
+      clean.payload = item.payload;
     }
 
     if (Array.isArray(item.evidenceList)) {
@@ -125,21 +137,141 @@ function canonicalizeEvent(item) {
   return String(item);
 }
 
-function canonicalizeConfig(cfg = {}) {
+const RECOGNIZED_CONFIG_FIELDS = new Set([
+  'experimentMode',
+  'experimentModules',
+  'model',
+  'modelVersion',
+  'provider',
+  'endpoint',
+  'sampling',
+  'seed',
+  'runtimeEngineVersion',
+  'engineVersion',
+  'version',
+  'dreamConfig',
+  'temperature',
+  'maxTokens'
+]);
+
+const NON_SEMANTIC_CONFIG_FIELDS = new Set([
+  'apiKey', 'key', 'secret', 'token', 'auth', 'password',
+  '_meta', '_comment', 'debug', 'userDataDir', 'dir', 'path'
+]);
+
+function canonicalizeConfig(cfg = {}, options = {}) {
+  if (!cfg || typeof cfg !== 'object') {
+    const defaultCanonical = canonicalStringify({ experimentMode: 'enabled', experimentModules: {} });
+    return options.detailed ? { canonical: defaultCanonical, unknownFields: [] } : defaultCanonical;
+  }
+
+  const unknownFields = [];
+  for (const k of Object.keys(cfg)) {
+    if (!RECOGNIZED_CONFIG_FIELDS.has(k) && !NON_SEMANTIC_CONFIG_FIELDS.has(k)) {
+      unknownFields.push(k);
+    }
+  }
+
   const clean = {
     experimentMode: cfg.experimentMode || 'enabled',
     experimentModules: normalizeState(cfg.experimentModules || {})
   };
-  return canonicalStringify(clean);
+
+  if (cfg.model !== undefined) clean.model = String(cfg.model);
+  if (cfg.modelVersion !== undefined) clean.modelVersion = String(cfg.modelVersion);
+  if (cfg.provider !== undefined) clean.provider = String(cfg.provider);
+  if (cfg.endpoint !== undefined) clean.endpoint = String(cfg.endpoint);
+  if (cfg.seed !== undefined) clean.seed = cfg.seed;
+  if (cfg.runtimeEngineVersion !== undefined || cfg.engineVersion !== undefined || cfg.version !== undefined) {
+    clean.runtimeEngineVersion = String(cfg.runtimeEngineVersion || cfg.engineVersion || cfg.version);
+  }
+
+  const sampling = {};
+  if (cfg.sampling && typeof cfg.sampling === 'object') {
+    for (const sk of Object.keys(cfg.sampling)) {
+      if (['temperature', 'maxTokens', 'topP', 'topK', 'seed'].includes(sk)) {
+        sampling[sk] = cfg.sampling[sk];
+      } else {
+        unknownFields.push(`sampling.${sk}`);
+      }
+    }
+  }
+  if (cfg.temperature !== undefined && sampling.temperature === undefined) {
+    sampling.temperature = cfg.temperature;
+  }
+  if (cfg.maxTokens !== undefined && sampling.maxTokens === undefined) {
+    sampling.maxTokens = cfg.maxTokens;
+  }
+  if (Object.keys(sampling).length > 0) {
+    clean.sampling = sampling;
+  }
+
+  if (cfg.dreamConfig && typeof cfg.dreamConfig === 'object') {
+    clean.dreamConfig = normalizeState(cfg.dreamConfig);
+  }
+
+  const canonical = canonicalStringify(clean);
+  return options.detailed ? { canonical, unknownFields: unknownFields.sort() } : canonical;
 }
 
-function canonicalizeProbe(probe = {}) {
+const RECOGNIZED_PROBE_FIELDS = new Set([
+  'category',
+  'salience',
+  'intensity',
+  'source',
+  'sensorType',
+  'location',
+  'environmentVersion',
+  'noise',
+  'payload',
+  'qualitativeDescriptor'
+]);
+
+const NON_SEMANTIC_PROBE_FIELDS = new Set([
+  'traceId', 'spanId', 'logTag', '_meta', '_comment', 'debug'
+]);
+
+function canonicalizeProbe(probe = {}, options = {}) {
+  if (!probe || typeof probe !== 'object') {
+    const defaultCanonical = canonicalStringify({
+      category: 'environmental_probe',
+      salience: 42,
+      intensity: 45
+    });
+    return options.detailed ? { canonical: defaultCanonical, unknownFields: [] } : defaultCanonical;
+  }
+
+  const unknownFields = [];
+  for (const k of Object.keys(probe)) {
+    if (!RECOGNIZED_PROBE_FIELDS.has(k) && !NON_SEMANTIC_PROBE_FIELDS.has(k)) {
+      unknownFields.push(k);
+    }
+  }
+
   const clean = {
     category: probe.category || 'environmental_probe',
     salience: Number(probe.salience ?? 42),
     intensity: Number(probe.intensity ?? 45)
   };
-  return canonicalStringify(clean);
+
+  if (probe.source !== undefined) clean.source = String(probe.source);
+  if (probe.sensorType !== undefined) clean.sensorType = String(probe.sensorType);
+  if (probe.location !== undefined) {
+    clean.location = typeof probe.location === 'object' ? normalizeState(probe.location) : probe.location;
+  }
+  if (probe.environmentVersion !== undefined) clean.environmentVersion = probe.environmentVersion;
+  if (probe.noise !== undefined) {
+    clean.noise = typeof probe.noise === 'object' ? normalizeState(probe.noise) : probe.noise;
+  }
+  if (probe.payload !== undefined) {
+    clean.payload = typeof probe.payload === 'object' ? normalizeState(probe.payload) : probe.payload;
+  }
+  if (probe.qualitativeDescriptor !== undefined) {
+    clean.qualitativeDescriptor = String(probe.qualitativeDescriptor);
+  }
+
+  const canonical = canonicalStringify(clean);
+  return options.detailed ? { canonical, unknownFields: unknownFields.sort() } : canonical;
 }
 
 /**
@@ -182,6 +314,7 @@ function runPathDependencyExperiment(options = {}) {
     userDataDirB,
     initialStateA,
     initialStateB,
+    clock,
     throwOnError = false
   } = options;
 
@@ -191,8 +324,13 @@ function runPathDependencyExperiment(options = {}) {
   const effectiveProbeA = probeStimulusA || probeStimulus || { category: 'environmental_probe', salience: 42, intensity: 45 };
   const effectiveProbeB = probeStimulusB || probeStimulus || { category: 'environmental_probe', salience: 42, intensity: 45 };
 
+  // 目录隔离保护：若未提供隔离目录，使用专用临时目录，杜绝并发竞争或工作区污染
+  const tmpBase = path.join(os.tmpdir(), 'life-path-exp-');
+  const isolatedDirA = userDataDirA || (options.userDataDir ? path.join(options.userDataDir, 'a') : fs.mkdtempSync(tmpBase + 'a-'));
+  const isolatedDirB = userDataDirB || (options.userDataDir ? path.join(options.userDataDir, 'b') : fs.mkdtempSync(tmpBase + 'b-'));
+
   // 1. 初始状态前置条件核验 (Initial State Identity)
-  const initRegA = new InternalRegulationManager(userDataDirA || '', {
+  const initRegA = new InternalRegulationManager(isolatedDirA, {
     enabled: effectiveConfigA.experimentModules?.internalRegulation !== false,
     experimentModules: effectiveConfigA.experimentModules
   });
@@ -202,7 +340,7 @@ function runPathDependencyExperiment(options = {}) {
       initRegA.salienceThreshold = initRegA._computeSalienceThreshold(initRegA.arousal);
     }
   }
-  const initSubA = new SubjectState(userDataDirA || '', {
+  const initSubA = new SubjectState(isolatedDirA, {
     experimentModules: effectiveConfigA.experimentModules
   });
   if (initialStateA?.subjectState) {
@@ -214,7 +352,7 @@ function runPathDependencyExperiment(options = {}) {
     }
   }
 
-  const initRegB = new InternalRegulationManager(userDataDirB || '', {
+  const initRegB = new InternalRegulationManager(isolatedDirB, {
     enabled: effectiveConfigB.experimentModules?.internalRegulation !== false,
     experimentModules: effectiveConfigB.experimentModules
   });
@@ -224,7 +362,7 @@ function runPathDependencyExperiment(options = {}) {
       initRegB.salienceThreshold = initRegB._computeSalienceThreshold(initRegB.arousal);
     }
   }
-  const initSubB = new SubjectState(userDataDirB || '', {
+  const initSubB = new SubjectState(isolatedDirB, {
     experimentModules: effectiveConfigB.experimentModules
   });
   if (initialStateB?.subjectState) {
@@ -262,15 +400,25 @@ function runPathDependencyExperiment(options = {}) {
   const eventSetHashB = 'sha256:' + sha256(JSON.stringify(eventSetB));
   const eventMultisetEqual = (eventSetHashA === eventSetHashB);
 
-  // 3. 实验配置一致性核验 (Config Identity)
-  const configHashA = 'sha256:' + sha256(canonicalizeConfig(effectiveConfigA));
-  const configHashB = 'sha256:' + sha256(canonicalizeConfig(effectiveConfigB));
-  const configEqual = (configHashA === configHashB);
+  // 审计事件溯源身份 (Event Provenance Audit)
+  const provenanceA = sequenceA.map(ev => (typeof ev === 'object' && ev ? (ev.provenance || ev.source || ev.payload?.provenance || ev.payload?.source || 'declared_fixture') : 'code_function'));
+  const provenanceB = sequenceB.map(ev => (typeof ev === 'object' && ev ? (ev.provenance || ev.source || ev.payload?.provenance || ev.payload?.source || 'declared_fixture') : 'code_function'));
 
-  // 4. Probe Stimulus 一致性核验 (Probe Identity)
-  const probeHashA = 'sha256:' + sha256(canonicalizeProbe(effectiveProbeA));
-  const probeHashB = 'sha256:' + sha256(canonicalizeProbe(effectiveProbeB));
-  const probeEqual = (probeHashA === probeHashB);
+  // 3. 实验配置一致性核验 (Config Identity) - 显式 Schema 与未知字段严格拒绝
+  const confResA = canonicalizeConfig(effectiveConfigA, { detailed: true });
+  const confResB = canonicalizeConfig(effectiveConfigB, { detailed: true });
+  const configHashA = 'sha256:' + sha256(confResA.canonical);
+  const configHashB = 'sha256:' + sha256(confResB.canonical);
+  const hasUnknownConfig = (confResA.unknownFields.length > 0 || confResB.unknownFields.length > 0);
+  const configEqual = (configHashA === configHashB) && !hasUnknownConfig;
+
+  // 4. Probe Stimulus 一致性核验 (Probe Identity) - 深度 Schema 与未知字段严格拒绝
+  const probeResA = canonicalizeProbe(effectiveProbeA, { detailed: true });
+  const probeResB = canonicalizeProbe(effectiveProbeB, { detailed: true });
+  const probeHashA = 'sha256:' + sha256(probeResA.canonical);
+  const probeHashB = 'sha256:' + sha256(probeResB.canonical);
+  const hasUnknownProbe = (probeResA.unknownFields.length > 0 || probeResB.unknownFields.length > 0);
+  const probeEqual = (probeHashA === probeHashB) && !hasUnknownProbe;
 
   // 综合前置条件判定
   let reason = null;
@@ -282,8 +430,12 @@ function runPathDependencyExperiment(options = {}) {
     reason = 'PATH_EXPERIMENT_INITIAL_STATE_MISMATCH';
   } else if (!eventMultisetEqual) {
     reason = 'PATH_EXPERIMENT_EVENT_SET_MISMATCH';
+  } else if (hasUnknownConfig) {
+    reason = 'PATH_EXPERIMENT_CONFIG_UNKNOWN_FIELDS';
   } else if (!configEqual) {
     reason = 'PATH_EXPERIMENT_CONFIG_MISMATCH';
+  } else if (hasUnknownProbe) {
+    reason = 'PATH_EXPERIMENT_PROBE_UNKNOWN_FIELDS';
   } else if (!probeEqual) {
     reason = 'PATH_EXPERIMENT_PROBE_MISMATCH';
   }
@@ -294,6 +446,14 @@ function runPathDependencyExperiment(options = {}) {
     eventMultisetEqual,
     configEqual,
     probeEqual,
+    hasUnknownConfig,
+    hasUnknownProbe,
+    unknownConfigFieldsA: confResA.unknownFields,
+    unknownConfigFieldsB: confResB.unknownFields,
+    unknownProbeFieldsA: probeResA.unknownFields,
+    unknownProbeFieldsB: probeResB.unknownFields,
+    eventProvenanceA: provenanceA,
+    eventProvenanceB: provenanceB,
     initialStateHash: initHashA,
     eventSetHashA,
     eventSetHashB,
@@ -317,7 +477,7 @@ function runPathDependencyExperiment(options = {}) {
     });
   }
 
-  function executeTrajectory(sequence, dir, effectiveCfg, initialState, probe) {
+  function executeTrajectory(sequence, dir, effectiveCfg, initialState, probe, execOpts = {}) {
     const reg = new InternalRegulationManager(dir || '', {
       enabled: effectiveCfg.experimentModules?.internalRegulation !== false,
       experimentModules: effectiveCfg.experimentModules
@@ -343,15 +503,19 @@ function runPathDependencyExperiment(options = {}) {
 
     // 依序执行历史序列事件
     for (const item of sequence) {
+      const itemTimestamp = (execOpts.clock && typeof execOpts.clock.now === 'function')
+        ? execOpts.clock.now()
+        : (item?.payload?.timestamp || item?.timestamp || Date.now());
+
       if (typeof item === 'function') {
-        item({ reg, scheduler, subjectState });
+        item({ reg, scheduler, subjectState, clock: execOpts.clock });
       } else if (item && typeof item === 'object') {
         if (item.type === 'interaction') {
-          reg.updateOnInteractionTurn(item.payload || {});
+          reg.updateOnInteractionTurn({ ...(item.payload || {}), timestamp: itemTimestamp });
         } else if (item.type === 'activity') {
-          reg.updateOnActivity(item.activityKind || 'poke', item.payload || {});
+          reg.updateOnActivity(item.activityKind || 'poke', { ...(item.payload || {}), timestamp: itemTimestamp });
         } else if (item.type === 'sleep') {
-          reg.updateOnSleep(Boolean(item.isAsleep), item.payload || {});
+          reg.updateOnSleep(Boolean(item.isAsleep), { ...(item.payload || {}), timestamp: itemTimestamp });
         } else if (item.type === 'evidence' && Array.isArray(item.evidenceList)) {
           subjectState.reduce(item.evidenceList, item.windowNo || 1, {
             canalization: effectiveCfg.experimentModules?.biographicalCanalization !== false,
@@ -375,7 +539,8 @@ function runPathDependencyExperiment(options = {}) {
       subjectAccessible: false
     };
     const attentionResult = evaluateAttentionGate(candidate, reg, {
-      modules: effectiveCfg.experimentModules
+      modules: effectiveCfg.experimentModules,
+      clock: execOpts.clock
     });
 
     return {
@@ -386,8 +551,8 @@ function runPathDependencyExperiment(options = {}) {
     };
   }
 
-  const trajectoryA = executeTrajectory(sequenceA, userDataDirA, effectiveConfigA, initialStateA, effectiveProbeA);
-  const trajectoryB = executeTrajectory(sequenceB, userDataDirB, effectiveConfigB, initialStateB, effectiveProbeB);
+  const trajectoryA = executeTrajectory(sequenceA, isolatedDirA, effectiveConfigA, initialStateA, effectiveProbeA, { clock });
+  const trajectoryB = executeTrajectory(sequenceB, isolatedDirB, effectiveConfigB, initialStateB, effectiveProbeB, { clock });
 
   // 计算多维分化指标 (4D Divergence: InternalRegulation, Behavior, Attention, SubjectState)
   const regDiff = {

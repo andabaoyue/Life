@@ -1039,7 +1039,7 @@ class SubjectState {
           const next = clamp(curr + clampedDelta, -999, 999);
           currentValues[trait] = next;
 
-          stepChanges.push(createStateChange({
+          const scOpts = {
             windowNo: wNo,
             trait,
             previousValue: curr,
@@ -1051,7 +1051,21 @@ class SubjectState {
             plasticityMultiplier,
             stepWeight,
             maxDelta
-          }));
+          };
+
+          if (typeof options.idGenerator === 'function') {
+            scOpts.stateChangeId = options.idGenerator('state_change', { windowNo: wNo, trait, seq: ++replaySeq });
+          } else if (options.deterministicIds) {
+            scOpts.stateChangeId = `sc-replay-w${wNo}-${trait}-${++replaySeq}`;
+          }
+
+          if (typeof ts === 'number' && !isNaN(ts)) {
+            scOpts.createdAt = ts;
+          } else if (options.clock && typeof options.clock.now === 'function') {
+            scOpts.createdAt = options.clock.now();
+          }
+
+          stepChanges.push(createStateChange(scOpts));
         }
       }
 
@@ -1091,7 +1105,12 @@ class SubjectState {
       acceptedEvidenceFingerprints: Array.from(acceptedEvidenceFingerprints),
       processedRecords,
       rejectedRecords,
-      warnings
+      warnings,
+      determinism: {
+        stateLevel: 'deterministic',
+        recordLevel: (options.deterministicIds || typeof options.idGenerator === 'function') ? 'deterministic' : 'state_only',
+        byteLevel: (options.deterministicIds || typeof options.idGenerator === 'function') ? 'deterministic' : 'semantic_only'
+      }
     };
   }
 

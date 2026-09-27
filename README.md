@@ -427,7 +427,10 @@ node test/internal-regulation.test.js # 23 项：Phase 0.5 内部状态调节中
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
 node test/attention-gate.test.js      # 33 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重）
 node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
-node test/path-dependency-preconditions.test.js # 23 项：Phase 0.5 路径依赖实验受控前置条件门禁（初始状态同一性、事件Multiset完全一致、函数事件可审计签名与不可审计裸函数拦截、实验配置一致、探测刺激一致、受控审计凭证完整性、确定性重放与throwOnError契约）
+node test/path-dependency-preconditions.test.js # 45 项：Phase 0.5 路径依赖实验受控前置条件门禁（初始状态同一性、事件Multiset完全一致、函数事件可审计签名与不可审计裸函数拦截、实验配置一致、探测刺激一致、受控审计凭证完整性、确定性重放与throwOnError契约、对抗未知字段拒绝与语义负载保真）
+node test/archive-write-gate.test.js # 27 项：Phase 4 归档硬写门禁与防篡改防伪造（F-10 / User Constraint #3，拒绝伪造 archiveSeq、prevHash、recordHash、非法类型与损坏 payload，文件尾部损坏自愈与底座纯净保护）
+node test/dream-provenance.test.js # 11 项：Phase 4 梦境溯源字段语义分立与确定性注入（F-11/F-15/F-16，messageId ≠ eventId ≠ evidenceId 严格分离、生成时钟注入与确定性 ID 生成器、门禁显式时钟）
+node test/internal-scalar-leak-capture.test.js # 4 项：Phase 4 内部标量防线端到端请求捕获与零泄漏（F-08，注入罕见浮点哨兵与私有属性名，全域拦截扫描发往 LLM 的完整 messages，严谨证实内部标量零进入主体层）
 node test/experiment-metadata.test.js # 31 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退、observedModel与深冻结）
 python3 test/ui_test.py          # 152 项：真实交互 + mock 衣柜桥接 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
