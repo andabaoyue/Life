@@ -80,11 +80,13 @@ function keyOf(t) {
 }
 
 function costOf(usage, price) {
-  const hit = usage.prompt_cache_hit_tokens || 0;
-  const miss = usage.prompt_cache_miss_tokens || 0;
-  const out = usage.completion_tokens || 0;
-  const p = price || {};
-  return (hit * (p.hit || 0) + miss * (p.miss || 0) + out * (p.out || 0)) / 1e6;
+  // v0.9.8 P3-3: 真正计算逻辑迁移到 DeepSeek Cost Strategy
+  //（normalizeUsage(FACT) -> cache 解释层 -> 定价）；本入口保留为兼容，
+  // 返回数字语义不变（无 usage 事实时返回 0，与旧 `|| 0` 行为一致）。
+  const { normalizeUsage } = require('./usage-normalizer');
+  const { getCostStrategy } = require('./cost-strategy');
+  const r = getCostStrategy('deepseek').calculate(normalizeUsage(usage), price || {});
+  return r.cost == null ? 0 : r.cost;
 }
 
 const { redactSecrets } = require('./redact');
