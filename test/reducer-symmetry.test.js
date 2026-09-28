@@ -106,8 +106,8 @@ function tmpDir(prefix = 'reducer-symmetry-test-') {
   const state = new SubjectState(dir, { stepWeight: 15 });
 
   const evidenceWindow1 = [
-    { trait: 'philosophical_curiosity', direction: 1, strength: 0.7, evidenceId: 'ev-w1-1' },
-    { trait: 'attachment_need', direction: -1, strength: 0.3, evidenceId: 'ev-w1-2' }
+    { trait: 'philosophical_curiosity', direction: 1, strength: 0.7, evidenceId: 'ev-w1-1', messageId: 'm-w1-1', quote: '数字生命', fingerprint: 'm-w1-1:数字生命:philosophical_curiosity:1' },
+    { trait: 'attachment_need', direction: -1, strength: 0.3, evidenceId: 'ev-w1-2', messageId: 'm-w1-1', quote: '数字生命', fingerprint: 'm-w1-1:数字生命:attachment_need:-1' }
   ];
 
   const evidenceWindow2 = [
