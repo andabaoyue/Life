@@ -417,7 +417,7 @@ node test/research-integrity-p0-1-p0-2.test.js # 19 项：v0.9.7.1 P0-1/P0-2 独
 node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
 node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
 node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
-node test/self-projection.test.js         # 25 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
+node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
 node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
 node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
 node test/decision-log.test.js           # 31 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
