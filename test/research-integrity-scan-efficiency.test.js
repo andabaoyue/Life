@@ -94,9 +94,17 @@ async function runTests() {
       evidenceAttestations: [],
       updatedAt: Date.now()
     }), 'utf8');
+    const firstScanRec = JSON.parse(lines[0]);
     const lastScanRec = JSON.parse(lines[lines.length - 1]);
     fs.writeFileSync(archivePath + '.anchor.json', JSON.stringify({
       schemaVersion: 1,
+      genesis: {
+        schemaVersion: 1,
+        archiveSeq: firstScanRec.archiveSeq,
+        recordId: firstScanRec.recordId,
+        recordHash: firstScanRec.recordHash,
+        recordedAt: Date.now()
+      },
       archiveSeq: lastScanRec.archiveSeq,
       recordId: lastScanRec.recordId,
       recordHash: lastScanRec.recordHash,
