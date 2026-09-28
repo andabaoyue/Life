@@ -33,6 +33,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
@@ -57,6 +58,26 @@ function check(name, cond, extra) {
 
 function tmpDir(prefix = 'research-test-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function writeProvenanceForArchive(archive) {
+  const hash = value => crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+  const normalizeQuote = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const messageAttestations = [];
+  const evidenceAttestations = [];
+  for (const rec of archive.readAll()) {
+    const p = rec.payload || {};
+    for (const evt of (Array.isArray(p.events) ? p.events : [])) {
+      const mid = evt && (evt.messageId || evt.payload?.messageId);
+      if (!mid) continue;
+      messageAttestations.push({ messageId: String(mid), sourceContentHash: hash(evt.payload?.content ?? evt.content ?? ''), windowNo: rec.windowNo ?? null, sourceRole: evt.source || null, attestedAt: rec.timestamp || Date.now() });
+    }
+    for (const ev of (Array.isArray(p.verifiedEvidence) ? p.verifiedEvidence : [])) {
+      if (!ev?.evidenceId || !ev?.messageId || !ev?.fingerprint) continue;
+      evidenceAttestations.push({ evidenceId: String(ev.evidenceId), fingerprint: String(ev.fingerprint), messageId: String(ev.messageId), quoteHash: hash(normalizeQuote(ev.quote)), windowNo: rec.windowNo ?? null });
+    }
+  }
+  if (!archive.updateProvenanceAttestations(messageAttestations, evidenceAttestations)) throw new Error('failed to write provenance fixture');
 }
 
 // -----------------------------------------------------------------------------
@@ -207,6 +228,8 @@ async function testB_AsyncReplay() {
       }
     });
   }
+
+  writeProvenanceForArchive(archiveWriter);
 
   const service = new ResearchService(dir);
 
