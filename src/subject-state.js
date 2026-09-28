@@ -959,6 +959,7 @@ class SubjectState {
     const actualWindowNos = [];
     let processedRecords = 0;
     let rejectedRecords = 0;
+    let replaySeq = 0;
 
     // P0-3: 统一完整性权威可信源——调用 ArchiveIntegrityService (或直接使用外部传入的权威完整性报告)
     let integrityReport = options.integrityReport;
