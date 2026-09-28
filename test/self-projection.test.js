@@ -182,8 +182,15 @@ async function testBrainSelfProjectionIntegration() {
   archive.appendWindowArchive({
     windowNo: 1,
     turns: 100,
+    events: [{
+      eventId: 'evt-v-1',
+      type: 'message',
+      source: 'user',
+      messageId: 'm-v-1',
+      payload: { content: '充满活力', roundNo: 1 }
+    }],
     verifiedEvidence: [
-      { trait: 'vitality', direction: 1, strength: 0.5, evidenceId: 'ev-v-1' }
+      { trait: 'vitality', direction: 1, strength: 0.5, evidenceId: 'ev-v-1', messageId: 'm-v-1', quote: '充满活力', fingerprint: 'm-v-1:充满活力:vitality:1' }
     ]
   });
 
@@ -194,16 +201,30 @@ async function testBrainSelfProjectionIntegration() {
     result: { currentSelfText: '充满活力' }
   });
 
+  archive.updateProvenanceAttestations([{
+    messageId: 'm-v-1',
+    sourceContentHash: crypto.createHash('sha256').update('充满活力', 'utf8').digest('hex'),
+    windowNo: 1,
+    sourceRole: 'user',
+    attestedAt: Date.now()
+  }], [{
+    evidenceId: 'ev-v-1',
+    fingerprint: 'm-v-1:充满活力:vitality:1',
+    messageId: 'm-v-1',
+    quoteHash: crypto.createHash('sha256').update('充满活力', 'utf8').digest('hex'),
+    windowNo: 1
+  }]);
+
   const records = archive.readAll();
 
   // 1. 完整性检查
-  const intRep = ArchiveIntegrityService.checkRecords(records);
+  const intRep = ArchiveIntegrityService.checkArchive(archive.path);
   check('ArchiveIntegrityService 判定包含 self_projection 的归档为 certified', intRep.integrity === 'certified');
   check('序列完整性为 monotonic', intRep.sequence_integrity === 'monotonic');
   check('哈希链完整性为 verified', intRep.hash_integrity === 'verified');
 
   // 2. Replay 重建
-  const replayRep = SubjectState.replay(records);
+  const replayRep = SubjectState.replay(records, { archivePath: archive.path });
   check('Replay 成功完成 (complete)', replayRep.replayStatus === 'complete');
   check('Replay 认证状态为 certified', replayRep.integrity === 'certified');
   check('Replay 仅将 window_summary 计入有效窗口状态 (窗口数为 1)', replayRep.windowStates.length === 1);
