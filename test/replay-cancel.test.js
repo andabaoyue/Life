@@ -11,6 +11,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { ResearchService } = require('../src/research-service');
@@ -52,16 +53,6 @@ function tmpDir(prefix = 'replay-cancel-test-') {
           // P1-02: Evidence 的 messageId 必须有真实消息/Event provenance
           { eventId: `evt-chunk-${i}`, type: 'message', source: 'user', messageId: `m-${i}`, timestamp: 10000 + i * 100, payload: { content: `q-${i}`, roundNo: 1 } }
         ],
-        verifiedEvidence: [
-          {
-            evidenceId: `ev-chunk-${i}`,
-            trait: 'quiet_preference',
-            direction: 1,
-            strength: 0.1,
-            messageId: `m-${i}`,
-            quote: `q-${i}`
-          }
-        ],
         rejectedEvidence: [],
         stateChanges: []
       }
@@ -71,6 +62,19 @@ function tmpDir(prefix = 'replay-cancel-test-') {
     lines.push(JSON.stringify(rec));
   }
   fs.writeFileSync(archivePath, lines.join('\n') + '\n', 'utf8');
+  const messageAttestations = Array.from({ length: TOTAL_RECORDS }, (_, idx) => ({
+    messageId: `m-${idx + 1}`,
+    sourceContentHash: crypto.createHash('sha256').update(`q-${idx + 1}`, 'utf8').digest('hex'),
+    windowNo: idx + 1,
+    sourceRole: 'user',
+    attestedAt: 10000 + (idx + 1) * 100
+  }));
+  fs.writeFileSync(archivePath + '.provenance.json', JSON.stringify({
+    schemaVersion: 1,
+    messageAttestations,
+    evidenceAttestations: [],
+    updatedAt: Date.now()
+  }), 'utf8');
   const lastRec = JSON.parse(lines[lines.length - 1]);
   fs.writeFileSync(archivePath + '.anchor.json', JSON.stringify({
     schemaVersion: 1,
