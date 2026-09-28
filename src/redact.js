@@ -24,6 +24,22 @@ const SECRET_HEADER_KEYS = new Set([
   'x-api-key', 'api-key', 'apikey', 'x-auth-token', 'x-access-token'
 ]);
 
+// v0.9.8 P1.1-A: 对象形式 credential 的敏感键名识别（大小写不敏感）。
+// 覆盖普通对象字段形态（如 { apiKey: "custom-secret" } —— 非 sk- 开头、非 header 名，
+// 字符串模式无法识别，只能按键名清理）。
+const SECRET_OBJECT_KEYS = new Set([
+  'apikey', 'api_key',
+  'accesstoken', 'access_token',
+  'refreshtoken', 'refresh_token',
+  'token', 'secret', 'password', 'passwd',
+  'credential', 'credentials'
+]);
+
+function isSecretKey(key) {
+  const k = String(key).toLowerCase();
+  return SECRET_HEADER_KEYS.has(k) || SECRET_OBJECT_KEYS.has(k);
+}
+
 function redactString(text) {
   let out = String(text);
   try {
@@ -46,7 +62,7 @@ function redactSecrets(value) {
     if (value && typeof value === 'object') {
       const out = {};
       for (const [k, v] of Object.entries(value)) {
-        if (SECRET_HEADER_KEYS.has(k.toLowerCase())) {
+        if (isSecretKey(k)) {
           out[k] = '[REDACTED]';
         } else {
           out[k] = redactSecrets(v);

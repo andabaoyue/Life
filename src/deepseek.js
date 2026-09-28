@@ -99,14 +99,18 @@ function classifyProviderHttpError(status) {
 }
 
 function extractSafeDetail(text) {
-  // 只保留 provider 结构化 error.message（redacted + 截断）作为 safe detail；绝不携带 raw body
+  // v0.9.8 P1.1-B: 只允许读取可解析 JSON 的结构化 error.message / error.msg / 顶层 message
+  //（redacted + 120 字符上限）；非合法 JSON 的 body 一律不作为 detail ——
+  // raw body 本体绝不进入 error chain（message/ProviderError/console/diagnostics/archive）。
   try {
     const raw = String(text || '');
     let detail = '';
     try {
       const j = JSON.parse(raw);
       detail = (j && j.error && (j.error.message || j.error.msg)) || (j && typeof j.message === 'string' ? j.message : '');
-    } catch { detail = raw; }
+    } catch {
+      return '';
+    }
     return redactSecrets(String(detail)).slice(0, 120);
   } catch { return ''; }
 }

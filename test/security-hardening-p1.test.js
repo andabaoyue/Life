@@ -298,6 +298,64 @@ function sseRes(frames) {
     globalThis.fetch = realFetch;
   }
 
+  /* ================= 8. P1.1 残余面收口 ================= */
+  {
+    // A: 对象形式 credential 的敏感键名识别
+    const r = redactSecrets({
+      apiKey: 'custom-secret', token: 'tok-x', secret: 's-x',
+      password: 'pw-x', credential: 'c-x', accessToken: 'at-x', model: 'm'
+    });
+    check('P1.1-A {apiKey:"custom-secret"} -> [REDACTED]', r.apiKey === '[REDACTED]');
+    check('P1.1-A token/secret/password/credential/accessToken -> [REDACTED]',
+      r.token === '[REDACTED]' && r.secret === '[REDACTED]' && r.password === '[REDACTED]' &&
+      r.credential === '[REDACTED]' && r.accessToken === '[REDACTED]');
+    check('P1.1-A 普通非敏感字段不改变', r.model === 'm');
+    const nested = redactSecrets({ a: [{ api_key: 'k1-keep-out', keep: 'v' }], b: { deep: { passwd: 'pw-keep-out' } } });
+    check('P1.1-A 嵌套 object/array 继续递归', nested.a[0].api_key === '[REDACTED]' && nested.a[0].keep === 'v' && nested.b.deep.passwd === '[REDACTED]');
+    check('P1.1-A 敏感值不出现在序列化结果',
+      !JSON.stringify(nested).includes('k1-keep-out') && !JSON.stringify(r).includes('custom-secret'));
+    check('P1.1-A 敏感键名大小写不敏感', redactSecrets({ ApiKey: 'x', ACCESS_TOKEN: 'y' }).ApiKey === '[REDACTED]' &&
+      redactSecrets({ ACCESS_TOKEN: 'y' }).ACCESS_TOKEN === '[REDACTED]');
+  }
+
+  {
+    // B: 非 JSON provider body —— 绝不 raw body fallback
+    const rawBody = 'oops raw body leaked ' + KEY + ' end';
+    const m = mockFetch(async () => httpRes(500, rawBody));
+    let err = null;
+    try {
+      await new DeepSeek({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm', maxRetries: 0 })
+        .complete([{ role: 'user', content: 'hi' }]);
+    } catch (e) { err = e; }
+    check('P1.1-B 非 JSON body -> ProviderError (status=500, server_error)', err && err.name === 'ProviderError' && err.status === 500 && err.errorType === 'server_error');
+    check('P1.1-B 非 JSON body -> retryState 正常', err && err.retryState && err.retryState.attempts === 1 && err.retryState.maxRetries === 0);
+    check('P1.1-B error.message 不含 fake secret', err && !String(err.message).includes(KEY));
+    check('P1.1-B 不产生 raw body fallback', err && !String(err.message).includes('oops raw body'));
+    globalThis.fetch = realFetch;
+  }
+
+  {
+    // C: JSON 结构化 detail 保留 + redact + 120 字符上限
+    const m = mockFetch(async () => httpRes(400, JSON.stringify({ error: { message: 'safe provider message' } })));
+    let err = null;
+    try {
+      await new DeepSeek({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm' })
+        .complete([{ role: 'user', content: 'hi' }]);
+    } catch (e) { err = e; }
+    check('P1.1-B JSON 结构化 message 保留为 safeDetail', err && String(err.message).includes('safe provider message'));
+    globalThis.fetch = realFetch;
+
+    const m2 = mockFetch(async () => httpRes(400, JSON.stringify({ error: { message: 'key=' + KEY + ' ' + 'L'.repeat(500) } })));
+    let err2 = null;
+    try {
+      await new DeepSeek({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm' })
+        .complete([{ role: 'user', content: 'hi' }]);
+    } catch (e) { err2 = e; }
+    check('P1.1-B JSON detail 仍过 redact', err2 && !String(err2.message).includes(KEY));
+    check('P1.1-B safeDetail 120 字符上限成立', err2 && !String(err2.message).includes('L'.repeat(200)));
+    globalThis.fetch = realFetch;
+  }
+
   globalThis.fetch = realFetch;
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
