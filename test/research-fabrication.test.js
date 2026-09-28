@@ -12,6 +12,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { ResearchQuery } = require('../src/research-query');
@@ -87,7 +88,16 @@ const rec1 = {
 fs.writeFileSync(statePath, JSON.stringify({ windowNo: 2, values: { ...DEFAULT_TRAITS } }), 'utf8');
 // P0-01/P0-02: 现代归档经 Canonical 写入路径生成链字段与 Tail Anchor
 const { ExperiencesArchive } = require('../src/experiences-archive');
-new ExperiencesArchive(dir).append(rec1);
+const archiveWriter = new ExperiencesArchive(dir);
+archiveWriter.append(rec1);
+const messageAttestations = rec1.payload.events.map(evt => ({
+  messageId: evt.messageId,
+  sourceContentHash: crypto.createHash('sha256').update(evt.payload.content, 'utf8').digest('hex'),
+  windowNo: rec1.windowNo,
+  sourceRole: evt.source,
+  attestedAt: rec1.timestamp
+}));
+archiveWriter.updateProvenanceAttestations(messageAttestations, []);
 
 const index = new ResearchIndex(archivePath);
 const query = new ResearchQuery(dir, { index });
