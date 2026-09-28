@@ -8,6 +8,8 @@
  * 我们逐次累加，用来算真实命中率。
  */
 
+const { markProviderRuntimeResponse } = require('./experiment-metadata');
+
 function isPeakHour(now = new Date()) {
   // DeepSeek 峰谷：工作日 09:00-12:00、14:00-18:00 为高峰；周六周日全天低谷；
   // 中国法定节假日全天、以及因调休补班的周末也按低谷（2026-09-19 官方补充说明）。
@@ -162,11 +164,11 @@ class DeepSeek {
         max_tokens: opts.maxTokens ?? 400
       }, ctrl.signal);
       const j = await res.json();
-      return {
+      return markProviderRuntimeResponse({
         text: (j.choices?.[0]?.message?.content || '').trim(),
         usage: j.usage || {},
         observedModel: (typeof j.model === 'string' && j.model.trim()) ? j.model.trim() : null
-      };
+      }, { adapter: 'deepseek' });
     } catch (err) {
       if (err.message === 'request timeout') {
         err.name = 'TimeoutError';
@@ -333,7 +335,7 @@ class DeepSeek {
         streamError.partial = full;
         throw streamError;
       }
-      return { text: full, usage, observedModel };
+      return markProviderRuntimeResponse({ text: full, usage, observedModel }, { adapter: 'deepseek' });
     } catch (outerErr) {
       if (reader) {
         try { await reader.cancel(); } catch {}

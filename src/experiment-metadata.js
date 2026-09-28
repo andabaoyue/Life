@@ -133,6 +133,60 @@ function collectPromptHashes(texts = {}) {
  * @param {number} [opts.generatedAt] 生成时间戳
  * @returns {Readonly<Object>}
  */
+const PROVIDER_RUNTIME_MARKER = Symbol('life.provider.runtime.marker');
+const providerRuntimeRegistry = new WeakSet();
+
+/**
+ * 将底座 API Client / Provider Adapter 的原生返回对象标记为受信任的运行时响应证据。
+ * 遵循认识论原则: caller 提供普通对象 ≠ provider adapter 产生的运行时对象。
+ *
+ * @template T
+ * @param {T} response 实际由 API adapter 产生的响应对象
+ * @param {object} [opts]
+ * @param {string} [opts.adapter] 适配器标识 (如 'deepseek')
+ * @param {string} [opts.token] 内部溯源 token
+ * @returns {T}
+ */
+function markProviderRuntimeResponse(response, opts = {}) {
+  if (!response || typeof response !== 'object') {
+    return response;
+  }
+  const token = opts.token || crypto.randomBytes(16).toString('hex');
+  const marker = Object.freeze({
+    markerType: 'provider_runtime_evidence',
+    adapter: String(opts.adapter || 'provider_adapter'),
+    token,
+    timestamp: Number.isFinite(opts.now) ? opts.now : Date.now()
+  });
+
+  try {
+    Object.defineProperty(response, PROVIDER_RUNTIME_MARKER, {
+      value: marker,
+      enumerable: false,
+      configurable: false,
+      writable: false
+    });
+  } catch {}
+
+  providerRuntimeRegistry.add(response);
+  return response;
+}
+
+/**
+ * 校验对象是否为经过认证的 Provider 运行时响应实例。
+ * 显式拒绝普通调用方传入的未授权字面量对象或缺少运行时标记的虚构响应。
+ *
+ * @param {any} response
+ * @returns {boolean}
+ */
+function isProviderRuntimeResponse(response) {
+  if (!response || typeof response !== 'object') return false;
+  return providerRuntimeRegistry.has(response) || Boolean(
+    response[PROVIDER_RUNTIME_MARKER] &&
+    response[PROVIDER_RUNTIME_MARKER].markerType === 'provider_runtime_evidence'
+  );
+}
+
 function buildGenerationContext(opts = {}) {
   const cfg = opts.cfg || {};
 
@@ -183,13 +237,17 @@ function buildGenerationContext(opts = {}) {
       }
     : null;
 
-  // v0.9.8.1 F-12: 区分“调用者声明的元数据”与“可信 runtime provider adapter 响应证据”
+  // v0.9.8.1 F-12: 区分“调用者声明的元数据/普通对象”与“可信 runtime provider adapter 响应证据”
   // 核心认识论边界：caller-supplied metadata ≠ runtime-observed fact
-  // 没有可信 runtime evidence 时，严禁仅凭 caller 声明自证升级到 provider_response，
-  // 必须降级为 caller_or_config；当 providerResponse 存在但不含 observedModel 时，保持 unavailable。
-  const runtimeResponse = (opts.providerResponse && typeof opts.providerResponse === 'object')
+  // caller 提供普通对象 ≠ provider adapter 产生的运行时对象
+  // 必须通过 isProviderRuntimeResponse() 校验 runtime marker / provenance token，
+  // 未携带有效运行时标记的普通对象一律视为 caller metadata，不得冒充 provider_response。
+  const runtimeCandidate = (opts.providerResponse && typeof opts.providerResponse === 'object')
     ? opts.providerResponse
     : ((opts.runtimeResponse && typeof opts.runtimeResponse === 'object') ? opts.runtimeResponse : null);
+
+  const isGenuineRuntimeResponse = isProviderRuntimeResponse(runtimeCandidate);
+  const runtimeResponse = isGenuineRuntimeResponse ? runtimeCandidate : null;
 
   const hasRuntimeProviderResponse = Boolean(
     runtimeResponse &&
@@ -205,15 +263,19 @@ function buildGenerationContext(opts = {}) {
     observedModel = runtimeResponse.observedModel.trim();
     observedModelSource = 'provider_response';
   } else if (runtimeResponse) {
-    // 显式提供了 runtimeResponse 但未观察到 observedModel（例如模型接口未返回该字段）
+    // 显式提供了真实 runtimeResponse 但未观察到 observedModel（例如模型接口未返回该字段）
     // 严格遵循 No-Fabrication：不得使用 cfg.model 或 opts.observedModel 冒充 provider_response
     observedModel = UNAVAILABLE;
     observedModelSource = UNAVAILABLE;
   } else {
-    // 没有可信 runtimeResponse 证据：普通 caller 传入或配置提供
-    // 无论 caller 是否在 opts.provenance 声明 provider_response，均不得自证升级，严格判定为 caller_or_config
+    // 没有可信 runtimeResponse 证据：
+    // 包括普通 caller 传入自造的普通对象 providerResponse、或者在 opts.provenance 声明 provider_response，
+    // 均严禁自证升级，严格判定为 caller_or_config
     if (typeof opts.observedModel === 'string' && opts.observedModel.trim() && opts.observedModel.trim() !== UNAVAILABLE) {
       observedModel = opts.observedModel.trim();
+      observedModelSource = 'caller_or_config';
+    } else if (runtimeCandidate && typeof runtimeCandidate.observedModel === 'string' && runtimeCandidate.observedModel.trim() && runtimeCandidate.observedModel.trim() !== UNAVAILABLE) {
+      observedModel = runtimeCandidate.observedModel.trim();
       observedModelSource = 'caller_or_config';
     } else if (cfg && typeof cfg.observedModel === 'string' && cfg.observedModel.trim() && cfg.observedModel.trim() !== UNAVAILABLE) {
       observedModel = cfg.observedModel.trim();
@@ -425,5 +487,7 @@ module.exports = {
   collectPromptHashes,
   buildGenerationContext,
   getGenerationContext,
-  validateGenerationContext
+  validateGenerationContext,
+  markProviderRuntimeResponse,
+  isProviderRuntimeResponse
 };

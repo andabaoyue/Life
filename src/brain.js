@@ -874,11 +874,12 @@ class Brain {
     }).join('\n');
 
     try {
-      const { text, usage, observedModel } = await this.api.complete(
+      const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: SUMMARY_SYS },
          { role: 'user', content: '【对话】\n' + dialogue }],
         { maxTokens: 900, temperature: 0.2 }
       );
+      const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'summary');
       if (this.shutdownRequested) return false;
       if (!text) return false;
@@ -905,6 +906,7 @@ class Brain {
         sourceWindowNo: snap.windowNo,
         sourceMessageRange,
         observedModel,
+        providerResponse: apiCompleteRes,
         generator: 'llm'
       });
 
@@ -1429,11 +1431,12 @@ class Brain {
       (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text).join('\n');
 
     try {
-      const { text, usage, observedModel } = await this.api.complete(
+      const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: MERGE_SYS },
          { role: 'user', content: body }],
         { maxTokens: 400, temperature: 0.2 }
       );
+      const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'merge');
       if (this.shutdownRequested) return false;
       if (!text) return false;
@@ -1450,6 +1453,7 @@ class Brain {
         }),
         sampling: { maxTokens: 400, temperature: 0.2 },
         observedModel,
+        providerResponse: apiCompleteRes,
         generator: 'llm'
       });
 
@@ -1468,11 +1472,12 @@ class Brain {
   async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;
-      const { text, usage, observedModel } = await this.api.complete(
+      const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: GROWTH_SYS },
          { role: 'user', content: '【窗口小结】\n' + summary + '\n【窗口对话】\n' + dialogue }],
         { maxTokens: 420, temperature: 0.15 }
       );
+      const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'growth');
       if (this.shutdownRequested) return 0;
       this.stats.growthCalls = (this.stats.growthCalls || 0) + 1;
@@ -1495,6 +1500,7 @@ class Brain {
         sourceWindowNo: window,
         sourceMessageRange: opts.sourceMessageRange || null,
         observedModel,
+        providerResponse: apiCompleteRes,
         generator: 'llm'
       });
 

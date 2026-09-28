@@ -14,7 +14,13 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { buildGenerationContext, validateGenerationContext, getGenerationContext } = require('../src/experiment-metadata');
+const {
+  buildGenerationContext,
+  validateGenerationContext,
+  getGenerationContext,
+  markProviderRuntimeResponse,
+  isProviderRuntimeResponse
+} = require('../src/experiment-metadata');
 const { InternalRegulationManager } = require('../src/internal-regulation');
 const { evaluateDreamGate, synthesizeDream } = require('../src/dream-system');
 const { SubjectState } = require('../src/subject-state');
@@ -55,7 +61,33 @@ function tmpDir(prefix = 'repro-p1-') {
   check('无 runtime provider 证据时 provenanceStatus 降级为 caller_supplied_or_config',
     callerFake.provenanceStatus === 'caller_supplied_or_config');
 
+  // 1b. 普通 caller 构造伪造普通对象 providerResponse: { observedModel: 'fake' } -> 不能得到 provider_response
+  const fakeObjCtx = buildGenerationContext({
+    kind: 'dream',
+    cfg: {
+      model: 'configured-model',
+      baseURL: 'https://api.deepseek.com',
+      provider: 'deepseek'
+    },
+    providerResponse: { observedModel: 'fake-provider-model' },
+    modelVersion: 'v-test',
+    promptHashes: { dream: 'sha256:test' },
+    gitCommit: '0123456789abcdef0123456789abcdef01234567',
+    generatedAt: 1000
+  });
+
+  check('伪造普通对象 providerResponse 无法冒充 provider_response (降级为 caller_or_config)',
+    fakeObjCtx.observedModelSource === 'caller_or_config');
+  check('伪造普通对象 providerResponse 其 provenanceStatus 为 caller_supplied_or_config',
+    fakeObjCtx.provenanceStatus === 'caller_supplied_or_config');
+
   // 2. 有真实 runtime provider adapter 响应证据 -> 认证为 provider_response
+  const trustedRes = markProviderRuntimeResponse({
+    observedModel: 'observed-provider-model',
+    text: 'dream narrative',
+    usage: {}
+  }, { adapter: 'deepseek' });
+
   const trustedCtx = buildGenerationContext({
     kind: 'dream',
     cfg: {
@@ -63,7 +95,7 @@ function tmpDir(prefix = 'repro-p1-') {
       baseURL: 'https://api.deepseek.com',
       provider: 'deepseek'
     },
-    providerResponse: { observedModel: 'observed-provider-model' },
+    providerResponse: trustedRes,
     modelVersion: 'v-test',
     promptHashes: { dream: 'sha256:test' },
     gitCommit: '0123456789abcdef0123456789abcdef01234567',
@@ -80,6 +112,10 @@ function tmpDir(prefix = 'repro-p1-') {
     validateGenerationContext(trustedCtx).valid === true);
 
   // 3. response 不含 observedModel -> unavailable，严禁伪造
+  const emptyRes = markProviderRuntimeResponse({
+    text: 'no observed model returned'
+  }, { adapter: 'deepseek' });
+
   const emptyResCtx = buildGenerationContext({
     kind: 'dream',
     cfg: {
@@ -87,7 +123,7 @@ function tmpDir(prefix = 'repro-p1-') {
       baseURL: 'https://api.deepseek.com',
       provider: 'deepseek'
     },
-    providerResponse: { text: 'no observed model returned' },
+    providerResponse: emptyRes,
     modelVersion: 'v-test',
     promptHashes: { dream: 'sha256:test' },
     generatedAt: 1000
@@ -206,10 +242,10 @@ function tmpDir(prefix = 'repro-p1-') {
 (async () => {
   const dummyClient = (obsModel = 'observed-provider-model') => ({
     cfg: { model: 'configured-model', baseURL: 'https://api.deepseek.com', provider: 'deepseek' },
-    complete: async () => ({
+    complete: async () => markProviderRuntimeResponse({
       text: '一场安静的梦',
       ...(obsModel ? { observedModel: obsModel } : {})
-    })
+    }, { adapter: 'test_mock_provider' })
   });
 
   const basePrompt = [{ role: 'system', content: 'system' }, { role: 'user', content: 'user' }];
