@@ -728,15 +728,20 @@ function testFinalConsistencyTestD() {
 
   archive.appendRecord('window_summary', 1, {
     reducer: { stepWeight: 20, maxDelta: 50 },
+    events: [
+      { eventId: 'evt-d-1', type: 'message', source: 'user', messageId: 'm-d-1', payload: { content: '安静阅读', roundNo: 1 } },
+      { eventId: 'evt-d-2', type: 'message', source: 'user', messageId: 'm-d-2', payload: { content: '数字生命', roundNo: 2 } }
+    ],
     verifiedEvidence: [
-      { evidenceId: 'ev-d-1', trait: 'quiet_preference', direction: 1, strength: 1.0 },
-      { evidenceId: 'ev-d-2', trait: 'philosophical_curiosity', direction: 1, strength: 0.5 }
+      { evidenceId: 'ev-d-1', trait: 'quiet_preference', direction: 1, strength: 1.0, messageId: 'm-d-1', quote: '安静阅读', fingerprint: 'm-d-1:安静阅读:quiet_preference:1' },
+      { evidenceId: 'ev-d-2', trait: 'philosophical_curiosity', direction: 1, strength: 0.5, messageId: 'm-d-2', quote: '数字生命', fingerprint: 'm-d-2:数字生命:philosophical_curiosity:1' }
     ],
     stateChanges: [
       { trait: 'quiet_preference', delta: 20, previousValue: 0, newValue: 20, reducer: { stepWeight: 20, maxDelta: 50 } },
       { trait: 'philosophical_curiosity', delta: 10, previousValue: 0, newValue: 10, reducer: { stepWeight: 20, maxDelta: 50 } }
     ]
   });
+  writeProvenanceForArchive(archive);
 
   const ss = new SubjectState(dir);
   // 执行 Replay 重建状态
@@ -744,7 +749,7 @@ function testFinalConsistencyTestD() {
 
   // 1. 完整无损归档下的 Replay
   const { records, diagnostics } = archive.readAllWithDiagnostics();
-  const replayClean = SubjectState.replay(records, { diagnostics });
+  const replayClean = SubjectState.replay(records, { diagnostics, archivePath: archive.path });
 
   check('Test D: 完整归档下 Replay 输出 certified', replayClean.integrity === 'certified');
   check('Test D: 完整归档下 replayStatus 为 complete', replayClean.replayStatus === 'complete');
@@ -833,6 +838,7 @@ function testR2_PersistentEvidenceDedup() {
     verifiedEvidence: [resCall1.verified[0]],
     stateChanges: [{ trait: 'quiet_preference', delta: 10, previousValue: 0, newValue: 10, reducer: { stepWeight: 20, maxDelta: 50 } }]
   });
+  writeProvenanceForArchive(archive);
 
   // 模拟 state 损坏或丢失后通过 Replay 重建
   const ssRebuilt = new SubjectState(dirReplay, { stepWeight: 20 });
@@ -909,9 +915,11 @@ function testR2_RecoveryIntegrity() {
   const arch1 = new ExperiencesArchive(dir1);
   arch1.appendRecord('window_summary', 1, {
     reducer: { stepWeight: 20, maxDelta: 50 },
-    verifiedEvidence: [{ evidenceId: 'ev-rec-1', trait: 'vitality', direction: 1, strength: 1.0 }],
+    events: [{ eventId: 'evt-rec-1', type: 'message', source: 'user', messageId: 'm-rec-1', payload: { content: '活力', roundNo: 1 } }],
+    verifiedEvidence: [{ evidenceId: 'ev-rec-1', trait: 'vitality', direction: 1, strength: 1.0, messageId: 'm-rec-1', quote: '活力', fingerprint: 'm-rec-1:活力:vitality:1' }],
     stateChanges: [{ trait: 'vitality', delta: 20, previousValue: 0, newValue: 20, reducer: { stepWeight: 20, maxDelta: 50 } }]
   });
+  writeProvenanceForArchive(arch1);
   const ss1 = new SubjectState(dir1);
   const ok1 = ss1.recoverFromPending(arch1, 'test_complete');
   check('P0-06: COMPLETE Archive 自动 Recovery 成功 (ok === true)', ok1 === true);
@@ -1019,6 +1027,7 @@ function testR2_FullConsistencyAndStartupRecovery() {
     action: 'state_commit_failed',
     recoveryPending: true
   });
+  writeProvenanceForArchive(archive);
 
   // 写入落后的 subject-state.json (Window 1 尚未提交，值为 0)
   fs.writeFileSync(path.join(dir, 'subject-state.json'), JSON.stringify({
@@ -1034,7 +1043,7 @@ function testR2_FullConsistencyAndStartupRecovery() {
 
   // P1-04: Raw Archive -> Replay -> Persisted State 三方完整一致性
   const { records, diagnostics } = archive.readAllWithDiagnostics();
-  const replayRep = SubjectState.replay(records, { diagnostics });
+  const replayRep = SubjectState.replay(records, { diagnostics, archivePath: archive.path });
   const consistency = SubjectState.checkConsistency(ss, replayRep);
 
   check('P1-04: State values / WindowNo / Accepted Evidence / StateChanges 全部一致',
