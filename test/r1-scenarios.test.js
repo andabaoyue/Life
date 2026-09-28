@@ -273,8 +273,11 @@ function testScenarioG() {
   // 写入两轮正常的历史归档
   archive.appendRecord('window_summary', 1, {
     reducer: { stepWeight: 20, maxDelta: 50 },
+    events: [
+      { eventId: 'evt-w1-1', type: 'message', source: 'user', messageId: 'm-w1-1', payload: { content: '喜欢安静', roundNo: 1 } }
+    ],
     verifiedEvidence: [
-      { evidenceId: 'ev-w1-1', trait: 'quiet_preference', direction: 1, strength: 1.0 } // +20
+      { evidenceId: 'ev-w1-1', trait: 'quiet_preference', direction: 1, strength: 1.0, messageId: 'm-w1-1', quote: '喜欢安静', fingerprint: 'm-w1-1:喜欢安静:quiet_preference:1' } // +20
     ],
     stateChanges: [
       { trait: 'quiet_preference', delta: 20, previousValue: 0, newValue: 20, reducer: { stepWeight: 20, maxDelta: 50 } }
@@ -283,13 +286,17 @@ function testScenarioG() {
 
   archive.appendRecord('window_summary', 2, {
     reducer: { stepWeight: 20, maxDelta: 50 },
+    events: [
+      { eventId: 'evt-w2-1', type: 'message', source: 'user', messageId: 'm-w2-1', payload: { content: '喜欢陪伴', roundNo: 2 } }
+    ],
     verifiedEvidence: [
-      { evidenceId: 'ev-w2-1', trait: 'attachment_need', direction: 1, strength: 0.5 } // +10
+      { evidenceId: 'ev-w2-1', trait: 'attachment_need', direction: 1, strength: 0.5, messageId: 'm-w2-1', quote: '喜欢陪伴', fingerprint: 'm-w2-1:喜欢陪伴:attachment_need:1' } // +10
     ],
     stateChanges: [
       { trait: 'attachment_need', delta: 10, previousValue: 0, newValue: 10, reducer: { stepWeight: 20, maxDelta: 50 } }
     ]
   });
+  writeProvenanceForArchive(archive);
 
   // 故意写入损坏的 subject-state.json 文件
   const statePath = path.join(dir, 'subject-state.json');
