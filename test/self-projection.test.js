@@ -11,6 +11,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { ExperiencesArchive } = require('../src/experiences-archive');
@@ -43,8 +44,22 @@ function tmpDir(prefix = 'self-projection-test-') {
     actualTurnCount: 100,
     turns: 100,
     segments: [],
+    events: [{
+      eventId: 'evt-sp-001',
+      type: 'message',
+      source: 'user',
+      messageId: 'm-sp-001',
+      payload: { content: '事实背景', roundNo: 1 }
+    }],
     windowSynthesis: { stableUserFacts: ['事实'] }
   });
+  archive.updateProvenanceAttestations([{
+    messageId: 'm-sp-001',
+    sourceContentHash: crypto.createHash('sha256').update('事实背景', 'utf8').digest('hex'),
+    windowNo: 1,
+    sourceRole: 'user',
+    attestedAt: Date.now()
+  }], []);
 
   // 1.2 写入自我投影记录
   const projOk = archive.appendSelfProjection({
