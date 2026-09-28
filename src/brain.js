@@ -8,6 +8,7 @@ const { CREATIVE_SKILL } = require('./creative-skill');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
 const { writeJsonAtomic } = require('./atomic');
 const { tryLoad, sanitize, DEFAULTS } = require('./config');
+const { redactSecrets } = require('./redact');
 const { SelfLedger } = require('./self-ledger');
 const { DeferredWriter } = require('./deferred-writer');
 const { ExperiencesArchive } = require('./experiences-archive');
@@ -1376,7 +1377,7 @@ class Brain {
               }
             }
           } catch (err) {
-            console.error('[Brain] Dream consolidation failed (Fail-Safe):', err.message);
+            console.error('[Brain] Dream consolidation failed (Fail-Safe):', redactSecrets(err.message));
           }
         }
 
@@ -1417,7 +1418,7 @@ class Brain {
       return done;
     } catch (e) {
       // 小结失败就不动历史，下个周期再试；宁可窗口超长也不能丢对话
-      console.error('window summary failed:', e.message);
+      console.error('window summary failed:', redactSecrets(e.message));
       return false;
     }
   }
@@ -1463,7 +1464,7 @@ class Brain {
       this.saveStats(true);
       return true;
     } catch (e) {
-      console.error('memory merge failed:', e.message);
+      console.error('memory merge failed:', redactSecrets(e.message));
       return false;
     }
   }
@@ -1540,7 +1541,7 @@ class Brain {
       // 非 JSON 的兼容模型响应属于“本轮没有形成可验证成长记录”，不刷屏；
       // 网络/文件等真正异常仍保留日志，便于定位。
       if (!(e instanceof SyntaxError))
-        console.error('self growth checkpoint failed:', e.message);
+        console.error('self growth checkpoint failed:', redactSecrets(e.message));
       return 0;
     }
   }

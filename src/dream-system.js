@@ -26,6 +26,7 @@
 const crypto = require('crypto');
 const { MEMORY_EPISTEMIC_STATUS } = require('./experiment-types');
 const { buildGenerationContext, collectPromptHashes, hashPrompt } = require('./experiment-metadata');
+const { redactSecrets } = require('./redact');
 
 /**
  * v0.9.8.1 F-16: Dream 时间输入确定性分类器。
@@ -553,7 +554,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       generatedAt: now
     };
   } catch (err) {
-    console.error(`[DreamSystem] 窗口 #${windowNo} 梦境合成调用失败 (Fail-Safe 保障):`, err.message);
+    console.error(`[DreamSystem] 窗口 #${windowNo} 梦境合成调用失败 (Fail-Safe 保障):`, redactSecrets(err.message));
     return null;
   }
 }
