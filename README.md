@@ -392,32 +392,32 @@ node test/experience-schema.test.js # 22 项：Event / Observation / Interpretat
 node test/state-change.test.js      # 12 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
 node test/recovery.test.js          # 38 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）
-node test/r1-scenarios.test.js      # 94 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
-node test/research.test.js          # 68 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容）
+node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
+node test/research.test.js          # 69 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容）
 node test/archive-schema.test.js      # 20 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）
-node test/research-fabrication.test.js # 18 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
+node test/research-fabrication.test.js # 19 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
 node test/event-source-validation.test.js # 20 项：v0.9.5.1 Event Source 正向白名单约束（5 种合法源、大小写容错、第三方拦截与黑名单防御）
-node test/replay-cancel.test.js       # 11 项：v0.9.5.1 分块异步推演（CHUNK_SIZE=500）、事件循环协作让出、运行中途即时取消与非阻塞机制
-node test/research-integrity.test.js  # 15 项：v0.9.5.1 统一归档完整性服务（CERTIFIED/PARTIAL/UNCERTIFIED/INVALID 判定一致性与遗留适配器隔离）
+node test/replay-cancel.test.js       # 15 项：v0.9.5.1 分块异步推演（CHUNK_SIZE=500）、事件循环协作让出、运行中途即时取消与非阻塞机制
+node test/research-integrity.test.js  # 19 项：v0.9.5.1 统一归档完整性服务（CERTIFIED/PARTIAL/UNCERTIFIED/INVALID 判定一致性与遗留适配器隔离）
 node test/research-round-inference.test.js # 17 项：v0.9.5.2 彻底禁止 Message ID -> Round 推断（严禁 Math.ceil 解析编号、无元数据保持 UNRESOLVED）
 node test/research-stat-defaults.test.js   # 22 项：v0.9.5.2 彻底消除虚假默认统计值（turns=0 保留为 0 严禁 || 100、messageCount 严禁 || 200、如实反映 segments）
 node test/legacy-schema-certification.test.js # 14 项：v0.9.5.2 缺失 schemaVersion 规范处理（严禁隐式补写原生 v1、经过 LegacySchemaAdapter 且归档降级 UNCERTIFIED）
 node test/archive-event-strictness.test.js # 20 项：v0.9.5.2 Event 来源白名单与完整性防御（缺源拦截、未知源拦截、Synthetic 拦截、Bridge Provenance 核验与坏账防御）
 node test/legacy-metadata-fabrication.test.js # 30 项：v0.9.5.2 遗留数据元数据严禁伪造（缺 schemaVersion 禁补原生 v1、缺时间戳禁补 Date.now()、缺 windowNo 禁补 1、缺 roundNo 禁补 1、缺 messageId 禁编 UNKNOWN_MESSAGE、全链路端到端防伪）
 node test/research-window-defaults.test.js # 43 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null、全生命周期 0/null 保留测试）
-node test/archive-event-runtime-parity.test.js # 16 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
+node test/archive-event-runtime-parity.test.js # 17 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
 node test/research-index-unknown-window.test.js # 31 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0、IPC 通道防御默认 1 降级）
 node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）
-node test/research-integrity-scan-efficiency.test.js # 5 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
+node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
 node test/research-role-unknown.test.js     # 6 项：v0.9.7 (P1-03) Research Query role 映射反伪造（source=activity-tracker/desktop-motion/lifecycle 缺 role 一律 UNKNOWN/null、绝不默认成 user、UNKNOWN 消息不进 user/assistant 消息位）
 node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命实验层核心架构、Schema 契约、基线零干预、内部状态代理、纯函数 Reducer 确定性（100次无漂移与时钟隔离）、数字环周知觉候选界限、证据门禁自传记忆全可信链、睡眠三态分立与零假说门禁
 node test/window-boundary.test.js        # 33 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）
-node test/archive-integrity.test.js       # 71 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）+ P0-01 现代记录缺链字段绝不 CERTIFIED、P0-02 Archive Tail Anchor（尾部截断/篡改/锚点落后检测）、P1-02 EOI 深度引用一致性（悬空引用 NOT_RECORDED/UNRESOLVED/INVALID 绝不认证）
-node test/research-integrity-p0-1-p0-2.test.js # 19 项：v0.9.7.1 P0-1/P0-2 独立证据认证与 Genesis Anchor（结构自洽不得 CERTIFIED、自称 CERTIFIED 无效、write-time attestation、attestation 篡改、伪造 evidence、Genesis 创建/删头/篡改/缺失与 epistemicStatus 默认 UNKNOWN）
+node test/archive-integrity.test.js       # 68 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）+ P0-01 现代记录缺链字段绝不 CERTIFIED、P0-02 Archive Tail Anchor（尾部截断/篡改/锚点落后检测）、P1-02 EOI 深度引用一致性（悬空引用 NOT_RECORDED/UNRESOLVED/INVALID 绝不认证）
+node test/research-integrity-p0-1-p0-2.test.js # 18 项：v0.9.7.1 P0-1/P0-2 独立证据认证与 Genesis Anchor（结构自洽不得 CERTIFIED、自称 CERTIFIED 无效、write-time attestation、attestation 篡改、伪造 evidence、Genesis 创建/删头/篡改/缺失与 epistemicStatus 默认 UNKNOWN）
 node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
 node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
-node test/reducer-symmetry.test.js        # 28 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
-node test/self-projection.test.js         # 24 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
+node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
+node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
 node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
 node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
 node test/decision-log.test.js           # 31 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
