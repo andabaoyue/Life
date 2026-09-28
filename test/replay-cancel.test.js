@@ -75,9 +75,17 @@ function tmpDir(prefix = 'replay-cancel-test-') {
     evidenceAttestations: [],
     updatedAt: Date.now()
   }), 'utf8');
+  const firstRec = JSON.parse(lines[0]);
   const lastRec = JSON.parse(lines[lines.length - 1]);
   fs.writeFileSync(archivePath + '.anchor.json', JSON.stringify({
     schemaVersion: 1,
+    genesis: {
+      schemaVersion: 1,
+      archiveSeq: firstRec.archiveSeq,
+      recordId: firstRec.recordId,
+      recordHash: firstRec.recordHash,
+      recordedAt: Date.now()
+    },
     archiveSeq: lastRec.archiveSeq,
     recordId: lastRec.recordId,
     recordHash: lastRec.recordHash,
