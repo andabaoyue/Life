@@ -36,7 +36,6 @@ const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 const { ResearchIndex } = require('../src/research-index');
 const { ResearchQuery } = require('../src/research-query');
 const {
