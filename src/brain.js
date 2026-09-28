@@ -2,7 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Memory } = require('./memory');
-const { DeepSeek, isPeakHour, costOf } = require('./deepseek');
+const { isPeakHour, costOf } = require('./deepseek');
+// v0.9.8 P2-7: 业务层经 Provider Registry 获取 adapter（stable provider id），
+// 不再依赖 DeepSeek concrete class；DeepSeek 专属 util（isPeakHour/costOf 属 P3 cost 范畴）暂留。
+const { createAdapter } = require('./provider-registry');
 const { PERSONA } = require('./persona');
 const { CREATIVE_SKILL } = require('./creative-skill');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
@@ -118,7 +121,10 @@ class Brain {
     if (!policyCheck.ok) {
       console.warn(`[Brain] Provider Policy 检查未通过: ${policyCheck.error}`);
     }
-    this.api = new DeepSeek(this.cfg);
+    // v0.9.8 P2-7: 经 Registry 构造 adapter（当前仅注册 stable id 'deepseek'，
+    // 其 adapter 为 OpenAI-compatible 线协议实现，亦服务 local/custom 端点；
+    // 未来 provider 分支由 Registry 承担，此处不再出现 provider 品牌实现分支）。
+    this.api = createAdapter('deepseek', this.cfg);
     this.persona = PERSONA;
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
