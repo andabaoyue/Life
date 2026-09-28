@@ -117,6 +117,11 @@ function countPass(out) {
     check(c.file + ' 全绿（0 项 FAIL）', r.fail === 0, 'FAIL=' + r.fail);
     check(c.file + ' 项数与 README 一致', r.pass === c.n,
       'README 写 ' + c.n + '，实际 ' + r.pass);
+    if (r.fail > 0) {
+      console.log('--- DEBUG FAILING OUTPUT: ' + c.file + ' ---');
+      console.log(out);
+      console.log('--- END DEBUG: ' + c.file + ' ---');
+    }
   }
 
   /* 3. README 点名的文件都存在（运行期产物除外） */
