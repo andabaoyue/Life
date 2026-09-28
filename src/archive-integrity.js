@@ -913,8 +913,10 @@ class ArchiveIntegrityService {
     } else if (independent_evidence_integrity !== 'verified' && independentEvidence.factualRecordCount > 0) {
       // v0.9.7.1 P0-01: 结构自洽 ≠ 事实认证。含研究事实的现代归档
       // 必须有 Archive 之外的写时独立证据认证；缺失或不匹配一律 UNCERTIFIED。
+      // 但“Replay 是否完整执行”与“事实是否已认证”是两个独立维度：
+      // 完整读取、解析并计算完毕时，replayStatus 仍应为 COMPLETE。
       integrity = INTEGRITY_STATUS.UNCERTIFIED;
-      replayStatus = REPLAY_STATUS.PARTIAL;
+      replayStatus = REPLAY_STATUS.COMPLETE;
     } else if (totalLines === 0) {
       integrity = INTEGRITY_STATUS.CERTIFIED;
       replayStatus = REPLAY_STATUS.COMPLETE;
