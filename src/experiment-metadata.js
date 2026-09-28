@@ -135,6 +135,9 @@ function collectPromptHashes(texts = {}) {
  */
 function buildGenerationContext(opts = {}) {
   const cfg = opts.cfg || {};
+
+  // v0.9.8 P1: GenerationContext 的“真实性”与“结构合法性”分开。
+  // 这里只记录来源强度，不把 caller-supplied metadata 宣称为运行时事实。
   let provider = UNAVAILABLE;
   if (typeof cfg.provider === 'string' && cfg.provider.trim()) {
     provider = cfg.provider.trim();
@@ -183,9 +186,24 @@ function buildGenerationContext(opts = {}) {
   const observedModel = (typeof opts.observedModel === 'string' && opts.observedModel.trim())
     ? opts.observedModel.trim()
     : ((cfg && typeof cfg.observedModel === 'string' && cfg.observedModel.trim()) ? cfg.observedModel.trim() : UNAVAILABLE);
+
+  const observedModelSource = (
+    opts.provenance && typeof opts.provenance === 'object' &&
+    opts.provenance.observedModelSource === 'provider_response'
+  )
+    ? 'provider_response'
+    : (observedModel !== UNAVAILABLE ? 'caller_or_config' : UNAVAILABLE);
+
   const modelVersion = (typeof opts.modelVersion === 'string' && opts.modelVersion.trim())
     ? opts.modelVersion.trim()
     : ((cfg && typeof cfg.modelVersion === 'string' && cfg.modelVersion.trim()) ? cfg.modelVersion.trim() : UNAVAILABLE);
+
+  const gitCommitSource = (
+    typeof opts.gitCommit === 'string' && opts.gitCommit.trim()
+  ) ? 'explicit'
+    : (process.env.LIFE_GIT_COMMIT && String(process.env.LIFE_GIT_COMMIT).trim()
+      ? 'environment_unverified'
+      : (resolveGitCommit() !== 'unknown' ? 'git_metadata' : 'unavailable'));
 
   const ctx = {
     metaSchemaVersion: META_SCHEMA_VERSION,
@@ -193,10 +211,12 @@ function buildGenerationContext(opts = {}) {
     generatedAt: Number.isFinite(opts.generatedAt) ? opts.generatedAt : Date.now(),
     lifeVersion: String(opts.lifeVersion || (pkg && pkg.version) || UNAVAILABLE),
     gitCommit: String(opts.gitCommit || resolveGitCommit()),
+    gitCommitSource,
     provider: String(provider || UNAVAILABLE),
     modelName: String(cfg.model || UNAVAILABLE),
     modelVersion: String(modelVersion || UNAVAILABLE),
     observedModel: String(observedModel || UNAVAILABLE),
+    observedModelSource,
     endpoint: String(cfg.baseURL || UNAVAILABLE),
     sampling,
     promptHashes: (opts.promptHashes && typeof opts.promptHashes === 'object')
@@ -208,7 +228,13 @@ function buildGenerationContext(opts = {}) {
       : ((cfg.experimentModules && typeof cfg.experimentModules === 'object') ? { ...cfg.experimentModules } : null),
     sourceWindowNo: Number.isInteger(opts.sourceWindowNo) ? opts.sourceWindowNo : null,
     sourceMessageRange: range,
-    generator: String(opts.generator || 'pure-computation-or-llm')
+    generator: String(opts.generator || 'pure-computation-or-llm'),
+    provenanceStatus: (
+      observedModelSource === 'provider_response' &&
+      Object.keys(opts.promptHashes || {}).length > 0
+    ) ? 'runtime_observed_partial' : (
+      observedModel !== UNAVAILABLE ? 'caller_supplied_or_config' : 'unavailable'
+    )
   };
 
   return deepFreeze(ctx);
@@ -223,7 +249,13 @@ function getGenerationContext(recordOrPayload) {
   const p = (recordOrPayload && recordOrPayload.payload) ? recordOrPayload.payload : recordOrPayload;
   const ctx = p && p.generationContext;
   if (ctx && typeof ctx === 'object' && typeof ctx.metaSchemaVersion === 'number') {
-    return { available: true, ...ctx };
+    return {
+      available: true,
+      ...ctx,
+      observedModelSource: ctx.observedModelSource || UNAVAILABLE,
+      gitCommitSource: ctx.gitCommitSource || UNAVAILABLE,
+      provenanceStatus: ctx.provenanceStatus || 'unavailable'
+    };
   }
   return {
     available: false,
@@ -236,6 +268,8 @@ function getGenerationContext(recordOrPayload) {
     modelName: UNAVAILABLE,
     modelVersion: UNAVAILABLE,
     observedModel: UNAVAILABLE,
+    observedModelSource: UNAVAILABLE,
+    gitCommitSource: UNAVAILABLE,
     endpoint: UNAVAILABLE,
     sampling: null,
     promptHashes: null,
@@ -244,6 +278,7 @@ function getGenerationContext(recordOrPayload) {
     sourceWindowNo: null,
     sourceMessageRange: null,
     generator: UNAVAILABLE,
+    provenanceStatus: 'unavailable',
     reason: NOT_RECORDED
   };
 }
@@ -273,6 +308,18 @@ function validateGenerationContext(ctx) {
   }
   if (typeof ctx.gitCommit !== 'string' || !ctx.gitCommit.trim()) {
     return { valid: false, present: true, reason: 'GENERATION_CONTEXT_INVALID_GIT_COMMIT' };
+  }
+  if (ctx.gitCommitSource !== undefined &&
+      !['explicit', 'environment_unverified', 'git_metadata', 'unavailable'].includes(ctx.gitCommitSource)) {
+    return { valid: false, present: true, reason: 'GENERATION_CONTEXT_INVALID_GIT_COMMIT_SOURCE' };
+  }
+  if (ctx.observedModelSource !== undefined &&
+      !['provider_response', 'caller_or_config', 'unavailable'].includes(ctx.observedModelSource)) {
+    return { valid: false, present: true, reason: 'GENERATION_CONTEXT_INVALID_OBSERVED_MODEL_SOURCE' };
+  }
+  if (ctx.provenanceStatus !== undefined &&
+      !['runtime_observed_partial', 'caller_supplied_or_config', 'unavailable'].includes(ctx.provenanceStatus)) {
+    return { valid: false, present: true, reason: 'GENERATION_CONTEXT_INVALID_PROVENANCE_STATUS' };
   }
   if (typeof ctx.provider !== 'string' || !ctx.provider.trim()) {
     return { valid: false, present: true, reason: 'GENERATION_CONTEXT_INVALID_PROVIDER' };

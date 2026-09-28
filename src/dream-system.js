@@ -171,7 +171,21 @@ function evaluateDreamGate(opts = {}) {
   }
 
   // 24小时频次硬顶约束 (显式时间注入，绝不隐式依赖系统时刻漂移)
-  const now = typeof opts.now === 'number' ? opts.now : (typeof opts.timestamp === 'number' ? opts.timestamp : (opts.clock && typeof opts.clock.now === 'function' ? opts.clock.now() : Date.now()));
+  const hasExplicitClock = typeof opts.now === 'number' ||
+    typeof opts.timestamp === 'number' ||
+    Boolean(opts.clock && typeof opts.clock.now === 'function');
+  const now = typeof opts.now === 'number'
+    ? opts.now
+    : (typeof opts.timestamp === 'number'
+      ? opts.timestamp
+      : (opts.clock && typeof opts.clock.now === 'function'
+        ? opts.clock.now()
+        : Date.now()));
+  const clockSource = typeof opts.now === 'number'
+    ? 'explicit_now'
+    : (typeof opts.timestamp === 'number'
+      ? 'explicit_timestamp'
+      : (opts.clock && typeof opts.clock.now === 'function' ? 'explicit_clock' : 'wall_clock'));
   const oneDayAgo = now - 24 * 60 * 60 * 1000;
   const recentDreamCount = dreamHistory.filter(d => (d.generatedAt || d.timestamp || 0) >= oneDayAgo).length;
   if (recentDreamCount >= cfg.maximumDreamCallsPer24h) {
@@ -186,6 +200,8 @@ function evaluateDreamGate(opts = {}) {
     costGatePassed,
     allowDream,
     reason: !eligible ? 'INSUFFICIENT_TENSION' : (costGatePassed ? 'TENSION_THRESHOLD_MET' : costGateReason),
+    clockSource,
+    deterministic: hasExplicitClock,
     metrics: {
       arousalVariance: Number(arousalVariance.toFixed(4)),
       maxArousalSpike: Number(maxArousalSpike.toFixed(4)),
@@ -398,7 +414,12 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       observedModel,
       modelVersion,
       modules: options.experimentModules || context.experimentModules || {},
-      sourceMessageRange: resolvedSourceMessageRange
+      sourceMessageRange: resolvedSourceMessageRange,
+      provenance: {
+        observedModelSource: (typeof res.observedModel === 'string' && res.observedModel.trim())
+          ? 'provider_response'
+          : 'unavailable'
+      }
     });
 
     const dreamPayload = {
@@ -422,6 +443,11 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
         ? context.eventProvenanceStatus.trim()
         : (Array.isArray(context.sourceEventIds) && context.sourceEventIds.length > 0 ? 'evidence_linked' : 'unavailable'),
       sourceMessageRange: resolvedSourceMessageRange,
+      identityScope: 'runtime_unique',
+      reproducibilityScope: {
+        semantic: ['narrative', 'outputHash', 'promptHash', 'gateMetrics', 'sourceEvidenceIds', 'sourceEventIds', 'sourceMessageRange'],
+        runtimeIdentity: ['dreamId', 'generatedAt']
+      },
       gateMetrics: context.gateMetrics || {},
       gateThresholds: context.gateThresholds || {},
       dreamModel: generationContext.modelName,

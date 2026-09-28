@@ -1,4 +1,4 @@
-# Life · 初澜 (Chulan) v0.9.7.1
+# Life · 初澜 (Chulan) v0.9.8
 
 Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
 
@@ -414,6 +414,7 @@ node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命
 node test/window-boundary.test.js        # 33 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）
 node test/archive-integrity.test.js       # 71 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）+ P0-01 现代记录缺链字段绝不 CERTIFIED、P0-02 Archive Tail Anchor（尾部截断/篡改/锚点落后检测）、P1-02 EOI 深度引用一致性（悬空引用 NOT_RECORDED/UNRESOLVED/INVALID 绝不认证）
 node test/research-integrity-p0-1-p0-2.test.js # 19 项：v0.9.7.1 P0-1/P0-2 独立证据认证与 Genesis Anchor（结构自洽不得 CERTIFIED、自称 CERTIFIED 无效、write-time attestation、attestation 篡改、伪造 evidence、Genesis 创建/删头/篡改/缺失与 epistemicStatus 默认 UNKNOWN）
+node test/research-reproducibility-p1.test.js # 21 项：v0.9.8 P1 研究可复现性与证据口径（GenerationContext provenance 来源强度、全历史 Attention Watermark 幂等、State-level Replay 确定性边界、Dream gate 显式时钟与 runtime identity）
 node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
 node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
 node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）

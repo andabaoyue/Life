@@ -86,10 +86,10 @@ class InternalRegulationManager {
     this.isSleeping = false;
     this.updatedAt = Date.now();
     this.history = []; // 最近转移事件流水 (上限 50 条)
-    // 注意力事件消费 Watermark 去重集合 (F-13: 有界滑动窗口幂等，非全历史无界幂等)
-    // 语义界定：在最近 256 个消费事件范围内提供持久化幂等保障；
-    // 超过 256 时最早的 ID 按 FIFO 淘汰（Bounded Idempotency，保障内存可控与持久化边界）。
+    // v0.9.8 F-13: 全历史 Attention Watermark 负责语义幂等；
+    // consumedAttentionEvents 仅是 256-entry 运行时 cache，不再承担全局语义。
     this.consumedAttentionEvents = new Set();
+    this.persistedConsumedAttentionEvents = new Set();
     this.maxConsumedAttentionEvents = 256;
     this.persistenceHealthy = true;
     this.persistenceError = null;
@@ -119,7 +119,13 @@ class InternalRegulationManager {
       interactionDensity: this.interactionDensity,
       cognitiveLoadProxy: this.cognitiveLoadProxy,
       isSleeping: this.isSleeping,
-      updatedAt: this.updatedAt
+      updatedAt: this.updatedAt,
+      watermark: {
+        scope: 'global',
+        runtimeCacheCapacity: this.maxConsumedAttentionEvents,
+        runtimeCachedCount: this.consumedAttentionEvents.size,
+        persistedCount: this.persistedConsumedAttentionEvents.size
+      }
     });
   }
 
@@ -311,9 +317,10 @@ class InternalRegulationManager {
     }
 
     if (eventId) {
-      if (this.consumedAttentionEvents.has(eventId)) {
+      if (this.persistedConsumedAttentionEvents.has(eventId)) {
         return this.getState();
       }
+      this.persistedConsumedAttentionEvents.add(eventId);
       this.consumedAttentionEvents.add(eventId);
       if (this.consumedAttentionEvents.size > this.maxConsumedAttentionEvents) {
         const first = this.consumedAttentionEvents.values().next().value;
@@ -357,6 +364,7 @@ class InternalRegulationManager {
       this.updatedAt = before.updatedAt;
       this.history = before.history;
       this.consumedAttentionEvents = before.consumedAttentionEvents;
+      this.persistedConsumedAttentionEvents = before.persistedConsumedAttentionEvents;
       return this.getState();
     }
     return this.getState();
@@ -477,9 +485,19 @@ class InternalRegulationManager {
           else if (raw.values && typeof raw.values.isSleeping === 'boolean') this.isSleeping = raw.values.isSleeping;
           this.updatedAt = raw.updatedAt || Date.now();
           if (Array.isArray(raw.history)) this.history = raw.history.slice(-50);
-          if (Array.isArray(raw.consumedAttentionEvents)) {
-            this.consumedAttentionEvents = new Set(raw.consumedAttentionEvents.slice(-this.maxConsumedAttentionEvents));
+          if (Array.isArray(raw.persistedConsumedAttentionEvents)) {
+            this.persistedConsumedAttentionEvents = new Set(
+              raw.persistedConsumedAttentionEvents.filter(v => typeof v === 'string' && v.trim())
+            );
+          } else if (Array.isArray(raw.consumedAttentionEvents)) {
+            // v0.9.8 migration: older bounded ledgers seed the new global ledger.
+            this.persistedConsumedAttentionEvents = new Set(
+              raw.consumedAttentionEvents.filter(v => typeof v === 'string' && v.trim())
+            );
           }
+          this.consumedAttentionEvents = new Set(
+            Array.from(this.persistedConsumedAttentionEvents).slice(-this.maxConsumedAttentionEvents)
+          );
           return true;
         }
         this.persistenceHealthy = false;
@@ -516,6 +534,7 @@ class InternalRegulationManager {
           interactionDensity: this.interactionDensity,
           cognitiveLoadProxy: this.cognitiveLoadProxy
         },
+        persistedConsumedAttentionEvents: Array.from(this.persistedConsumedAttentionEvents),
         consumedAttentionEvents: Array.from(this.consumedAttentionEvents).slice(-this.maxConsumedAttentionEvents),
         history: this.history
       };

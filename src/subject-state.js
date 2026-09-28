@@ -913,6 +913,8 @@ class SubjectState {
    *    nextWindowNo 严格按 max(actualWindowNo) + 1 计算。
    * 4. P0-01: 离线重放时同步构建并去重 acceptedEvidenceIds 与 acceptedEvidenceFingerprints。
    * 5. P0-03: 区分 complete / partial / invalid 与 certified / uncertified。
+   * 6. v0.9.8 F-14: 明确 Replay 的确定性边界为 state-level semantic equivalence，
+   *    不把运行时 ID 与时间戳误称为 byte-for-byte deterministic。
    */
   static replay(archiveRecords, options = {}) {
     const initialTraits = options.initialTraits || { ...DEFAULT_TRAITS };
@@ -936,6 +938,12 @@ class SubjectState {
         nextWindowNo: 1,
         acceptedEvidenceIds: [],
         acceptedEvidenceFingerprints: [],
+        determinism: {
+          scope: 'state',
+          semanticFields: ['finalState', 'windowStates', 'acceptedEvidenceIds', 'acceptedEvidenceFingerprints'],
+          runtimeFields: ['stateChangeId', 'createdAt'],
+          note: 'State-level replay is deterministic; runtime identity/timestamp fields are not part of semantic equivalence.'
+        },
         processedRecords: 0,
         rejectedRecords: 0,
         warnings: []
@@ -1172,6 +1180,12 @@ class SubjectState {
       nextWindowNo,
       acceptedEvidenceIds: Array.from(acceptedEvidenceIds),
       acceptedEvidenceFingerprints: Array.from(acceptedEvidenceFingerprints),
+      determinism: {
+        scope: 'state',
+        semanticFields: ['finalState', 'windowStates', 'acceptedEvidenceIds', 'acceptedEvidenceFingerprints'],
+        runtimeFields: ['stateChangeId', 'createdAt'],
+        note: 'State-level replay is deterministic; runtime identity/timestamp fields are excluded from semantic equivalence.'
+      },
       processedRecords,
       rejectedRecords,
       warnings,
