@@ -336,16 +336,30 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
             ? context.clock.now()
             : Date.now())));
 
-    const idSuffix = (typeof options.idGenerator === 'function')
-      ? options.idGenerator('dream')
-      : ((typeof context.idGenerator === 'function')
-        ? context.idGenerator('dream')
-        : (context.dreamIdSuffix || options.dreamIdSuffix || Math.random().toString(36).slice(2, 6)));
+    const isCallerSupplied = Boolean(
+      (options.dreamId && typeof options.dreamId === 'string' && options.dreamId.trim()) ||
+      (context.dreamId && typeof context.dreamId === 'string' && context.dreamId.trim())
+    );
 
-    const dreamId = (options.dreamId || context.dreamId)
-      ? (options.dreamId || context.dreamId)
+    const hasDeterministicGenerator = Boolean(
+      !isCallerSupplied &&
+      (typeof options.idGenerator === 'function' || typeof context.idGenerator === 'function')
+    );
+
+    const idSuffix = hasDeterministicGenerator
+      ? (typeof options.idGenerator === 'function' ? options.idGenerator('dream') : context.idGenerator('dream'))
+      : (context.dreamIdSuffix || options.dreamIdSuffix || Math.random().toString(36).slice(2, 6));
+
+    const dreamId = isCallerSupplied
+      ? (options.dreamId ? String(options.dreamId).trim() : String(context.dreamId).trim())
       : `dream-w${windowNo}-${now.toString(36)}-${idSuffix}`;
     const outputHash = sha256(content);
+
+    const identityScope = isCallerSupplied ? 'caller_supplied' : 'runtime_unique';
+    const identitySource = isCallerSupplied
+      ? 'caller_supplied'
+      : (hasDeterministicGenerator ? 'deterministic_generator' : 'runtime_generated');
+    const identityDeterministic = Boolean(hasDeterministicGenerator);
 
     // P0-1: 真实记录 API 返回的 observedModel，严禁回退到 cfg.model 伪造
     const observedModel =
@@ -443,7 +457,9 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
         ? context.eventProvenanceStatus.trim()
         : (Array.isArray(context.sourceEventIds) && context.sourceEventIds.length > 0 ? 'evidence_linked' : 'unavailable'),
       sourceMessageRange: resolvedSourceMessageRange,
-      identityScope: 'runtime_unique',
+      identityScope,
+      identitySource,
+      identityDeterministic,
       reproducibilityScope: {
         semantic: ['narrative', 'outputHash', 'promptHash', 'gateMetrics', 'sourceEvidenceIds', 'sourceEventIds', 'sourceMessageRange'],
         runtimeIdentity: ['dreamId', 'generatedAt']
