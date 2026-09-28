@@ -1183,18 +1183,16 @@ class SubjectState {
       acceptedEvidenceFingerprints: Array.from(acceptedEvidenceFingerprints),
       determinism: {
         scope: 'state',
+        stateLevel: 'deterministic',
         semanticFields: ['finalState', 'windowStates', 'acceptedEvidenceIds', 'acceptedEvidenceFingerprints'],
         runtimeFields: ['stateChangeId', 'createdAt'],
+        recordLevel: (options.deterministicIds || typeof options.idGenerator === 'function') ? 'deterministic_ids' : 'state_only',
+        byteLevel: (options.deterministicIds || typeof options.idGenerator === 'function') ? 'deterministic_ids_only' : 'semantic_only',
         note: 'State-level replay is deterministic; runtime identity/timestamp fields are excluded from semantic equivalence.'
       },
       processedRecords,
       rejectedRecords,
-      warnings,
-      determinism: {
-        stateLevel: 'deterministic',
-        recordLevel: (options.deterministicIds || typeof options.idGenerator === 'function') ? 'deterministic' : 'state_only',
-        byteLevel: (options.deterministicIds || typeof options.idGenerator === 'function') ? 'deterministic' : 'semantic_only'
-      }
+      warnings
     };
   }
 
