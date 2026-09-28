@@ -72,8 +72,15 @@ function writeProvenanceForArchive(archive) {
       messageAttestations.push({ messageId: String(mid), sourceContentHash: hash(evt.payload?.content ?? evt.content ?? ''), windowNo: rec.windowNo ?? null, sourceRole: evt.source || null, attestedAt: rec.timestamp || Date.now() });
     }
     for (const ev of (Array.isArray(p.verifiedEvidence) ? p.verifiedEvidence : [])) {
-      if (!ev?.evidenceId || !ev?.messageId || !ev?.fingerprint) continue;
-      evidenceAttestations.push({ evidenceId: String(ev.evidenceId), fingerprint: String(ev.fingerprint), messageId: String(ev.messageId), quoteHash: hash(normalizeQuote(ev.quote)), windowNo: rec.windowNo ?? null });
+      if (!ev?.evidenceId || !ev?.messageId) continue;
+      const trait = String(ev.trait || '').trim();
+      const direction = Math.max(-1, Math.min(1, Number(ev.direction || 0)));
+      const normalizedQuote = normalizeQuote(ev.quote);
+      const fingerprint = ev.fingerprint || (trait && normalizedQuote
+        ? `${ev.messageId}:${normalizedQuote}:${trait}:${direction}`
+        : null);
+      if (!fingerprint) continue;
+      evidenceAttestations.push({ evidenceId: String(ev.evidenceId), fingerprint: String(fingerprint), messageId: String(ev.messageId), quoteHash: hash(normalizedQuote), windowNo: rec.windowNo ?? null });
     }
   }
   if (!archive.updateProvenanceAttestations(messageAttestations, evidenceAttestations)) throw new Error('failed to write provenance fixture');
