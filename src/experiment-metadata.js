@@ -183,16 +183,46 @@ function buildGenerationContext(opts = {}) {
       }
     : null;
 
-  const observedModel = (typeof opts.observedModel === 'string' && opts.observedModel.trim())
-    ? opts.observedModel.trim()
-    : ((cfg && typeof cfg.observedModel === 'string' && cfg.observedModel.trim()) ? cfg.observedModel.trim() : UNAVAILABLE);
+  // v0.9.8.1 F-12: 区分“调用者声明的元数据”与“可信 runtime provider adapter 响应证据”
+  // 核心认识论边界：caller-supplied metadata ≠ runtime-observed fact
+  // 没有可信 runtime evidence 时，严禁仅凭 caller 声明自证升级到 provider_response，
+  // 必须降级为 caller_or_config；当 providerResponse 存在但不含 observedModel 时，保持 unavailable。
+  const runtimeResponse = (opts.providerResponse && typeof opts.providerResponse === 'object')
+    ? opts.providerResponse
+    : ((opts.runtimeResponse && typeof opts.runtimeResponse === 'object') ? opts.runtimeResponse : null);
 
-  const observedModelSource = (
-    opts.provenance && typeof opts.provenance === 'object' &&
-    opts.provenance.observedModelSource === 'provider_response'
-  )
-    ? 'provider_response'
-    : (observedModel !== UNAVAILABLE ? 'caller_or_config' : UNAVAILABLE);
+  const hasRuntimeProviderResponse = Boolean(
+    runtimeResponse &&
+    typeof runtimeResponse.observedModel === 'string' &&
+    runtimeResponse.observedModel.trim() &&
+    runtimeResponse.observedModel.trim() !== UNAVAILABLE
+  );
+
+  let observedModel = UNAVAILABLE;
+  let observedModelSource = UNAVAILABLE;
+
+  if (hasRuntimeProviderResponse) {
+    observedModel = runtimeResponse.observedModel.trim();
+    observedModelSource = 'provider_response';
+  } else if (runtimeResponse) {
+    // 显式提供了 runtimeResponse 但未观察到 observedModel（例如模型接口未返回该字段）
+    // 严格遵循 No-Fabrication：不得使用 cfg.model 或 opts.observedModel 冒充 provider_response
+    observedModel = UNAVAILABLE;
+    observedModelSource = UNAVAILABLE;
+  } else {
+    // 没有可信 runtimeResponse 证据：普通 caller 传入或配置提供
+    // 无论 caller 是否在 opts.provenance 声明 provider_response，均不得自证升级，严格判定为 caller_or_config
+    if (typeof opts.observedModel === 'string' && opts.observedModel.trim() && opts.observedModel.trim() !== UNAVAILABLE) {
+      observedModel = opts.observedModel.trim();
+      observedModelSource = 'caller_or_config';
+    } else if (cfg && typeof cfg.observedModel === 'string' && cfg.observedModel.trim() && cfg.observedModel.trim() !== UNAVAILABLE) {
+      observedModel = cfg.observedModel.trim();
+      observedModelSource = 'caller_or_config';
+    } else {
+      observedModel = UNAVAILABLE;
+      observedModelSource = UNAVAILABLE;
+    }
+  }
 
   const modelVersion = (typeof opts.modelVersion === 'string' && opts.modelVersion.trim())
     ? opts.modelVersion.trim()

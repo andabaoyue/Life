@@ -429,6 +429,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       modelVersion,
       modules: options.experimentModules || context.experimentModules || {},
       sourceMessageRange: resolvedSourceMessageRange,
+      providerResponse: res,
       provenance: {
         observedModelSource: (typeof res.observedModel === 'string' && res.observedModel.trim())
           ? 'provider_response'
