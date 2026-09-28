@@ -121,11 +121,21 @@ function collectFactualClaims(records) {
     const status = String(ev.status || 'verified').toLowerCase();
     if (status === 'rejected') return;
     if (!ev.evidenceId) return;
+    const messageId = ev.messageId || null;
+    const quote = ev.quote || '';
+    const trait = ev.trait || '';
+    const direction = Math.max(-1, Math.min(1, Number(ev.direction || 0)));
+    const normalizedQuote = String(quote || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const fingerprint = ev.fingerprint || (
+      messageId && trait
+        ? `${messageId}:${normalizedQuote}:${trait}:${direction}`
+        : null
+    );
     evidenceClaims.push({
       evidenceId: ev.evidenceId,
-      fingerprint: ev.fingerprint || null,
-      messageId: ev.messageId || null,
-      quote: ev.quote || '',
+      fingerprint,
+      messageId,
+      quote,
       windowNo: ev.windowNo ?? null,
       recordRef
     });
@@ -259,16 +269,13 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
 
   let status = 'not_required';
   if (factualRecords.length > 0) {
-    // 没有任何可对应的消息/证据主张时，旧窗口的 attestation 也不能替当前事实“背书”。
+    // 没有可认证的消息/证据事实主张时，不应因为“没有 attestation”
+    // 把纯结构/元数据记录误降级为未认证。
     if (claims.messageClaims.length === 0 && claims.evidenceClaims.length === 0) {
-      status = 'not_recorded';
+      status = 'not_required';
     } else {
       status = defects.length > 0 ? 'unresolved' : 'verified';
     }
-  }
-
-  if (factualRecords.length > 0 && messageAtts.length === 0 && attestations.length === 0) {
-    status = 'not_recorded';
   }
 
   return {
@@ -910,7 +917,7 @@ class ArchiveIntegrityService {
       // P1-02: 引用悬空 (NOT_RECORDED) / 来源无法证明 (UNRESOLVED) → 绝不 CERTIFIED
       integrity = INTEGRITY_STATUS.UNCERTIFIED;
       replayStatus = REPLAY_STATUS.PARTIAL;
-    } else if (independent_evidence_integrity !== 'verified' && independentEvidence.factualRecordCount > 0) {
+    } else if (independent_evidence_integrity !== 'verified' && (independentEvidence.messageClaimCount > 0 || independentEvidence.evidenceClaimCount > 0)) {
       // v0.9.7.1 P0-01: 结构自洽 ≠ 事实认证。含研究事实的现代归档
       // 必须有 Archive 之外的写时独立证据认证；缺失或不匹配一律 UNCERTIFIED。
       // 但“Replay 是否完整执行”与“事实是否已认证”是两个独立维度：
