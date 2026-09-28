@@ -1683,12 +1683,22 @@ document.getElementById('rExpFullBundle')?.addEventListener('click', () => handl
 pet.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   menu.classList.remove('hidden');           // 先显示，才量得到尺寸
-  const mh = menu.offsetHeight || 0, mw = menu.offsetWidth || 0;
-  // 贴边时也别超出：上下左右各留 0，量不出来时退回旧行为至少不会 NaN
-  const top = Math.max(0, Math.min(e.clientY, window.innerHeight - mh));
-  const left = Math.max(0, Math.min(e.clientX, window.innerWidth - mw));
-  menu.style.top = top + 'px';
-  menu.style.left = left + 'px';
+
+  const clampMenuToViewport = () => {
+    const rect = menu.getBoundingClientRect();
+    const top = Math.max(0, Math.min(e.clientY, window.innerHeight - rect.height));
+    const left = Math.max(0, Math.min(e.clientX, window.innerWidth - rect.width));
+    menu.style.top = top + 'px';
+    menu.style.left = left + 'px';
+  };
+
+  // 首次布局后按真实尺寸夹紧。
+  clampMenuToViewport();
+
+  // 字体/布局完成后尺寸可能再次变化（Linux headless CI 已观测到这一类
+  // line-height 波动），再校正一次，避免“测量时 284px、最终 304px”导致
+  // 菜单底部越界。这里不写死菜单高度。
+  requestAnimationFrame(clampMenuToViewport);
 });
 
 window.addEventListener('mousedown', (e) => {
