@@ -168,6 +168,7 @@ const validEvent = {
   eventId: 'evt-valid-01',
   type: 'message',
   source: 'user',
+  messageId: 'm-valid-01',
   payload: { content: 'hello world', roundNo: 1 }
 };
 
@@ -192,7 +193,16 @@ const dirE = tmpDir('parity-e-');
 const archiveE = path.join(dirE, 'experiences.jsonl');
 // P0-01/P0-02: 现代归档经 Canonical 写入路径生成链字段与 Tail Anchor
 const { ExperiencesArchive } = require('../src/experiences-archive');
-new ExperiencesArchive(dirE).append(summaryValid);
+const archiveEWriter = new ExperiencesArchive(dirE);
+archiveEWriter.append(summaryValid);
+const hash = require('crypto').createHash('sha256').update('hello world', 'utf8').digest('hex');
+archiveEWriter.updateProvenanceAttestations([{
+  messageId: 'm-valid-01',
+  sourceContentHash: hash,
+  windowNo: 1,
+  sourceRole: 'user',
+  attestedAt: 1000
+}], []);
 const reportE = ArchiveIntegrityService.checkArchive(archiveE);
 check('Test E: 纯合法事件归档正常获得 CERTIFIED 认证', reportE.integrity === INTEGRITY_STATUS.CERTIFIED);
 try { fs.rmSync(dirE, { recursive: true, force: true }); } catch {}
