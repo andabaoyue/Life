@@ -7,7 +7,7 @@
  * 1. self_projection 记录格式符合 Canonical Schema v1 规范
  * 2. sourceExperienceRecords 与 sourceStateChanges 严格溯源
  * 3. 窗口小结与自我成长后的因果链记录落盘 (experiences.jsonl)
- * 4. Replay 审计：自我投影记录平滑兼容并保持哈希链与序列完整性 (certified)
+ * 4. Replay 审计：自我投影记录平滑兼容并保持哈希链与序列完整性；事实认证另由独立 provenance 决定
  */
 
 const fs = require('fs');
@@ -183,14 +183,14 @@ async function testBrainSelfProjectionIntegration() {
 
   // 1. 完整性检查
   const intRep = ArchiveIntegrityService.checkRecords(records);
-  check('ArchiveIntegrityService 判定包含 self_projection 的归档为 certified', intRep.integrity === 'certified');
+  check('ArchiveIntegrityService 对缺少独立事实证明的 self_projection 归档标记为 uncertified', intRep.integrity === 'uncertified');
   check('序列完整性为 monotonic', intRep.sequence_integrity === 'monotonic');
   check('哈希链完整性为 verified', intRep.hash_integrity === 'verified');
 
   // 2. Replay 重建
   const replayRep = SubjectState.replay(records);
   check('Replay 成功完成 (complete)', replayRep.replayStatus === 'complete');
-  check('Replay 认证状态为 certified', replayRep.integrity === 'certified');
+  check('Replay 保留完整计算结果但事实认证状态为 uncertified', replayRep.integrity === 'uncertified');
   check('Replay 仅将 window_summary 计入有效窗口状态 (窗口数为 1)', replayRep.windowStates.length === 1);
   check('Replay 正确计算 vitality 状态累加 (+10)', replayRep.finalState.vitality === 10);
 
