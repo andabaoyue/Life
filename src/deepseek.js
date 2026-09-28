@@ -8,7 +8,10 @@
  * 我们逐次累加，用来算真实命中率。
  */
 
-const { markProviderRuntimeResponse } = require('./experiment-metadata');
+const { __internal } = require('./experiment-metadata');
+// v0.9.8.2 F-12a: runtime evidence 铸造权限经内部接口获取，并在铸造器上绑定受信 adapter='deepseek'。
+// 该能力不属于公共 metadata API；complete()/stream() 的真实 response 均经此铸造器注册。
+const markProviderRuntimeResponse = __internal.createProviderRuntimeMintAuthority('deepseek');
 
 function isPeakHour(now = new Date()) {
   // DeepSeek 峰谷：工作日 09:00-12:00、14:00-18:00 为高峰；周六周日全天低谷；

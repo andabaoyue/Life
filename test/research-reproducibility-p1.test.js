@@ -18,9 +18,11 @@ const {
   buildGenerationContext,
   validateGenerationContext,
   getGenerationContext,
-  markProviderRuntimeResponse,
-  isProviderRuntimeResponse
+  isProviderRuntimeResponse,
+  __internal
 } = require('../src/experiment-metadata');
+// v0.9.8.2 F-12a: 测试以「provider adapter 仿真」身份使用内部铸造接口（普通 caller 的公共 API 无铸造能力）
+const markProviderRuntimeResponse = __internal.createProviderRuntimeMintAuthority('deepseek');
 const { InternalRegulationManager } = require('../src/internal-regulation');
 const { evaluateDreamGate, synthesizeDream } = require('../src/dream-system');
 const { SubjectState } = require('../src/subject-state');
@@ -206,6 +208,45 @@ function tmpDir(prefix = 'repro-p1-') {
     noHashCtx.provenanceStatus === 'runtime_observed_partial');
   check('F-12p promptHashes 缺失时如实为空对象 (不补造完整 provenance)',
     noHashCtx.promptHashes && Object.keys(noHashCtx.promptHashes).length === 0);
+
+  // 7. F-12a 铸造权限边界: 公共 metadata API 不含铸造能力
+  const publicApi = require('../src/experiment-metadata');
+  check('F-12a 公共 metadata API 不导出铸造函数 markProviderRuntimeResponse',
+    typeof publicApi.markProviderRuntimeResponse === 'undefined');
+  check('F-12a 铸造能力仅存在于内部接口 __internal.createProviderRuntimeMintAuthority',
+    typeof publicApi.__internal.createProviderRuntimeMintAuthority === 'function');
+  check('F-12a fake object 无法经公共路径自行获得 runtime attestation',
+    isProviderRuntimeResponse({ observedModel: 'fake' }) === false);
+  check('F-12a deepseek 经 __internal 获取铸造权限且 complete()/stream() 均注册',
+    deepseekSrc.includes("createProviderRuntimeMintAuthority('deepseek')") && markCalls >= 2);
+
+  // 8. F-12b runtime evidence 与 provider/adapter 绑定
+  check('F-12b trusted deepseek response + provider=deepseek -> provider_response',
+    trustedCtx.observedModelSource === 'provider_response');
+  const mintOtherAdapter = __internal.createProviderRuntimeMintAuthority('other-adapter');
+
+  const crossA = markProviderRuntimeResponse({ observedModel: 'deepseek-model', text: 'x' });
+  const crossCtxA = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'm', baseURL: 'https://api.openai.com/v1', provider: 'openai' },
+    providerResponse: crossA,
+    generatedAt: 1000
+  });
+  check('F-12b trusted deepseek response + 不同 provider -> 不冒充 provider_response (降级)',
+    crossCtxA.observedModelSource !== 'provider_response');
+  check('F-12b adapter/provider 不匹配时 provenanceStatus 亦不宣称 runtime 观测',
+    crossCtxA.provenanceStatus === 'caller_supplied_or_config');
+
+  const crossB = mintOtherAdapter({ observedModel: 'other-model', text: 'x' });
+  const crossCtxB = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'm', baseURL: 'https://api.deepseek.com', provider: 'deepseek' },
+    providerResponse: crossB,
+    generatedAt: 1000
+  });
+  check('F-12b 其他 adapter 的 trusted response + provider=deepseek -> 降级 caller_or_config',
+    crossCtxB.observedModelSource === 'caller_or_config');
+  check('F-12b fake/untrusted object 仍然拒绝', isProviderRuntimeResponse({}) === false);
 }
 
 // -----------------------------------------------------------------------------
@@ -385,7 +426,8 @@ function tmpDir(prefix = 'repro-p1-') {
     { now: 12345, dreamId: 'dream-test-fixed' }
   );
   check('Case B options 指定: identityScope=caller_supplied', dreamB.payload.identityScope === 'caller_supplied');
-  check('Case B options 指定: identityDeterministic=false', dreamB.payload.identityDeterministic === false);
+  check('Case B options 指定: identityDeterministic=true (caller 固定 identity 可重复，与 identitySource 正交)',
+    dreamB.payload.identityDeterministic === true);
   check('Case B options 指定: identitySource=caller_supplied', dreamB.payload.identitySource === 'caller_supplied');
   check('Case B options 指定: dreamId 等于调用者提供值', dreamB.payload.dreamId === 'dream-test-fixed');
   check('Case B Dream GenerationContext 如实标记 observedModel 来自 provider response',
@@ -402,6 +444,7 @@ function tmpDir(prefix = 'repro-p1-') {
   );
   check('Case C context 指定: identityScope=caller_supplied', dreamC.payload.identityScope === 'caller_supplied');
   check('Case C context 指定: identitySource=caller_supplied', dreamC.payload.identitySource === 'caller_supplied');
+  check('Case C context 指定: identityDeterministic=true (两维度独立表达)', dreamC.payload.identityDeterministic === true);
   check('Case C context 指定: dreamId 等于 context 提供值', dreamC.payload.dreamId === 'dream-context-supplied');
 
   // Case D: deterministic idGenerator (runtime-generated with deterministic flag)
@@ -452,6 +495,20 @@ function tmpDir(prefix = 'repro-p1-') {
   );
   check('Case G 确定性生成器 + deterministic clock: identityDeterministic=true',
     dreamG.payload.identityDeterministic === true);
+
+  // F-15d: runtime_unique 语义 —— 运行时生成 ≠ 跨运行全局唯一
+  const dreamG2 = await synthesizeDream(
+    dummyClient(),
+    basePrompt,
+    baseContext,
+    { clock: { now: () => 777 }, idGenerator: deterministicIdGen }
+  );
+  check('F-15d deterministic generator 跨运行可复现产生相同 dreamId (非全局唯一)',
+    dreamG2.payload.dreamId === dreamG.payload.dreamId);
+  check('F-15d identityScopeSemantics 明示 runtime 生成不承诺跨运行全局唯一',
+    dreamG.payload.identityScopeSemantics === 'runtime_generated_identity_not_globally_unique');
+  check('F-15d caller_supplied 的 identityScopeSemantics 独立标注',
+    dreamB.payload.identityScopeSemantics === 'caller_supplied_identity');
 
   // 跨 Case 语义一致性验证：reproducibilityScope 与 identityScope 解耦
   const allCases = [dreamA, dreamB, dreamC, dreamD];

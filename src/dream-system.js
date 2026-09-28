@@ -384,17 +384,27 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const outputHash = sha256(content);
 
     const identityScope = isCallerSupplied ? 'caller_supplied' : 'runtime_unique';
+    // v0.9.8.2 F-15d: identityScope 语义澄清 —— 'runtime_unique' 仅表示「本次运行内由 runtime 生成的
+    // identity 占位」，绝不表示跨运行全局唯一：deterministic generator 在不同运行可复现产生相同 dreamId。
+    // 历史数据中的 'runtime_unique' 取值原样可读，本字段为纯增量语义标注。
+    const identityScopeSemantics = isCallerSupplied
+      ? 'caller_supplied_identity'
+      : 'runtime_generated_identity_not_globally_unique';
     const identitySource = isCallerSupplied
       ? 'caller_supplied'
       : (hasDeterministicGenerator ? 'deterministic_generator' : 'runtime_generated');
-    // v0.9.8.1 F-15: identityDeterministic 宣称的是「完整 dreamId 可复现」：
+    // v0.9.8.2 F-15c: identitySource（identity 从哪来）与 identityDeterministic（该 identity 本身
+    // 是否可重复）是两个独立维度。caller-supplied 固定 dreamId 每次提供即相同值 —— 可重复，
+    // 不因来源是 caller 就自动等价为 nondeterministic。
+    // identityDeterministic 对 runtime 生成的 id 宣称的是「完整 dreamId 可复现」：
     // dreamId = f(windowNo, now, idSuffix)，只有时间输入实际确定且后缀确定
     //（deterministic generator 或 caller 显式固定后缀）时才成立；
     // deterministic generator + wall-clock now 绝不宣称完整可复现。
-    // caller_supplied identity 由 identitySource/identityScope 单独标注，不宣称生成确定性。
     const suffixDeterministic = Boolean(hasDeterministicGenerator) ||
       Boolean(typeof explicitDreamIdSuffix === 'string' && explicitDreamIdSuffix.trim());
-    const identityDeterministic = !isCallerSupplied && identityTime.deterministic && suffixDeterministic;
+    const identityDeterministic = isCallerSupplied
+      ? true
+      : (identityTime.deterministic && suffixDeterministic);
 
     // P0-1: 真实记录 API 返回的 observedModel，严禁回退到 cfg.model 伪造
     const observedModel =
@@ -494,6 +504,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
         : (Array.isArray(context.sourceEventIds) && context.sourceEventIds.length > 0 ? 'evidence_linked' : 'unavailable'),
       sourceMessageRange: resolvedSourceMessageRange,
       identityScope,
+      identityScopeSemantics,
       identitySource,
       identityDeterministic,
       reproducibilityScope: {
