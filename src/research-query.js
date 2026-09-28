@@ -303,8 +303,8 @@ class ResearchQuery {
 
     // H-04 性能优化：在窗口循环前只执行一次完整性快照扫描，避免 O(Window × Archive) 重复全量 I/O
     const integrityReport = this._getIntegritySnapshot();
-    const defaultArchiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'CERTIFIED';
-    const defaultReplayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'COMPLETE';
+    const defaultArchiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'UNKNOWN';
+    const defaultReplayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'UNKNOWN';
 
     // 汇总各窗口概况
     const summaries = [];
@@ -447,8 +447,8 @@ class ResearchQuery {
     // 若归档记录中无 segments，如实返回空数组，不得由程序臆造假段落
 
     const integrityReport = this._getIntegritySnapshot();
-    let archiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'CERTIFIED';
-    let replayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'COMPLETE';
+    let archiveIntegrity = integrityReport.integrity ? integrityReport.integrity.toUpperCase() : 'UNKNOWN';
+    let replayStatus = integrityReport.replayStatus ? integrityReport.replayStatus.toUpperCase() : 'UNKNOWN';
     if (windowNo === null) {
       archiveIntegrity = 'UNCERTIFIED';
       replayStatus = 'UNRESOLVED';

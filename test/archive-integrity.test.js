@@ -90,7 +90,8 @@ function tmpDir(prefix = 'archive-integrity-test-') {
 
   // ArchiveIntegrityService 链条全局校验
   const report = ArchiveIntegrityService.checkRecords(records);
-  check('完整归档 report.integrity 为 certified', report.integrity === 'certified');
+  check('完整归档无独立事实证据 -> report.integrity 为 uncertified', report.integrity === 'uncertified');
+  check('完整归档无独立事实证据 -> independent_evidence_integrity=not_recorded', report.independent_evidence_integrity === 'not_recorded');
   check('完整归档 report.sequence_integrity 为 monotonic', report.sequence_integrity === 'monotonic');
   check('完整归档 report.hash_integrity 为 verified', report.hash_integrity === 'verified');
   check('完整归档 report.syntax_integrity 为 valid', report.syntax_integrity === 'valid');
@@ -250,7 +251,7 @@ function tmpDir(prefix = 'archive-integrity-test-') {
   const anchorPath = archivePath + '.anchor.json';
 
   const okReport = ArchiveIntegrityService.checkArchive(archivePath);
-  check('正常 archive + 正常 anchor -> CERTIFIED', okReport.integrity === 'certified');
+  check('正常 archive + 正常 anchor 但无独立证据 -> UNCERTIFIED', okReport.integrity === 'uncertified');
   check('正常 archive + 正常 anchor -> tail_anchor=verified', okReport.tail_anchor === 'verified');
 
   // 删除最后 1 条 record -> TAIL_TRUNCATED
@@ -350,7 +351,7 @@ function tmpDir(prefix = 'archive-integrity-test-') {
   }
 
   const relOK = ArchiveIntegrityService.checkRecords([makeRelRecord({})]);
-  check('全部引用可解析 -> relationship_integrity=verified 且 certified', relOK.relationship_integrity === 'verified' && relOK.integrity === 'certified');
+  check('全部引用可解析 -> relationship_integrity=verified，但无独立证据仍非 certified', relOK.relationship_integrity === 'verified' && relOK.integrity !== 'certified');
 
   const relObs = ArchiveIntegrityService.checkRecords([makeRelRecord({ observations: [{ observationId: 'obs-x', eventIds: ['evt-missing'], content: 'x' }] })]);
   check('Observation.eventIds 悬空 -> NOT_RECORDED 且非 certified', relObs.relationship_integrity === 'not_recorded' && relObs.integrity !== 'certified');

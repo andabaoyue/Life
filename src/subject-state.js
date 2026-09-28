@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { createStateChange, validateStateChange, symmetricRound } = require('./state-change');
@@ -42,7 +43,7 @@ function normalizeQuote(quote) {
 }
 
 /**
- * SubjectState：初澜主体状态量化模型与确定性 Reducer (v0.9.4-R1)
+ * SubjectState：初澜主体状态量化模型与确定性 Reducer (v0.9.7.1)
  * 
  * 核心规范：
  * 1. 主体状态值统一采用 [-999, 999]，特质严格限制在 ALLOWED_TRAITS 白名单内。
@@ -77,6 +78,8 @@ class SubjectState {
       stateChanges: [],
       seenFingerprints: [],
       seenEvidenceIds: [],
+      messageAttestations: [],
+      evidenceAttestations: [],
       recoveryStatus: 'NORMAL'
     };
     this.frozenSnapshot = '';
@@ -113,6 +116,8 @@ class SubjectState {
             seenEvidenceIds: Array.isArray(raw.seenEvidenceIds)
               ? raw.seenEvidenceIds
               : (Array.isArray(raw.acceptedEvidenceIds) ? raw.acceptedEvidenceIds : []),
+            messageAttestations: Array.isArray(raw.messageAttestations) ? raw.messageAttestations : [],
+            evidenceAttestations: Array.isArray(raw.evidenceAttestations) ? raw.evidenceAttestations : [],
             recoveryStatus: raw.recoveryStatus || 'NORMAL'
           };
           for (const k of Object.keys(this.data.values)) {
@@ -175,6 +180,9 @@ class SubjectState {
             stateChanges: replayReport.stateChanges || [],
             seenFingerprints: Array.from(this.committedFingerprints),
             seenEvidenceIds: Array.from(this.committedEvidenceIds),
+            // A corrupted state file cannot safely reconstruct independent attestations from Archive.
+            messageAttestations: [],
+            evidenceAttestations: [],
             recoveryStatus: this.recoveryStatus
           };
           this.updateSnapshot();
@@ -208,6 +216,8 @@ class SubjectState {
       stateChanges: [],
       seenFingerprints: [],
       seenEvidenceIds: [],
+      messageAttestations: [],
+      evidenceAttestations: [],
       recoveryStatus: 'RECOVERY_FAILED'
     };
     this.committedFingerprints = new Set();
@@ -484,6 +494,41 @@ class SubjectState {
   }
 
   /**
+   * v0.9.7.1: 写时记录真实消息来源证明。
+   * 这不是 Archive 自己产生的引用，而是由运行时 verifier 从当前真实消息对象
+   * 提取 messageId + 原文 hash 后保存到 Archive 之外的持久化状态。
+   */
+  attestMessages(messages, windowNo = null) {
+    let items = [];
+    if (messages instanceof Map) items = Array.from(messages.values());
+    else if (Array.isArray(messages)) items = messages;
+    else if (messages && typeof messages === 'object') items = Object.values(messages);
+
+    if (!Array.isArray(this.data.messageAttestations)) this.data.messageAttestations = [];
+    for (const message of items) {
+      if (!message || typeof message !== 'object') continue;
+      const messageId = typeof message.messageId === 'string' ? message.messageId.trim() : '';
+      if (!messageId) continue;
+      const attestation = {
+        messageId,
+        sourceContentHash: crypto.createHash('sha256')
+          .update(String(message.content || ''), 'utf8')
+          .digest('hex'),
+        windowNo: Number.isFinite(message.windowNo) ? message.windowNo : (Number.isFinite(windowNo) ? windowNo : null),
+        sourceRole: message.role || 'unknown',
+        attestedAt: Date.now()
+      };
+      const exists = this.data.messageAttestations.some(a =>
+        a && a.messageId === attestation.messageId &&
+        a.sourceContentHash === attestation.sourceContentHash &&
+        a.windowNo === attestation.windowNo
+      );
+      if (!exists) this.data.messageAttestations.push(attestation);
+    }
+    return this.data.messageAttestations.length;
+  }
+
+  /**
    * Provenance 强验证：由程序发 ID，由程序验 ID (v0.9.4-R1 强化版)
    * 
    * 检验项：
@@ -699,6 +744,30 @@ class SubjectState {
       this.committedFingerprints.add(fingerprint);
       this.data.seenEvidenceIds = Array.from(this.committedEvidenceIds);
       this.data.seenFingerprints = Array.from(this.committedFingerprints);
+
+      // v0.9.7.1: write-time independent attestation. This is generated from
+      // the message that the verifier actually matched, not from the archive
+      // body, and is persisted only with the successful SubjectState commit.
+      const sourceContentHash = crypto.createHash('sha256')
+        .update(String(sourceMsg.content || ''), 'utf8')
+        .digest('hex');
+      const attestation = {
+        evidenceId,
+        fingerprint,
+        messageId: cleanMsgId,
+        quoteHash: crypto.createHash('sha256').update(normQuote, 'utf8').digest('hex'),
+        sourceContentHash,
+        trait: cleanTrait,
+        direction: cleanDir,
+        windowNo,
+        sourceRole: sourceMsg.role || 'unknown',
+        attestedAt: Date.now()
+      };
+      if (!Array.isArray(this.data.evidenceAttestations)) this.data.evidenceAttestations = [];
+      const existingAttestation = this.data.evidenceAttestations.some(a =>
+        a && a.evidenceId === evidenceId && a.fingerprint === fingerprint
+      );
+      if (!existingAttestation) this.data.evidenceAttestations.push(attestation);
 
       verified.push({
         evidenceId,

@@ -4,7 +4,7 @@ const { wrapArchiveRecord, normalizeArchiveRecord } = require('./experience-sche
 const { validateArchiveRecord, computeCanonicalRecordHash, isLegacyAdaptedRecord, findModernChainFieldDefects } = require('./archive-integrity');
 
 /**
- * Append-Only 原始实验底座：experiences.jsonl (v0.9.6)
+ * Append-Only 原始实验底座：experiences.jsonl (v0.9.7.1)
  * 
  * 核心哲学与工程原则：
  * 1. 只追加，永不静默修改，永不覆盖。
@@ -88,6 +88,17 @@ class ExperiencesArchive {
       if (!a || a.archiveSeq !== previous.archiveSeq || a.recordHash !== previous.recordHash || a.recordId !== previous.recordId) {
         return { valid: false, reason: 'ARCHIVE_ANCHOR_MISMATCH' };
       }
+
+      // v0.9.7.1 P0-02: 若存在 Genesis Anchor，头部也必须与原始首记录一致。
+      // 缺失旧版 Genesis Anchor 时允许继续追加，但该归档保持 UNCERTIFIED，
+      // 绝不把当前首记录重新声明成“原始首记录”。
+      const firstSequenced = records.find(r => Number.isInteger(r.archiveSeq) && r.archiveSeq >= 1);
+      if (a.genesis && firstSequenced &&
+          (a.genesis.archiveSeq !== firstSequenced.archiveSeq ||
+           a.genesis.recordId !== firstSequenced.recordId ||
+           a.genesis.recordHash !== firstSequenced.recordHash)) {
+        return { valid: false, reason: 'ARCHIVE_GENESIS_ANCHOR_MISMATCH' };
+      }
     }
     return { valid: true, last: previous };
   }
@@ -105,17 +116,40 @@ class ExperiencesArchive {
 
   /**
    * P0-02: 更新链外尾部锚点（先写临时文件并 fsync，再原子 rename）。
+   * v0.9.7.1：同一锚点首次创建时同时固定 Genesis；后续更新只移动 Tail。
    * anchor 不参与 record hash chain，避免循环依赖。
    */
   _updateTailAnchor(entry) {
     const anchorPath = this.path + '.anchor.json';
+    let existing = null;
+    if (fs.existsSync(anchorPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
+        if (parsed && typeof parsed === 'object') existing = parsed;
+      } catch {}
+    }
+
     const anchor = {
+      ...(existing || {}),
       schemaVersion: 1,
       archiveSeq: entry.archiveSeq,
       recordId: entry.recordId,
       recordHash: entry.recordHash,
       updatedAt: Date.now()
     };
+
+    // 只有真正从 archiveSeq=1 开始建立链时才写 Genesis Anchor。
+    // 对已有旧归档，绝不把当前“看见的第一条”重新伪装成原始 Genesis。
+    if (!anchor.genesis && entry.archiveSeq === 1) {
+      anchor.genesis = {
+        schemaVersion: 1,
+        archiveSeq: entry.archiveSeq,
+        recordId: entry.recordId,
+        recordHash: entry.recordHash,
+        recordedAt: Date.now()
+      };
+    }
+
     try {
       const tmpPath = anchorPath + '.tmp';
       const fd = fs.openSync(tmpPath, 'w');
@@ -281,6 +315,66 @@ class ExperiencesArchive {
   }
 
   /**
+   * v0.9.7.1: 持久化 Archive 外的 provenance attestations。
+   * 这不是第二套事实数据库，只保存写时 verifier 产生的 ID/hash 证明材料，
+   * 用于在 State commit 失败/重启后仍能验证 Archive 中的引用来源。
+   */
+  updateProvenanceAttestations(messageAttestations = [], evidenceAttestations = []) {
+    const provenancePath = this.path + '.provenance.json';
+    const normalizeList = value => Array.isArray(value) ? value.filter(v => v && typeof v === 'object') : [];
+    let existing = { schemaVersion: 1, messageAttestations: [], evidenceAttestations: [] };
+
+    if (fs.existsSync(provenancePath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(provenancePath, 'utf8'));
+        if (parsed && typeof parsed === 'object') existing = parsed;
+      } catch {
+        return false;
+      }
+    }
+
+    const mergeByKey = (oldList, newList, keyFn) => {
+      const map = new Map();
+      for (const item of normalizeList(oldList)) map.set(keyFn(item), item);
+      for (const item of normalizeList(newList)) map.set(keyFn(item), item);
+      return Array.from(map.values());
+    };
+
+    const next = {
+      schemaVersion: 1,
+      messageAttestations: mergeByKey(
+        existing.messageAttestations,
+        messageAttestations,
+        a => [a.messageId, a.sourceContentHash, a.windowNo].join('|')
+      ),
+      evidenceAttestations: mergeByKey(
+        existing.evidenceAttestations,
+        evidenceAttestations,
+        a => [a.evidenceId, a.fingerprint].join('|')
+      ),
+      updatedAt: Date.now()
+    };
+
+    try {
+      if (!fs.existsSync(this.dir)) fs.mkdirSync(this.dir, { recursive: true });
+      const tmpPath = provenancePath + '.tmp';
+      const fd = fs.openSync(tmpPath, 'w');
+      try {
+        fs.writeSync(fd, JSON.stringify(next), null, 'utf8');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmpPath, provenancePath);
+      return true;
+    } catch (e) {
+      try { fs.unlinkSync(provenancePath + '.tmp'); } catch {}
+      console.error('[ExperiencesArchive] provenance sidecar update failed:', e.message);
+      return false;
+    }
+  }
+
+  /**
    * 检查指定窗口是否已存在可靠完成的 window_summary / window_archive 记录
    */
   hasWindowArchive(windowNo) {
@@ -348,7 +442,8 @@ class ExperiencesArchive {
       stateChanges: Array.isArray(data.stateChanges) ? data.stateChanges : [],
       explanations: Array.isArray(data.explanations) ? data.explanations : [],
       rawSummaryText: typeof data.rawSummaryText === 'string' ? data.rawSummaryText : '',
-      epistemicStatus: data.epistemicStatus || 'CERTIFIED',
+      // v0.9.7.1: missing epistemic status is unknown, never an automatic certification.
+      epistemicStatus: data.epistemicStatus || 'UNKNOWN',
       structuredSummaryAvailable: data.structuredSummaryAvailable !== false,
       summaryFailureReason: data.summaryFailureReason || null
     };

@@ -1,7 +1,7 @@
 /**
  * src/archive-integrity.js
  * 
- * 初澜数字生命实验：Archive 归档 Schema 强校验与统一完整性服务 (v0.9.5.1)
+ * 初澜数字生命实验：Archive 归档 Schema 强校验与统一完整性服务 (v0.9.7.1)
  * 
  * 核心哲学与工程准则：
  * 1. 宁可显示“未记录 / 无法认证 / 数据损坏”，也绝不生成、推断、补全、伪造不存在的实验记录。
@@ -60,6 +60,7 @@ const VALID_RECORD_TYPES = new Set([
 const INTEGRITY_STATUS = {
   CERTIFIED: 'certified',
   UNCERTIFIED: 'uncertified',
+  UNKNOWN: 'unknown',
   PARTIAL: 'partial',
   CORRUPTED: 'corrupted',
   INVALID: 'invalid',
@@ -70,8 +71,216 @@ const REPLAY_STATUS = {
   COMPLETE: 'complete',
   PARTIAL: 'partial',
   FAILED: 'failed',
-  INVALID: 'invalid'
+  INVALID: 'invalid',
+  UNKNOWN: 'unknown'
 };
+
+/**
+ * v0.9.7.1: 结构完整性与独立事实认证分层。
+ * 这些记录一旦包含事件/证据/主体叙事等研究事实，就不能仅凭
+ * Archive 自身的引用闭环获得 CERTIFIED；必须存在 Archive 之外、
+ * 在写入时由真实消息验证路径产生的 evidence attestation。
+ */
+const FACTUAL_RECORD_TYPES = new Set([
+  'window_summary',
+  'window_archive',
+  'event',
+  'observation',
+  'interpretation',
+  'evidence',
+  'state_change'
+]);
+
+function recordTypeOf(record) {
+  return record && (record.recordType || record.type) || null;
+}
+
+function hashCanonicalText(value) {
+  return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+}
+
+function collectFactualClaims(records) {
+  const messageClaims = [];
+  const evidenceClaims = [];
+
+  const addEvent = (evt, recordRef) => {
+    if (!evt || typeof evt !== 'object') return;
+    const messageId = evt.messageId || (evt.payload && evt.payload.messageId);
+    if (!messageId) return;
+    const payload = evt.payload && typeof evt.payload === 'object' ? evt.payload : evt;
+    messageClaims.push({
+      messageId,
+      windowNo: evt.windowNo ?? payload.windowNo ?? null,
+      content: typeof payload.content === 'string' ? payload.content : null,
+      recordRef
+    });
+  };
+
+  const addEvidence = (ev, recordRef) => {
+    if (!ev || typeof ev !== 'object') return;
+    const status = String(ev.status || 'verified').toLowerCase();
+    if (status === 'rejected') return;
+    if (!ev.evidenceId) return;
+    evidenceClaims.push({
+      evidenceId: ev.evidenceId,
+      fingerprint: ev.fingerprint || null,
+      messageId: ev.messageId || null,
+      quote: ev.quote || '',
+      windowNo: ev.windowNo ?? null,
+      recordRef
+    });
+  };
+
+  for (const rec of records || []) {
+    const p = (rec && rec.payload) || {};
+    const ref = rec && (rec.recordId || rec.archiveSeq) || null;
+    if (recordTypeOf(rec) === 'event') addEvent(p, ref);
+    if (Array.isArray(p.events)) p.events.forEach(evt => addEvent(evt, ref));
+    if (recordTypeOf(rec) === 'evidence') addEvidence(p, ref);
+    if (Array.isArray(p.verifiedEvidence)) p.verifiedEvidence.forEach(ev => addEvidence(ev, ref));
+  }
+
+  return { messageClaims, evidenceClaims };
+}
+
+function normalizeExternalMessageAttestations(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(a =>
+    a && typeof a === 'object' &&
+    typeof a.messageId === 'string' && a.messageId.trim() &&
+    typeof a.sourceContentHash === 'string' && a.sourceContentHash.trim()
+  );
+}
+
+function normalizeExternalEvidenceAttestations(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(a =>
+    a && typeof a === 'object' &&
+    typeof a.evidenceId === 'string' && a.evidenceId.trim() &&
+    typeof a.fingerprint === 'string' && a.fingerprint.trim() &&
+    typeof a.messageId === 'string' && a.messageId.trim()
+  );
+}
+
+function verifyIndependentEvidence(records, evidenceAttestations, messageAttestations) {
+  const factualRecords = (records || []).filter(r => FACTUAL_RECORD_TYPES.has(recordTypeOf(r)));
+  const claims = collectFactualClaims(records);
+  const messageAtts = normalizeExternalMessageAttestations(messageAttestations);
+  const attestations = normalizeExternalEvidenceAttestations(evidenceAttestations);
+  const byEvidenceId = new Map(attestations.map(a => [a.evidenceId, a]));
+  const byMessageId = new Map();
+  for (const a of attestations) {
+    if (!byMessageId.has(a.messageId)) byMessageId.set(a.messageId, []);
+    byMessageId.get(a.messageId).push(a);
+  }
+
+  const defects = [];
+  const byMessageAttestedId = new Map(messageAtts.map(a => [a.messageId, a]));
+
+  // Event/message claims are checked against the write-time attestation of the
+  // actual message source, not against the Archive's own event payload.
+  for (const claim of claims.messageClaims) {
+    const att = byMessageAttestedId.get(claim.messageId);
+    if (!att) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'event->external-message',
+        recordRef: claim.recordRef,
+        reference: claim.messageId,
+        detail: 'INDEPENDENT_MESSAGE_ATTESTATION_NOT_FOUND'
+      });
+      continue;
+    }
+    if (claim.content !== null && att.sourceContentHash !== hashCanonicalText(claim.content)) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'event->external-message',
+        recordRef: claim.recordRef,
+        reference: claim.messageId,
+        detail: 'INDEPENDENT_MESSAGE_CONTENT_MISMATCH'
+      });
+    }
+  }
+
+  for (const claim of claims.evidenceClaims) {
+    const att = byEvidenceId.get(claim.evidenceId);
+    if (!att) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'evidence->external-attestation',
+        recordRef: claim.recordRef,
+        reference: claim.evidenceId,
+        detail: 'INDEPENDENT_EVIDENCE_ATTESTATION_NOT_FOUND'
+      });
+      continue;
+    }
+
+    if (att.fingerprint !== claim.fingerprint) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'evidence->external-attestation',
+        recordRef: claim.recordRef,
+        reference: claim.evidenceId,
+        detail: 'INDEPENDENT_EVIDENCE_FINGERPRINT_MISMATCH'
+      });
+    }
+
+    if (claim.messageId && att.messageId !== claim.messageId) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'evidence->external-attestation',
+        recordRef: claim.recordRef,
+        reference: claim.evidenceId,
+        detail: 'INDEPENDENT_EVIDENCE_MESSAGE_MISMATCH'
+      });
+    }
+
+    const quoteHash = hashCanonicalText(String(claim.quote || '').trim().toLowerCase().replace(/\s+/g, ' '));
+    if (att.quoteHash && att.quoteHash !== quoteHash) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'evidence->external-attestation',
+        recordRef: claim.recordRef,
+        reference: claim.evidenceId,
+        detail: 'INDEPENDENT_EVIDENCE_QUOTE_MISMATCH'
+      });
+    }
+
+    if (Number.isFinite(claim.windowNo) && Number.isFinite(att.windowNo) && claim.windowNo !== att.windowNo) {
+      defects.push({
+        status: 'UNRESOLVED',
+        relation: 'evidence->external-attestation',
+        recordRef: claim.recordRef,
+        reference: claim.evidenceId,
+        detail: 'INDEPENDENT_EVIDENCE_WINDOW_MISMATCH'
+      });
+    }
+  }
+
+  let status = 'not_required';
+  if (factualRecords.length > 0) {
+    // 没有任何可对应的消息/证据主张时，旧窗口的 attestation 也不能替当前事实“背书”。
+    if (claims.messageClaims.length === 0 && claims.evidenceClaims.length === 0) {
+      status = 'not_recorded';
+    } else {
+      status = defects.length > 0 ? 'unresolved' : 'verified';
+    }
+  }
+
+  if (factualRecords.length > 0 && messageAtts.length === 0 && attestations.length === 0) {
+    status = 'not_recorded';
+  }
+
+  return {
+    status,
+    factualRecordCount: factualRecords.length,
+    messageClaimCount: claims.messageClaims.length,
+    evidenceClaimCount: claims.evidenceClaims.length,
+    messageAttestationCount: messageAtts.length,
+    attestationCount: attestations.length,
+    defects
+  };
+}
 
 /**
  * P0-01: 判定归档记录是否为明确的 Legacy 适配记录。
@@ -602,6 +811,15 @@ class ArchiveIntegrityService {
     // P1-02: 深度引用一致性（引用目标不存在/无法证明 → 绝不认证，也绝不补造）
     const relationships = validateRecordRelationships(validRecords);
     const relationship_integrity = relationships.status;
+
+    // v0.9.7.1: 独立证据认证，不再把 Archive 自身的实体闭环当成事实认证。
+    const independentEvidence = verifyIndependentEvidence(
+      validRecords,
+      options.evidenceAttestations,
+      options.messageAttestations
+    );
+    const independent_evidence_integrity = independentEvidence.status;
+
     const explicitlyUncertified = validRecords.some(rec => {
       const payload = rec && rec.payload;
       return payload && payload.epistemicStatus === 'UNCERTIFIED';
@@ -692,6 +910,11 @@ class ArchiveIntegrityService {
       // P1-02: 引用悬空 (NOT_RECORDED) / 来源无法证明 (UNRESOLVED) → 绝不 CERTIFIED
       integrity = INTEGRITY_STATUS.UNCERTIFIED;
       replayStatus = REPLAY_STATUS.PARTIAL;
+    } else if (independent_evidence_integrity !== 'verified' && independentEvidence.factualRecordCount > 0) {
+      // v0.9.7.1 P0-01: 结构自洽 ≠ 事实认证。含研究事实的现代归档
+      // 必须有 Archive 之外的写时独立证据认证；缺失或不匹配一律 UNCERTIFIED。
+      integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      replayStatus = REPLAY_STATUS.PARTIAL;
     } else if (totalLines === 0) {
       integrity = INTEGRITY_STATUS.CERTIFIED;
       replayStatus = REPLAY_STATUS.COMPLETE;
@@ -706,6 +929,14 @@ class ArchiveIntegrityService {
       modern_chain_integrity,
       relationship_integrity,
       relationshipDefects: relationships.defects,
+      independent_evidence_integrity,
+      independentEvidenceDefects: independentEvidence.defects,
+      factualRecordCount: independentEvidence.factualRecordCount,
+      messageClaimCount: independentEvidence.messageClaimCount,
+      evidenceClaimCount: independentEvidence.evidenceClaimCount,
+      messageAttestationCount: independentEvidence.messageAttestationCount,
+      evidenceAttestationCount: independentEvidence.attestationCount,
+      independentEvidenceSource: options.independentEvidenceSource || null,
       validCount,
       invalidCount,
       corruptLines,
@@ -743,7 +974,7 @@ class ArchiveIntegrityService {
     }
 
     try {
-      const content = fs.readFileSync(archivePath, 'utf8');
+      const content = fs.readFileSync(targetFile, 'utf8');
       const rawLines = content.split('\n');
 
       let totalLines = 0;
@@ -770,13 +1001,63 @@ class ArchiveIntegrityService {
         }
       }
 
+      let evidenceAttestations = [];
+      let messageAttestations = [];
+      let provenanceSource = 'none';
+
+      // v0.9.7.1: 独立 provenance sidecar 优先。它与 Archive 正文分离，
+      // 并在 SubjectState commit 失败后仍可用于恢复/审计。
+      const provenancePath = targetFile + '.provenance.json';
+      if (fs.existsSync(provenancePath)) {
+        provenanceSource = 'archive-provenance-sidecar';
+        try {
+          const provenance = JSON.parse(fs.readFileSync(provenancePath, 'utf8'));
+          messageAttestations = Array.isArray(provenance.messageAttestations)
+            ? provenance.messageAttestations
+            : [];
+          evidenceAttestations = Array.isArray(provenance.evidenceAttestations)
+            ? provenance.evidenceAttestations
+            : [];
+        } catch (err) {
+          diagnostics.push({
+            lineNumber: 0,
+            error: 'INDEPENDENT_PROVENANCE_SIDECAR_UNREADABLE',
+            message: err.message
+          });
+        }
+      } else {
+        const subjectStatePath = path.join(path.dirname(targetFile), 'subject-state.json');
+        if (fs.existsSync(subjectStatePath)) {
+          provenanceSource = 'subject-state-legacy-fallback';
+          try {
+            const subjectState = JSON.parse(fs.readFileSync(subjectStatePath, 'utf8'));
+            messageAttestations = Array.isArray(subjectState.messageAttestations)
+              ? subjectState.messageAttestations
+              : [];
+            evidenceAttestations = Array.isArray(subjectState.evidenceAttestations)
+              ? subjectState.evidenceAttestations
+              : [];
+          } catch (err) {
+            diagnostics.push({
+              lineNumber: 0,
+              error: 'INDEPENDENT_EVIDENCE_ATTESTATION_SOURCE_UNREADABLE',
+              message: err.message
+            });
+          }
+        }
+      }
+
       const report = ArchiveIntegrityService.checkRecords(parsedRecords, {
         corruptLines,
         diagnostics: { skippedCount: corruptLines, errors: diagnostics },
-        totalLines
+        totalLines,
+        messageAttestations,
+        evidenceAttestations,
+        independentEvidenceSource: provenanceSource
       });
-      // P0-02: Tail Anchor 校验（链外锚点证明当前尾部是最近一次已确认的可信尾部）
-      return ArchiveIntegrityService._applyTailAnchorCheck(report, targetFile, parsedRecords);
+      // P0-02: Tail Anchor + Genesis Anchor 校验。
+      const withTail = ArchiveIntegrityService._applyTailAnchorCheck(report, targetFile, parsedRecords);
+      return ArchiveIntegrityService._applyGenesisAnchorCheck(withTail, targetFile, parsedRecords);
     } catch (e) {
       return {
         integrity: INTEGRITY_STATUS.INVALID,
@@ -804,6 +1085,8 @@ class ArchiveIntegrityService {
  *   anchor_stale  实际尾部晚于锚点（未提交尾部 / 锚点更新失败）→ UNCERTIFIED fail-closed
  *   tampered      锚点与链尾 recordId/recordHash 不一致（锚点或尾部被篡改）→ INVALID
  *   invalid       锚点文件损坏 / 结构非法 → INVALID
+ *
+ * v0.9.7.1 同一 sidecar 同时保存 genesis，专门阻断删头后“剩余链自洽”的问题。
  */
 ArchiveIntegrityService._applyTailAnchorCheck = function (report, archiveFilePath, parsedRecords) {
   const anchorPath = archiveFilePath + '.anchor.json';
@@ -892,6 +1175,107 @@ ArchiveIntegrityService._applyTailAnchorCheck = function (report, archiveFilePat
   return result;
 };
 
+
+/**
+ * v0.9.7.1 P0-02: Genesis Anchor 校验。
+ * Tail Anchor 只能证明“当前尾部”；Genesis Anchor 证明“当前首条记录仍是
+ * 原始链首”，因此删除任意头部记录都会被检测为 INVALID。
+ */
+ArchiveIntegrityService._applyGenesisAnchorCheck = function (report, archiveFilePath, parsedRecords) {
+  const anchorPath = archiveFilePath + '.anchor.json';
+  const chained = (parsedRecords || [])
+    .filter(r => r && typeof r === 'object' && Number.isInteger(r.archiveSeq) &&
+      typeof r.recordId === 'string' && typeof r.recordHash === 'string' && r.recordHash)
+    .sort((a, b) => a.archiveSeq - b.archiveSeq);
+  const actualGenesis = chained.length > 0 ? chained[0] : null;
+
+  if (!actualGenesis) {
+    const result = Object.assign({}, report, { genesis_anchor: 'not_recorded', genesis_anchor_diagnostics: [] });
+    return result;
+  }
+
+  let anchor = null;
+  let corrupt = false;
+  if (!fs.existsSync(anchorPath)) {
+    const result = Object.assign({}, report, {
+      genesis_anchor: 'not_recorded',
+      genesis_anchor_diagnostics: [{ error: 'GENESIS_ANCHOR_NOT_RECORDED' }]
+    });
+    if (result.integrity === INTEGRITY_STATUS.CERTIFIED) {
+      result.integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      result.replayStatus = REPLAY_STATUS.PARTIAL;
+    }
+    return result;
+  }
+
+  try {
+    anchor = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
+  } catch {
+    corrupt = true;
+  }
+
+  const genesis = anchor && anchor.genesis;
+
+  // 旧版只有 Tail Anchor、尚未记录 Genesis：可继续读取，但不能认证。
+  if (!genesis) {
+    const result = Object.assign({}, report, {
+      genesis_anchor: 'not_recorded',
+      genesis_anchor_diagnostics: [{ error: 'GENESIS_ANCHOR_NOT_RECORDED' }]
+    });
+    if (result.integrity === INTEGRITY_STATUS.CERTIFIED) {
+      result.integrity = INTEGRITY_STATUS.UNCERTIFIED;
+      result.replayStatus = REPLAY_STATUS.PARTIAL;
+    }
+    return result;
+  }
+
+  if (corrupt ||
+      !Number.isInteger(genesis.archiveSeq) ||
+      genesis.archiveSeq < 1 ||
+      typeof genesis.recordId !== 'string' ||
+      !genesis.recordId.trim() ||
+      typeof genesis.recordHash !== 'string' ||
+      !genesis.recordHash.trim()) {
+    const result = Object.assign({}, report, {
+      genesis_anchor: 'invalid',
+      genesis_anchor_diagnostics: [{ error: 'GENESIS_ANCHOR_CORRUPTED' }]
+    });
+    result.integrity = INTEGRITY_STATUS.INVALID;
+    result.replayStatus = REPLAY_STATUS.INVALID;
+    return result;
+  }
+
+  if (genesis.archiveSeq !== actualGenesis.archiveSeq ||
+      genesis.recordId !== actualGenesis.recordId ||
+      genesis.recordHash !== actualGenesis.recordHash) {
+    const result = Object.assign({}, report, {
+      genesis_anchor: 'tampered',
+      genesis_anchor_diagnostics: [{
+        error: 'GENESIS_ANCHOR_MISMATCH',
+        expected: {
+          archiveSeq: genesis.archiveSeq,
+          recordId: genesis.recordId,
+          recordHash: genesis.recordHash
+        },
+        actual: {
+          archiveSeq: actualGenesis.archiveSeq,
+          recordId: actualGenesis.recordId,
+          recordHash: actualGenesis.recordHash
+        }
+      }]
+    });
+    result.integrity = INTEGRITY_STATUS.INVALID;
+    result.replayStatus = REPLAY_STATUS.INVALID;
+    return result;
+  }
+
+  const result = Object.assign({}, report, {
+    genesis_anchor: 'verified',
+    genesis_anchor_diagnostics: []
+  });
+  return result;
+};
+
 module.exports = {
   SCHEMA_VERSION,
   VALID_RECORD_TYPES,
@@ -902,5 +1286,7 @@ module.exports = {
   computeCanonicalRecordHash,
   isLegacyAdaptedRecord,
   findModernChainFieldDefects,
-  validateRecordRelationships
+  validateRecordRelationships,
+  FACTUAL_RECORD_TYPES,
+  verifyIndependentEvidence
 };

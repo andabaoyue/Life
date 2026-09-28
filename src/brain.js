@@ -1073,8 +1073,16 @@ class Brain {
       let stateStaging = null;
 
       if (this.subjectState) {
-        // P0-08: 两阶段提交——在验证与 Reducer 前创建完整暂存快照，若 Archive 失败则连同已登记指纹一并回滚
+        // P0-08: 两阶段提交——先冻结完整暂存快照，再写入任何新的 provenance 状态。
+        // 这样 Archive 失败时，message/evidence attestations 以及 seen* 集合都会一起回滚。
         stateStaging = this.subjectState.createStagingSnapshot();
+
+        // v0.9.7.1: 在真实窗口消息仍可验证时生成 Archive 外独立 message attestations。
+        // 这些证明随后随 SubjectState 两阶段提交持久化；Archive 自身不能生成它们。
+        if (typeof this.subjectState.attestMessages === 'function') {
+          this.subjectState.attestMessages(activeItems, snap.windowNo);
+        }
+
         const verifyResult = this.subjectState.verifyEvidence(allEvidence, msgMap, snap.windowNo, { stageOnly: true });
         verifiedEvidence = verifyResult.verified;
         rejectedEvidence = verifyResult.rejected;
@@ -1165,7 +1173,28 @@ class Brain {
         return false;
       }
 
-      // Archive 确认写入成功后，正式提交 Subject State 持久化 (P0-01)
+      // v0.9.7.1: Archive 已成功后，先提交独立 provenance sidecar。
+      // 这一步与 SubjectState 分开，保证 State commit 失败后重启仍能验证历史来源。
+      let provenanceCommitSuccess = true;
+      if (this.experiencesArchive && this.subjectState &&
+          typeof this.experiencesArchive.updateProvenanceAttestations === 'function') {
+        provenanceCommitSuccess = this.experiencesArchive.updateProvenanceAttestations(
+          this.subjectState.data.messageAttestations || [],
+          this.subjectState.data.evidenceAttestations || []
+        );
+      }
+
+      if (!provenanceCommitSuccess) {
+        console.error('[Brain] Archive 已写入但独立 provenance sidecar 提交失败，回滚暂存状态并中止本次关窗');
+        if (this.subjectState && stateStaging) {
+          this.subjectState.rollbackStage(stateStaging);
+          this.subjectState.recoveryPending = true;
+          this.subjectState.recoveryPendingReason = 'provenance_commit_failed';
+        }
+        return false;
+      }
+
+      // Archive + provenance sidecar 均确认后，正式提交 Subject State 持久化 (P0-01)
       let stateCommitSuccess = true;
       if (this.subjectState) {
         stateCommitSuccess = this.subjectState.commit();

@@ -97,7 +97,7 @@ function exportEvidence(evidenceList, format = 'json') {
         escapeCsvCell(ev.trait || ''),
         ev.direction ?? 0,
         ev.strength ?? 0,
-        escapeCsvCell(ev.status || 'verified'),
+        escapeCsvCell(ev.status || 'unknown'),
         escapeCsvCell(ev.reason || ''),
         escapeCsvCell(ev.fingerprint || '')
       ].join(','));

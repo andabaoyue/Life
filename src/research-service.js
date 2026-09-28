@@ -441,8 +441,8 @@ class ResearchService {
       task.percent = 98;
 
       const archiveReport = ArchiveIntegrityService.checkArchive(this.archivePath);
-      let replayStatus = archiveReport.replayStatus || 'complete';
-      let integrity = archiveReport.integrity || 'certified';
+      let replayStatus = archiveReport.replayStatus || 'unknown';
+      let integrity = archiveReport.integrity || 'unknown';
 
       if (corruptDetected) {
         replayStatus = 'partial';

@@ -13,6 +13,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { ArchiveIntegrityService, INTEGRITY_STATUS, REPLAY_STATUS } = require('../src/archive-integrity');
@@ -64,7 +65,33 @@ const validRec1 = {
 };
 // P0-01/P0-02: 现代归档必须经 Canonical 写入路径生成链字段与 Tail Anchor
 new ExperiencesArchive(cleanDir).append(validRec1);
-fs.writeFileSync(cleanState, JSON.stringify({ windowNo: 1, values: { ...DEFAULT_TRAITS } }), 'utf8');
+const normalizeQuote = q => String(q || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const sourceContentHash = crypto.createHash('sha256').update('q', 'utf8').digest('hex');
+const quoteHash = crypto.createHash('sha256').update(normalizeQuote('q'), 'utf8').digest('hex');
+const fingerprint = 'm-1:' + normalizeQuote('q') + ':quiet_preference:1';
+fs.writeFileSync(cleanState, JSON.stringify({
+  windowNo: 1,
+  values: { ...DEFAULT_TRAITS },
+  messageAttestations: [{
+    messageId: 'm-1',
+    sourceContentHash,
+    windowNo: 1,
+    sourceRole: 'user',
+    attestedAt: 1000
+  }],
+  evidenceAttestations: [{
+    evidenceId: 'ev-clean-1',
+    fingerprint,
+    messageId: 'm-1',
+    quoteHash,
+    sourceContentHash,
+    trait: 'quiet_preference',
+    direction: 1,
+    windowNo: 1,
+    sourceRole: 'user',
+    attestedAt: 1000
+  }]
+}), 'utf8');
 
 const cleanReport = ArchiveIntegrityService.checkArchive(cleanArchive);
 check('纯净归档完整性判定为 certified', cleanReport.integrity === INTEGRITY_STATUS.CERTIFIED);
