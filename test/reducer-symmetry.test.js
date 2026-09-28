@@ -12,6 +12,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const { symmetricRound, createStateChange } = require('../src/state-change');
@@ -110,8 +111,8 @@ function tmpDir(prefix = 'reducer-symmetry-test-') {
   ];
 
   const evidenceWindow2 = [
-    { trait: 'philosophical_curiosity', direction: -1, strength: 0.7, evidenceId: 'ev-w2-1' },
-    { trait: 'attachment_need', direction: 1, strength: 0.3, evidenceId: 'ev-w2-2' }
+    { trait: 'philosophical_curiosity', direction: -1, strength: 0.7, evidenceId: 'ev-w2-1', messageId: 'm-w2-1', quote: '数字生命', fingerprint: 'm-w2-1:数字生命:philosophical_curiosity:-1' },
+    { trait: 'attachment_need', direction: 1, strength: 0.3, evidenceId: 'ev-w2-2', messageId: 'm-w2-1', quote: '数字生命', fingerprint: 'm-w2-1:数字生命:attachment_need:1' }
   ];
 
   const w1Res = state.reduce(evidenceWindow1, 1, { stepWeight: 15 });
@@ -128,19 +129,29 @@ function tmpDir(prefix = 'reducer-symmetry-test-') {
   archive.appendWindowArchive({
     windowNo: 1,
     turns: 100,
+    events: [{ eventId: 'evt-w1-1', type: 'message', source: 'user', messageId: 'm-w1-1', payload: { content: '数字生命', roundNo: 1 } }],
     stateChanges: [{ reducer: { stepWeight: 15, maxDelta: 50 } }],
     verifiedEvidence: evidenceWindow1
   });
   archive.appendWindowArchive({
     windowNo: 2,
     turns: 100,
+    events: [{ eventId: 'evt-w2-1', type: 'message', source: 'user', messageId: 'm-w2-1', payload: { content: '数字生命', roundNo: 2 } }],
     stateChanges: [{ reducer: { stepWeight: 15, maxDelta: 50 } }],
     verifiedEvidence: evidenceWindow2
   });
+  const hash = value => crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+  archive.updateProvenanceAttestations([
+    { messageId: 'm-w1-1', sourceContentHash: hash('数字生命'), windowNo: 1, sourceRole: 'user', attestedAt: 1100 },
+    { messageId: 'm-w2-1', sourceContentHash: hash('数字生命'), windowNo: 2, sourceRole: 'user', attestedAt: 1200 }
+  ], [
+    ...evidenceWindow1.map(ev => ({ evidenceId: ev.evidenceId, fingerprint: ev.fingerprint, messageId: ev.messageId, quoteHash: hash(ev.quote), windowNo: 1 })),
+    ...evidenceWindow2.map(ev => ({ evidenceId: ev.evidenceId, fingerprint: ev.fingerprint, messageId: ev.messageId, quoteHash: hash(ev.quote), windowNo: 2 }))
+  ]);
 
   const mockArchiveRecords = archive.readAll();
 
-  const replayResult = SubjectState.replay(mockArchiveRecords);
+  const replayResult = SubjectState.replay(mockArchiveRecords, { archivePath: archive.path });
   check('Replay 成功执行且状态完整', replayResult.replayStatus === 'complete');
   check('Replay 最终状态 philosophical_curiosity 与初始一致 (净变化 0)', replayResult.finalState.philosophical_curiosity === DEFAULT_TRAITS.philosophical_curiosity);
   check('Replay 最终状态 attachment_need 与初始一致 (净变化 0)', replayResult.finalState.attachment_need === DEFAULT_TRAITS.attachment_need);
