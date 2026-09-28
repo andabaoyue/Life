@@ -66,7 +66,7 @@ function pass(name) { console.log('PASS  ' + name); }
   // Version provenance: normal package is real; unavailable package is unknown, not 0.9.7.
   assert.strictEqual(getPackageVersion(path.join(os.tmpdir(), 'package-does-not-exist.json')), null);
   const manifest = createExperimentRunManifest({ now: 1, idSuffix: 'test', runId: 'run-version-test' });
-  assert.strictEqual(manifest.lifeVersion, '0.9.7.1');
+  assert.strictEqual(manifest.lifeVersion, getPackageVersion());
   pass('package.json 正常读取真实版本，不可读取时返回未知');
 
   // Research task cleanup retains only queryable terminal metadata.

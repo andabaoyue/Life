@@ -103,10 +103,12 @@ function countPass(out) {
       continue;
     }
     let out = '';
+    let runError = null;
     try {
       out = await runOne(c.file, c.file.endsWith('.py') && url
         ? { DESKPET_URL: url } : null);
     } catch (e) {
+      runError = e;
       out = String((e && e.stdout) || '');
       if (!out.trim()) {
         check(c.file + ' 能跑通', false, String((e && e.message) || e).slice(0, 120));
@@ -114,7 +116,7 @@ function countPass(out) {
       }
     }
     const r = countPass(out);
-    check(c.file + ' 全绿（0 项 FAIL）', r.fail === 0, 'FAIL=' + r.fail);
+    check(c.file + ' 全绿（0 项 FAIL）', r.fail === 0 && !runError, runError ? '子进程非零退出: ' + String(runError.message || runError).slice(0, 100) : ('FAIL=' + r.fail));
     check(c.file + ' 项数与 README 一致', r.pass === c.n,
       'README 写 ' + c.n + '，实际 ' + r.pass);
   }

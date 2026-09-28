@@ -1,4 +1,4 @@
-# Life · 初澜 (Chulan) v0.9.8
+# Life · 初澜 (Chulan) v0.9.8.1
 
 Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
 
@@ -414,13 +414,13 @@ node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命
 node test/window-boundary.test.js        # 33 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）
 node test/archive-integrity.test.js       # 71 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）+ P0-01 现代记录缺链字段绝不 CERTIFIED、P0-02 Archive Tail Anchor（尾部截断/篡改/锚点落后检测）、P1-02 EOI 深度引用一致性（悬空引用 NOT_RECORDED/UNRESOLVED/INVALID 绝不认证）
 node test/research-integrity-p0-1-p0-2.test.js # 19 项：v0.9.7.1 P0-1/P0-2 独立证据认证与 Genesis Anchor（结构自洽不得 CERTIFIED、自称 CERTIFIED 无效、write-time attestation、attestation 篡改、伪造 evidence、Genesis 创建/删头/篡改/缺失与 epistemicStatus 默认 UNKNOWN）
-node test/research-reproducibility-p1.test.js # 21 项：v0.9.8 P1 研究可复现性与证据口径（GenerationContext provenance 来源强度、全历史 Attention Watermark 幂等、State-level Replay 确定性边界、Dream gate 显式时钟与 runtime identity）
+node test/research-reproducibility-p1.test.js # 45 项：v0.9.8.1 P1 残余收口（F-15 Dream Identity 来源区分与确定性解耦、F-12 provider_response 运行时自证门禁与向后兼容、全历史 Attention Watermark 幂等、State-level Replay 确定性边界、Dream gate 显式时钟）
 node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
 node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
 node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
 node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
 node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
-node test/final-closure-repair.test.js    # 8 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
+node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
 node test/decision-log.test.js           # 31 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
 node test/canalization.test.js           # 27 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay）
 node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
