@@ -67,6 +67,7 @@ async function runTests() {
           type: 'message',
           source: 'user',
           text: `User message window ${w}`,
+          payload: { content: `User message window ${w}` },
           timestamp: 1000 + w * 10
         }],
         stateChanges: []
