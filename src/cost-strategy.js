@@ -27,7 +27,11 @@ const DEEPSEEK_COST_STRATEGY = Object.freeze({
    */
   calculate(normalizedUsage, pricingContext = {}) {
     const usage = normalizedUsage && typeof normalizedUsage === 'object' ? normalizedUsage : null;
-    const pricingVersion = (pricingContext && pricingContext.pricingVersion) || null;
+    // P3.1: 价格模型必须有版本身份 —— 调用方未提供 pricingVersion 时落地
+    // DEFAULT_PRICING_VERSION ('unversioned-legacy')，绝不留 null 歧义。
+    // 不使用 defaultPricingVersion ('deepseek-price-v1')：当前配置价格尚未真正版本化，
+    // 不假装历史事实。
+    const pricingVersion = (pricingContext && pricingContext.pricingVersion) || DEFAULT_PRICING_VERSION;
 
     if (!usage || usage.usageSource === 'unavailable') {
       // 不伪造 0 成本 —— 无 provider usage 事实时成本也是未知

@@ -109,6 +109,12 @@ function check(name, cond, extra) {
 
   const unavail = getCostStrategy('deepseek').calculate(normalizeUsage(null), { hit: 1, miss: 1, out: 1 });
   check('usage unavailable -> cost=null（不伪造 0 成本）', unavail.cost === null && unavail.reason === 'USAGE_UNAVAILABLE');
+
+  // P3.1: pricingVersion 必须落地版本身份，未传时不得留 null
+  const noVersion = getCostStrategy('deepseek').calculate(normalizeUsage({ completion_tokens: 10 }), { hit: 1, miss: 1, out: 1 });
+  check('P3.1 未传 pricingVersion -> unversioned-legacy（不留 null）',
+    noVersion.pricingVersion === DEFAULT_PRICING_VERSION && DEFAULT_PRICING_VERSION === 'unversioned-legacy');
+  check('P3.1 unavailable 路径同样带版本身份', unavail.pricingVersion === DEFAULT_PRICING_VERSION);
 }
 
 /* ============ costOf 兼容入口 parity ============ */
