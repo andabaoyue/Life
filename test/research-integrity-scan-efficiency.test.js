@@ -12,6 +12,7 @@
  */
 
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const os = require('os');
 const { ResearchQuery } = require('../src/research-query');
@@ -68,12 +69,6 @@ async function runTests() {
           text: `User message window ${w}`,
           timestamp: 1000 + w * 10
         }],
-        verifiedEvidence: [{
-          evidenceId: `evi-w${w}-1`,
-          trait: 'quiet_preference',
-          direction: 1,
-          strength: 0.5
-        }],
         stateChanges: []
       }, {
         archiveSeq: w,
@@ -86,6 +81,19 @@ async function runTests() {
       lines.push(JSON.stringify(rec));
     }
     fs.writeFileSync(archivePath, lines.join('\n') + '\n', 'utf8');
+    const messageAttestations = Array.from({ length: WINDOW_COUNT }, (_, idx) => ({
+      messageId: `msg-w${idx + 1}-1`,
+      sourceContentHash: crypto.createHash('sha256').update(`User message window ${idx + 1}`, 'utf8').digest('hex'),
+      windowNo: idx + 1,
+      sourceRole: 'user',
+      attestedAt: 1000 + (idx + 1) * 10
+    }));
+    fs.writeFileSync(archivePath + '.provenance.json', JSON.stringify({
+      schemaVersion: 1,
+      messageAttestations,
+      evidenceAttestations: [],
+      updatedAt: Date.now()
+    }), 'utf8');
     const lastScanRec = JSON.parse(lines[lines.length - 1]);
     fs.writeFileSync(archivePath + '.anchor.json', JSON.stringify({
       schemaVersion: 1,
