@@ -181,10 +181,10 @@ function markProviderRuntimeResponse(response, opts = {}) {
  */
 function isProviderRuntimeResponse(response) {
   if (!response || typeof response !== 'object') return false;
-  return providerRuntimeRegistry.has(response) || Boolean(
-    response[PROVIDER_RUNTIME_MARKER] &&
-    response[PROVIDER_RUNTIME_MARKER].markerType === 'provider_runtime_evidence'
-  );
+  // v0.9.8.1 F-12: WeakSet 对象身份是唯一 runtime attestation 信任根。
+  // 可复制的 Symbol marker 不再构成信任依据（防止从真实 response 上
+  // getOwnPropertySymbols 取出 marker 复制到 fake object 绕过认证）。
+  return providerRuntimeRegistry.has(response);
 }
 
 function buildGenerationContext(opts = {}) {
@@ -321,9 +321,16 @@ function buildGenerationContext(opts = {}) {
     sourceWindowNo: Number.isInteger(opts.sourceWindowNo) ? opts.sourceWindowNo : null,
     sourceMessageRange: range,
     generator: String(opts.generator || 'pure-computation-or-llm'),
+    // v0.9.8.1 F-12 provenanceStatus 语义一致性：
+    // provenanceStatus 描述「整体 provenance completeness 强度分级」，
+    // 与 observedModelSource（model provenance 来源）和 promptHashes（可用性）语义正交且不互相矛盾：
+    //   - runtime provider response 经 attestation 认证 -> 'runtime_observed_partial'
+    //     （存在真实 runtime 证据，但证据集仅部分齐备，如 promptHashes 可能缺失；
+    //       永不宣称完整 provenance，也绝不因缺少部分证据把 runtime 观测降格成 caller 声明）
+    //   - 仅 caller/config 声明 observedModel -> 'caller_supplied_or_config'
+    //   - 无任何 observedModel 证据 -> 'unavailable'
     provenanceStatus: (
-      observedModelSource === 'provider_response' &&
-      Object.keys(opts.promptHashes || {}).length > 0
+      observedModelSource === 'provider_response'
     ) ? 'runtime_observed_partial' : (
       observedModel !== UNAVAILABLE ? 'caller_supplied_or_config' : 'unavailable'
     )

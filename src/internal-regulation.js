@@ -316,6 +316,19 @@ class InternalRegulationManager {
       }
     }
 
+    // v0.9.8.1 F-13: before snapshot 必须在任何 mutation（含两套 watermark 消费）之前完整保存，
+    // 包括 consumedAttentionEvents 与 persistedConsumedAttentionEvents；
+    // save 失败时必须完整恢复（严禁恢复成 undefined / 严禁回滚后事件仍被视为已消费）。
+    const before = {
+      arousal: this.arousal,
+      cognitiveLoadProxy: this.cognitiveLoadProxy,
+      salienceThreshold: this.salienceThreshold,
+      updatedAt: this.updatedAt,
+      history: this.history.slice(),
+      consumedAttentionEvents: new Set(this.consumedAttentionEvents),
+      persistedConsumedAttentionEvents: new Set(this.persistedConsumedAttentionEvents)
+    };
+
     if (eventId) {
       if (this.persistedConsumedAttentionEvents.has(eventId)) {
         return this.getState();
@@ -327,15 +340,6 @@ class InternalRegulationManager {
         this.consumedAttentionEvents.delete(first);
       }
     }
-
-    const before = {
-      arousal: this.arousal,
-      cognitiveLoadProxy: this.cognitiveLoadProxy,
-      salienceThreshold: this.salienceThreshold,
-      updatedAt: this.updatedAt,
-      history: this.history.slice(),
-      consumedAttentionEvents: new Set(this.consumedAttentionEvents)
-    };
     const at = Number(details.timestamp || Date.now());
     const salience = Number(gateResult.salience || 40);
     const prev = {

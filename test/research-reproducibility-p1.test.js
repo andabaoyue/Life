@@ -159,6 +159,53 @@ function tmpDir(prefix = 'repro-p1-') {
 
   const bad = { ...trustedCtx, observedModelSource: 'provider_response_fake' };
   check('未知 observedModelSource 被拒绝', validateGenerationContext(bad).valid === false);
+
+  // 5. F-12 attestation 伪造路径: 复制真实 response 的 Symbol marker 到 fake object -> 绝不可信
+  check('F-12 真实 runtime response 通过 attestation', isProviderRuntimeResponse(trustedRes) === true);
+  const copiedSymbols = Object.getOwnPropertySymbols(trustedRes);
+  const markerForged = { observedModel: 'forged-provider-model' };
+  for (const sym of copiedSymbols) {
+    try {
+      Object.defineProperty(markerForged, sym, { value: trustedRes[sym], enumerable: false, configurable: true });
+    } catch {}
+  }
+  check('F-12 fake object 携带复制 Symbol marker -> 不可信', isProviderRuntimeResponse(markerForged) === false);
+  const forgedCtx = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'configured-model', baseURL: 'https://api.deepseek.com', provider: 'deepseek' },
+    providerResponse: markerForged,
+    promptHashes: { dream: 'sha256:test' },
+    gitCommit: '0123456789abcdef0123456789abcdef01234567',
+    generatedAt: 1000
+  });
+  check('F-12 复制 marker 伪造 providerResponse -> observedModelSource 降级 caller_or_config',
+    forgedCtx.observedModelSource === 'caller_or_config');
+  check('F-12 复制 marker 伪造时 provenanceStatus=caller_supplied_or_config',
+    forgedCtx.provenanceStatus === 'caller_supplied_or_config');
+
+  // 5b. DeepSeek complete()/stream() 返回路径仍经 markProviderRuntimeResponse 注册（源码级回归护栏）
+  const deepseekSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'deepseek.js'), 'utf8');
+  const markCalls = deepseekSrc.split('markProviderRuntimeResponse(').length - 1;
+  check('F-12 deepseek complete()/stream() 均经 markProviderRuntimeResponse 注册 runtime response', markCalls >= 2);
+
+  // 6. provenanceStatus 语义一致性: runtime 证据缺 promptHashes 时不得互相矛盾
+  const runtimeNoHashes = markProviderRuntimeResponse({
+    observedModel: 'observed-provider-model',
+    text: 'dream'
+  }, { adapter: 'deepseek' });
+  const noHashCtx = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'configured-model', baseURL: 'https://api.deepseek.com', provider: 'deepseek' },
+    providerResponse: runtimeNoHashes,
+    gitCommit: '0123456789abcdef0123456789abcdef01234567',
+    generatedAt: 1000
+  });
+  check('F-12p runtime 证据缺 promptHashes: observedModelSource 仍为 provider_response',
+    noHashCtx.observedModelSource === 'provider_response');
+  check('F-12p runtime 证据缺 promptHashes: provenanceStatus=runtime_observed_partial (不降格为 caller 声明)',
+    noHashCtx.provenanceStatus === 'runtime_observed_partial');
+  check('F-12p promptHashes 缺失时如实为空对象 (不补造完整 provenance)',
+    noHashCtx.promptHashes && Object.keys(noHashCtx.promptHashes).length === 0);
 }
 
 // -----------------------------------------------------------------------------
@@ -187,6 +234,53 @@ function tmpDir(prefix = 'repro-p1-') {
     { eventId: 'attn-0', timestamp: 5000 }
   );
   check('重启后最早事件仍被识别为 duplicate', reloaded.getState().arousal === before);
+
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+}
+
+// -----------------------------------------------------------------------------
+// F-13b: save() 失败时 before snapshot 完整 rollback（含两套 watermark）
+// -----------------------------------------------------------------------------
+{
+  const dir = tmpDir();
+  const manager = new InternalRegulationManager(dir, { enabled: true });
+  manager.updateOnAttention(
+    { status: 'ATTENDED', attended: true, salience: 40, eventId: 'rb-0' },
+    { eventId: 'rb-0', timestamp: 1000 }
+  );
+  const s0 = manager.getState();
+  const arousal0 = s0.arousal;
+  const load0 = s0.cognitiveLoadProxy;
+  const persisted0 = s0.watermark.persistedCount;
+
+  // 注入 save 失败
+  const realSave = manager.save.bind(manager);
+  manager.save = () => false;
+  const sFail = manager.updateOnAttention(
+    { status: 'ATTENDED', attended: true, salience: 80, eventId: 'rb-fail' },
+    { eventId: 'rb-fail', timestamp: 2000 }
+  );
+  check('F-13b save 失败后 getState() 正常返回', Boolean(sFail) && typeof sFail === 'object');
+  check('F-13b save 失败时 arousal 完整 rollback', manager.getState().arousal === arousal0);
+  check('F-13b save 失败时 cognitiveLoadProxy 完整 rollback', manager.getState().cognitiveLoadProxy === load0);
+  check('F-13b save 失败时 persisted watermark 未消费该事件 (非 undefined/非误记)',
+    manager.getState().watermark.persistedCount === persisted0);
+
+  // 恢复 save，同一事件重新处理 -> 必须被正常消费（证明 rollback 后事件没被错误消费）
+  manager.save = realSave;
+  manager.updateOnAttention(
+    { status: 'ATTENDED', attended: true, salience: 80, eventId: 'rb-fail' },
+    { eventId: 'rb-fail', timestamp: 3000 }
+  );
+  check('F-13b rollback 后同一事件可被再次正常处理 (未被错误消费)', manager.getState().arousal > arousal0);
+  check('F-13b 再次处理后事件才被正确消费 (+1 watermark)', manager.getState().watermark.persistedCount === persisted0 + 1);
+
+  // 消费后重复处理仍幂等
+  manager.updateOnAttention(
+    { status: 'ATTENDED', attended: true, salience: 80, eventId: 'rb-fail' },
+    { eventId: 'rb-fail', timestamp: 4000 }
+  );
+  check('F-13b 消费后的事件重复处理保持幂等 (watermark 不再增长)', manager.getState().watermark.persistedCount === persisted0 + 1);
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
@@ -234,6 +328,26 @@ function tmpDir(prefix = 'repro-p1-') {
   check('显式注入 clock 来源可审计', explicit.clockSource === 'explicit_now');
   check('未注入 clock 时如实标记 wall_clock', implicit.clockSource === 'wall_clock');
   check('未注入 clock 时不宣称 deterministic', implicit.deterministic === false);
+
+  // F-16 五类时间输入分类：只有实际确定的时间输入才 deterministic
+  const fixedTs = evaluateDreamGate({ timestamp: 100000, windowNo: 10, dreamHistory: [] });
+  check('F-16 fixed timestamp -> deterministic=true (fixed_timestamp)',
+    fixedTs.deterministic === true && fixedTs.timeInputKind === 'fixed_timestamp');
+
+  const detClock = evaluateDreamGate({ clock: { now: () => 100000 }, windowNo: 10, dreamHistory: [] });
+  check('F-16 deterministic clock -> deterministic=true (deterministic_clock)',
+    detClock.deterministic === true && detClock.timeInputKind === 'deterministic_clock');
+
+  const wallClock = evaluateDreamGate({ clock: { now: () => Date.now() }, windowNo: 10, dreamHistory: [] });
+  check('F-16 Date.now clock -> deterministic=false (wall_clock)',
+    wallClock.deterministic === false && wallClock.timeInputKind === 'wall_clock');
+
+  const randomClock = evaluateDreamGate({ clock: { now: () => Math.random() * 1e13 }, windowNo: 10, dreamHistory: [] });
+  check('F-16 random clock -> deterministic=false (random_clock)',
+    randomClock.deterministic === false && randomClock.timeInputKind === 'random_clock');
+
+  check('F-16 default clock -> deterministic=false (default_clock)',
+    implicit.deterministic === false && implicit.timeInputKind === 'default_clock');
 }
 
 // -----------------------------------------------------------------------------
@@ -306,6 +420,38 @@ function tmpDir(prefix = 'repro-p1-') {
     dreamD.payload.identitySource === 'deterministic_generator');
   check('Case D 确定性生成器: dreamId 包含确定性生成后缀',
     dreamD.payload.dreamId.includes('fixed-det-suffix-001'));
+
+  // Case E: deterministic generator + wall-clock now -> 绝不宣称完整 identity 可复现 (F-15)
+  const dreamE = await synthesizeDream(
+    dummyClient(),
+    basePrompt,
+    baseContext,
+    { clock: { now: () => Date.now() }, idGenerator: deterministicIdGen }
+  );
+  check('Case E 确定性生成器 + wall clock: identityDeterministic=false',
+    dreamE.payload.identityDeterministic === false);
+  check('Case E 确定性生成器 + wall clock: identitySource 仍如实标注 deterministic_generator',
+    dreamE.payload.identitySource === 'deterministic_generator');
+
+  // Case F: 默认运行时生成 (随机后缀 + 非确定时间) -> false
+  const dreamF = await synthesizeDream(
+    dummyClient(),
+    basePrompt,
+    baseContext,
+    { clock: { now: () => Math.random() * 1e13 } }
+  );
+  check('Case F 默认运行时生成: identityDeterministic=false', dreamF.payload.identityDeterministic === false);
+  check('Case F 默认运行时生成: identitySource=runtime_generated', dreamF.payload.identitySource === 'runtime_generated');
+
+  // Case G: deterministic generator + deterministic clock -> 完整可复现成立
+  const dreamG = await synthesizeDream(
+    dummyClient(),
+    basePrompt,
+    baseContext,
+    { clock: { now: () => 777 }, idGenerator: deterministicIdGen }
+  );
+  check('Case G 确定性生成器 + deterministic clock: identityDeterministic=true',
+    dreamG.payload.identityDeterministic === true);
 
   // 跨 Case 语义一致性验证：reproducibilityScope 与 identityScope 解耦
   const allCases = [dreamA, dreamB, dreamC, dreamD];

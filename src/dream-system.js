@@ -27,6 +27,46 @@ const crypto = require('crypto');
 const { MEMORY_EPISTEMIC_STATUS } = require('./experiment-types');
 const { buildGenerationContext, collectPromptHashes, hashPrompt } = require('./experiment-metadata');
 
+/**
+ * v0.9.8.1 F-16: Dream 时间输入确定性分类器。
+ * 只有「实际确定的时间输入」才产生 deterministic=true：
+ *   fixed now / fixed timestamp / 输出恒定可证的 deterministic clock。
+ * wall clock（含 Date.now 本体或调用它的包装）、random clock（Math.random）、
+ * 输出不恒定的 clock、以及默认时钟一律 deterministic=false，绝不因“显式提供了 clock”就宣称确定性。
+ * 返回 { value, clockSource, timeInputKind, deterministic }。
+ */
+function classifyDreamTimeInput(src = {}) {
+  if (typeof src.now === 'number' && Number.isFinite(src.now)) {
+    return { value: src.now, clockSource: 'explicit_now', timeInputKind: 'fixed_now', deterministic: true };
+  }
+  if (typeof src.timestamp === 'number' && Number.isFinite(src.timestamp)) {
+    return { value: src.timestamp, clockSource: 'explicit_timestamp', timeInputKind: 'fixed_timestamp', deterministic: true };
+  }
+  const nowFn = (src.clock && typeof src.clock.now === 'function') ? src.clock.now : null;
+  if (!nowFn) {
+    return { value: Date.now(), clockSource: 'wall_clock', timeInputKind: 'default_clock', deterministic: false };
+  }
+  let fnSrc = '';
+  try { fnSrc = Function.prototype.toString.call(nowFn); } catch {}
+  const wallLike = nowFn === Date.now || /\bDate\.now\s*\(/.test(fnSrc);
+  const randomLike = /\bMath\.random\s*\(/.test(fnSrc);
+  const first = Number(nowFn());
+  if (wallLike) {
+    return { value: first, clockSource: 'wall_clock', timeInputKind: 'wall_clock', deterministic: false };
+  }
+  if (randomLike) {
+    return { value: first, clockSource: 'random_clock', timeInputKind: 'random_clock', deterministic: false };
+  }
+  // 源码无法直判：跨毫秒边界二次采样，输出恒定才可证明为确定性时间输入（fail-closed）
+  const boundary = Date.now();
+  while (Date.now() - boundary < 2) { /* bounded spin <= 2ms */ }
+  const second = Number(nowFn());
+  if (Number.isFinite(first) && Object.is(first, second)) {
+    return { value: first, clockSource: 'deterministic_clock', timeInputKind: 'deterministic_clock', deterministic: true };
+  }
+  return { value: first, clockSource: 'nondeterministic_clock', timeInputKind: 'nondeterministic_clock', deterministic: false };
+}
+
 const DEFAULT_DREAM_CONFIG = Object.freeze({
   // 第一道：本地认知门禁阈值
   emotionalVarianceThreshold: 15.0,  // Arousal 轨迹方差门槛
@@ -171,21 +211,10 @@ function evaluateDreamGate(opts = {}) {
   }
 
   // 24小时频次硬顶约束 (显式时间注入，绝不隐式依赖系统时刻漂移)
-  const hasExplicitClock = typeof opts.now === 'number' ||
-    typeof opts.timestamp === 'number' ||
-    Boolean(opts.clock && typeof opts.clock.now === 'function');
-  const now = typeof opts.now === 'number'
-    ? opts.now
-    : (typeof opts.timestamp === 'number'
-      ? opts.timestamp
-      : (opts.clock && typeof opts.clock.now === 'function'
-        ? opts.clock.now()
-        : Date.now()));
-  const clockSource = typeof opts.now === 'number'
-    ? 'explicit_now'
-    : (typeof opts.timestamp === 'number'
-      ? 'explicit_timestamp'
-      : (opts.clock && typeof opts.clock.now === 'function' ? 'explicit_clock' : 'wall_clock'));
+  // v0.9.8.1 F-16: 仅实际确定的时间输入产生 deterministic 标记（fixed now/timestamp、可证恒定 clock）
+  const timeInfo = classifyDreamTimeInput({ now: opts.now, timestamp: opts.timestamp, clock: opts.clock });
+  const now = timeInfo.value;
+  const clockSource = timeInfo.clockSource;
   const oneDayAgo = now - 24 * 60 * 60 * 1000;
   const recentDreamCount = dreamHistory.filter(d => (d.generatedAt || d.timestamp || 0) >= oneDayAgo).length;
   if (recentDreamCount >= cfg.maximumDreamCallsPer24h) {
@@ -201,7 +230,8 @@ function evaluateDreamGate(opts = {}) {
     allowDream,
     reason: !eligible ? 'INSUFFICIENT_TENSION' : (costGatePassed ? 'TENSION_THRESHOLD_MET' : costGateReason),
     clockSource,
-    deterministic: hasExplicitClock,
+    timeInputKind: timeInfo.timeInputKind,
+    deterministic: timeInfo.deterministic,
     metrics: {
       arousalVariance: Number(arousalVariance.toFixed(4)),
       maxArousalSpike: Number(maxArousalSpike.toFixed(4)),
@@ -326,15 +356,12 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const content = String(res.text || '').trim();
     if (!content) return null;
 
-    const now = typeof options.now === 'number'
-      ? options.now
-      : (typeof context.now === 'number'
-        ? context.now
-        : ((options.clock && typeof options.clock.now === 'function')
-          ? options.clock.now()
-          : ((context.clock && typeof context.clock.now === 'function')
-            ? context.clock.now()
-            : Date.now())));
+    // v0.9.8.1 F-15/F-16: dreamId 内嵌 now，identity 时间输入同样做确定性分类
+    const identityTime = classifyDreamTimeInput({
+      now: (typeof options.now === 'number' ? options.now : context.now),
+      clock: (options.clock && typeof options.clock.now === 'function') ? options.clock : context.clock
+    });
+    const now = identityTime.value;
 
     const isCallerSupplied = Boolean(
       (options.dreamId && typeof options.dreamId === 'string' && options.dreamId.trim()) ||
@@ -346,9 +373,10 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       (typeof options.idGenerator === 'function' || typeof context.idGenerator === 'function')
     );
 
+    const explicitDreamIdSuffix = context.dreamIdSuffix || options.dreamIdSuffix;
     const idSuffix = hasDeterministicGenerator
       ? (typeof options.idGenerator === 'function' ? options.idGenerator('dream') : context.idGenerator('dream'))
-      : (context.dreamIdSuffix || options.dreamIdSuffix || Math.random().toString(36).slice(2, 6));
+      : (explicitDreamIdSuffix || Math.random().toString(36).slice(2, 6));
 
     const dreamId = isCallerSupplied
       ? (options.dreamId ? String(options.dreamId).trim() : String(context.dreamId).trim())
@@ -359,7 +387,14 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const identitySource = isCallerSupplied
       ? 'caller_supplied'
       : (hasDeterministicGenerator ? 'deterministic_generator' : 'runtime_generated');
-    const identityDeterministic = Boolean(hasDeterministicGenerator);
+    // v0.9.8.1 F-15: identityDeterministic 宣称的是「完整 dreamId 可复现」：
+    // dreamId = f(windowNo, now, idSuffix)，只有时间输入实际确定且后缀确定
+    //（deterministic generator 或 caller 显式固定后缀）时才成立；
+    // deterministic generator + wall-clock now 绝不宣称完整可复现。
+    // caller_supplied identity 由 identitySource/identityScope 单独标注，不宣称生成确定性。
+    const suffixDeterministic = Boolean(hasDeterministicGenerator) ||
+      Boolean(typeof explicitDreamIdSuffix === 'string' && explicitDreamIdSuffix.trim());
+    const identityDeterministic = !isCallerSupplied && identityTime.deterministic && suffixDeterministic;
 
     // P0-1: 真实记录 API 返回的 observedModel，严禁回退到 cfg.model 伪造
     const observedModel =
