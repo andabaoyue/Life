@@ -489,6 +489,13 @@ pip install opencv-contrib-python numpy pillow
 
 ## 版本记录
 
+**v0.9.8 系列** — Provider Runtime Expansion 与安全边界收口：在 v0.9.7.1/v0.9.8.1 的研究完整性基础上，把“只能写死 DeepSeek”的网络层扩展为可注册 Provider Adapter 的运行时架构，同时保持研究溯源、凭据和成本真相边界。
+- **P1 Security Hardening**：统一 Secret Redaction、Provider Error 归一化、Retry/Retry-After/Timeout/Abort/Stream 生命周期边界，以及发送前 Budget Guard；未知成本 fail-closed。
+- **P2 Provider Adapter**：建立统一 Adapter Contract 与 Registry；Provider 身份、连接类型、Adapter、Credential Policy 分层；DeepSeek 作为首个标准 Adapter，Brain 不再直接依赖 DeepSeek concrete client。
+- **P3 Usage / Cache / Cost**：建立 Usage FACT、Provider-specific Cache Strategy、Cost Strategy 三层；pricingVersion 具备明确版本身份，未知 usage/cost 不伪造为 0，非 DeepSeek 不继承 DeepSeek cache/计价语义。
+- **P4 Routing / Fallback / Circuit Breaker**：模块已实现并有 35 项回归，但**继续保持 Staged**。跨 Provider 真正自动 fallback 需要第二套 endpoint / credential / model 配置与独立凭据持久化；本轮不为“收尾”而扩大配置面，因此不把这部分伪装成已经投入生产的能力。
+- **P5 Provider Runtime Expansion**：Registry 动态 dispatch、Generic OpenAI-compatible Adapter、跨 chunk SSE framing、Provider namespace 隔离、Brain hot-swap 全部进入主线；随后完成 timeout lifecycle、v0 namespace collision/ambiguous ownership fail-closed 与 provider-keyed cost 收口。
+- **当前可用 Provider 分类**：deepseek（具体官方 Provider）、generic（OpenAI-compatible 通用接口）、local（本地端点）、custom（自定义端点）；invalid 仅为内部兼容构造，不提供给用户选择。新的厂商可在后续通过独立 Adapter 注册，而不是把品牌硬编码进 Brain。
 **v0.9.7** — 《生命动力学第一迭代：梦境、遗忘与发育景观》（Life Dynamics: Dreams, Forgetting, and Epigenetic Landscape）：在 v0.9.6 严格窗口边界与因果证据底座之上，引入低成本、内生性的生命动力学机制，坚守 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 本体论边界与工程不可逆约束（D-001 ～ D-007）：
 - **工程架构决策账本 (`research/ENGINEERING-DECISION-LOG.md`)**：确立 D-001 ~ D-007 七大已决决策（SETTLED DECISION）；彻底封杀后台连续代谢 Tick（严禁 `setInterval` 扣除 energy/arousal）；坚决拒绝人类中心主义 24h 昼夜节律牢笼；确立关系时间（Relational Temporality），只有主体经历互动时生命历程才真正流逝。
 - **沃丁顿发育景观与经历依赖塑性衰减 (`src/canalization.js`)**：提出数字发育可塑性衰减模型 $\eta(W) = \frac{\eta_0}{1 + \gamma \ln(1 + W)}$；随窗口累积平滑衰减状态步长权重；划分幼态期（JUVENILE）、发育期（DEVELOPMENTAL）与稳定个体化期（STABILIZED）；历史参数（`baseStepWeight`、`effectiveStepWeight`、`plasticityMultiplier`）强一致性落盘于 `StateChange`，保证离线 Replay 100% 确定性；Baseline 模式塑性乘子严格恒为 1.0。
