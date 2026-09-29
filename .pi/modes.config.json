@@ -1,0 +1,53 @@
+{
+  "defaultMode": "ask",
+  "modes": {
+    "ask": {
+      "description": "ASK / EXPLORE（Life）：只讨论、只解释、只读调查，不修改文件",
+      "thinkingLevel": "low",
+      "extraInstructions": [
+        "Life ASK/EXPLORE 模式：只讨论、解释、只读调查；禁止修改任何文件；低成本思考，输出精炼。",
+        "Life 只读模式规则：不得修改文件；不得 commit / push。",
+        "Token 纪律：不做不必要的文件扫描；不重复读取；不重复调用工具；不读无关源码；不整文件重写；不重复验证；不写冗长报告。"
+      ]
+    },
+    "plan": {
+      "description": "PLAN（Life）：只制定方案，不修改文件",
+      "thinkingLevel": "medium",
+      "extraInstructions": [
+        "Life PLAN 模式：只产出方案与步骤，不实施修改；方案遵守最小差异原则。",
+        "Life 只读模式规则：不得修改文件；不得 commit / push。",
+        "Token 纪律：不做不必要的文件扫描；不重复读取；不重复调用工具；不读无关源码；不整文件重写；不重复验证；不写冗长报告。"
+      ]
+    },
+    "build": {
+      "description": "BUILD（Life）：正常开发（等价 act）",
+      "thinkingLevel": "medium",
+      "extraInstructions": [
+        "Life BUILD 模式：正常开发，最小差异修改；修改后跑相关测试并检查 git diff；不默认 commit/push。",
+        "Life 写入模式规则：默认只在 ~/Life 仓库内工作，不修改仓库外文件；不碰 API Key/Token/credentials；不默认 commit；不默认 push；绝不执行 force push / reset --hard / clean -fd；保留用户已有修改。",
+        "Token 纪律：不做不必要的文件扫描；不重复读取；不重复调用工具；不读无关源码；不整文件重写；不重复验证；不写冗长报告。"
+      ]
+    },
+    "debug": {
+      "description": "DEBUG（Life）：系统性定位问题（等价 fix）",
+      "thinkingLevel": "high",
+      "extraInstructions": [
+        "Life DEBUG 模式：系统性定位根因，结论附证据；没有证据不声称已修复。",
+        "Life 写入模式规则：默认只在 ~/Life 仓库内工作，不修改仓库外文件；不碰 API Key/Token/credentials；不默认 commit；不默认 push；绝不执行 force push / reset --hard / clean -fd；保留用户已有修改。",
+        "Token 纪律：不做不必要的文件扫描；不重复读取；不重复调用工具；不读无关源码；不整文件重写；不重复验证；不写冗长报告。"
+      ]
+    },
+    "review": {
+      "description": "REVIEW / AUDIT（Life）：只读代码审查与安全/研究审计（等价 audit）",
+      "thinkingLevel": "high",
+      "extraInstructions": [
+        "Life REVIEW/AUDIT 模式：只读审查与审计，禁止修改文件；调查范围限定在目标内，限制无关探索；区分【事实】/【推断】/【未验证】。",
+        "Life 只读模式规则：不得修改文件；不得 commit / push。",
+        "Token 纪律：不做不必要的文件扫描；不重复读取；不重复调用工具；不读无关源码；不整文件重写；不重复验证；不写冗长报告。"
+      ]
+    },
+    "yolo": {
+      "enabled": false
+    }
+  }
+}
