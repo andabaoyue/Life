@@ -27,14 +27,32 @@ const LEGACY_KEY_FILE = 'gpt-girl-key';
 const CFG_FILE = 'life-config.json';
 const LEGACY_CFG_FILE = 'gpt-girl-config.json';
 
-function keyPath(dir) {
+/**
+ * Credential storage contract（P5-C2）：
+ *   { providerId, credentialType, secret value }
+ *     → 逻辑命名空间 apiKey:${providerId} → 存储文件映射（命名空间经净化，不机械把冒号当文件名）。
+ *   - providerId 'deepseek'（含缺省/legacy）：沿用 life-key / gpt-girl-key（legacy 迁移语义保持）；
+ *   - 其他 providerId：隔离文件 life-key--<ns> —— deepseek key ≠ generic key ≠ provider A/B，
+ *     切换 Provider 后绝不读到另一个 Provider 的 key。
+ */
+function credentialNamespace(providerId) {
+  const pid = String(providerId == null ? '' : providerId).trim() || 'deepseek';
+  return pid.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'deepseek';
+}
+
+function keyPath(dir, providerId) {
+  const ns = credentialNamespace(providerId);
+  if (ns !== 'deepseek') return path.join(dir, KEY_FILE + '--' + ns);
   const primary = path.join(dir, KEY_FILE);
   if (fs.existsSync(primary)) return primary;
   const legacy = path.join(dir, LEGACY_KEY_FILE);
   if (fs.existsSync(legacy)) return legacy;
   return primary;
 }
-function primaryKeyPath(dir) { return path.join(dir, KEY_FILE); }
+function primaryKeyPath(dir, providerId) {
+  const ns = credentialNamespace(providerId);
+  return path.join(dir, ns === 'deepseek' ? KEY_FILE : KEY_FILE + '--' + ns);
+}
 
 function cfgPath(dir) {
   const primary = path.join(dir, CFG_FILE);
@@ -46,13 +64,13 @@ function cfgPath(dir) {
 function primaryCfgPath(dir) { return path.join(dir, CFG_FILE); }
 
 /** 加密不可用返回 false，调用方据此退回明文并如实上报 */
-function encryptKey(getSS, dir, apiKey) {
+function encryptKey(getSS, dir, apiKey, providerId) {
   try {
     const ss = typeof getSS === 'function' ? getSS() : null;
     if (!ss || !ss.isEncryptionAvailable()) return false;
     // 必须原子写：这一步成功之后 config.json 里那份明文就会被删掉，
     // 写出半截密文 = key 真的没了。
-    writeFileAtomic(primaryKeyPath(dir), ss.encryptString(apiKey));
+    writeFileAtomic(primaryKeyPath(dir, providerId), ss.encryptString(apiKey));
     return true;
   } catch (e) {
     console.error('key encrypt failed:', e.message);
@@ -61,15 +79,15 @@ function encryptKey(getSS, dir, apiKey) {
 }
 
 /** 没有密文文件、或解不出（换机器/换 Windows 用户）都返回 null */
-function decryptKey(getSS, dir) {
+function decryptKey(getSS, dir, providerId) {
   try {
-    const kp = keyPath(dir);
+    const kp = keyPath(dir, providerId);
     const buf = fs.readFileSync(kp);
     const ss = typeof getSS === 'function' ? getSS() : null;
     if (!ss || !ss.isEncryptionAvailable()) return null;
     const key = ss.decryptString(buf) || null;
-    if (key && kp.endsWith(LEGACY_KEY_FILE) && !fs.existsSync(primaryKeyPath(dir))) {
-      try { writeFileAtomic(primaryKeyPath(dir), buf); } catch {}
+    if (key && kp.endsWith(LEGACY_KEY_FILE) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
+      try { writeFileAtomic(primaryKeyPath(dir, providerId), buf); } catch {}
     }
     return key;
   } catch {
@@ -77,9 +95,11 @@ function decryptKey(getSS, dir) {
   }
 }
 
-function dropKeyFile(dir) {
-  try { fs.unlinkSync(primaryKeyPath(dir)); } catch {}
-  try { fs.unlinkSync(path.join(dir, LEGACY_KEY_FILE)); } catch {}
+function dropKeyFile(dir, providerId) {
+  try { fs.unlinkSync(primaryKeyPath(dir, providerId)); } catch {}
+  if (credentialNamespace(providerId) === 'deepseek') {
+    try { fs.unlinkSync(path.join(dir, LEGACY_KEY_FILE)); } catch {}
+  }
 }
 
 /** 从 config.json 里抹掉明文 apiKey（就地改文件） */
@@ -107,11 +127,12 @@ function stripPlainKey(dir) {
  * 6. 严禁留下半写入文件或版本不一致的组合。
  */
 function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
-  const kp = primaryKeyPath(dir);
+  const providerId = String((cfg && cfg.provider) || '').trim() || 'deepseek';
+  const kp = primaryKeyPath(dir, providerId);
   const cp = primaryCfgPath(dir);
 
   // 1. 保存前记录旧 Key 文件与 Config 文件状态快照
-  const activeKp = keyPath(dir);
+  const activeKp = keyPath(dir, providerId);
   const activeCp = cfgPath(dir);
   const oldKeyExists = fs.existsSync(activeKp);
   const oldKeyData = oldKeyExists ? fs.readFileSync(activeKp) : null;
@@ -172,7 +193,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
       if (idx !== -1) tmpFiles.splice(idx, 1);
     } else {
       // 未加密或清空 key 时，删除可能残留的旧密文文件
-      dropKeyFile(dir);
+      dropKeyFile(dir, providerId);
     }
 
     return { encrypted, hasKey };
@@ -187,7 +208,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
       if (oldKeyExists && oldKeyData !== null) {
         writeFileAtomic(kp, oldKeyData);
       } else {
-        dropKeyFile(dir);
+        dropKeyFile(dir, providerId);
       }
     } catch (rbErr) {
       console.error('[Rollback] 恢复旧 Key 文件失败:', rbErr.message);
@@ -213,15 +234,16 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
  */
 function loadConfig(getSS, dir, readDisk) {
   const disk = readDisk() || {};
-  const fromKey = decryptKey(getSS, dir);
+  const providerId = String(disk.provider || '').trim() || 'deepseek';
+  const fromKey = decryptKey(getSS, dir, providerId);
   if (fromKey) {
     if ('apiKey' in disk) stripPlainKey(dir);
     return { cfg: { ...disk, apiKey: fromKey }, encrypted: true };
   }
   const legacy = String(disk.apiKey || '');
-  const noCipher = !fs.existsSync(keyPath(dir));
-  if (legacy && noCipher && encryptKey(getSS, dir, legacy)
-      && decryptKey(getSS, dir) === legacy) {
+  const noCipher = !fs.existsSync(keyPath(dir, providerId));
+  if (legacy && noCipher && encryptKey(getSS, dir, legacy, providerId)
+      && decryptKey(getSS, dir, providerId) === legacy) {
     stripPlainKey(dir);
     return { cfg: { ...disk, apiKey: legacy }, encrypted: true, migrated: true };
   }
@@ -233,6 +255,7 @@ module.exports = {
   LEGACY_KEY_FILE,
   CFG_FILE,
   LEGACY_CFG_FILE,
+  credentialNamespace,
   keyPath,
   primaryKeyPath,
   cfgPath,

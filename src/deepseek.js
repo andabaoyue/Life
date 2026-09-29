@@ -90,207 +90,27 @@ function costOf(usage, price) {
 }
 
 const { redactSecrets } = require('./redact');
-
-/* ---- v0.9.8 P1-2: Provider HTTP Error 归一化（禁止 raw body 传播） ---- */
-function classifyProviderHttpError(status) {
-  if (status === 429) return { errorType: 'rate_limited', retryable: true };
-  if (status === 500 || status === 502 || status === 503 || status === 504) return { errorType: 'server_error', retryable: true };
-  if (status === 401 || status === 403) return { errorType: 'auth_failed', retryable: false };
-  if (status === 400 || status === 404) return { errorType: 'request_rejected', retryable: false };
-  return { errorType: 'http_error', retryable: false };
-}
-
-function extractSafeDetail(text) {
-  // v0.9.8 P1.1-B: 只允许读取可解析 JSON 的结构化 error.message / error.msg / 顶层 message
-  //（redacted + 120 字符上限）；非合法 JSON 的 body 一律不作为 detail ——
-  // raw body 本体绝不进入 error chain（message/ProviderError/console/diagnostics/archive）。
-  try {
-    const raw = String(text || '');
-    let detail = '';
-    try {
-      const j = JSON.parse(raw);
-      detail = (j && j.error && (j.error.message || j.error.msg)) || (j && typeof j.message === 'string' ? j.message : '');
-    } catch {
-      return '';
-    }
-    return redactSecrets(String(detail)).slice(0, 120);
-  } catch { return ''; }
-}
-
-function makeProviderError({ status, provider, requestStage, errorType, retryable, safeDetail, retryState, cause }) {
-  const err = new Error(
-    `HTTP ${status === null || status === undefined ? 'n/a' : status} [${errorType}] provider=${provider} stage=${requestStage}` +
-    (safeDetail ? ' ' + safeDetail : '')
-  );
-  err.name = 'ProviderError';
-  err.status = status === undefined ? null : status;
-  err.provider = provider;
-  err.requestStage = requestStage;
-  err.retryable = Boolean(retryable);
-  err.errorType = errorType;
-  if (retryState) err.retryState = retryState;
-  if (cause) err.cause = cause;
-  return err;
-}
-
-function parseRetryAfter(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const secs = Number(value);
-  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
-  const when = Date.parse(String(value));
-  if (Number.isFinite(when)) return Math.max(0, when - Date.now());
-  return null;
-}
-
-function sleepMaybeAbort(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (!ms || ms <= 0) { resolve(); return; }
-    const cleanup = () => {
-      clearTimeout(t);
-      if (signal) signal.removeEventListener('abort', onAbort);
-    };
-    const onAbort = () => {
-      cleanup();
-      const reason = signal && signal.reason;
-      const err = reason instanceof Error ? reason : new Error(reason || 'aborted');
-      err.name = err.name === 'TimeoutError' ? 'TimeoutError' : 'AbortError';
-      reject(err);
-    };
-    const t = setTimeout(() => { cleanup(); resolve(); }, ms);
-    if (signal) {
-      if (signal.aborted) { onAbort(); return; }
-      signal.addEventListener('abort', onAbort, { once: true });
-    }
-  });
-}
+// v0.9.8 P5-B1: 通用 HTTP/retry/budget/错误归一化已提取至 openai-transport.js
+//（DeepSeek 与 Generic OpenAI-compatible adapter 共用；DeepSeek 行为保持兼容）
+const { makeProviderError, requestChatCompletion } = require('./openai-transport');
 
 class DeepSeek {
   constructor(cfg) {
     this.cfg = cfg;
   }
 
+  /** P5-B1: 传输层委托 —— policy 门禁 / budget guard / retry / 错误归一化均在 openai-transport。
+   *  品牌语义（deepseek-api-key credential 类型）留在本 DeepSeek 模块内，不进共享层。 */
   async raw(body, signal) {
-    const { providerFor, validateCredentialTarget } = require('./provider-policy');
-    const { assertBudget } = require('./budget-guard');
+    const { providerFor } = require('./provider-policy');
     const provider = this.cfg.provider || providerFor(this.cfg.baseURL);
-    const credentialType = this.cfg.credentialType || (provider === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
-    const policy = validateCredentialTarget({ provider, baseURL: this.cfg.baseURL, credentialType });
-    if (!policy.ok) {
-      // P1-3: endpoint/credential policy 失败属 non-retryable，且绝不发请求
-      const err = new Error(`[DeepSeek] Provider Policy 违规拦截: ${policy.error}`);
-      err.name = 'PolicyError';
-      err.retryable = false;
-      err.errorType = 'policy_violation';
-      err.requestStage = 'policy';
-      throw err;
-    }
-
-    const url = this.cfg.baseURL.replace(/\/+$/, '') + '/chat/completions';
-    const requestTimeoutMs = Number.isFinite(this.cfg.requestTimeoutMs)
-      ? this.cfg.requestTimeoutMs : 60000;
-    // P1-3: retry 硬上限 + 指数退避 + 退避上限 + Retry-After；绝不无限 retry
-    const HARD_MAX_RETRIES = 3;
-    const configuredRetries = Number.isFinite(this.cfg.maxRetries)
-      ? Math.max(0, Math.floor(this.cfg.maxRetries)) : 2;
-    const maxRetries = Math.min(configuredRetries, HARD_MAX_RETRIES);
-    const retryBaseDelayMs = Number.isFinite(this.cfg.retryBaseDelayMs) && this.cfg.retryBaseDelayMs >= 0
-      ? this.cfg.retryBaseDelayMs : 500;
-    const RETRY_DELAY_CAP_MS = 5000;
-    const MAX_RETRY_AFTER_MS = 30000;
-
-    let attempt = 0;
-    for (;;) {
-      // P1-4: Budget Guard —— 发送前按最坏资源消耗 fail-closed，绝不发请求；retry 不得绕过预算
-      const budget = assertBudget({
-        maxTokens: body && body.max_tokens,
-        attempt,
-        maxRetries,
-        budgetMaxOutputTokens: this.cfg.budgetMaxOutputTokens
-      });
-      if (!budget.ok) {
-        const err = new Error(`[DeepSeek] Budget Guard 拦截: ${budget.reason} worstCase=${budget.worstCase} budget=${budget.budgetMaxOutputTokens}`);
-        err.name = 'BudgetExceededError';
-        err.retryable = false;
-        err.errorType = 'budget_exceeded';
-        err.requestStage = 'budget';
-        throw err;
-      }
-
-      let res;
-      // 如果上层未传递 signal，内部兜底建立超时保护控制器
-      const fallbackCtrl = signal ? null : new AbortController();
-      const timer = fallbackCtrl
-        ? setTimeout(() => {
-            const err = new Error('request timeout');
-            err.name = 'TimeoutError';
-            fallbackCtrl.abort(err);
-          }, requestTimeoutMs)
-        : null;
-
-      try {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer ' + this.cfg.apiKey
-          },
-          body: JSON.stringify(body),
-          signal: signal || fallbackCtrl.signal
-        });
-      } catch (netErr) {
-        // Abort/Timeout 保持原语义上抛（non-retryable）；其余网络错误按明确暂态处理
-        if (netErr && (netErr.name === 'AbortError' || netErr.name === 'TimeoutError')) {
-          netErr.retryState = { attempts: attempt + 1, maxRetries };
-          throw netErr;
-        }
-        const canRetry = attempt < maxRetries && !(signal && signal.aborted);
-        if (!canRetry) {
-          throw makeProviderError({
-            status: null,
-            provider,
-            requestStage: 'request',
-            errorType: 'network_error',
-            retryable: true,
-            safeDetail: redactSecrets(String((netErr && netErr.message) || netErr)),
-            retryState: { attempts: attempt + 1, maxRetries },
-            cause: netErr
-          });
-        }
-        const delayMs = Math.min(retryBaseDelayMs * Math.pow(2, attempt), RETRY_DELAY_CAP_MS);
-        attempt++;
-        await sleepMaybeAbort(delayMs, signal);
-        continue;
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        const cls = classifyProviderHttpError(res.status);
-        const retryAfterMs = parseRetryAfter(res.headers && typeof res.headers.get === 'function' ? res.headers.get('retry-after') : null);
-        const safeDetail = extractSafeDetail(text);
-        const retryAfterTooLong = retryAfterMs !== null && retryAfterMs > MAX_RETRY_AFTER_MS;
-        const canRetry = cls.retryable && attempt < maxRetries && !retryAfterTooLong && !(signal && signal.aborted);
-        if (canRetry) {
-          const expDelay = Math.min(retryBaseDelayMs * Math.pow(2, attempt), RETRY_DELAY_CAP_MS);
-          const delayMs = retryAfterMs !== null ? Math.min(retryAfterMs, RETRY_DELAY_CAP_MS) : expDelay;
-          attempt++;
-          await sleepMaybeAbort(delayMs, signal);
-          continue;
-        }
-        throw makeProviderError({
-          status: res.status,
-          provider,
-          requestStage: 'request',
-          errorType: cls.errorType,
-          retryable: cls.retryable,
-          safeDetail,
-          retryState: { attempts: attempt + 1, maxRetries, retryAfterMs }
-        });
-      }
-      res.attempts = attempt + 1;
-      return res;
-    }
+    return requestChatCompletion({
+      cfg: this.cfg,
+      body,
+      signal,
+      provider,
+      credentialType: this.cfg.credentialType || (provider === 'deepseek' ? 'deepseek-api-key' : 'apiKey')
+    });
   }
 
   /** 非流式，用于生成摘要 */

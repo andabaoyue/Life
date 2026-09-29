@@ -394,52 +394,28 @@ ipcMain.handle('config-get', () => {
 });
 
 ipcMain.handle('config-set-key', (e, key) => {
-  const oldBrain = brain;
+  // P5-D: 热替换编排收敛到 brain-hot-swap.js ——
+  // candidate 任一步失败 -> cleanup + 配置回滚 + 旧 Brain 继续服务，绝不留半初始化 Brain
+  const { swapBrain } = require('./src/brain-hot-swap');
   const oldCfg = cfg;
   const next = { ...cfg, apiKey: String(key || '').trim() };
+  let persisted = null;
+  const res = swapBrain({
+    oldBrain: brain,
+    oldCfg,
+    nextCfg: next,
+    createCandidate: (c) => new Brain(app.getPath('userData'), c),
+    bindCandidate: bindBrainDeps,
+    persistCfg: (c) => { persisted = persistCfg(c); }
+  });
+  if (!res.ok) return { ok: false, error: res.error };
 
-  // 1. 保留旧 Brain，不提前 shutdown
-  // 2. 持久化并验证新配置
-  let r;
-  try {
-    r = persistCfg(next);
-  } catch (err) {
-    return { ok: false, error: '配置持久化失败: ' + err.message };
-  }
+  // 切换主引用
+  cfg = res.cfg;
+  brain = res.brain;
+  keyEncrypted = persisted.encrypted;
 
-  // 3. 尝试使用新配置创建并初始化新 Brain
-  let candidateBrain;
-  try {
-    candidateBrain = new Brain(app.getPath('userData'), next);
-    bindBrainDeps(candidateBrain); // 新 Brain 接入同一个 tracker / 衣柜
-  } catch (err) {
-    // 新 Brain 初始化失败：必须回滚配置持久化到旧状态
-    try {
-      persistCfg(oldCfg);
-    } catch (rbErr) {
-      console.error('[Rollback] 回滚配置失败:', rbErr.message);
-    }
-    // 旧 Brain 完好无损，继续工作
-    return { ok: false, error: '新 Brain 初始化失败: ' + err.message };
-  }
-
-  // 4. 新 Brain 初始化成功后，再 flush / 关闭旧 Brain
-  try {
-    if (oldBrain) {
-      if (typeof oldBrain.flushAll === 'function') oldBrain.flushAll();
-      if (typeof oldBrain.shutdown === 'function') oldBrain.shutdown();
-      else if (typeof oldBrain.abort === 'function') oldBrain.abort();
-    }
-  } catch (err) {
-    console.warn('[Brain] 旧 Brain 关闭异常（非致命）:', err.message);
-  }
-
-  // 5. 切换主引用
-  cfg = next;
-  brain = candidateBrain;
-  keyEncrypted = r.encrypted;
-
-  return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: r.encrypted };
+  return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
 });
 
 ipcMain.handle('creative-mode-get', () => ({ enabled: !!(cfg && cfg.writingMode) }));

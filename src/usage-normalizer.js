@@ -18,13 +18,17 @@ function numOrNull(v) {
 
 /**
  * @param {object|null|undefined} rawUsage provider 原始 usage（provider_response 事实）
+ * @param {string} [providerId] P5-A2：strategy 选择以 providerId 为键。
+ *   DeepSeek 推导语义（prompt=hit+miss / total=sum）只属于 DeepSeek；
+ *   其他 provider 只记录真实返回字段，绝不套用 DeepSeek 语义。
  * @returns {{
  *   promptTokens: number|null, completionTokens: number|null, totalTokens: number|null,
  *   cacheHitTokens: number|null, cacheMissTokens: number|null,
  *   providerRawUsage: object|null, usageSource: 'provider_response'|'partial'|'unavailable'
  * }}
  */
-function normalizeUsage(rawUsage) {
+function normalizeUsage(rawUsage, providerId = 'deepseek') {
+  const pid = String(providerId || 'deepseek');
   const empty = {
     promptTokens: null,
     completionTokens: null,
@@ -49,13 +53,13 @@ function normalizeUsage(rawUsage) {
   const completionTokens = numOrNull(rawUsage.completion_tokens);
 
   let promptTokens = numOrNull(rawUsage.prompt_tokens);
-  if (promptTokens === null && cacheHitTokens !== null && cacheMissTokens !== null) {
+  if (promptTokens === null && pid === 'deepseek' && cacheHitTokens !== null && cacheMissTokens !== null) {
     // DeepSeek 语义：prompt tokens = cache hit + cache miss（provider 实际字段的算术，不是猜测）
     promptTokens = cacheHitTokens + cacheMissTokens;
   }
 
   let totalTokens = numOrNull(rawUsage.total_tokens);
-  if (totalTokens === null && promptTokens !== null && completionTokens !== null) {
+  if (totalTokens === null && pid === 'deepseek' && promptTokens !== null && completionTokens !== null) {
     totalTokens = promptTokens + completionTokens;
   }
 

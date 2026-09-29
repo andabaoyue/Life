@@ -5,7 +5,7 @@ const { Memory } = require('./memory');
 const { isPeakHour, costOf } = require('./deepseek');
 // v0.9.8 P2-7: 业务层经 Provider Registry 获取 adapter（stable provider id），
 // 不再依赖 DeepSeek concrete class；DeepSeek 专属 util（isPeakHour/costOf 属 P3 cost 范畴）暂留。
-const { createAdapter } = require('./provider-registry');
+const { createAdapter, getProviderInfo } = require('./provider-registry');
 const { PERSONA } = require('./persona');
 const { CREATIVE_SKILL } = require('./creative-skill');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
@@ -116,15 +116,16 @@ class Brain {
     this.cfg.experimentModules = sanitizedExp.experimentModules;
     const { validateCredentialTarget, providerFor } = require('./provider-policy');
     const pTarget = this.cfg.provider || providerFor(this.cfg.baseURL);
-    const cType = this.cfg.credentialType || (pTarget === 'deepseek' ? 'deepseek-api-key' : 'apiKey');
+    // P5-A1: credential type 从 Registry credentialPolicy 派生（无品牌分支）
+    const regInfo = getProviderInfo(pTarget);
+    const cType = this.cfg.credentialType || (regInfo && regInfo.credentialPolicy) || 'apiKey';
     const policyCheck = validateCredentialTarget({ provider: pTarget, baseURL: this.cfg.baseURL, credentialType: cType });
     if (!policyCheck.ok) {
       console.warn(`[Brain] Provider Policy 检查未通过: ${policyCheck.error}`);
     }
-    // v0.9.8 P2-7: 经 Registry 构造 adapter（当前仅注册 stable id 'deepseek'，
-    // 其 adapter 为 OpenAI-compatible 线协议实现，亦服务 local/custom 端点；
-    // 未来 provider 分支由 Registry 承担，此处不再出现 provider 品牌实现分支）。
-    this.api = createAdapter('deepseek', this.cfg);
+    // P5-B4: provider dispatch 经 Registry —— provider 来自 config（缺省经 providerFor 解析），
+    // 未知 provider fail-closed；无品牌 if/else。
+    this.api = createAdapter(this.cfg.provider || providerFor(this.cfg.baseURL), this.cfg);
     this.persona = PERSONA;
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)

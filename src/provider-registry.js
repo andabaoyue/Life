@@ -82,4 +82,24 @@ registerProvider({
   display: { name: 'DeepSeek', note: 'UI display metadata only — not research truth' }
 });
 
+// v0.9.8 P5-A1: generic OpenAI-compatible 注册项（架构验证用，不接真实第三方服务）。
+// 硬性事实边界：协议兼容 ≠ Provider 语义相同 ≠ Cache 规则相同 ≠ 价格相同 ——
+// 故 generic/local/custom 的 pricingPolicy/cachePolicy 明确为 null（绝不继承 DeepSeek 语义）。
+const { createOpenAICompatibleAdapter } = require('./adapters/openai-compatible-adapter');
+// 'invalid' = providerFor() 的端点解析失败分类（如无 baseURL 的 headless/测试构造）——
+// 注册它以保持既有 Brain 构造语义（网络调用仍在 policy/transport 门禁处 fail-closed）；
+// 真正未知的 provider id 依旧拒绝（UnknownProviderError）。
+for (const genericId of ['generic', 'local', 'custom', 'invalid']) {
+  registerProvider({
+    providerId: genericId,
+    providerType: genericId === 'local' ? 'local' : (genericId === 'custom' || genericId === 'invalid' ? 'custom' : 'openai-compatible'),
+    adapterFactory: (cfg) => createOpenAICompatibleAdapter(cfg, { providerId: genericId }),
+    capabilities: { streaming: true, usage: true, systemMessage: true, vision: false, tools: false, jsonMode: false },
+    credentialPolicy: 'apiKey',
+    display: { name: genericId, note: 'UI display metadata only — not research truth' },
+    pricingPolicy: null,
+    cachePolicy: null
+  });
+}
+
 module.exports = { registerProvider, createAdapter, getProviderInfo, listProviders, PROVIDER_TYPES };
