@@ -132,7 +132,13 @@
 4. 各模式 `extraInstructions` 的实际注入效果——仅 ASK 模式横幅实测可见，其余模式未逐条观测。
 5. ASK/EXPLORE、PLAN 模式的别名入口（`audit`/`act`/`fix`）——未逐一切换实测。
 
-## 11. 本轮 commit hash
+## 11. 外部问题备注（与 Life 无关）
+
+> **手机端 Pi Agent 输入框粘贴问题：当前正在修复中。** 多行文本直接粘贴到手机端 Pi Agent 的对话框时，存在前面内容被提前触发/提交而**最后一行无法正常输入**的现象。
+>
+> 该问题属于**手机端 Pi Agent / 输入框交互层**问题，不属于 Life 源码、Life runtime 或 Life API/provider 架构问题；在后续 Life 审计、回归检查和问题归因中，**不得将此现象计入 Life 缺陷**。
+
+## 12. 本轮 commit hash
 
 `dbbc11f`（feat(agent): add Life workflow modes，仅 `.pi/modes.config.json`，53 行）——**本地提交，尚未 push**。
 （上一任务提交 `ba5f7ac` 已在远端，非本轮。）
