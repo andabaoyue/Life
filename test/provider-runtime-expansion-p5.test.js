@@ -238,8 +238,7 @@ function sseRes(chunks) {
     check('legacy key 只归 deepseek namespace：generic 读不到 legacy key',
       secure.decryptKey(getSS, dir, 'deepseek') === 'sk-legacy-deepseek-1' && secure.decryptKey(getSS, dir, 'generic') === 'sk-generic-000');
     check('legacy 迁移不复制到 generic namespace',
-      !fs.existsSync(path.join(dir, 'life-key--generic--legacy')) && secure.keyPath(dir, 'generic') === path.join(dir, 'life-key--generic') &&
-      fs.existsSync(path.join(dir, 'life-key'))); // 迁移只发生在 deepseek 主文件
+      secure.keyPath(dir, 'generic') === secure.primaryKeyPath(dir, 'generic') && fs.existsSync(path.join(dir, 'life-key'))); // 迁移只发生在 deepseek 主文件
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
@@ -341,6 +340,120 @@ function sseRes(chunks) {
       persistCfg: (c) => okCalls.push(c)
     });
     check('hot-swap 成功路径：candidate 采纳、旧 Brain 关闭', res2.ok === true && res2.brain === fresh && oldBrain.shut === true);
+  }
+
+  /* ===== P5-B-01: Generic complete 全生命周期 timeout ===== */
+  {
+    const mk = () => createOpenAICompatibleAdapter({ baseURL: 'https://llm.example.com', apiKey: KEY, model: 'm', requestTimeoutMs: 30 }, { providerId: 'generic' });
+
+    // 1. 无 caller signal + fetch hang -> TimeoutError
+    const m1 = mockFetch(async (u, init) => hangRes(init));
+    let e1 = null;
+    try { await mk().complete([{ role: 'user', content: 'x' }]); } catch (e) { e1 = e; }
+    check('P5-B-01 无 caller signal + fetch hang -> TimeoutError', e1 && e1.name === 'TimeoutError' && m1.calls === 1);
+    globalThis.fetch = realFetch;
+
+    // 2. caller signal 未 abort + response.json hang -> TimeoutError
+    const m2 = mockFetch(async () => ({
+      ok: true, status: 200, headers: { get: () => null },
+      text: async () => '',
+      json: () => new Promise(() => {}) // 永久挂起的解析
+    }));
+    let e2 = null;
+    const ac2 = new AbortController();
+    try { await mk().complete([{ role: 'user', content: 'x' }], { signal: ac2.signal }); } catch (e) { e2 = e; }
+    check('P5-B-01 fetch 已返回 + json hang -> TimeoutError（caller signal 不使 timeout 失效）', e2 && e2.name === 'TimeoutError' && m2.calls === 1);
+    globalThis.fetch = realFetch;
+
+    // 3. caller signal 主动 abort -> AbortError
+    const m3 = mockFetch(async (u, init) => hangRes(init));
+    const ac3 = new AbortController();
+    setTimeout(() => ac3.abort(), 10);
+    let e3 = null;
+    try { await mk().complete([{ role: 'user', content: 'x' }], { signal: ac3.signal }); } catch (e) { e3 = e; }
+    check('P5-B-01 caller signal 主动 abort -> AbortError', e3 && e3.name === 'AbortError');
+    globalThis.fetch = realFetch;
+
+    // 4. 正常 response -> success
+    const m4 = mockFetch(async () => okRes({ choices: [{ message: { content: 'fine' } }], usage: {}, model: 'm' }));
+    const r4 = await mk().complete([{ role: 'user', content: 'x' }]);
+    check('P5-B-01 正常 response -> 正常返回', r4 && r4.text === 'fine');
+    globalThis.fetch = realFetch;
+  }
+
+  /* ===== P5-C-01: credential namespace 碰撞防护（真实走 save/decrypt/keyPath） ===== */
+  {
+    const dir = tmpDir('p5-ns-');
+    const fakeSS = {
+      isEncryptionAvailable: () => true,
+      encryptString: (s) => Buffer.from('enc:' + s).toString('base64'),
+      decryptString: (b) => Buffer.from(String(b), 'base64').toString('utf8').slice(4)
+    };
+    const getSS = () => fakeSS;
+
+    // 1. a/b 与 a_b 不得同名
+    secure.saveConfig(getSS, dir, { provider: 'a/b', apiKey: 'sk-ab-000', model: 'm' }, () => {});
+    secure.saveConfig(getSS, dir, { provider: 'a_b', apiKey: 'sk-underscore-000', model: 'm' }, () => {});
+    check('P5-C-01 a/b ≠ a_b（keyPath/primaryKeyPath 均不同）',
+      secure.keyPath(dir, 'a/b') !== secure.keyPath(dir, 'a_b') &&
+      secure.primaryKeyPath(dir, 'a/b') !== secure.primaryKeyPath(dir, 'a_b'));
+    check('P5-C-01 a/b 与 a_b 各自读到自己的 credential',
+      secure.decryptKey(getSS, dir, 'a/b') === 'sk-ab-000' && secure.decryptKey(getSS, dir, 'a_b') === 'sk-underscore-000');
+
+    // 2. >64 字符、仅 64 字符之后不同 -> 仍然不同
+    const longPrefix = 'q'.repeat(64);
+    const pid1 = longPrefix + '-ONE';
+    const pid2 = longPrefix + '-TWO';
+    secure.saveConfig(getSS, dir, { provider: pid1, apiKey: 'sk-one-000', model: 'm' }, () => {});
+    secure.saveConfig(getSS, dir, { provider: pid2, apiKey: 'sk-two-000', model: 'm' }, () => {});
+    check('P5-C-01 64 字符截断碰撞场景仍然不同（hash 取自完整 providerId）',
+      secure.primaryKeyPath(dir, pid1) !== secure.primaryKeyPath(dir, pid2) &&
+      secure.decryptKey(getSS, dir, pid1) === 'sk-one-000' && secure.decryptKey(getSS, dir, pid2) === 'sk-two-000');
+
+    // 3. A → B -> A 回读
+    secure.saveConfig(getSS, dir, { provider: 'a/b', apiKey: 'sk-ab-000', model: 'm' }, () => {});
+    check('P5-C-01 A→B→A 回读保持', secure.decryptKey(getSS, dir, 'a_b') === 'sk-underscore-000' && secure.decryptKey(getSS, dir, 'a/b') === 'sk-ab-000');
+
+    // 4/5. DeepSeek legacy 只属 DeepSeek；新 Provider 读不到 legacy
+    fs.writeFileSync(path.join(dir, 'gpt-girl-key'), fakeSS.encryptString('sk-legacy-ds-9'));
+    check('P5-C-01 DeepSeek legacy 只属于 DeepSeek',
+      secure.decryptKey(getSS, dir, 'deepseek') === 'sk-legacy-ds-9');
+    check('P5-C-01 新 Provider 不得读取 DeepSeek legacy',
+      secure.decryptKey(getSS, dir, 'a/b') === 'sk-ab-000' && secure.keyPath(dir, 'a/b') !== path.join(dir, 'gpt-girl-key'));
+
+    // 6. v0 首版命名迁移：旧文件被读取并迁到新路径，不静默覆盖
+    const v0Path = path.join(dir, 'life-key--' + secure.legacyV0Namespace('migrated'));
+    fs.writeFileSync(v0Path, fakeSS.encryptString('sk-v0-000'));
+    check('P5-C-01 v0 旧命名 credential 被迁移读取（不丢失）',
+      secure.decryptKey(getSS, dir, 'migrated') === 'sk-v0-000' &&
+      fs.existsSync(secure.primaryKeyPath(dir, 'migrated')));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  /* ===== P5-A: Brain 成本记账走 provider-keyed Cost Strategy ===== */
+  {
+    const { Brain } = require('../src/brain');
+    const usageFat = { prompt_cache_hit_tokens: 1e6, prompt_cache_miss_tokens: 1e6, completion_tokens: 1e6 };
+    const price = { hit: 1, miss: 2, out: 3 };
+
+    // 1. DeepSeek 成本 parity（peak=valley 同价，结果确定 = (1+2+3)=6）
+    const bd = new Brain(tmpDir(), { apiKey: KEY, model: 'm', baseURL: 'https://api.deepseek.com', provider: 'deepseek', price: { peak: price, valley: price } });
+    bd.track(usageFat);
+    check('P5-A DeepSeek 成本 parity（strategy 计价 = 旧 costOf 结果）',
+      Math.abs(bd.stats.cost - 6) < 1e-9 && Math.abs(bd.stats.history[0].cost - 6) < 1e-9);
+
+    // 2/3/4. Generic 无 pricing -> cost:null；不进 DeepSeek costOf；未知成本不累加
+    const bg = new Brain(tmpDir(), { apiKey: KEY, model: 'm', baseURL: 'https://llm.example.com', provider: 'generic', price: { peak: price, valley: price } });
+    bg.track(usageFat);
+    check('P5-A Generic 无 pricing -> cost:null（绝不进 DeepSeek costOf）',
+      bg.stats.history[0].cost === null && bg.stats.cost === 0);
+    check('P5-A 未知成本不累加 stats.cost', bg.stats.cost === 0);
+
+    // 5. summary bucket 未知成本保持 null semantics（token 计数照常）
+    bg.track(usageFat, true, 'summary');
+    const last = bg.stats.history[bg.stats.history.length - 1];
+    check('P5-A summary/merge/growth 未知成本仍保持 null semantics',
+      last.cost === null && bg.stats.summaryCalls === 1 && bg.stats.summaryPromptTokens > 0);
   }
 
   globalThis.fetch = realFetch;

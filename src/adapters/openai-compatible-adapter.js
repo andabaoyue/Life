@@ -65,6 +65,34 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
     },
 
     async complete(messages, callOpts = {}) {
+      // P5-B-01: requestTimeoutMs 覆盖完整生命周期（fetch + response 解析）——
+      // caller signal 转发到生命周期 controller；timeout 不因 caller signal 存在而失效；
+      // transport 仍负责网络 retry / policy / budget；TimeoutError / AbortError 语义保持。
+      const callerSignal = callOpts.signal;
+      const ctrl = new AbortController();
+      const forwardAbort = () => {
+        const reason = callerSignal && callerSignal.reason;
+        ctrl.abort(reason instanceof Error ? reason : Object.assign(new Error(reason || 'aborted'), { name: 'AbortError' }));
+      };
+      if (callerSignal) {
+        if (callerSignal.aborted) forwardAbort();
+        else callerSignal.addEventListener('abort', forwardAbort, { once: true });
+      }
+      const requestTimeoutMs = Number.isFinite(cfg.requestTimeoutMs) ? cfg.requestTimeoutMs : 60000;
+      let timeoutTimer = null;
+      const lifecycleTimeout = requestTimeoutMs > 0
+        ? new Promise((_, reject) => {
+            timeoutTimer = setTimeout(() => {
+              const err = new Error('request timeout');
+              err.name = 'TimeoutError';
+              ctrl.abort(err);   // 终止底层连接
+              reject(err);       // response 解析挂起时同样 fail-fast
+            }, requestTimeoutMs);
+          })
+        : null;
+      // 若 fetch/网络阶段先失败，此 promise 可能无人消费 —— 挂 no-op catch 防未处理拒绝
+      if (lifecycleTimeout) lifecycleTimeout.catch(() => {});
+
       try {
         const res = await requestChatCompletion({
           cfg,
@@ -76,12 +104,13 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             temperature: callOpts.temperature ?? 0.3,
             max_tokens: callOpts.maxTokens ?? 400
           },
-          signal: callOpts.signal
+          signal: ctrl.signal
         });
         let j;
         try {
-          j = await res.json();
+          j = lifecycleTimeout ? await Promise.race([res.json(), lifecycleTimeout]) : await res.json();
         } catch (parseErr) {
+          if (parseErr && parseErr.name === 'TimeoutError') throw parseErr;
           throw makeProviderError({
             status: 200,
             provider: providerId,
@@ -104,6 +133,9 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
         };
       } catch (e) {
         throw toUnifiedError(e, providerId);
+      } finally {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (callerSignal) callerSignal.removeEventListener('abort', forwardAbort);
       }
     },
 

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { writeFileAtomic, writeJsonAtomic, renameWithRetry, tmpNameFor } = require('./atomic');
 
 /**
@@ -37,12 +38,31 @@ const LEGACY_CFG_FILE = 'gpt-girl-config.json';
  */
 function credentialNamespace(providerId) {
   const pid = String(providerId == null ? '' : providerId).trim() || 'deepseek';
+  if (pid === 'deepseek') return 'deepseek'; // legacy 行为逐位保持
+  // P5-C-01: readablePrefix + stableHash(fullProviderId) —— 碰撞不可能后缀。
+  // 简单字符替换可碰撞（'a/b' 与 'a_b' 同名）、64 字符截断可碰撞；
+  // hash 取自完整 providerId（非加密，仅作 namespace 唯一性），有界且文件名安全。
+  const readable = pid.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 32) || 'p';
+  const hash = crypto.createHash('sha256').update(pid).digest('hex').slice(0, 16);
+  return readable + '--' + hash;
+}
+
+/** P5 首版命名（可碰撞、64 截断），仅用于旧文件迁移读取，绝不用于新写入 */
+function legacyV0Namespace(providerId) {
+  const pid = String(providerId == null ? '' : providerId).trim() || 'deepseek';
   return pid.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'deepseek';
 }
 
 function keyPath(dir, providerId) {
   const ns = credentialNamespace(providerId);
-  if (ns !== 'deepseek') return path.join(dir, KEY_FILE + '--' + ns);
+  if (ns !== 'deepseek') {
+    const primary = path.join(dir, KEY_FILE + '--' + ns);
+    if (fs.existsSync(primary)) return primary;
+    // P5-C-01 兼容迁移：P5 首版命名的旧文件存在则读取（迁移由 decryptKey 完成，绝不静默覆盖旧 credential）
+    const legacyV0 = path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId));
+    if (fs.existsSync(legacyV0)) return legacyV0;
+    return primary;
+  }
   const primary = path.join(dir, KEY_FILE);
   if (fs.existsSync(primary)) return primary;
   const legacy = path.join(dir, LEGACY_KEY_FILE);
@@ -86,7 +106,7 @@ function decryptKey(getSS, dir, providerId) {
     const ss = typeof getSS === 'function' ? getSS() : null;
     if (!ss || !ss.isEncryptionAvailable()) return null;
     const key = ss.decryptString(buf) || null;
-    if (key && kp.endsWith(LEGACY_KEY_FILE) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
+    if (key && kp !== primaryKeyPath(dir, providerId) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
       try { writeFileAtomic(primaryKeyPath(dir, providerId), buf); } catch {}
     }
     return key;
@@ -99,6 +119,8 @@ function dropKeyFile(dir, providerId) {
   try { fs.unlinkSync(primaryKeyPath(dir, providerId)); } catch {}
   if (credentialNamespace(providerId) === 'deepseek') {
     try { fs.unlinkSync(path.join(dir, LEGACY_KEY_FILE)); } catch {}
+  } else {
+    try { fs.unlinkSync(path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId))); } catch {}
   }
 }
 
@@ -256,6 +278,7 @@ module.exports = {
   CFG_FILE,
   LEGACY_CFG_FILE,
   credentialNamespace,
+  legacyV0Namespace,
   keyPath,
   primaryKeyPath,
   cfgPath,

@@ -2,10 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Memory } = require('./memory');
-const { isPeakHour, costOf } = require('./deepseek');
+const { isPeakHour } = require('./deepseek');
 // v0.9.8 P2-7: 业务层经 Provider Registry 获取 adapter（stable provider id），
-// 不再依赖 DeepSeek concrete class；DeepSeek 专属 util（isPeakHour/costOf 属 P3 cost 范畴）暂留。
+// 不再依赖 DeepSeek concrete class；isPeakHour（峰谷判定 util）暂留。
+// P5-A: 成本记账改走 provider-keyed Cost Strategy，不再经 DeepSeek concrete costOf。
 const { createAdapter, getProviderInfo } = require('./provider-registry');
+const { getCostStrategy } = require('./cost-strategy');
+const { normalizeUsage } = require('./usage-normalizer');
 const { PERSONA } = require('./persona');
 const { CREATIVE_SKILL } = require('./creative-skill');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
@@ -1561,8 +1564,20 @@ class Brain {
     const hit = usage.prompt_cache_hit_tokens || 0;
     const miss = usage.prompt_cache_miss_tokens || 0;
     const out = usage.completion_tokens || 0;
-    const price = isPeakHour() ? this.cfg.price.peak : this.cfg.price.valley;
-    const c = costOf(usage, price);
+    // P5-A: 成本统计由当前 providerId 的 Cost Strategy 决定（不再由 DeepSeek concrete costOf 记账）。
+    // DeepSeek 峰谷价格语义保持（pricing context 仍按 peak/valley 选择）；
+    // generic/local/custom 未定义 pricing -> strategy 为 null -> cost=null（不伪造 0、不累加、不隐式继承 DeepSeek 价格）。
+    const providerIdForCost = this.cfg.provider || require('./provider-policy').providerFor(this.cfg.baseURL);
+    const costStrategy = getCostStrategy(providerIdForCost);
+    let c = null;
+    if (costStrategy) {
+      const peakValleyPrice = (this.cfg.price && (isPeakHour() ? this.cfg.price.peak : this.cfg.price.valley)) || {};
+      const pricingContext = {
+        ...peakValleyPrice,
+        pricingVersion: (this.cfg.price && this.cfg.price.pricingVersion) || undefined
+      };
+      c = costStrategy.calculate(normalizeUsage(usage, providerIdForCost), pricingContext).cost;
+    }
     // E-02: 未知成本（null）不得伪装为 0 —— 不累加、history 显式记 null
     const costKnown = c !== null;
     const hitRateRatio = (hit + miss) ? hit / (hit + miss) : 0;
