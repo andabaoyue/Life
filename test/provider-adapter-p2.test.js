@@ -23,8 +23,7 @@ const { createDeepSeekAdapter } = require('../src/adapters/deepseek-adapter');
 const { createAdapter, getProviderInfo, listProviders, registerProvider } = require('../src/provider-registry');
 const {
   buildGenerationContext,
-  isProviderRuntimeResponse,
-  __internal
+  isProviderRuntimeResponse
 } = require('../src/experiment-metadata');
 
 const KEY = 'sk-test-fixture-000';
@@ -278,6 +277,21 @@ const baseCfg = () => ({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model
     try { await createDeepSeekAdapter(baseCfg()).stream([{ role: 'user', content: 'hi' }]); } catch (e) { err4 = e; }
     check('stream post-yield failure 不重启生成（1 次请求、partial 保留）', err4 && m4.calls === 1 && err4.partial === '你好');
     globalThis.fetch = realFetch;
+  }
+
+  /* ============ 29-31. F-01 / B-02 审计修复回归 ============ */
+  {
+    // F-01: 重复 providerId 静默覆盖拦截
+    let dupErr = null;
+    try { registerProvider({ providerId: 'fixture-x', adapterFactory: () => createDeepSeekAdapter(baseCfg()) }); } catch (e) { dupErr = e; }
+    check('F-01 重复 providerId -> 显式报错（禁止静默覆盖）', dupErr && /ALREADY_REGISTERED/.test(dupErr.message));
+    registerProvider({ providerId: 'fixture-x', adapterFactory: () => createDeepSeekAdapter(baseCfg()), override: true });
+    check('F-01 显式 override: true 允许替换', typeof createAdapter('fixture-x', baseCfg()).complete === 'function');
+
+    // B-02: Provider 身份冒用拦截（第三方端点不得被判定为 deepseek）
+    const { validateCredentialTarget } = require('../src/provider-policy');
+    const spoof = validateCredentialTarget({ provider: 'deepseek', baseURL: 'https://evil-thirdparty.example.com', credentialType: 'apiKey' });
+    check('B-02 第三方端点不得被判定为 deepseek（身份冒用拦截）', spoof.ok === false || spoof.provider !== 'deepseek');
   }
 
   /* ============ 24-28. Provider Type（连接/能力类型 ≠ 品牌） ============ */

@@ -254,8 +254,10 @@ async function main() {
     return Math.abs(costOf(u, p) - 10.04) < 1e-9;
   })(), costOf({ prompt_cache_hit_tokens: 1e6, prompt_cache_miss_tokens: 1e6,
                  completion_tokens: 1e6 }, { hit: 0.04, miss: 2, out: 8 }));
-  check('usage 缺字段按 0 算而不是 NaN',
-    costOf({}, { hit: 1, miss: 1, out: 1 }) === 0 && !Number.isNaN(costOf({}, {})));
+  // E-02 真值修正：缺字段按 0 计入（部分事实）；完全无 usage 事实 -> null（未知成本保持未知）
+  check('usage 缺字段按 0 算而不是 NaN；完全无 usage 事实时成本为 null',
+    costOf({ prompt_cache_hit_tokens: 1e6 }, { hit: 1 }) === 1 &&
+    costOf({}, { hit: 1, miss: 1, out: 1 }) === null && costOf(null, {}) === null);
 
   /* ---- 5. P1-1 & P1-2: 流式生命周期 AbortSignal 与双超时隔离 ---- */
   {

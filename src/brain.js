@@ -1562,6 +1562,8 @@ class Brain {
     const out = usage.completion_tokens || 0;
     const price = isPeakHour() ? this.cfg.price.peak : this.cfg.price.valley;
     const c = costOf(usage, price);
+    // E-02: 未知成本（null）不得伪装为 0 —— 不累加、history 显式记 null
+    const costKnown = c !== null;
     const hitRateRatio = (hit + miss) ? hit / (hit + miss) : 0;
 
     let breakReason = null;
@@ -1585,20 +1587,20 @@ class Brain {
     });
 
     this.stats.history.push({
-      t: Date.now(), hit, miss, out, cost: +c.toFixed(6),
+      t: Date.now(), hit, miss, out, cost: costKnown ? +c.toFixed(6) : null,
       rate: (hit + miss) ? +(hit / (hit + miss) * 100).toFixed(1) : 0,
       kind: bucket,
       prompt: usage.prompt_tokens || hit + miss
     });
     if (this.stats.history.length > 300) this.stats.history.shift();
 
-    this.stats.cost += c;
+    if (costKnown) this.stats.cost += c;
     if (summary) {
       this.stats.summaryCalls = (this.stats.summaryCalls || 0) + 1;
       this.stats[bucket + 'PromptTokens'] = (this.stats[bucket + 'PromptTokens'] || 0)
         + (usage.prompt_tokens || hit + miss);
       this.stats[bucket + 'OutputTokens'] = (this.stats[bucket + 'OutputTokens'] || 0) + out;
-      this.stats[bucket + 'Cost'] = (this.stats[bucket + 'Cost'] || 0) + c;
+      if (costKnown) this.stats[bucket + 'Cost'] = (this.stats[bucket + 'Cost'] || 0) + c;
     } else {
       this.stats.requests++;
       this.stats.hit += hit;

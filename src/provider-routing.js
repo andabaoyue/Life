@@ -1,6 +1,9 @@
 /**
  * src/provider-routing.js — Routing Contract 与 Fallback 策略（v0.9.8 P4-0/P4-2）
  *
+ * 【Staged 预留阶段】本模块已实现并有回归覆盖，但暂未接进主干生产编排
+ * （brain.js 主链路当前无真实 fallback 流量经此流转）——INT-01：实现 ≠ 运行时。
+ *
  * Routing Contract 元数据：
  *   selectedProvider   —— 最终采用输出的 provider
  *   fallbackProvider   —— 配置的备选 provider（可空）
@@ -52,6 +55,10 @@ function evaluateFallbackPolicy(plan, {
 } = {}) {
   if (outputYielded) return { ok: false, reason: 'OUTPUT_ALREADY_YIELDED' };
   if (!plan.fallbackProvider) return { ok: false, reason: 'NO_FALLBACK_CONFIGURED' };
+
+  // E-01: 成本未知（null / NaN / 未提供）时严格 fail-closed ——
+  // 绝不把未知成本当 0 放行（对齐严格成本门禁）
+  if (!Number.isFinite(estimatedCost)) return { ok: false, reason: 'UNKNOWN_COST' };
 
   const req = plan.policy.requiredCapability;
   if (req) {

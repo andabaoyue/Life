@@ -1,6 +1,10 @@
 /**
  * src/generation-attempt.js — Generation Attempt / Result（v0.9.8 P4-1）
  *
+ * 【Staged 预留阶段】本模块已实现并有回归覆盖，但暂未接进主干生产编排
+ * （brain.js 主链路当前无真实 fallback 流量经此流转）——INT-01：实现 ≠ 运行时，
+ * 请勿把本模块的存在误读为「生产已在使用」。
+ *
  * 语义边界：
  * - 一次 provider 调用 = 一个 Attempt；
  * - Retry（调用内部的重试）≠ 新语义生成 —— 不产生新 Attempt，只记 attempt.retryState；

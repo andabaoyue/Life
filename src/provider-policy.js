@@ -47,7 +47,11 @@ function validateCredentialTarget({ provider, baseURL, credentialType = 'apiKey'
     return { ok: false, error: '自定义 Provider 不得复用 DeepSeek Key' };
   }
 
-  const effectiveProvider = isDeepSeekOfficial ? 'deepseek' : (isLocal ? 'local' : (provider || 'custom'));
+  // B-02: effectiveProvider 必须以实际 baseURL 解析结果为准 ——
+  // 第三方端点不得被判定为 'deepseek'（Provider 身份冒用拦截）
+  const effectiveProvider = isDeepSeekOfficial
+    ? 'deepseek'
+    : (isLocal ? 'local' : (provider && provider !== 'deepseek' ? provider : 'custom'));
   return { ok: true, provider: effectiveProvider, credentialType };
 }
 

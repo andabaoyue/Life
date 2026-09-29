@@ -8,10 +8,10 @@
  * 我们逐次累加，用来算真实命中率。
  */
 
-const { __internal } = require('./experiment-metadata');
-// v0.9.8.2 F-12a: runtime evidence 铸造权限经内部接口获取，并在铸造器上绑定受信 adapter='deepseek'。
+// v0.9.8 C-01: 铸造权限经专用信任根模块获取，并在铸造器上绑定受信 adapter='deepseek'。
 // 该能力不属于公共 metadata API；complete()/stream() 的真实 response 均经此铸造器注册。
-const markProviderRuntimeResponse = __internal.createProviderRuntimeMintAuthority('deepseek');
+const { createProviderRuntimeMintAuthority } = require('./provider-runtime-trust');
+const markProviderRuntimeResponse = createProviderRuntimeMintAuthority('deepseek');
 
 function isPeakHour(now = new Date()) {
   // DeepSeek 峰谷：工作日 09:00-12:00、14:00-18:00 为高峰；周六周日全天低谷；
@@ -80,13 +80,13 @@ function keyOf(t) {
 }
 
 function costOf(usage, price) {
-  // v0.9.8 P3-3: 真正计算逻辑迁移到 DeepSeek Cost Strategy
-  //（normalizeUsage(FACT) -> cache 解释层 -> 定价）；本入口保留为兼容，
-  // 返回数字语义不变（无 usage 事实时返回 0，与旧 `|| 0` 行为一致）。
+  // v0.9.8 P3-3/E-02: 真正计算逻辑在 DeepSeek Cost Strategy
+  //（normalizeUsage(FACT) -> cache 解释层 -> 定价）。
+  // E-02 真值边界：未知成本返回 null —— 绝不把未知伪装为 0 消费，调用方显式处理未知状态。
   const { normalizeUsage } = require('./usage-normalizer');
   const { getCostStrategy } = require('./cost-strategy');
   const r = getCostStrategy('deepseek').calculate(normalizeUsage(usage), price || {});
-  return r.cost == null ? 0 : r.cost;
+  return r.cost;
 }
 
 const { redactSecrets } = require('./redact');

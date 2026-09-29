@@ -133,80 +133,12 @@ function collectPromptHashes(texts = {}) {
  * @param {number} [opts.generatedAt] 生成时间戳
  * @returns {Readonly<Object>}
  */
-const PROVIDER_RUNTIME_MARKER = Symbol('life.provider.runtime.marker');
-const providerRuntimeRegistry = new WeakSet();
-// v0.9.8.2 F-12b: attestation 同时绑定受信 adapter（WeakSet 仍是唯一信任根，此表只记录绑定元数据）
-const providerRuntimeAdapters = new WeakMap();
-
-/**
- * 内部接口（非公共 API）：创建某个 provider adapter 专属的 runtime evidence 铸造器。
- *
- * v0.9.8.2 F-12a 铸造权限边界：runtime attestation 的铸造能力只授予
- * provider adapter 内部接线（如 deepseek.js）与测试中的 adapter 仿真，
- * 不再作为普通 caller 可自由调用的公开 metadata helper 导出。
- * 通用认识论原则不变: caller 提供普通对象 ≠ provider adapter 产生的运行时对象。
- *
- * @param {string} adapter 受信 adapter 标识（铸造时绑定进 attestation）
- * @returns {(response: object, opts?: {token?: string, now?: number}) => object} 铸造器
- */
-function createProviderRuntimeMintAuthority(adapter) {
-  const boundAdapter = String(adapter || 'provider_adapter');
-  return function mintProviderRuntimeResponse(response, opts = {}) {
-    if (!response || typeof response !== 'object') {
-      return response;
-    }
-    const token = opts.token || crypto.randomBytes(16).toString('hex');
-    const marker = Object.freeze({
-      markerType: 'provider_runtime_evidence',
-      adapter: boundAdapter,
-      token,
-      timestamp: Number.isFinite(opts.now) ? opts.now : Date.now()
-    });
-
-    try {
-      Object.defineProperty(response, PROVIDER_RUNTIME_MARKER, {
-        value: marker,
-        enumerable: false,
-        configurable: false,
-        writable: false
-      });
-    } catch {}
-
-    providerRuntimeRegistry.add(response);
-    providerRuntimeAdapters.set(response, boundAdapter);
-    return response;
-  };
-}
-
-/**
- * 校验对象是否为经过认证的 Provider 运行时响应实例。
- * 显式拒绝普通调用方传入的未授权字面量对象或缺少运行时标记的虚构响应。
- *
- * v0.9.8.1 F-12: WeakSet 对象身份是唯一 runtime attestation 信任根。
- * 可复制的 Symbol marker 不再构成信任依据（防止从真实 response 上
- * getOwnPropertySymbols 取出 marker 复制到 fake object 绕过认证）。
- *
- * @param {any} response
- * @returns {boolean}
- */
-function isProviderRuntimeResponse(response) {
-  if (!response || typeof response !== 'object') return false;
-  return providerRuntimeRegistry.has(response);
-}
-
-/**
- * v0.9.8.2 F-12b: runtime evidence 与具体 provider/adapter 绑定校验。
- * WeakSet 只证明「该对象被内部 runtime path 注册过」；本函数进一步校验
- * 「该 evidence 的受信 adapter 与当前 GenerationContext 声明的 provider 一致」。
- * 不匹配时必须 fail-closed（由调用方降级），绝不冒充匹配的 provider_response。
- * context 未声明 provider（unavailable）时无从产生矛盾，不做绑定否定。
- */
-function providerRuntimeAdapterMatches(response, provider) {
-  const attested = providerRuntimeAdapters.get(response);
-  if (!attested) return false;
-  if (!provider || provider === UNAVAILABLE) return true;
-  return attested.trim().toLowerCase() === String(provider).trim().toLowerCase();
-}
+// v0.9.8 C-01: runtime attestation 信任根（含铸造权限）已收进专用模块 provider-runtime-trust.js。
+// 本公共 metadata API 不导出任何铸造途径（internal 通道已彻底移除），只持有验证端。
+const {
+  isProviderRuntimeResponse,
+  providerRuntimeAdapterMatches
+} = require('./provider-runtime-trust');
 
 function buildGenerationContext(opts = {}) {
   const cfg = opts.cfg || {};
@@ -269,8 +201,13 @@ function buildGenerationContext(opts = {}) {
 
   // v0.9.8.2 F-12b: 除对象身份认证外，还须校验 evidence 的受信 adapter 与本 context 声明的 provider 一致；
   // 不匹配时 fail-closed 降级为 caller 声明（绝不冒充匹配的 provider_response）
+  // v0.9.8 B-01: 同时校验 endpoint ↔ provider 一致性 —— declared provider='deepseek' 但
+  // endpoint 不是 DeepSeek 官方域名（第三方/本地 mock）时严格降级，禁止标记 provider_response
+  const endpointProvider = cfg.baseURL ? providerFor(cfg.baseURL) : UNAVAILABLE;
+  const endpointProviderConsistent = !(provider === 'deepseek' && endpointProvider !== 'deepseek');
   const isGenuineRuntimeResponse = isProviderRuntimeResponse(runtimeCandidate) &&
-    providerRuntimeAdapterMatches(runtimeCandidate, provider);
+    providerRuntimeAdapterMatches(runtimeCandidate, provider) &&
+    endpointProviderConsistent;
   const runtimeResponse = isGenuineRuntimeResponse ? runtimeCandidate : null;
 
   const hasRuntimeProviderResponse = Boolean(
@@ -519,12 +456,5 @@ module.exports = {
   buildGenerationContext,
   getGenerationContext,
   validateGenerationContext,
-  isProviderRuntimeResponse,
-  // v0.9.8.2 F-12a: 内部接口（非公共 API）。runtime attestation 铸造权限仅授予
-  // provider adapter 内部接线与测试的 adapter 仿真；普通 caller 不应使用。
-  // 普通 caller 可自由调用的公共 metadata API 中不含任何铸造函数。
-  __internal: Object.freeze({
-    createProviderRuntimeMintAuthority,
-    providerRuntimeAdapterMatches
-  })
+  isProviderRuntimeResponse
 };

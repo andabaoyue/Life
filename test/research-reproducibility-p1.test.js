@@ -18,11 +18,11 @@ const {
   buildGenerationContext,
   validateGenerationContext,
   getGenerationContext,
-  isProviderRuntimeResponse,
-  __internal
+  isProviderRuntimeResponse
 } = require('../src/experiment-metadata');
-// v0.9.8.2 F-12a: 测试以「provider adapter 仿真」身份使用内部铸造接口（普通 caller 的公共 API 无铸造能力）
-const markProviderRuntimeResponse = __internal.createProviderRuntimeMintAuthority('deepseek');
+// v0.9.8 C-01: 测试以「provider adapter 仿真」身份经专用信任根铸造（公共 metadata API 无任何铸造途径）
+const { createProviderRuntimeMintAuthority } = require('../src/provider-runtime-trust');
+const markProviderRuntimeResponse = createProviderRuntimeMintAuthority('deepseek');
 const { InternalRegulationManager } = require('../src/internal-regulation');
 const { evaluateDreamGate, synthesizeDream } = require('../src/dream-system');
 const { SubjectState } = require('../src/subject-state');
@@ -213,17 +213,19 @@ function tmpDir(prefix = 'repro-p1-') {
   const publicApi = require('../src/experiment-metadata');
   check('F-12a 公共 metadata API 不导出铸造函数 markProviderRuntimeResponse',
     typeof publicApi.markProviderRuntimeResponse === 'undefined');
-  check('F-12a 铸造能力仅存在于内部接口 __internal.createProviderRuntimeMintAuthority',
-    typeof publicApi.__internal.createProviderRuntimeMintAuthority === 'function');
+  check('F-12a 公共 metadata API 无任何铸造途径（internal 通道已彻底移除）',
+    publicApi.__internal === undefined && typeof publicApi.createProviderRuntimeMintAuthority === 'undefined');
+  check('F-12a 铸造能力仅存在于专用信任根模块 provider-runtime-trust',
+    typeof require('../src/provider-runtime-trust').createProviderRuntimeMintAuthority === 'function');
   check('F-12a fake object 无法经公共路径自行获得 runtime attestation',
     isProviderRuntimeResponse({ observedModel: 'fake' }) === false);
-  check('F-12a deepseek 经 __internal 获取铸造权限且 complete()/stream() 均注册',
+  check('F-12a deepseek 经信任根模块获取铸造权限且 complete()/stream() 均注册',
     deepseekSrc.includes("createProviderRuntimeMintAuthority('deepseek')") && markCalls >= 2);
 
   // 8. F-12b runtime evidence 与 provider/adapter 绑定
   check('F-12b trusted deepseek response + provider=deepseek -> provider_response',
     trustedCtx.observedModelSource === 'provider_response');
-  const mintOtherAdapter = __internal.createProviderRuntimeMintAuthority('other-adapter');
+  const mintOtherAdapter = createProviderRuntimeMintAuthority('other-adapter');
 
   const crossA = markProviderRuntimeResponse({ observedModel: 'deepseek-model', text: 'x' });
   const crossCtxA = buildGenerationContext({
@@ -247,6 +249,40 @@ function tmpDir(prefix = 'repro-p1-') {
   check('F-12b 其他 adapter 的 trusted response + provider=deepseek -> 降级 caller_or_config',
     crossCtxB.observedModelSource === 'caller_or_config');
   check('F-12b fake/untrusted object 仍然拒绝', isProviderRuntimeResponse({}) === false);
+
+  // 9. B-01 / C-02 / G-01: endpoint↔provider 绑定、身份缺失旁路、usage 伪造链
+  const b01res = markProviderRuntimeResponse({ observedModel: 'obs-model', text: 'x', usage: { completion_tokens: 1 } });
+  const b01ctx = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'm', baseURL: 'http://127.0.0.1:5000', provider: 'deepseek' },
+    providerResponse: b01res,
+    generatedAt: 1000
+  });
+  check('B-01 provider=deepseek + 非官方 endpoint（本地 mock）-> 严格降级', b01ctx.observedModelSource !== 'provider_response');
+  const b01ctx2 = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'm', baseURL: 'https://evil-thirdparty.example.com', provider: 'deepseek' },
+    providerResponse: b01res,
+    generatedAt: 1000
+  });
+  check('B-01 provider=deepseek + 第三方 endpoint -> 严格降级', b01ctx2.observedModelSource !== 'provider_response');
+
+  const c02ctx = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'm' },
+    providerResponse: b01res,
+    generatedAt: 1000
+  });
+  check('C-02 provider 缺失（unavailable）-> 绑定 fail-closed 降级', c02ctx.observedModelSource !== 'provider_response');
+
+  const g01fake = { observedModel: 'fake-model', text: 'x', usage: { completion_tokens: 9999 } };
+  const g01ctx = buildGenerationContext({
+    kind: 'dream',
+    cfg: { model: 'm', baseURL: 'https://api.deepseek.com', provider: 'deepseek' },
+    providerResponse: g01fake,
+    generatedAt: 1000
+  });
+  check('G-01 fake usage 无法经伪造 response 升级为 provider truth（usage 伪造链断开）', g01ctx.observedModelSource === 'caller_or_config');
 }
 
 // -----------------------------------------------------------------------------

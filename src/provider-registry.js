@@ -25,7 +25,8 @@ function registerProvider(entry) {
     credentialPolicy = null,
     display = null,
     pricingPolicy = null, // P3 扩展点，本轮仅占位
-    cachePolicy = null    // P3 扩展点，本轮仅占位
+    cachePolicy = null,   // P3 扩展点，本轮仅占位
+    override = false      // F-01: 重复 ID 必须显式 override，禁止静默覆盖
   } = entry || {};
   if (typeof providerId !== 'string' || !providerId.trim()) {
     throw new Error('PROVIDER_ID_REQUIRED');
@@ -35,6 +36,10 @@ function registerProvider(entry) {
   }
   if (providerType && !PROVIDER_TYPES.includes(providerType)) {
     throw new Error('UNKNOWN_PROVIDER_TYPE: ' + providerType);
+  }
+  // F-01: 重复 providerId 静默覆盖会悄悄换掉既有 adapter factory —— 显式拦截
+  if (ENTRIES.has(providerId.trim()) && !override) {
+    throw new Error('PROVIDER_ID_ALREADY_REGISTERED: ' + providerId.trim());
   }
   ENTRIES.set(providerId.trim(), Object.freeze({
     providerId: providerId.trim(),

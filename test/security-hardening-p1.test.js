@@ -13,10 +13,12 @@
 const { redactSecrets } = require('../src/redact');
 const { assertBudget } = require('../src/budget-guard');
 const { DeepSeek } = require('../src/deepseek');
-const { buildGenerationContext, __internal } = require('../src/experiment-metadata');
+const { buildGenerationContext } = require('../src/experiment-metadata');
+// v0.9.8 C-01: 测试以「provider adapter 仿真」身份经专用信任根铸造（公共 metadata API 无任何铸造途径）
+const { createProviderRuntimeMintAuthority } = require('../src/provider-runtime-trust');
 
 const KEY = 'sk-test-fixture-000';
-const mintDeepseek = __internal.createProviderRuntimeMintAuthority('deepseek');
+const mintDeepseek = createProviderRuntimeMintAuthority('deepseek');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -354,6 +356,19 @@ function sseRes(frames) {
     check('P1.1-B JSON detail 仍过 redact', err2 && !String(err2.message).includes(KEY));
     check('P1.1-B safeDetail 120 字符上限成立', err2 && !String(err2.message).includes('L'.repeat(200)));
     globalThis.fetch = realFetch;
+  }
+
+  {
+    // A-01: 复合对象键后缀匹配 + 典型平台 token 形态
+    const r = redactSecrets({ dbPassword: 'pw1', sessionToken: 'tok1', clientSecret: 'sec1', privateKey: 'pk1', my_api_key: 'k1', keep: 'v' });
+    check('A-01 复合对象键（*password/*token/*secret/*key）后缀匹配脱敏',
+      r.dbPassword === '[REDACTED]' && r.sessionToken === '[REDACTED]' && r.clientSecret === '[REDACTED]' &&
+      r.privateKey === '[REDACTED]' && r.my_api_key === '[REDACTED]');
+    check('A-01 非敏感键不受后缀匹配影响', r.keep === 'v');
+    const gh = 'ghp_' + 'a'.repeat(20);
+    const aws = 'AKIA' + 'B'.repeat(16);
+    check('A-01 GitHub PAT 形态脱敏', !redactSecrets('leak ' + gh + ' end').includes(gh));
+    check('A-01 AWS Access Key 形态脱敏', !redactSecrets('leak ' + aws + ' end').includes(aws));
   }
 
   globalThis.fetch = realFetch;

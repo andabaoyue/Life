@@ -2,7 +2,13 @@
  * src/redact.js — 统一敏感信息清理层（v0.9.8 P1-1）
  *
  * 只覆盖 Life 当前已知安全边界（API key / Authorization / Bearer / cookie /
- * credential-like key=value 形态），不做"万能 secret detector"。
+ * credential-like key=value 形态 / 平台 token 形态），不做"万能 secret detector"。
+ *
+ * v0.9.8 A-01 局限声明（严正）：裸随机串 / 无形态自定义 secret **无法可靠识别** ——
+ * 例如纯词 'SECRET_MID' 混在普通文本中，模式匹配无法与正常内容区分。
+ * 高熵启发式有误伤面（会吞掉哈希/ID 等合法内容），明确不做。
+ * 因此本层是「已知形态的确定性清理」，不是「secret 不可能泄漏」的密码学证明；
+ * 新形态 secret 应挂到敏感键名下或使用标准 token 前缀，才会被本层覆盖。
  * 供 deepseek.js（错误归一化）与 brain.js（日志出口）复用。
  *
  * 约束：
@@ -15,8 +21,12 @@ const SECRET_STRING_PATTERNS = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]{4,}/gi,
   // 常见 API key 形态（sk-... / 深度长串）
   /\bsk-[A-Za-z0-9_-]{4,}/g,
-  // key=value / key: value 形态（api_key / apiKey / token / secret / password / passwd / authorization / cookie）
-  /\b(api[-_]?key|access[-_]?token|refresh[-_]?token|token|secret|password|passwd|authorization|cookie|credential)\b(\s*[:=]\s*)(["']?)[^\s"',;)&]+\3/gi
+  // key=value / key: value 形态（api_key / apiKey / token / secret / password / passwd / authorization / cookie / credential）
+  /\b(api[-_]?key|access[-_]?token|refresh[-_]?token|token|secret|password|passwd|authorization|cookie|credential)\b(\s*[:=]\s*)(["']?)[^\s"',;)&]+\3/gi,
+  // v0.9.8 A-01: 典型平台 token 形态
+  /\bgh[pousr]_[A-Za-z0-9]{16,}/g,   // GitHub PAT (ghp_/gho_/ghu_/ghs_/ghr_)
+  /\bAKIA[A-Z0-9]{16}\b/g,           // AWS Access Key ID
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g  // Slack token
 ];
 
 const SECRET_HEADER_KEYS = new Set([
@@ -24,20 +34,15 @@ const SECRET_HEADER_KEYS = new Set([
   'x-api-key', 'api-key', 'apikey', 'x-auth-token', 'x-access-token'
 ]);
 
-// v0.9.8 P1.1-A: 对象形式 credential 的敏感键名识别（大小写不敏感）。
-// 覆盖普通对象字段形态（如 { apiKey: "custom-secret" } —— 非 sk- 开头、非 header 名，
-// 字符串模式无法识别，只能按键名清理）。
-const SECRET_OBJECT_KEYS = new Set([
-  'apikey', 'api_key',
-  'accesstoken', 'access_token',
-  'refreshtoken', 'refresh_token',
-  'token', 'secret', 'password', 'passwd',
-  'credential', 'credentials'
-]);
+// v0.9.8 A-01: 对象敏感键名识别 —— 后缀模糊匹配（大小写不敏感），
+// 覆盖复合键名（dbPassword / sessionToken / clientSecret / privateKey / my_api_key 等）。
+// 显式表保留 header 类与 passwd 等无共同后缀的形态。
+const SECRET_KEY_SUFFIXES = ['secret', 'password', 'token', 'key', 'credential', 'passwd'];
 
 function isSecretKey(key) {
   const k = String(key).toLowerCase();
-  return SECRET_HEADER_KEYS.has(k) || SECRET_OBJECT_KEYS.has(k);
+  if (SECRET_HEADER_KEYS.has(k)) return true;
+  return SECRET_KEY_SUFFIXES.some((s) => k.endsWith(s));
 }
 
 function redactString(text) {
@@ -46,6 +51,10 @@ function redactString(text) {
     out = out.replace(SECRET_STRING_PATTERNS[0], 'Bearer [REDACTED]');
     out = out.replace(SECRET_STRING_PATTERNS[1], '[REDACTED]');
     out = out.replace(SECRET_STRING_PATTERNS[2], (_m, key, sep, quote) => `${key}${sep}${quote}[REDACTED]${quote}`);
+    // A-01: 其余形态（平台 token 等）统一替换
+    for (let i = 3; i < SECRET_STRING_PATTERNS.length; i++) {
+      out = out.replace(SECRET_STRING_PATTERNS[i], '[REDACTED]');
+    }
   } catch {
     return '[REDACTED]';
   }

@@ -106,6 +106,13 @@ function check(name, cond, extra) {
   check('privacy 约束 -> 第三方 fallback 不允许', evaluateFallbackPolicy(plan, { fallbackCapabilities: { streaming: true }, estimatedCost: 0, fallbackIsThirdParty: true }).ok === false);
   check('budget 不足 -> 不允许', evaluateFallbackPolicy(plan, { fallbackCapabilities: { streaming: true }, estimatedCost: 99 }).ok === false);
   check('全部约束满足 -> 允许 fallback', evaluateFallbackPolicy(plan, { fallbackCapabilities: { streaming: true }, estimatedCost: 0.5 }).ok === true);
+
+  // E-01: 成本未知 fail-closed
+  const eNull = evaluateFallbackPolicy(plan, { fallbackCapabilities: { streaming: true }, estimatedCost: null });
+  check('E-01 成本未知（null）-> UNKNOWN_COST fail-closed', eNull.ok === false && eNull.reason === 'UNKNOWN_COST');
+  const eNaN = evaluateFallbackPolicy(plan, { fallbackCapabilities: { streaming: true }, estimatedCost: NaN });
+  const eMissing = evaluateFallbackPolicy(plan, { fallbackCapabilities: { streaming: true } });
+  check('E-01 成本未知（NaN/未提供）-> 同样拦截', eNaN.ok === false && eMissing.ok === false && eMissing.reason === 'UNKNOWN_COST');
 }
 
 /* ============ P4-3: Circuit Breaker ============ */

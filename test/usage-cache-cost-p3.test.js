@@ -122,7 +122,9 @@ function check(name, cond, extra) {
   const u = { prompt_cache_hit_tokens: 1e6, prompt_cache_miss_tokens: 1e6, completion_tokens: 1e6 };
   check('costOf 兼容入口数字语义不变（10.04 parity）',
     Math.abs(costOf(u, { hit: 1, miss: 2, out: 10.02 }) - (1 + 2 + 10.02)) < 1e-9);
-  check('costOf 空 usage -> 0、空 price 不 NaN', costOf({}, { hit: 1 }) === 0 && !Number.isNaN(costOf({}, {})));
+  check('costOf 空 usage -> null（E-02 未知成本保持未知）、null usage -> null',
+    costOf({}, { hit: 1 }) === null && costOf(null, {}) === null);
+  check('E-02 costOf(null) 绝不伪装为 0 消费', costOf(null, { hit: 1, miss: 1, out: 1 }) === null);
   check('DEFAULT_PRICING_VERSION 可记录（无版本价格表时）', DEFAULT_PRICING_VERSION === 'unversioned-legacy');
 }
 
