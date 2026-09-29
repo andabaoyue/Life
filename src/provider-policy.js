@@ -1,6 +1,6 @@
 /**
- * Provider / Endpoint / Credential 边界（v0.9.1）。
- * 当前仍只支持 DeepSeek；该模块不发送请求，只用于阻止凭据边界继续模糊。
+ * Provider / Endpoint / Credential 边界。
+ * 该模块只负责解析/约束 Provider、Endpoint 与 Credential 的组合，不发送请求。
  */
 const DEEPSEEK_HOSTS = new Set(['api.deepseek.com', 'api.deepseek.com.cn']);
 
