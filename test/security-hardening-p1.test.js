@@ -18,7 +18,8 @@ const { buildGenerationContext } = require('../src/experiment-metadata');
 const { createProviderRuntimeMintAuthority } = require('../src/provider-runtime-trust');
 
 const KEY = 'sk-test-fixture-000';
-const mintDeepseek = createProviderRuntimeMintAuthority('deepseek');
+// SEC-06: 铸造器绑定「实现 Provider Adapter 契约的 runtime identity 对象」，不再凭 provider string 领取
+const mintDeepseek = createProviderRuntimeMintAuthority('deepseek', { complete() {}, stream() {}, normalizeError() {} });
 
 let failures = 0;
 function check(name, cond, extra) {

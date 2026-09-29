@@ -55,10 +55,11 @@ function tmpNameFor(file) {
     '.' + path.basename(file) + '.tmp-' + process.pid + '-' + rnd);
 }
 
-function writeFileAtomic(file, data) {
+function writeFileAtomic(file, data, opts = {}) {
   const tmp = tmpNameFor(file);
   try {
-    const fd = fs.openSync(tmp, 'w');
+    // SEC-05: opts.mode（如 0o600）在创建时即生效，不依赖默认 umask；不传则行为不变
+    const fd = fs.openSync(tmp, 'w', opts.mode);
     try {
       fs.writeFileSync(fd, data);
       fs.fsyncSync(fd);          // 数据进盘再 rename，否则崩溃后可能读到零字节
@@ -66,14 +67,18 @@ function writeFileAtomic(file, data) {
       fs.closeSync(fd);
     }
     renameWithRetry(tmp, file);  // 同目录 rename 是原子的，Windows 下同样覆盖
+    if (opts.mode !== undefined) {
+      // SEC-05: 落盘后再次确保 mode（rename 携带 inode mode，此处双保险；Windows chmod 语义有限则容忍）
+      try { fs.chmodSync(file, opts.mode); } catch {}
+    }
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* 清理失败不掩盖真正的错误 */ }
     throw e;
   }
 }
 
-function writeJsonAtomic(file, obj) {
-  writeFileAtomic(file, JSON.stringify(obj, null, 2));
+function writeJsonAtomic(file, obj, opts = {}) {
+  writeFileAtomic(file, JSON.stringify(obj, null, 2), opts);
 }
 
 module.exports = {

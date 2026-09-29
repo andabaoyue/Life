@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<!-- SEC-02: CSP 第二层浏览器级边界。script-src 严格 'self'（无 unsafe-inline/无远程）；
+     style-src 保留 'unsafe-inline' 仅因现存行内 style 属性；img data:/blob: 供动态图层。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none';">
 <title>Life</title>
 <link rel="stylesheet" href="style.css">
 </head>

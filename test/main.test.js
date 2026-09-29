@@ -34,9 +34,11 @@ const CFG = path.join(DIR, 'life-config.json');
 const handlers = new Map();
 const sent = [];
 let pos = [100, 500], size = [340, 480], blurCb = null;
+// SEC-01: handler 现经 sender/frame/URL 校验 —— 测试以受信主 frame 事件调用（fixture 补合规形态）
+const mainFrame = { url: require('url').pathToFileURL(path.join(ROOT, 'index.html')).href };
 const fakeWin = {
   isDestroyed: () => false,
-  webContents: { send: (c, p) => sent.push([c, p]), on: () => {} },
+  webContents: { send: (c, p) => sent.push([c, p]), on: () => {}, mainFrame },
   // blur 要被 main.js 注册进来，探针才知道"窗口失焦"这条兜底路径通不通
   on: (ev, cb) => { if (ev === 'blur') blurCb = cb; },
   loadFile: () => {},
@@ -81,8 +83,9 @@ SpiedBrain.failNext = false;
 brainMod.Brain = SpiedBrain;
 require(path.join(ROOT, 'main.js'));
 
-const invoke = async (ch, arg, arg2) => handlers.get(ch)(null, arg, arg2);
-const emit = async (ch, arg) => handlers.get('on:' + ch)(null, arg);
+const trustedEvent = () => ({ sender: fakeWin.webContents, senderFrame: fakeWin.webContents.mainFrame });
+const invoke = async (ch, arg, arg2) => handlers.get(ch)(trustedEvent(), arg, arg2);
+const emit = async (ch, arg) => handlers.get('on:' + ch)(trustedEvent(), arg);
 const writeCfg = (o) => fs.writeFileSync(CFG, JSON.stringify(o, null, 2));
 const readCfg = () => fs.readFileSync(CFG, 'utf8');
 

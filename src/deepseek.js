@@ -11,7 +11,6 @@
 // v0.9.8 C-01: 铸造权限经专用信任根模块获取，并在铸造器上绑定受信 adapter='deepseek'。
 // 该能力不属于公共 metadata API；complete()/stream() 的真实 response 均经此铸造器注册。
 const { createProviderRuntimeMintAuthority } = require('./provider-runtime-trust');
-const markProviderRuntimeResponse = createProviderRuntimeMintAuthority('deepseek');
 
 function isPeakHour(now = new Date()) {
   // DeepSeek 峰谷：工作日 09:00-12:00、14:00-18:00 为高峰；周六周日全天低谷；
@@ -96,6 +95,8 @@ const { makeProviderError, requestChatCompletion } = require('./openai-transport
 
 class DeepSeek {
   constructor(cfg) {
+    // SEC-06: 铸造器绑定真实 runtime identity（this，实现 Provider Adapter 契约的实例），不再凭 string 领取
+    this._markProviderRuntimeResponse = createProviderRuntimeMintAuthority('deepseek', this);
     this.cfg = cfg;
   }
 
@@ -159,7 +160,7 @@ class DeepSeek {
           cause: parseErr
         });
       }
-      return markProviderRuntimeResponse({
+      return this._markProviderRuntimeResponse({
         text: (j.choices?.[0]?.message?.content || '').trim(),
         usage: j.usage || {},
         observedModel: (typeof j.model === 'string' && j.model.trim()) ? j.model.trim() : null,
@@ -332,7 +333,7 @@ class DeepSeek {
         streamError.partial = full;
         throw streamError;
       }
-      return markProviderRuntimeResponse({ text: full, usage, observedModel, attempts: res.attempts || 1 }, { adapter: 'deepseek' });
+      return this._markProviderRuntimeResponse({ text: full, usage, observedModel, attempts: res.attempts || 1 }, { adapter: 'deepseek' });
     } catch (outerErr) {
       if (reader) {
         try { await reader.cancel(); } catch {}

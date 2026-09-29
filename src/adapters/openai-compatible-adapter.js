@@ -15,8 +15,15 @@
 const {
   resolveChatCompletionsURL,
   makeProviderError,
-  requestChatCompletion
+  requestChatCompletion,
+  readBodyCapped,
+  makeResponseTooLargeError
 } = require('../openai-transport');
+
+// SEC-03: 响应大小硬上限（保守值，防恶意/异常 endpoint 无界内存增长）
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;   // complete 原始 body 10MB（JSON parse 前即受限）
+const MAX_STREAM_TEXT_CHARS = 500 * 1024;      // stream 累计文本 500K 字符
+const MAX_SSE_BUFFER_BYTES = 1 * 1024 * 1024;  // SSE 未解析 buffer 1MB
 const { createSSEParser } = require('../sse-parser');
 const {
   validateAdapterContract,
@@ -113,11 +120,17 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
         const res = lifecycleTimeout ? await Promise.race([requestPromise, lifecycleTimeout]) : await requestPromise;
         let j;
         try {
-          const jsonPromise = res.json();
+          // SEC-03: 流式有界读取 + JSON.parse 前即限制原始 body 大小
+          const jsonPromise = readBodyCapped(res, MAX_RESPONSE_BYTES, { stage: 'response' })
+            .then((text) => JSON.parse(text));
           jsonPromise.catch(() => {});
           j = lifecycleTimeout ? await Promise.race([jsonPromise, lifecycleTimeout]) : await jsonPromise;
         } catch (parseErr) {
           if (parseErr && parseErr.name === 'TimeoutError') throw parseErr;
+          if (parseErr && parseErr.name === 'ResponseTooLargeError') {
+            ctrl.abort(parseErr); // 超限立即 abort 连接，fail-closed 不再消费 body
+            throw parseErr;
+          }
           throw makeProviderError({
             status: 200,
             provider: providerId,
@@ -192,6 +205,7 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
         });
 
         const parser = createSSEParser({
+          maxBufferBytes: MAX_SSE_BUFFER_BYTES,
           onEvent: (ev) => {
             if (streamError || ev.done) return;
             if (ev.malformed) {
@@ -214,6 +228,11 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             const d = j.choices?.[0]?.delta?.content;
             if (d) {
               full += d;
+              // SEC-03: 累计文本硬上限（full 不得无界增长）
+              if (full.length > MAX_STREAM_TEXT_CHARS) {
+                ctrl.abort();
+                throw makeResponseTooLargeError(MAX_STREAM_TEXT_CHARS, 'stream');
+              }
               yielded = true;
               if (onDelta) onDelta(d);
             }

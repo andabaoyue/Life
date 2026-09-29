@@ -59,6 +59,55 @@ function extractSafeDetail(text) {
   } catch { return ''; }
 }
 
+/* ---- SEC-03: 响应体硬上限（防恶意/异常 endpoint 无界内存增长） ---- */
+const MAX_ERROR_BODY_BYTES = 64 * 1024; // error body 64KB：足够提取安全摘要，绝不无界读取
+
+function makeResponseTooLargeError(limit, stage) {
+  const err = new Error('response body exceeds ' + limit + ' bytes');
+  err.name = 'ResponseTooLargeError';
+  err.errorType = 'response_too_large';
+  err.requestStage = stage || 'response';
+  err.retryable = false;
+  return err;
+}
+
+/**
+ * 流式有界读取 response body：累计超过 maxBytes 时
+ *   - truncate: 截断返回已读内容（error body 用：保留原 HTTP 错误语义，不掩盖 status）
+ *   - 否则 fail-closed 抛 ResponseTooLargeError（调用方负责 abort 连接）
+ * 读取过程不把 body 内容放进错误信息（经 redact/truncate 边界）。
+ */
+async function readBodyCapped(res, maxBytes, opts = {}) {
+  const truncate = !!opts.truncate;
+  if (!res || !res.body || typeof res.body.getReader !== 'function') {
+    const text = await res.text().catch(() => '');
+    if (text.length <= maxBytes) return text;
+    if (truncate) return text.slice(0, maxBytes);
+    throw makeResponseTooLargeError(maxBytes, opts.stage);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let out = '';
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value ? value.byteLength : 0;
+      if (bytes > maxBytes) {
+        try { await reader.cancel(); } catch {}
+        if (truncate) return out;
+        throw makeResponseTooLargeError(maxBytes, opts.stage);
+      }
+      out += dec.decode(value, { stream: true });
+    }
+    out += dec.decode();
+    return out;
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+}
+
 function makeProviderError({ status, provider, requestStage, errorType, retryable, safeDetail, retryState, cause }) {
   const err = new Error(
     `HTTP ${status === null || status === undefined ? 'n/a' : status} [${errorType}] provider=${provider} stage=${requestStage}` +
@@ -205,7 +254,7 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
     }
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
+      const text = await readBodyCapped(res, MAX_ERROR_BODY_BYTES, { truncate: true }).catch(() => '');
       const cls = classifyProviderHttpError(res.status);
       const retryAfterMs = parseRetryAfter(res.headers && typeof res.headers.get === 'function' ? res.headers.get('retry-after') : null);
       const safeDetail = extractSafeDetail(text);
@@ -234,6 +283,9 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
 }
 
 module.exports = {
+  readBodyCapped,
+  makeResponseTooLargeError,
+  MAX_ERROR_BODY_BYTES,
   normalizeBaseURL,
   resolveChatCompletionsURL,
   classifyProviderHttpError,

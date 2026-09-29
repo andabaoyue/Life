@@ -22,7 +22,9 @@ const {
 } = require('../src/experiment-metadata');
 // v0.9.8 C-01: 测试以「provider adapter 仿真」身份经专用信任根铸造（公共 metadata API 无任何铸造途径）
 const { createProviderRuntimeMintAuthority } = require('../src/provider-runtime-trust');
-const markProviderRuntimeResponse = createProviderRuntimeMintAuthority('deepseek');
+// SEC-06: 铸造器绑定「实现 Provider Adapter 契约的 runtime identity 对象」，不再凭 provider string 领取
+const runtimeIdentityStub = { complete() {}, stream() {}, normalizeError() {} };
+const markProviderRuntimeResponse = createProviderRuntimeMintAuthority('deepseek', runtimeIdentityStub);
 const { InternalRegulationManager } = require('../src/internal-regulation');
 const { evaluateDreamGate, synthesizeDream } = require('../src/dream-system');
 const { SubjectState } = require('../src/subject-state');
@@ -220,12 +222,12 @@ function tmpDir(prefix = 'repro-p1-') {
   check('F-12a fake object 无法经公共路径自行获得 runtime attestation',
     isProviderRuntimeResponse({ observedModel: 'fake' }) === false);
   check('F-12a deepseek 经信任根模块获取铸造权限且 complete()/stream() 均注册',
-    deepseekSrc.includes("createProviderRuntimeMintAuthority('deepseek')") && markCalls >= 2);
+    deepseekSrc.includes("createProviderRuntimeMintAuthority('deepseek', this)") && markCalls >= 2);
 
   // 8. F-12b runtime evidence 与 provider/adapter 绑定
   check('F-12b trusted deepseek response + provider=deepseek -> provider_response',
     trustedCtx.observedModelSource === 'provider_response');
-  const mintOtherAdapter = createProviderRuntimeMintAuthority('other-adapter');
+  const mintOtherAdapter = createProviderRuntimeMintAuthority('other-adapter', runtimeIdentityStub);
 
   const crossA = markProviderRuntimeResponse({ observedModel: 'deepseek-model', text: 'x' });
   const crossCtxA = buildGenerationContext({

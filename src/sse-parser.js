@@ -43,11 +43,21 @@ function parseEvent(rawEvent) {
  * @param {{onEvent: (ev: {json?: object, done?: boolean, malformed?: boolean, raw?: string}) => void}} opts
  * @returns {{feed(chunk: string|Uint8Array): void, flush(): void}}
  */
-function createSSEParser({ onEvent } = {}) {
+function createSSEParser({ onEvent, maxBufferBytes } = {}) {
   let buffer = '';
   return {
     feed(chunk) {
       buffer += typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+      // SEC-03: SSE buffer 硬上限 —— 恶意/异常 endpoint 持续发不完整 event 时不得无界增长
+      if (Number.isFinite(maxBufferBytes) && maxBufferBytes > 0 && buffer.length > maxBufferBytes) {
+        buffer = '';
+        const err = new Error('SSE buffer exceeds ' + maxBufferBytes + ' bytes');
+        err.name = 'ResponseTooLargeError';
+        err.errorType = 'response_too_large';
+        err.requestStage = 'stream';
+        err.retryable = false;
+        throw err;
+      }
       for (;;) {
         const b = findEventBoundary(buffer);
         if (!b) break;

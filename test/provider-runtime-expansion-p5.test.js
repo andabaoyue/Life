@@ -353,11 +353,12 @@ function sseRes(chunks) {
     check('P5-B-01 无 caller signal + fetch hang -> TimeoutError', e1 && e1.name === 'TimeoutError' && m1.calls === 1);
     globalThis.fetch = realFetch;
 
-    // 2. caller signal 未 abort + response.json hang -> TimeoutError
+    // 2. caller signal 未 abort + response body 解析阶段永久挂起 -> TimeoutError
+    //（SEC-03 后 complete 走有界 body 读取，解析挂起等价场景为 body 读取永不 settle）
     const m2 = mockFetch(async () => ({
       ok: true, status: 200, headers: { get: () => null },
-      text: async () => '',
-      json: () => new Promise(() => {}) // 永久挂起的解析
+      text: () => new Promise(() => {}), // 永久挂起的 body 读取
+      json: () => new Promise(() => {})
     }));
     let e2 = null;
     const ac2 = new AbortController();

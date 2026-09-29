@@ -24,6 +24,8 @@ const { writeFileAtomic, writeJsonAtomic, renameWithRetry, tmpNameFor } = requir
  */
 
 const KEY_FILE = 'life-key';
+// SEC-05: 敏感文件（credential/config）落盘权限 —— Unix 0600；Windows 保持既有 ACL 语义（chmod 为有限语义，仅尽力）
+const SENSITIVE_FILE_MODE = 0o600;
 const LEGACY_KEY_FILE = 'gpt-girl-key';
 const CFG_FILE = 'life-config.json';
 const LEGACY_CFG_FILE = 'gpt-girl-config.json';
@@ -117,7 +119,7 @@ function encryptKey(getSS, dir, apiKey, providerId) {
     if (!ss || !ss.isEncryptionAvailable()) return false;
     // 必须原子写：这一步成功之后 config.json 里那份明文就会被删掉，
     // 写出半截密文 = key 真的没了。
-    writeFileAtomic(primaryKeyPath(dir, providerId), ss.encryptString(apiKey));
+    writeFileAtomic(primaryKeyPath(dir, providerId), ss.encryptString(apiKey), { mode: SENSITIVE_FILE_MODE });
     return true;
   } catch (e) {
     console.error('key encrypt failed:', e.message);
@@ -134,7 +136,7 @@ function decryptKey(getSS, dir, providerId) {
     if (!ss || !ss.isEncryptionAvailable()) return null;
     const key = ss.decryptString(buf) || null;
     if (key && kp !== primaryKeyPath(dir, providerId) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
-      try { writeFileAtomic(primaryKeyPath(dir, providerId), buf); } catch {}
+      try { writeFileAtomic(primaryKeyPath(dir, providerId), buf, { mode: SENSITIVE_FILE_MODE }); } catch {}
     }
     return key;
   } catch {
@@ -157,7 +159,7 @@ function stripPlainKey(dir) {
     const raw = JSON.parse(fs.readFileSync(cfgPath(dir), 'utf8'));
     if (!raw || !('apiKey' in raw)) return false;
     delete raw.apiKey;
-    writeJsonAtomic(cfgPath(dir), raw);
+    writeJsonAtomic(cfgPath(dir), raw, { mode: SENSITIVE_FILE_MODE });
     return true;
   } catch {
     return false;   // 文件不存在/坏掉都当没这回事，load 自有兜底
@@ -218,7 +220,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
     if (encrypted && cipherBuf) {
       tmpKeyPath = tmpNameFor(kp);
       tmpFiles.push(tmpKeyPath);
-      const fd = fs.openSync(tmpKeyPath, 'w');
+      const fd = fs.openSync(tmpKeyPath, 'w', SENSITIVE_FILE_MODE);
       try {
         fs.writeFileSync(fd, cipherBuf);
         fs.fsyncSync(fd);
@@ -238,6 +240,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
     }
     if (encrypted && tmpKeyPath) {
       renameWithRetry(tmpKeyPath, kp);
+      try { fs.chmodSync(kp, SENSITIVE_FILE_MODE); } catch {} // SEC-05: 落盘后再次确保 mode
       const idx = tmpFiles.indexOf(tmpKeyPath);
       if (idx !== -1) tmpFiles.splice(idx, 1);
     } else {
@@ -255,7 +258,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
     // 回滚 Key 文件
     try {
       if (oldKeyExists && oldKeyData !== null) {
-        writeFileAtomic(kp, oldKeyData);
+        writeFileAtomic(kp, oldKeyData, { mode: SENSITIVE_FILE_MODE });
       } else {
         dropKeyFile(dir, providerId);
       }
@@ -266,7 +269,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
     // 回滚 Config 文件
     try {
       if (oldCfgExists && oldCfgData !== null) {
-        writeFileAtomic(cp, oldCfgData);
+        writeFileAtomic(cp, oldCfgData, { mode: SENSITIVE_FILE_MODE });
       } else {
         try { fs.unlinkSync(cp); } catch {}
       }

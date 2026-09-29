@@ -12,6 +12,7 @@ const secure = require('./src/secure');
 const layout = require('./src/layout');
 const { ResearchService } = require('./src/research-service');
 const { registerResearchIpc } = require('./src/research-ipc');
+const { createIpcGuard } = require('./src/ipc-guard');
 
 /* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
    都收在这一个函数里。以前只有 wardrobe 在这里绑，tracker 若另处再绑一次，
@@ -36,6 +37,10 @@ let proactiveTimer = null;
 const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
 let keyEncrypted = false;   // 面板要如实显示「已加密 / 明文降级」，不吹安全状态
 let researchService = null;
+
+// SEC-01: 所有 IPC 统一经 sender/frame/URL 三重校验（src/ipc-guard.js）；
+// child frame / 外部 URL / 其他 webContents 一律拒绝，错误信息只有 UNTRUSTED_RENDERER。
+const ipcGuard = createIpcGuard({ ipcMain, getMainWindow: () => win, appDir: __dirname });
 
 app.name = 'Life';
 
@@ -63,6 +68,7 @@ function createWindow() {
     }
   });
   win.loadFile('index.html');
+  ipcGuard.attachNavigationGuard(win.webContents); // SEC-01: will-navigate/will-redirect 限本地、拒绝新窗口
   setupMotion();
   // 拖到一半焦点丢了（在别的程序上松手），渲染进程收不到 mouseup ——
   // 主进程知道失焦，主动通知它收尾，否则桌宠会一直粘着鼠标。
@@ -120,32 +126,32 @@ function reconfigureMotion() {
 
 /* ---------- 拖动 ---------- */
 let dragging = false;
-ipcMain.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); });
-ipcMain.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); });
-ipcMain.on('drag-move', (e, { dx, dy }) => {
+ipcGuard.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); });
+ipcGuard.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); });
+ipcGuard.on('drag-move', (e, { dx, dy }) => {
   if (!dragging || !win) return;
   const [x, y] = win.getPosition();
   win.setPosition(Math.round(x + dx), Math.round(y + dy));
   reconfigureMotion();
 });
 
-ipcMain.on('motion-ui-state', (e, state = {}) => {
+ipcGuard.on('motion-ui-state', (e, state = {}) => {
   for (const k of Object.keys(motionUi)) {
     if (typeof state[k] === 'boolean') motionUi[k] = state[k];
   }
   syncMotionBlock('ui-state');
 });
 
-ipcMain.handle('motion-status', () => motion ? motion.snapshot() : null);
+ipcGuard.handle('motion-status', () => motion ? motion.snapshot() : null);
 
-ipcMain.handle('toggle-pin', () => {
+ipcGuard.handle('toggle-pin', () => {
   if (!win) return false;
   const on = !win.isAlwaysOnTop();
   win.setAlwaysOnTop(on, 'screen-saver');
   return on;   // 返回新状态，菜单文案才能区分「已置顶/已取消置顶」
 });
 
-ipcMain.on('resize-pet', (e, factor) => {
+ipcGuard.on('resize-pet', (e, factor) => {
   if (!win) return;
   const [w, h] = win.getSize();
   const next = layout.nextSize(w, Number(factor) || 1);
@@ -158,7 +164,7 @@ ipcMain.on('resize-pet', (e, factor) => {
   syncMotionBlock('resize');
 });
 
-ipcMain.on('quit-app', () => {
+ipcGuard.on('quit-app', () => {
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
   app.quit();
 });
@@ -168,7 +174,7 @@ ipcMain.on('quit-app', () => {
    取快照。渲染端只知道"我这儿点了一下"，把它自己那套时间戳再算一遍就是
    第二个事实来源 —— 于是又回到"一个改了一个没改"那个老形状。
    用 .on 不用 .handle：这是纯上报，没有返回值，省一次 promise 往返。 */
-ipcMain.on('activity', (e, type) => {
+ipcGuard.on('activity', (e, type) => {
   if (tracker) tracker.record(type);
   // 用户有了新交互，重置空闲检查闹钟
   scheduleProactiveCheck(IDLE_MS);
@@ -179,7 +185,7 @@ ipcMain.on('activity', (e, type) => {
 
 /* ---------- 对话 ---------- */
 // 并发保护：上一条没回完就发新消息时，先掐断上一条
-ipcMain.handle('chat-send', async (e, text, opts) => {
+ipcGuard.handle('chat-send', async (e, text, opts) => {
   if (!brain || !brain.ready) {
     return { ok: false, needKey: true };
   }
@@ -265,46 +271,46 @@ function checkAndPushProactive() {
   }
 }
 
-ipcMain.on('proactive-declined', () => {
+ipcGuard.on('proactive-declined', () => {
   scheduleProactiveCheck(COOLDOWN_MS);
 });
 
-ipcMain.handle('proactive-check', () => {
+ipcGuard.handle('proactive-check', () => {
   if (!trigger || !brain || !brain.ready) return null;
   return trigger.evaluate();
 });
 
-ipcMain.handle('chat-report', () => {
+ipcGuard.handle('chat-report', () => {
   // 面板上那些数字（model / 窗口参数）和 config-get 同一个盲区，一起补
   syncCfgFromDisk();
   return brain ? brain.report() : null;
 });
 
-ipcMain.handle('memory-clear', () => {
+ipcGuard.handle('memory-clear', () => {
   if (!brain) return false;
   brain.clearMemory();
   return true;
 });
 
-ipcMain.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
+ipcGuard.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
 
 // 自我成长记录只读展示；删除/覆盖留到 schema 和审计策略明确后再开放。
-ipcMain.handle('self-ledger-list', () => (brain ? brain.listSelfLedger() : []));
+ipcGuard.handle('self-ledger-list', () => (brain ? brain.listSelfLedger() : []));
 
-ipcMain.handle('self-ledger-reset', () => {
+ipcGuard.handle('self-ledger-reset', () => {
   if (!brain) return { ok: false, error: '程序尚未初始化' };
   brain.selfLedger.reset();
   brain.birthAt = brain.selfLedger.birthAt;
   return { ok: true, birthAt: brain.birthAt };
 });
 
-ipcMain.handle('memory-delete', (e, idx) => {
+ipcGuard.handle('memory-delete', (e, idx) => {
   if (!brain) return false;
   return brain.memory.deleteWindow(idx);
 });
 
 // Phase 0.5: 内部调节中枢权威状态只读查询通道
-ipcMain.handle('internal-regulation-get', () => (brain && brain.internalRegulation ? brain.internalRegulation.getState() : null));
+ipcGuard.handle('internal-regulation-get', () => (brain && brain.internalRegulation ? brain.internalRegulation.getState() : null));
 
 /* ---------- 换装 ----------
    服装只是外观层：这里没有任何路径会碰 persona 里的人格设定，
@@ -320,18 +326,18 @@ function pushWardrobe(r) {
   win.webContents.send('wardrobe-changed', wardrobe.layers());
 }
 
-ipcMain.handle('wardrobe-state', () =>
+ipcGuard.handle('wardrobe-state', () =>
   wardrobe ? { catalog: wardrobe.catalog(), layers: wardrobe.layers() }
            : { catalog: null, layers: [] });
 
-ipcMain.handle('wardrobe-set', (e, { slot, itemId }) => {
+ipcGuard.handle('wardrobe-set', (e, { slot, itemId }) => {
   if (!wardrobe) return { ok: false, error: '换装系统未初始化' };
   const r = wardrobe.setEquip(String(slot || ''), itemId === undefined ? null : itemId);
   pushWardrobe(r);
   return r;
 });
 
-ipcMain.handle('wardrobe-preset', (e, id) => {
+ipcGuard.handle('wardrobe-preset', (e, id) => {
   if (!wardrobe) return { ok: false, error: '换装系统未初始化' };
   const r = wardrobe.applyPreset(id);
   pushWardrobe(r);
@@ -367,7 +373,7 @@ function syncCfgFromDisk() {
   Object.assign(cfg, next, { apiKey });
 }
 
-ipcMain.handle('config-get', () => {
+ipcGuard.handle('config-get', () => {
   syncCfgFromDisk();
   return {
   hasKey: !!cfg.apiKey,
@@ -393,7 +399,7 @@ ipcMain.handle('config-get', () => {
   };
 });
 
-ipcMain.handle('config-set-key', (e, key) => {
+ipcGuard.handle('config-set-key', (e, key) => {
   // P5-D: 热替换编排收敛到 brain-hot-swap.js ——
   // candidate 任一步失败 -> cleanup + 配置回滚 + 旧 Brain 继续服务，绝不留半初始化 Brain
   const { swapBrain } = require('./src/brain-hot-swap');
@@ -418,9 +424,9 @@ ipcMain.handle('config-set-key', (e, key) => {
   return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
 });
 
-ipcMain.handle('creative-mode-get', () => ({ enabled: !!(cfg && cfg.writingMode) }));
+ipcGuard.handle('creative-mode-get', () => ({ enabled: !!(cfg && cfg.writingMode) }));
 
-ipcMain.handle('creative-mode-set', (e, enabled) => {
+ipcGuard.handle('creative-mode-set', (e, enabled) => {
   if (!cfg || !brain) return { ok: false, error: '程序尚未初始化' };
   const next = { ...cfg, writingMode: enabled === true };
   try {
@@ -434,7 +440,7 @@ ipcMain.handle('creative-mode-set', (e, enabled) => {
   }
 });
 
-ipcMain.handle('config-open', () => {
+ipcGuard.handle('config-open', () => {
   const p = secure.cfgPath(app.getPath('userData'));
   if (!fs.existsSync(p)) {
     // 交给唯一那个写盘口生成，别在这里手抄一份：
@@ -446,7 +452,7 @@ ipcMain.handle('config-open', () => {
   return p;
 });
 
-ipcMain.handle('asset-check', () => assetReport || checkAssets(__dirname, CATALOG));
+ipcGuard.handle('asset-check', () => assetReport || checkAssets(__dirname, CATALOG));
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
@@ -472,7 +478,7 @@ app.whenReady().then(() => {
     for (const w of assetReport.warnings) console.warn('[AssetCheck]', w);
   }
   researchService = new ResearchService(app.getPath('userData'));
-  registerResearchIpc(ipcMain, researchService, { dialog });
+  registerResearchIpc(ipcGuard, researchService, { dialog }); // SEC-01: research IPC 同样经 sender 校验
   createWindow();
 });
 

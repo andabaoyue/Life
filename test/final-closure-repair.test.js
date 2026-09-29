@@ -71,7 +71,8 @@ function pass(name) { console.log('PASS  ' + name); }
 
   // Research task cleanup retains only queryable terminal metadata.
   const researchDir = tmp('closure-research-');
-  const research = new ResearchService(researchDir, { taskRetentionMs: 0 });
+  // SEC-04 自动 cleanup 接管 retention 到期释放；本测试专测手动 cleanup 机械，故 fixture 用大 retention 避免竞争
+  const research = new ResearchService(researchDir, { taskRetentionMs: 3600000 });
   const running = research.startReplayTask();
   assert.strictEqual(research.activeTasks.has(running.taskId), true);
   pass('running replay task 保留在 activeTasks');

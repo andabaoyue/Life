@@ -16,10 +16,29 @@ const providerRuntimeRegistry = new WeakSet(); // 唯一信任根：对象身份
 const providerRuntimeAdapters = new WeakMap(); // attestation 绑定的受信 adapter
 
 /**
- * 创建某个 provider adapter 专属的 runtime evidence 铸造器（受信接线专用）。
+ * SEC-06: 合法 capability 判定 —— mint 权限绑定「真实 provider runtime / adapter 对象」
+ *（实现 Provider Adapter 契约的对象身份），绝不发放给仅有 provider string 的调用方。
+ * 诚实边界：同进程恶意代码可伪造鸭子类型；此处收敛的是「仅凭 provider string 取得
+ * 铸造权」的公共伪造路径，不是同进程密码学安全边界。
  */
-function createProviderRuntimeMintAuthority(adapter) {
+function isLegalRuntimeIdentity(runtimeIdentity) {
+  return !!runtimeIdentity && typeof runtimeIdentity === 'object' &&
+    typeof runtimeIdentity.complete === 'function' &&
+    typeof runtimeIdentity.stream === 'function';
+}
+
+/**
+ * 创建某个 provider adapter 专属的 runtime evidence 铸造器（受信接线专用）。
+ * 必须同时提供实现契约的 runtime identity 对象；否则 fail-closed 返回拒绝铸造器
+ *（返回 response 不注册 attestation —— 下游一律按 caller-supplied 降级处理）。
+ */
+function createProviderRuntimeMintAuthority(adapter, runtimeIdentity) {
   const boundAdapter = String(adapter || 'provider_adapter');
+  if (!isLegalRuntimeIdentity(runtimeIdentity)) {
+    return function deniedMint(response) {
+      return response; // 无合法 capability：拒绝铸造（fail-closed）
+    };
+  }
   return function mintProviderRuntimeResponse(response, opts = {}) {
     if (!response || typeof response !== 'object') {
       return response;
@@ -65,6 +84,7 @@ function providerRuntimeAdapterMatches(response, provider) {
 
 module.exports = {
   createProviderRuntimeMintAuthority,
+  isLegalRuntimeIdentity,
   isProviderRuntimeResponse,
   providerRuntimeAdapterMatches
 };

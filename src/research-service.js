@@ -129,9 +129,13 @@ class ResearchService {
     };
     this.activeTasks.set(taskId, task);
 
-    // 异步排期执行，不阻塞主调用
-    setImmediate(() => {
-      this._executeReplayTask(task);
+    // 异步排期执行，不阻塞主调用；结束后必然触发 retention cleanup（SEC-04）
+    setImmediate(async () => {
+      try {
+        await this._executeReplayTask(task);
+      } finally {
+        this._scheduleReplayCleanup();
+      }
     });
 
     return { taskId, status: 'running' };
@@ -174,9 +178,10 @@ class ResearchService {
         totalWindows: task.totalWindows,
         percent: task.percent,
         cancelled: task.cancelled,
-        result: task.result,
         error: task.error,
-        completedAt: terminalAt
+        completedAt: terminalAt,
+        // SEC-04: 到期释放大型 result（windowStates/trajectory/stateChanges/result 不在 metadata 滞留）
+        resultReleased: true
       });
       this.activeTasks.delete(taskId);
       removed++;
@@ -192,9 +197,32 @@ class ResearchService {
       task.status = 'cancelled';
       task.stage = 'cancelled';
       task.completedAt = Date.now();
+      this._scheduleReplayCleanup();
       return true;
     }
     return false;
+  }
+
+  /**
+   * SEC-04: retention 到期自动 cleanup —— 单一合流 timer；触发后若仍有未到期的
+   * terminal task 则继续排期，多 task 并行互不破坏；不触碰 running task。
+   */
+  _scheduleReplayCleanup() {
+    if (this._cleanupTimer) return;
+    const delay = Math.max(0, this.taskRetentionMs);
+    this._cleanupTimer = setTimeout(() => {
+      this._cleanupTimer = null;
+      this.cleanupReplayTasks();
+      for (const t of this.activeTasks.values()) {
+        if (['completed', 'cancelled', 'failed'].includes(t.status)) {
+          this._scheduleReplayCleanup();
+          break;
+        }
+      }
+    }, delay);
+    if (this._cleanupTimer && typeof this._cleanupTimer.unref === 'function') {
+      this._cleanupTimer.unref(); // 不拖住进程退出（测试/CLI 场景）
+    }
   }
 
   /**
