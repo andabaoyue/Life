@@ -53,14 +53,41 @@ function legacyV0Namespace(providerId) {
   return pid.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'deepseek';
 }
 
+/**
+ * P5-C-01: v0 旧命名归属判定 —— 候选集 = 当前 providerId + Registry 全部已注册 providerId。
+ * 映射到同一 v0 路径的候选（文件名按大小写不敏感比较，与 Windows 文件系统一致）：
+ *   仅 1 个 -> 归属可证明，允许 legacy fallback / 迁移；
+ *   >1 个 -> 归属无法证明，必须 fail-closed（不读取、不迁移、不覆盖新 namespace）。
+ * Registry 不可枚举时返回 null（同样 fail-closed）。通用规则，无任何 id 特例。
+ */
+function legacyV0Claimants(providerId) {
+  const pid = String(providerId == null ? '' : providerId).trim() || 'deepseek';
+  let known;
+  try {
+    known = require('./provider-registry').listProviders();
+  } catch {
+    return null; // 无法枚举候选 -> 无法证明归属
+  }
+  const target = legacyV0Namespace(pid).toLowerCase();
+  const claimants = new Set();
+  for (const id of [pid, ...known.map((x) => String(x))]) {
+    if (legacyV0Namespace(id).toLowerCase() === target) claimants.add(String(id).trim());
+  }
+  return [...claimants];
+}
+
 function keyPath(dir, providerId) {
   const ns = credentialNamespace(providerId);
   if (ns !== 'deepseek') {
     const primary = path.join(dir, KEY_FILE + '--' + ns);
     if (fs.existsSync(primary)) return primary;
-    // P5-C-01 兼容迁移：P5 首版命名的旧文件存在则读取（迁移由 decryptKey 完成，绝不静默覆盖旧 credential）
-    const legacyV0 = path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId));
-    if (fs.existsSync(legacyV0)) return legacyV0;
+    // P5-C-01 兼容迁移：P5 首版命名的旧文件仅在归属可证明（唯一 claimant）时读取；
+    // 历史碰撞（多个 provider 映射同一旧路径）-> fail-closed：不读取、不迁移。
+    const claimants = legacyV0Claimants(providerId);
+    if (claimants && claimants.length === 1) {
+      const legacyV0 = path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId));
+      if (fs.existsSync(legacyV0)) return legacyV0;
+    }
     return primary;
   }
   const primary = path.join(dir, KEY_FILE);
@@ -279,6 +306,7 @@ module.exports = {
   LEGACY_CFG_FILE,
   credentialNamespace,
   legacyV0Namespace,
+  legacyV0Claimants,
   keyPath,
   primaryKeyPath,
   cfgPath,

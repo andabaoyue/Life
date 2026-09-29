@@ -94,7 +94,7 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
       if (lifecycleTimeout) lifecycleTimeout.catch(() => {});
 
       try {
-        const res = await requestChatCompletion({
+        const requestPromise = requestChatCompletion({
           cfg,
           provider: providerId,
           body: {
@@ -106,9 +106,16 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
           },
           signal: ctrl.signal
         });
+        // P5-B-01: 生命周期 race 覆盖整个请求（含 retry/backoff）。
+        // loser-promise 显式 rejection sink —— 不依赖 Promise.race 的隐式处理：
+        // timeout 先行后 requestPromise 的后续 reject 不形成 unhandled rejection，resolve 不再影响 complete。
+        requestPromise.catch(() => {});
+        const res = lifecycleTimeout ? await Promise.race([requestPromise, lifecycleTimeout]) : await requestPromise;
         let j;
         try {
-          j = lifecycleTimeout ? await Promise.race([res.json(), lifecycleTimeout]) : await res.json();
+          const jsonPromise = res.json();
+          jsonPromise.catch(() => {});
+          j = lifecycleTimeout ? await Promise.race([jsonPromise, lifecycleTimeout]) : await jsonPromise;
         } catch (parseErr) {
           if (parseErr && parseErr.name === 'TimeoutError') throw parseErr;
           throw makeProviderError({

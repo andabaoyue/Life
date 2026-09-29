@@ -456,6 +456,65 @@ function sseRes(chunks) {
       last.cost === null && bg.stats.summaryCalls === 1 && bg.stats.summaryPromptTokens > 0);
   }
 
+  /* ===== P5-B-01 补充矩阵：不合作 fetch 与 backoff 期 timeout ===== */
+  {
+    // 1. fetch 永久 pending 且完全忽略 AbortSignal -> complete 仍必须有界返回
+    const mk = () => createOpenAICompatibleAdapter({ baseURL: 'https://llm.example.com', apiKey: KEY, model: 'm', requestTimeoutMs: 30 }, { providerId: 'generic' });
+    const m1 = mockFetch(async () => new Promise(() => {})); // 永不 settle、无视 signal
+    let e1 = null;
+    try { await mk().complete([{ role: 'user', content: 'x' }]); } catch (e) { e1 = e; }
+    check('P5-B-01 fetch 永久 pending + 忽略 AbortSignal -> TimeoutError（lifecycle 有界返回）',
+      e1 && e1.name === 'TimeoutError' && m1.calls === 1);
+    globalThis.fetch = realFetch;
+
+    // 7. retry/backoff 期间 lifecycle timeout 仍生效
+    const m7 = mockFetch(async () => httpRes(500, JSON.stringify({ error: { message: 'hiccup' } })));
+    let e7 = null;
+    const t0 = Date.now();
+    try {
+      await createOpenAICompatibleAdapter({ baseURL: 'https://llm.example.com', apiKey: KEY, model: 'm', requestTimeoutMs: 50, retryBaseDelayMs: 60000, maxRetries: 3 }, { providerId: 'generic' })
+        .complete([{ role: 'user', content: 'x' }]);
+    } catch (e) { e7 = e; }
+    check('P5-B-01 retry/backoff 期间 timeout 仍生效（及时返回、不再发第二次请求）',
+      e7 && e7.name === 'TimeoutError' && m7.calls === 1 && Date.now() - t0 < 5000);
+    globalThis.fetch = realFetch;
+  }
+
+  /* ===== P5-C-01 补充矩阵：v0 历史碰撞归属不可证明 -> fail-closed ===== */
+  {
+    const dir = tmpDir('p5-ambig-');
+    const fakeSS = {
+      isEncryptionAvailable: () => true,
+      encryptString: (s) => Buffer.from('enc:' + s).toString('base64'),
+      decryptString: (b) => Buffer.from(String(b), 'base64').toString('utf8').slice(4)
+    };
+    const getSS = () => fakeSS;
+
+    // Case A: 'a/b' 与 'a_b' 映射同一 v0 路径（两个均为系统已知 provider）-> 双双 fail-closed
+    registerProvider({ providerId: 'a/b', adapterFactory: () => createDeepSeekAdapter({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm' }), override: true });
+    registerProvider({ providerId: 'a_b', adapterFactory: () => createDeepSeekAdapter({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm' }), override: true });
+    const v0Ambig = path.join(dir, 'life-key--' + secure.legacyV0Namespace('a/b'));
+    fs.writeFileSync(v0Ambig, fakeSS.encryptString('sk-ambiguous-000'));
+    check('P5-C-01 Case A: v0 碰撞双方 decryptKey 均 fail-closed（返回 null）',
+      secure.decryptKey(getSS, dir, 'a/b') === null && secure.decryptKey(getSS, dir, 'a_b') === null);
+    check('P5-C-01 Case A: 不迁移、不覆盖任何新 namespace',
+      !fs.existsSync(secure.primaryKeyPath(dir, 'a/b')) && !fs.existsSync(secure.primaryKeyPath(dir, 'a_b')));
+    check('P5-C-01 Case A: keyPath 不回落歧义 v0（只指向新 namespace）',
+      secure.keyPath(dir, 'a/b') === secure.primaryKeyPath(dir, 'a/b') && secure.keyPath(dir, 'a_b') === secure.primaryKeyPath(dir, 'a_b'));
+
+    // Case E: 已有新 namespace + ambiguous legacy -> ambiguous 不得覆盖已有新 credential
+    secure.saveConfig(getSS, dir, { provider: 'a/b', apiKey: 'sk-new-v1-000', model: 'm' }, () => {});
+    check('P5-C-01 Case E: ambiguous legacy 不覆盖已有新 credential',
+      secure.decryptKey(getSS, dir, 'a/b') === 'sk-new-v1-000');
+
+    // Case B: 非碰撞 v0 provider 归属唯一 -> 正常迁移（补充显式 foo 场景）
+    registerProvider({ providerId: 'foo', adapterFactory: () => createDeepSeekAdapter({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm' }), override: true });
+    fs.writeFileSync(path.join(dir, 'life-key--' + secure.legacyV0Namespace('foo')), fakeSS.encryptString('sk-foo-000'));
+    check('P5-C-01 Case B: 非碰撞 v0 provider 正常迁移',
+      secure.decryptKey(getSS, dir, 'foo') === 'sk-foo-000' && fs.existsSync(secure.primaryKeyPath(dir, 'foo')));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   globalThis.fetch = realFetch;
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
