@@ -205,6 +205,72 @@ async function run() {
   check('SEC-03 正常大小 complete 行为不变', r5 && r5.text === 'fine' && m5.calls === 1);
   check('SEC-03 正常大小 stream 行为不变', got === 'ok' && r6 && r6.text === 'ok');
   globalThis.fetch = realFetch;
+
+  /* ---- SEC-03 DeepSeek production path（Brain→Registry→DeepSeekAdapter→DeepSeek 真实链） ---- */
+  {
+    const { DeepSeek } = require('../src/deepseek');
+    const dsCfg = { baseURL: 'https://api.deepseek.com', apiKey: KEY, model: 'm', requestTimeoutMs: 5000, maxRetries: 3, retryBaseDelayMs: 1 };
+
+    // A. DeepSeek complete response > 10MB
+    let dsSig = null;
+    const md1 = mockFetch((u, init) => { dsSig = init.signal; return streamRes(200, [bigChunk, bigChunk], { 'content-type': 'application/json' }); });
+    let de1 = null;
+    try { await new DeepSeek(dsCfg).complete([{ role: 'user', content: 'x' }]); } catch (e) { de1 = e; }
+    check('SEC-03-DP DeepSeek complete >10MB -> response_too_large（retryable=false）',
+      de1 && de1.errorType === 'response_too_large' && de1.retryable === false);
+    check('SEC-03-DP DeepSeek complete 超限 abort 连接且仅 1 次请求',
+      !!(dsSig && dsSig.aborted) && md1.calls === 1);
+    globalThis.fetch = realFetch;
+
+    // B. DeepSeek stream 累计文本 > 500K（partial 语义保留）
+    const dsBigDelta = JSON.stringify({ choices: [{ delta: { content: 'y'.repeat(60 * 1024) } }] });
+    const dsSse = 'data: ' + dsBigDelta + '\n\n';
+    let dsSig2 = null;
+    const md2 = mockFetch((u, init) => { dsSig2 = init.signal; return streamRes(200, Array(10).fill(dsSse)); });
+    let de2 = null;
+    const dsChunks = [];
+    try {
+      await new DeepSeek(dsCfg).stream([{ role: 'user', content: 'x' }], (d) => dsChunks.push(d));
+    } catch (e) { de2 = e; }
+    check('SEC-03-DP DeepSeek stream 累计 >500K -> response_too_large（partial 不丢）',
+      de2 && de2.errorType === 'response_too_large' && de2.retryable === false &&
+      typeof de2.partial === 'string' && de2.partial.length > 0 && de2.partial.length <= 500 * 1024 &&
+      de2.partial === dsChunks.join(''));
+    check('SEC-03-DP DeepSeek stream 超限不 retry 且终止连接',
+      md2.calls === 1 && !!(dsSig2 && dsSig2.aborted));
+    globalThis.fetch = realFetch;
+
+    // C. DeepSeek stream 未终结 SSE buffer > 1MB（byte 级上限）
+    let dsSig3 = null;
+    const md3 = mockFetch((u, init) => {
+      dsSig3 = init.signal;
+      return streamRes(200, ['data: {"never-ending', new Uint8Array(1024 * 1024 + 2048).fill(120)]);
+    });
+    let de3 = null;
+    try { await new DeepSeek(dsCfg).stream([{ role: 'user', content: 'x' }], () => {}); } catch (e) { de3 = e; }
+    check('SEC-03-DP DeepSeek stream 未终结 buffer >1MB -> response_too_large fail-closed',
+      de3 && de3.errorType === 'response_too_large' && de3.retryable === false &&
+      md3.calls === 1 && !!(dsSig3 && dsSig3.aborted));
+    globalThis.fetch = realFetch;
+
+    // D. 正常 DeepSeek complete / stream 行为完全不变
+    const md4 = mockFetch(() => streamRes(200,
+      [JSON.stringify({ choices: [{ message: { content: 'deep-fine' } }], usage: { prompt_tokens: 1 }, model: 'deepseek-chat' })],
+      { 'content-type': 'application/json' }));
+    const rd1 = await new DeepSeek(dsCfg).complete([{ role: 'user', content: 'x' }]);
+    const md5 = mockFetch(() => streamRes(200, [
+      'data: {"model":"deepseek-chat","choices":[{"delta":{"content":"ok"}}]}\n\n',
+      'data: {"usage":{"prompt_tokens":2}}\n\n',
+      'data: [DONE]\n\n'
+    ]));
+    let dgot = '';
+    const rd2 = await new DeepSeek(dsCfg).stream([{ role: 'user', content: 'x' }], (d) => { dgot += d; });
+    check('SEC-03-DP 正常 DeepSeek complete/stream 行为完全不变（含 usage/observedModel）',
+      rd1 && rd1.text === 'deep-fine' && rd1.usage && rd1.usage.prompt_tokens === 1 && rd1.observedModel === 'deepseek-chat' &&
+      md4.calls === 1 && dgot === 'ok' && rd2 && rd2.text === 'ok' &&
+      rd2.usage && rd2.usage.prompt_tokens === 2 && rd2.observedModel === 'deepseek-chat' && md5.calls === 1);
+    globalThis.fetch = realFetch;
+  }
 }
 
 /* ================= SEC-04: replay task 生命周期 ================= */

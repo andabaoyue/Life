@@ -60,6 +60,10 @@ function extractSafeDetail(text) {
 }
 
 /* ---- SEC-03: 响应体硬上限（防恶意/异常 endpoint 无界内存增长） ---- */
+// 共享上限：Generic adapter 与 DeepSeek production path 共用同一套常量，不复制第二套
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;   // complete 原始 body 10MB（JSON parse 前即受限）
+const MAX_STREAM_TEXT_CHARS = 500 * 1024;      // stream 累计文本 500K 字符
+const MAX_SSE_BUFFER_BYTES = 1 * 1024 * 1024;  // SSE 未解析 buffer 1MB
 const MAX_ERROR_BODY_BYTES = 64 * 1024; // error body 64KB：足够提取安全摘要，绝不无界读取
 
 function makeResponseTooLargeError(limit, stage) {
@@ -285,6 +289,9 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
 module.exports = {
   readBodyCapped,
   makeResponseTooLargeError,
+  MAX_RESPONSE_BYTES,
+  MAX_STREAM_TEXT_CHARS,
+  MAX_SSE_BUFFER_BYTES,
   MAX_ERROR_BODY_BYTES,
   normalizeBaseURL,
   resolveChatCompletionsURL,

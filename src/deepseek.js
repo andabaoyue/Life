@@ -91,7 +91,15 @@ function costOf(usage, price) {
 const { redactSecrets } = require('./redact');
 // v0.9.8 P5-B1: 通用 HTTP/retry/budget/错误归一化已提取至 openai-transport.js
 //（DeepSeek 与 Generic OpenAI-compatible adapter 共用；DeepSeek 行为保持兼容）
-const { makeProviderError, requestChatCompletion } = require('./openai-transport');
+const {
+  makeProviderError,
+  requestChatCompletion,
+  readBodyCapped,
+  makeResponseTooLargeError,
+  MAX_RESPONSE_BYTES,
+  MAX_STREAM_TEXT_CHARS,
+  MAX_SSE_BUFFER_BYTES
+} = require('./openai-transport'); // SEC-03: 与 Generic 共用同一套响应大小硬上限
 
 class DeepSeek {
   constructor(cfg) {
@@ -146,8 +154,14 @@ class DeepSeek {
       }, ctrl.signal);
       let j;
       try {
-        j = await res.json();
+        // SEC-03: 流式有界读取 —— JSON.parse 前即限制原始 body；超限 fail-closed 不触发 retry
+        j = await readBodyCapped(res, MAX_RESPONSE_BYTES, { stage: 'response' })
+          .then((text) => JSON.parse(text));
       } catch (parseErr) {
+        if (parseErr && parseErr.name === 'ResponseTooLargeError') {
+          ctrl.abort(parseErr); // 超限立即 abort 当前连接
+          throw parseErr;
+        }
         // P1-2: JSON 解析错误信息可能内嵌 raw body 片段 —— 归一化为 response_parse 错误，禁止片段传播
         throw makeProviderError({
           status: 200,
@@ -247,7 +261,16 @@ class DeepSeek {
         }
         if (j.usage) usage = j.usage;
         const d = j.choices?.[0]?.delta?.content;
-        if (d) { full += d; onDelta && onDelta(d); }
+        if (d) {
+          // SEC-03: 累计文本上限 —— 追加前检查，不得先无界 full += d；走 streamError 出口保留 partial 语义
+          if (full.length + d.length > MAX_STREAM_TEXT_CHARS) {
+            const tooLarge = makeResponseTooLargeError(MAX_STREAM_TEXT_CHARS, 'stream');
+            ctrl.abort(tooLarge);
+            streamError = tooLarge;
+            return;
+          }
+          full += d; onDelta && onDelta(d);
+        }
       };
 
       // P1-2: streamIdleTimeoutMs 仅约束连续 chunk 之间的等待空闲时间
@@ -293,6 +316,12 @@ class DeepSeek {
 
           if (done) break;
           buf += dec.decode(value, { stream: true });
+          // SEC-03: 未解析 SSE buffer 按 UTF-8 byte 硬上限（不换行的恶意流不得无限累积）
+          if (Buffer.byteLength(buf, 'utf8') > MAX_SSE_BUFFER_BYTES) {
+            const tooLarge = makeResponseTooLargeError(MAX_SSE_BUFFER_BYTES, 'stream');
+            ctrl.abort(tooLarge);
+            throw tooLarge;
+          }
 
           // SSE 按行解析，行尾可能是 \n 或 \r\n；没有换行的尾巴留在 buf 里等下一块
           const lines = buf.split('\n');
@@ -325,6 +354,12 @@ class DeepSeek {
       // [DONE] 之前 —— 服务端少发一个换行，命中率/计费就会静默归零。
       if (!streamError) {
         buf += dec.decode();         // 无参调用吐出 decoder 里剩余的字节
+        // SEC-03: flush 路径同样受 byte 上限约束
+        if (Buffer.byteLength(buf, 'utf8') > MAX_SSE_BUFFER_BYTES) {
+          const tooLarge = makeResponseTooLargeError(MAX_SSE_BUFFER_BYTES, 'stream');
+          ctrl.abort(tooLarge);
+          throw tooLarge;
+        }
         if (buf) consume(buf);
       }
       if (streamError) {

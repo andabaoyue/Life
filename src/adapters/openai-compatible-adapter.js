@@ -17,13 +17,11 @@ const {
   makeProviderError,
   requestChatCompletion,
   readBodyCapped,
-  makeResponseTooLargeError
-} = require('../openai-transport');
-
-// SEC-03: 响应大小硬上限（保守值，防恶意/异常 endpoint 无界内存增长）
-const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;   // complete 原始 body 10MB（JSON parse 前即受限）
-const MAX_STREAM_TEXT_CHARS = 500 * 1024;      // stream 累计文本 500K 字符
-const MAX_SSE_BUFFER_BYTES = 1 * 1024 * 1024;  // SSE 未解析 buffer 1MB
+  makeResponseTooLargeError,
+  MAX_RESPONSE_BYTES,
+  MAX_STREAM_TEXT_CHARS,
+  MAX_SSE_BUFFER_BYTES
+} = require('../openai-transport'); // SEC-03 上限为共享常量（transport 单一来源，Generic 与 DeepSeek 共用）
 const { createSSEParser } = require('../sse-parser');
 const {
   validateAdapterContract,
