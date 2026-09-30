@@ -199,9 +199,13 @@ function registerCreativeIpc(guard, options = {}) {
 
   guard.handle('creative:update-context', async (e, projectId, context) => {
     try {
-      const id = projectIdOf(projectId, getStore().getActiveProject());
+      const store = getStore();
+      const id = projectIdOf(projectId, store.getActiveProject());
+      // FINDING-1 修复：与 summarize/get-history/send 同一 projectExists 门禁 ——
+      // 禁止 updateContext 的 mkdir 产生无 project.json 的幻影项目
+      if (!store.projectExists(id)) return { ok: false, code: 'CREATIVE_PROJECT_NOT_FOUND', error: 'project not found' };
       const safe = validateContext(context);
-      return { ok: true, projectId: id, context: getStore().updateContext(id, safe) };
+      return { ok: true, projectId: id, context: store.updateContext(id, safe) };
     } catch (err) { return safeError(err, 'CREATIVE_VALIDATION_ERROR', dataRoot); }
   });
 

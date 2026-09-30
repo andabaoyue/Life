@@ -1064,6 +1064,7 @@ function crBind() {
   if (crProjectSelect) crProjectSelect.addEventListener('change', async () => {
     const r = await api.creative.setActiveProject(crProjectSelect.value);
     if (!r || !r.ok) return crSay('切换失败：' + ((r && r.error) || ''));
+    if (crStream) crStream.textContent = ''; // FINDING-2 修复：切换项目即切换显示，旧流随旧项目一并离开视图
     crSay('当前项目：' + r.activeProject);
     crLoadHistory();
   });
@@ -1103,10 +1104,22 @@ function crBind() {
     crSay('Context 已保存');
   });
 
-  api.creative.onDelta((p) => { if (crStream) crStream.textContent += p.text; });
-  api.creative.onCompleted(() => { crSay('创作助手生成完成'); crLoadHistory(); });
-  api.creative.onError((p) => { crSay('生成出错：' + (p && p.error ? p.error : '') + '（' + ((p && p.code) || '') + '）'); crLoadHistory(); });
-  api.creative.onAborted(() => { crSay('生成已中止（partial 已保留）'); crLoadHistory(); });
+  api.creative.onDelta((p) => {
+    // FINDING-2 修复：流式输出绑定 projectId —— 其他项目的旧流不串显到当前视图
+    if (crStream && p && p.projectId === crProjectSelect.value) crStream.textContent += p.text;
+  });
+  api.creative.onCompleted((p) => {
+    if (p && p.projectId !== crProjectSelect.value) return; // 终态只刷新同项目视图
+    crSay('创作助手生成完成'); crLoadHistory();
+  });
+  api.creative.onError((p) => {
+    if (p && p.projectId !== crProjectSelect.value) return;
+    crSay('生成出错：' + (p && p.error ? p.error : '') + '（' + ((p && p.code) || '') + '）'); crLoadHistory();
+  });
+  api.creative.onAborted((p) => {
+    if (p && p.projectId !== crProjectSelect.value) return;
+    crSay('生成已中止（partial 已保留）'); crLoadHistory();
+  });
 }
 crBind();
 

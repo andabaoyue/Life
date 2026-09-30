@@ -110,6 +110,7 @@ async function run() {
     const r7 = await h.invoke('creative:send', h.trusted(), { projectId: 'default', content: 'x'.repeat(MAX_CONTENT_CHARS + 1) });
     check('S7 超限 content 拒绝', r7.ok === false && r7.code === 'CREATIVE_VALIDATION_ERROR');
 
+    await h.invoke('creative:create-project', h.trusted(), 'default'); // S8 在已存在项目上验证 context 边界
     const badCtx = { fn: () => {}, __proto__: { x: 1 } };
     const r8 = await h.invoke('creative:update-context', h.trusted(), 'default', badCtx);
     const r8b = await h.invoke('creative:update-context', h.trusted(), 'default', { when: new Date() });
@@ -356,6 +357,23 @@ async function run() {
     await h.invoke('creative:set-active-project', h.trusted(), 'zz');
     check('Z1 Creative UI + send + abort + summarize + context + switch 全流程 Subject 零写入',
       snap() === before);
+  }
+
+  /* ================= X. 审计修复钉（FINDING-1/2） ================= */
+  {
+    // X1: update-context 对不存在项目必须 fail-closed —— 不得 mkdir 幻影项目
+    const rGhost = await h.invoke('creative:update-context', h.trusted(), 'ghost', { a: 1 });
+    check('X1 update-context 不存在项目 -> CREATIVE_PROJECT_NOT_FOUND（不产生幻影项目）',
+      rGhost.ok === false && rGhost.code === 'CREATIVE_PROJECT_NOT_FOUND' &&
+      !store.listProjects().includes('ghost'));
+
+    // X2/X3: UI 事件必须绑定 projectId（旧流不跨项目串显、终态只刷新同项目视图、切换清空旧流）
+    const petSrc = fs.readFileSync(path.join(ROOT, 'pet.js'), 'utf8');
+    const evtZone = petSrc.slice(petSrc.indexOf('api.creative.onDelta'));
+    check('X2 pet.js Creative 事件按 projectId 绑定（不跨项目串显/误刷新）',
+      (evtZone.match(/p\.projectId/g) || []).length >= 3);
+    check('X3 切换项目清空旧流显示（旧流语义明确）',
+      /crProjectSelect[\s\S]{0,600}addEventListener\('change'[\s\S]{0,400}crStream\.textContent = ''/.test(petSrc));
   }
 
   /* ================= U. UI 文案与暴露面隔离 ================= */
