@@ -431,7 +431,6 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     // P0-2: Prompt Hash 不二次哈希，直接传递确定性哈希
     const dreamPromptHashes = collectPromptHashes({
       persona: options.persona || context.persona || null,
-      creativeSkill: options.creativeSkill || context.creativeSkill || null,
       dream: promptHash
     });
 

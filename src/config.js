@@ -46,7 +46,6 @@ const DEFAULTS = {
   selfGrowthEnabled: true,   // 每个记忆窗口结束时，提炼一次主体成长证据
   selfLedgerMaxEntries: 200, // 只限制条目数量，不把旧经历覆盖成一个“最新人格”
   currentSelfTokenBudget: 3000, // 只注入最新 user 尾部的有限自我投影
-  writingMode: false,        // 只在用户主动打开时注入成人向虚构小说 Skill
   requestTimeoutMs: 60000,   // 请求总超时，避免网络卡住永久锁死界面
   streamIdleTimeoutMs: 20000,// SSE 长时间无新数据时主动中止
 
@@ -142,7 +141,6 @@ function sanitize(raw = {}) {
     selfGrowthEnabled: raw.selfGrowthEnabled !== false,
     selfLedgerMaxEntries: finiteInt(raw.selfLedgerMaxEntries, DEFAULTS.selfLedgerMaxEntries, 20, 2000),
     currentSelfTokenBudget: finiteInt(raw.currentSelfTokenBudget, DEFAULTS.currentSelfTokenBudget, 256, 10000),
-    writingMode: raw.writingMode === true,
     requestTimeoutMs: finiteInt(raw.requestTimeoutMs, DEFAULTS.requestTimeoutMs, 5000, 600000),
     streamIdleTimeoutMs: finiteInt(raw.streamIdleTimeoutMs, DEFAULTS.streamIdleTimeoutMs, 2000, 120000),
     motionEnabled: raw.motionEnabled !== false,
@@ -279,6 +277,7 @@ function load(userDataDir) {
 function save(userDataDir, cfg, diskOverride) {
   const { apiKey, ...rest } = cfg;
   const disk = diskOverride === undefined ? rest : diskOverride;
+  delete disk.writingMode; // v0.9.9: 旧字段静默淘汰 —— 旧配置读取兼容，保存永不写回
   writeJsonAtomic(primaryFile(userDataDir), disk);
   const written = sanitize(disk);
   lastGood.set(realKey(userDataDir), written);

@@ -3,7 +3,6 @@
  *
  * 检查项：
  * 1. JS 语法静态检查通过（node --check）
- * 2. 创作规范文件 skills/DS Skill.md 存在且内容规范
  * 3. 换装系统所需的 12 个 PNG 图层资源全部存在且符合 760x1000 规范
  * 4. 换装图层透明度与 Alpha 边界非破坏性审计 (P1-6: 识别全透明空图层并预警，绝不破坏/覆盖资产)
  * 5. 兜底皮套 assets/pet.png 存在且符合 1015x1171 比例规范
@@ -68,26 +67,6 @@ function checkJsSyntax() {
     report('PASS', 'JS 静态语法检查', `全部 ${jsFiles.length} 个 JavaScript 源码文件均通过 node --check 校验`);
   } else {
     report('FAIL', 'JS 静态语法检查', `以下文件语法错误: ${failedFiles.join(', ')}`);
-  }
-}
-
-/* 2. DS Skill 检查 */
-function checkCreativeSkill() {
-  const skillPath = path.join(ROOT, 'skills', 'DS Skill.md');
-  if (!fs.existsSync(skillPath)) {
-    report('FAIL', '创作模式规范', 'skills/DS Skill.md 文件不存在');
-    return;
-  }
-  const content = fs.readFileSync(skillPath, 'utf8');
-  if (content.length < 200 || !content.includes('DS Skill')) {
-    report('FAIL', '创作模式规范', 'skills/DS Skill.md 内容不完整或未声明 DS Skill');
-  } else {
-    report('PASS', '创作模式规范', `skills/DS Skill.md 完整存在 (${content.length} 字节, 规范名称: DS Skill)`);
-  }
-
-  const legacyPath = path.join(ROOT, 'skills', 'DS破甲skill.md');
-  if (fs.existsSync(legacyPath)) {
-    report('WARN', '历史命名兼容', '检测到历史旧文件名 skills/DS破甲skill.md 仍存在，建议归档或清理');
   }
 }
 
@@ -364,7 +343,6 @@ function checkDocsAndTestSuites() {
 
 /* 执行检查 */
 checkJsSyntax();
-checkCreativeSkill();
 checkWardrobeAssets();
 checkLayerTransparency();
 checkFallbackSprite();

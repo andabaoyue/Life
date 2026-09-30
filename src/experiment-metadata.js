@@ -98,7 +98,9 @@ function hashPrompt(text) {
 
 /**
  * 收集当前生效的核心 Prompt 模板指纹集合。
- * texts: { summary, growth, merge, persona, creativeSkill }
+ * texts: { summary, growth, merge, persona }
+ * （creativeSkill 键固定 'not_enabled'：v0.9.9 旧 Creative Mode / DS Skill 已永久停用，
+ *   不再读取 texts.creativeSkill、不再计算其哈希；键保留仅为维持 GenerationContext 既有形状）
  */
 function collectPromptHashes(texts = {}) {
   const personaText = typeof texts.persona === 'string' ? texts.persona.trim() : '';
@@ -107,9 +109,7 @@ function collectPromptHashes(texts = {}) {
     growth: hashPrompt(texts.growth || ''),
     merge: hashPrompt(texts.merge || ''),
     persona: personaText.length > 0 ? hashPrompt(personaText) : UNAVAILABLE,
-    creativeSkill: (texts.creativeSkill && typeof texts.creativeSkill === 'string' && texts.creativeSkill.trim())
-      ? hashPrompt(texts.creativeSkill.trim())
-      : 'not_enabled'
+    creativeSkill: 'not_enabled' // v0.9.9 兼容层：已永久停用，固定精确字符串，绝不删除该键
   };
   if (texts.dream && typeof texts.dream === 'string' && texts.dream.trim()) {
     const d = texts.dream.trim();

@@ -36,7 +36,6 @@ npm start
 - 设置面板里有「衣柜」：点预设整套切换，或按槽位单件换、脱下；也可以直接在对话里说「换成哥特那套」
 - 戳她几下、拖她一下，她**真的知道**（见「本地活动与主动搭话」）；说「晚安」之后她不会再自己开口，直到你把她叫醒
 - 从一个表情换到另一个表情有衔接（一下微动 + 明暗渐变），不再是硬切；见「状态机 → 表情之间切换的衔接」
-- 设置面板可以载入或关闭「创作 Skill」（DS Skill）。载入后才会使用 `skills/DS Skill.md`，关闭后回到日常聊天。
 - 无气泡、无输入、无聊天、未拖拽且未睡眠时，主进程会让桌宠在屏幕工作区底部缓慢闲逛；到左右边缘会短暂停留并表现为贴边悬挂。
 - 用户拖拽、打开输入框、聊天请求、气泡、记录/设置面板或睡眠状态都会立即停止自主运动。运动状态会进入真实环境感知块。
 - 设置面板中的「清空记忆」只清除用户长期记忆；「重置成长档案」会二次确认，并让初澜以新的出生点重新开始。两者不会再混为一个动作。
@@ -76,7 +75,6 @@ src/wardrobe.js  换装数据层：槽位、衣柜、预设、校验、持久化
 src/tracker.js   本地活动：被戳/被拖的真实计数（双轨 + 水位线）、晚安与唤醒
 src/trigger.js   主动搭话判据：该不该开口（纯函数，只出提案不改状态）
 src/brain.js     调度：对话、关窗、记忆合并、换装提案执行、缓存统计
-src/creative-skill.js  创作模式适配：优先加载独立 DS Skill，缺失时使用内置降级文本
 src/animation-state.js 程序化自然动画：物理微动与姿态状态机
 src/render-adapter.js  动画渲染适配器：解耦状态输出与 DOM / CSS 图层接管
 src/animation-controller.js 动画控制器：60fps 驱动器与图层微动矩阵
@@ -84,7 +82,6 @@ src/behavior-scheduler.js 自主行为调度器：呼吸、眨眼、打哈欠、
 src/asset-check.js     启动立绘与换装资产完整性分级检查
 src/deferred-writer.js 脏标记与延迟合并写盘
 src/migration.js       数据版本迁移框架
-skills/DS Skill.md     用户提供的成人向虚构小说创作规范（DS Skill）
 assets/pet.png        透明立绘（衣柜不可用时的兜底皮套，1015×1171）
 assets/character/     分层换装资源（见「换装系统」）
 tools/chroma.py  绿幕抠图脚本
@@ -108,14 +105,6 @@ test/            测试
 | `motionSpeed` | `2` | 每 tick 的窗口位移像素 |
 | `motionTickMs` | `50` | 主进程运动 tick 间隔，范围 30–250ms |
 | `motionMargin` | `20` | 工作区底部安全边距 |
-
-## 创作 Skill（DS Skill）的放置方式
-
-`skills/DS Skill.md` 是独立的模式规范（统一称为 `DS Skill`），不放进 `persona.js`，也不放进运行时记忆文件。这样可以保证初澜平时不会被成人向小说规则影响，长期记忆也不会把创作规则当成用户事实。
-
-设置面板中的「载入创作 Skill」会把这份文件作为 system 提示词的一部分注入。关闭创作模式后，下一次请求只使用普通 persona 和已有记忆。这个切换会改变 system 前缀，因此可能造成一次缓存未命中，这是预期代价。
-
-创作模式只负责写作规则，不会自动生成章节。开始创作时仍建议在消息中说明世界观、人物年龄、题材、分级、文风、视角、章节和字数目标。
 
 ## 记忆：轮数窗口 + 分层压缩
 
@@ -352,7 +341,7 @@ key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key �
 立即执行两阶段事务回滚并恢复旧配置，旧 Brain 继续存活，避免服务处于无 Brain 僵死状态。
 
 配置热更新的覆盖范围：
-- **热更新覆盖**：`price.*`、`model`、`baseURL`、`windowTurns`、`windowMaxTokens`、`keepTailMessages`、`memoryCapTokens`、`selfGrowthEnabled`、`selfLedgerMaxEntries`、`currentSelfTokenBudget`、`writingMode`、`requestTimeoutMs`、`streamIdleTimeoutMs` 等均在每轮对话或面板读取时就地生效。
+- **热更新覆盖**：`price.*`、`model`、`baseURL`、`windowTurns`、`windowMaxTokens`、`keepTailMessages`、`memoryCapTokens`、`selfGrowthEnabled`、`selfLedgerMaxEntries`、`currentSelfTokenBudget`、`requestTimeoutMs`、`streamIdleTimeoutMs` 等均在每轮对话或面板读取时就地生效。
 - **重构重建覆盖**：API Key 变更走独立生命周期与事务回滚流程。
 
 热重载的挂点有两个：**每轮对话开头**（`Brain.refreshConfig()`）和
@@ -370,7 +359,7 @@ node test/brain.test.js          # 164 项：窗口边界、前缀不变式、�
 node test/memory.test.js         # 30 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
 node test/subject-state.test.js  # 19 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放
-node test/main.test.js           # 85 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 creative-mode-set 明文降级不丢 key、N-08 self-ledger-reset 显式确认门）
+node test/main.test.js           # 87 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 明文降级配置保存不丢 key 与 writingMode 兼容淘汰、N-08 self-ledger-reset 显式确认门）
 node test/tracker.test.js        # 42 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟
 node test/wardrobe.test.js       # 55 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离
@@ -379,7 +368,6 @@ node test/atomic.test.js         # 20 项：临时文件不留残、写失败后
 node test/config.test.js         # 28 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离
 node test/deepseek.test.js       # 32 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离、预先abort与headers后abort
 node test/layout.test.js         # 16 项：宽高比为常量、来回缩放收得回、下边缘钉住、main.js 不许再用量出来的比例
-node test/creative-mode.check.js # 7 项：创作 Skill（DS Skill）加载、成年角色边界、模式配置和超时配置检查
 node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
 node test/deferred-writer.test.js # 8 项：脏标记、防抖延迟合并写盘、同步 flush、写失败保持 dirty、unref 定时器
 node test/migration.test.js       # 17 项：通用数据迁移、版本号升序执行、缺少迁移函数报错、版本防回退、自定义版本字段名

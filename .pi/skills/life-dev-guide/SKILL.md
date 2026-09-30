@@ -14,7 +14,7 @@ Life 是 Electron 桌宠 + 数字生命实验平台，主体为「初澜（Chula
 
 - `main.js` 主进程（窗口、IPC、衣柜实例、桌面漫步位移）；`preload.js` 桥接为 `window.deskpet`；`pet.js` / `index.html` / `style.css` 渲染层。
 - `src/` 核心模块：`brain.js`（调度）、`memory.js`（三层记忆）、`self-ledger.js`（生命档案）、`wardrobe.js`（换装）、`tracker.js`/`trigger.js`（本地活动与主动搭话）、`subject-state.js`/`experiences-archive.js`/`state-change.js`（实验层）、`config.js`/`secure.js`/`atomic.js`（配置/密钥/原子写）、`provider-*`/`redact.js`/`budget-guard.js`/`circuit-breaker.js`（安全与路由）。
-- `test/` 全部测试（Node 单测 + `ui_test.py` 真实 UI 逐帧测试）；`skills/DS Skill.md` 是应用运行时资产（创作模式规范），不是 agent skill，不要改动它的语义。
+- `test/` 全部测试（Node 单测 + `ui_test.py` 真实 UI 逐帧测试）；（v0.9.9：旧 Creative Mode / DS Skill 已整体拆除，应用已无对应运行时资产。）
 
 ## 一、本体论分立（最高层边界，任何改动不得违反）
 

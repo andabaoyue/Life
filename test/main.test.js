@@ -419,20 +419,27 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('开口之后仍在冷却（重建 brain 也不会绕过冷却）',
     (await invoke('proactive-check')) === null);
 
-  /* ============ N-03: creative-mode-set 不得擦掉明文降级下的 apiKey ============ */
-  await invoke('config-set-key', 'sk-creative-keepme');
-  const cm = await invoke('creative-mode-set', true);
-  check('N-03 creative-mode-set 正常切换并持久化 writingMode（原语义不变）',
-    cm.ok === true && cm.enabled === true && JSON.parse(readCfg()).writingMode === true);
-  check('N-03 明文降级（safeStorage=null）下 creative-mode-set 后盘上 apiKey 保留',
-    JSON.parse(readCfg()).apiKey === 'sk-creative-keepme',
+  /* ============ N-03: 明文降级下的 apiKey 落盘不被配置保存擦除 + writingMode 兼容淘汰 ============ */
+  await invoke('config-set-key', 'sk-cre...epme');
+  await invoke('config-set-key', 'sk-cre...epme');   // 第二次配置保存（真实 persistCfg 路径）
+  check('N-03 明文降级（safeStorage=null）下重复保存配置后盘上 apiKey 保留',
+    JSON.parse(readCfg()).apiKey === 'sk-cre...epme',
     'apiKey=' + JSON.parse(readCfg()).apiKey);
+  check('N-03 旧 writingMode 字段不再写回盘（兼容淘汰）',
+    JSON.parse(readCfg()).writingMode === undefined);
   const secureMod = require(path.join(ROOT, 'src/secure.js'));
   const reread = secureMod.loadConfig(() => null, DIR, () => JSON.parse(readCfg()));
   check('N-03 重启路径重新读取仍能得到原 apiKey',
-    reread.cfg.apiKey === 'sk-creative-keepme' && reread.encrypted === false,
+    reread.cfg.apiKey === 'sk-cre...epme' && reread.encrypted === false,
     'apiKey=' + reread.cfg.apiKey);
-  await invoke('creative-mode-set', false);
+  // 旧 life-config.json 携带 writingMode：静默忽略、不打回默认值、保存不写回
+  writeCfg({ ...JSON.parse(readCfg()), writingMode: true, windowTurns: 7 });
+  const legacyRead = secureMod.loadConfig(() => null, DIR, () => JSON.parse(readCfg()));
+  check('N-03 旧配置 writingMode 被静默忽略且其余字段正常读取（不打回默认值）',
+    legacyRead.cfg.writingMode === undefined && legacyRead.cfg.windowTurns === 7);
+  await invoke('config-set-key', 'sk-cre...epme'); // 再次保存
+  check('N-03 保存后 writingMode 不回写（旧字段自然淘汰）',
+    JSON.parse(readCfg()).writingMode === undefined);
 
   /* ============ N-08: self-ledger-reset 必须显式确认 ============ */
   const birthBefore = brain.birthAt;

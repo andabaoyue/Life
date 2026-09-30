@@ -400,7 +400,6 @@ ipcGuard.handle('config-get', () => {
   currentSelfTokenBudget: cfg.currentSelfTokenBudget,
   birthAt: brain && brain.birthAt,
   archiveStatus: brain && brain.selfLedger && brain.selfLedger.status,
-  writingMode: !!cfg.writingMode,
   requestTimeoutMs: cfg.requestTimeoutMs,
   streamIdleTimeoutMs: cfg.streamIdleTimeoutMs,
   motionEnabled: cfg.motionEnabled,
@@ -433,33 +432,6 @@ ipcGuard.handle('config-set-key', (e, key) => {
   keyEncrypted = persisted.encrypted;
 
   return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
-});
-
-ipcGuard.handle('creative-mode-get', () => ({ enabled: !!(cfg && cfg.writingMode) }));
-
-ipcGuard.handle('creative-mode-set', (e, enabled) => {
-  if (!cfg || !brain) return { ok: false, error: '程序尚未初始化' };
-  const next = { ...cfg, writingMode: enabled === true };
-  try {
-    // 不调用 persistCfg：切换创作模式不应重复处理或降级保存 API Key。
-    // N-03：但绝不裸 save —— 明文降级时 apiKey 唯一落盘点就是 config 文件，
-    // 裸 save（config.save 从源头摘 key）会把它抹掉，重启后用户凭据丢失。
-    // 这里按盘上 key 的原有形态回写：盘上 config 有 key（明文降级）就原样保留；
-    // 盘上没有（加密存 key 文件）就维持没有，绝不把内存明文 key 写回盘。
-    let diskKey = null;
-    try {
-      const raw = JSON.parse(fs.readFileSync(secure.cfgPath(app.getPath('userData')), 'utf8'));
-      if (raw && typeof raw.apiKey === 'string' && raw.apiKey !== '') diskKey = raw.apiKey;
-    } catch { /* 盘上无 config / 读不到：按无 key 处理，行为与裸 save 一致 */ }
-    const { apiKey, ...diskRest } = next;
-    save(app.getPath('userData'), next,
-      diskKey !== null ? { ...diskRest, apiKey: diskKey } : diskRest);
-    Object.assign(cfg, next);
-    brain.refreshConfig();
-    return { ok: true, enabled: cfg.writingMode };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
 });
 
 ipcGuard.handle('config-open', () => {

@@ -7,8 +7,6 @@ const panel = document.getElementById('panel');
 const researchPanel = document.getElementById('researchPanel');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
-const creativeToggle = document.getElementById('creativeToggle');
-const creativeState = document.getElementById('creativeState');
 const figure = document.getElementById('figure');
 const layerBox = document.getElementById('layers');
 const spriteImg = document.getElementById('sprite');
@@ -746,25 +744,8 @@ function openPanel() {
   panel.classList.remove('hidden');
   syncMotionPriority();
   refreshStats();
-  refreshCreativeMode();
   refreshMem();
   refreshWardrobe();
-}
-
-async function refreshCreativeMode() {
-  if (!creativeToggle || !creativeState) return;
-  if (!api || !api.creativeModeGet) {
-    creativeToggle.disabled = true;
-    creativeState.textContent = '预览模式不可用';
-    return;
-  }
-  try {
-    const r = await api.creativeModeGet();
-    const on = !!r.enabled;
-    creativeToggle.textContent = on ? '关闭创作 Skill' : '载入创作 Skill';
-    creativeToggle.classList.toggle('on', on);
-    creativeState.textContent = on ? '成人向虚构创作模式已启用' : '日常聊天模式';
-  } catch { creativeState.textContent = '读取模式失败'; }
 }
 
 /* 长期记忆可视化。文本一律用 textContent 写入 ——
@@ -882,12 +863,6 @@ async function refreshStats() {
       ? (g.keyEncrypted ? '已配置 Key（磁盘上为加密存储）'
                         : '已配置 Key（注意：本机不支持加密，Key 仍是明文存储）')
       : '未配置 Key — 填一下才能对话';
-  if (creativeToggle && g.writingMode !== undefined) {
-    const on = !!g.writingMode;
-    creativeToggle.textContent = on ? '关闭创作 Skill' : '载入创作 Skill';
-    creativeToggle.classList.toggle('on', on);
-    creativeState.textContent = on ? '成人向虚构创作模式已启用' : '日常聊天模式';
-  }
 }
 
 document.getElementById('logClose').addEventListener('click', () => toggleLog(false));
@@ -1020,17 +995,6 @@ document.getElementById('connDelete').addEventListener('click', async () => {
 });
 
 refreshConnections();
-
-if (creativeToggle) creativeToggle.addEventListener('click', async () => {
-  if (!api || !api.creativeModeGet || !api.creativeModeSet) return;
-  try {
-    const cur = await api.creativeModeGet();
-    const r = await api.creativeModeSet(!cur.enabled);
-    if (!r.ok) return say('创作模式切换失败：' + r.error);
-    refreshCreativeMode();
-    say(r.enabled ? '创作 Skill 已载入，只影响当前 system，不写入长期记忆。' : '已回到日常聊天模式。');
-  } catch (e) { say('创作模式切换失败：' + e.message); }
-});
 
 document.getElementById('openCfg').addEventListener('click', () => api && api.openConfig());
 

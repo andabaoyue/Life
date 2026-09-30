@@ -10,7 +10,6 @@ const { createAdapter, getProviderInfo } = require('./provider-registry');
 const { getCostStrategy } = require('./cost-strategy');
 const { normalizeUsage } = require('./usage-normalizer');
 const { PERSONA } = require('./persona');
-const { CREATIVE_SKILL } = require('./creative-skill');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
 const { writeJsonAtomic } = require('./atomic');
 const { tryLoad, sanitize, DEFAULTS } = require('./config');
@@ -55,7 +54,7 @@ const GROWTH_SYS =
   + '没有足够证据就输出 []。support 与 oppose 都要保留，不能用最新值覆盖矛盾经历。';
 
 function systemPersona(cfg) {
-  return cfg.writingMode ? PERSONA + '\n\n' + CREATIVE_SKILL : PERSONA;
+  return PERSONA; // v0.9.9: 旧 Creative Mode / DS Skill 已拆除，persona 无条件单一来源
 }
 
 /* ---------- 状态标记 ----------
@@ -496,7 +495,6 @@ class Brain {
     if (!next) return false;
     const apiKey = this.cfg.apiKey;
     const oldPersona = this.memory ? this.memory.persona : null;
-    const oldWritingMode = this.cfg ? this.cfg.writingMode : null;
 
     // Phase 0 / 0.5: 窗口级实验快照冻结不变量。
     // 当前窗口活跃期间，禁止外部热重载篡改当前窗口的 experimentMode 与 experimentModules。
@@ -516,9 +514,7 @@ class Brain {
     m.persona = systemPersona(this.cfg);
 
     if (oldPersona !== null && oldPersona !== m.persona) {
-      this.pendingCacheBreakReason = (oldWritingMode !== this.cfg.writingMode)
-        ? 'writing_mode_change'
-        : 'config_prompt_change';
+      this.pendingCacheBreakReason = 'config_prompt_change';
     }
 
     // 2. SelfLedger 档案参数同步（P1-02）
@@ -898,7 +894,6 @@ class Brain {
       const summaryPromptHashes = collectPromptHashes({
         summary: SUMMARY_SYS,
         persona: PERSONA,
-        creativeSkill: this.cfg.writingMode ? CREATIVE_SKILL : null,
         growth: GROWTH_SYS,
         merge: MERGE_SYS
       });
@@ -1459,7 +1454,6 @@ class Brain {
           merge: MERGE_SYS,
           summary: SUMMARY_SYS,
           persona: PERSONA,
-          creativeSkill: this.cfg.writingMode ? CREATIVE_SKILL : null,
           growth: GROWTH_SYS
         }),
         sampling: { maxTokens: 400, temperature: 0.2 },
@@ -1499,7 +1493,6 @@ class Brain {
         growth: GROWTH_SYS,
         summary: SUMMARY_SYS,
         persona: PERSONA,
-        creativeSkill: this.cfg.writingMode ? CREATIVE_SKILL : null,
         merge: MERGE_SYS
       });
 

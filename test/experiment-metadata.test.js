@@ -64,8 +64,10 @@ function check(name, cond, extra) {
     persona: '人设模板',
     creativeSkill: 'DS 写作技能完整正文'
   });
-  check('collectPromptHashes 写作模式开启时包含 creativeSkill 哈希',
-    hashesWithSkill.creativeSkill.startsWith('sha256:')
+  // v0.9.9: 旧 Creative Mode / DS Skill 已永久停用 —— 即使输入携带 creativeSkill 文本，
+  // 也固定返回 'not_enabled'（不再读取、不再计算哈希；键保留维持 GenerationContext 形状）
+  check('collectPromptHashes creativeSkill 固定 not_enabled（已永久停用，不再计算哈希）',
+    hashesWithSkill.creativeSkill === 'not_enabled'
   );
 
   const hashesUnavailable = collectPromptHashes({ persona: '' });

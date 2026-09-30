@@ -52,8 +52,6 @@ contextBridge.exposeInMainWorld('deskpet', {
   setKey: (k) => ipcRenderer.invoke('config-set-key', k),
   openConfig: () => ipcRenderer.invoke('config-open'),
   // 创作 Skill 是临时模式，不进入长期记忆；只改变 system 提示词。
-  creativeModeGet: () => ipcRenderer.invoke('creative-mode-get'),
-  creativeModeSet: (enabled) => ipcRenderer.invoke('creative-mode-set', !!enabled),
 
   // 0.9.8 Z3：Connection 管理（credential 只进不出 —— API Key 可传入，绝无回读）
   connections: {

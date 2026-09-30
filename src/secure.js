@@ -285,7 +285,8 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
  * 读配置，并顺手把老版本（v0.5 及更早）留在 config.json 里的明文 key 迁成密文。
  */
 function loadConfig(getSS, dir, readDisk) {
-  const disk = readDisk() || {};
+  const disk = { ...(readDisk() || {}) };
+  delete disk.writingMode; // v0.9.9: 旧字段静默忽略 —— 读取兼容、不报错、不打回默认值
   const providerId = String(disk.provider || '').trim() || 'deepseek';
   const fromKey = decryptKey(getSS, dir, providerId);
   if (fromKey) {
