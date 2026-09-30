@@ -55,6 +55,17 @@ contextBridge.exposeInMainWorld('deskpet', {
   creativeModeGet: () => ipcRenderer.invoke('creative-mode-get'),
   creativeModeSet: (enabled) => ipcRenderer.invoke('creative-mode-set', !!enabled),
 
+  // 0.9.8 Z3：Connection 管理（credential 只进不出 —— API Key 可传入，绝无回读）
+  connections: {
+    list: () => ipcRenderer.invoke('connections:list'),
+    get: (connectionId) => ipcRenderer.invoke('connections:get', { connectionId }),
+    create: (data) => ipcRenderer.invoke('connections:create', data),
+    update: (connectionId, patch, credential) => ipcRenderer.invoke('connections:update', { connectionId, patch, credential }),
+    delete: (connectionId, deleteCredential) => ipcRenderer.invoke('connections:delete', { connectionId, deleteCredential }),
+    test: (connectionId) => ipcRenderer.invoke('connections:test', { connectionId }),
+    activate: (connectionId) => ipcRenderer.invoke('connections:activate', { connectionId })
+  },
+
   // 实验观测与可复盘工具链 (v0.9.5)
   research: {
     getState: () => ipcRenderer.invoke('research:get-state'),

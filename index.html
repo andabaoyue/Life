@@ -26,6 +26,43 @@
         <button id="keySave">保存</button>
       </div>
       <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
+      <!-- 0.9.8 Z3：Connection 管理（Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
+      <div class="p-title">连接管理</div>
+      <div class="row">
+        <select id="connList"></select>
+        <span class="hint" id="connActive"></span>
+      </div>
+      <label>显示名</label>
+      <div class="row"><input id="connName" type="text" spellcheck="false"></div>
+      <label>Provider Identity</label>
+      <div class="row">
+        <select id="connProvider">
+          <option value="deepseek">DeepSeek</option>
+          <option value="local">Local</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <label>Protocol</label>
+      <div class="row">
+        <select id="connProtocol">
+          <option value="openai-compatible">OpenAI-compatible</option>
+          <option value="anthropic-native">Anthropic-native（未实现）</option>
+        </select>
+      </div>
+      <label>API Key</label>
+      <div class="row"><input id="connKey" type="password" placeholder="仅写入，不回显" spellcheck="false"></div>
+      <label>Endpoint</label>
+      <div class="row"><input id="connUrl" type="text" placeholder="https://..." spellcheck="false"></div>
+      <label>Model</label>
+      <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
+      <div class="row btns">
+        <button id="connNew">新建</button>
+        <button id="connSave">保存</button>
+        <button id="connTest">测试连接</button>
+        <button id="connActivate">设为当前</button>
+        <button id="connDelete">删除</button>
+      </div>
+      <div class="hint" id="connState">—</div>
       <div class="p-title">创作模式</div>
       <div class="row">
         <button id="creativeToggle">载入创作 Skill</button>

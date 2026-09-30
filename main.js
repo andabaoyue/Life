@@ -12,6 +12,11 @@ const secure = require('./src/secure');
 const layout = require('./src/layout');
 const { ResearchService } = require('./src/research-service');
 const { registerResearchIpc } = require('./src/research-ipc');
+// 0.9.8 Z3：Connection 管理（Provider Identity ≠ Protocol ≠ Connection ≠ Model）
+const connectionsMod = require('./src/connections');
+const secureCreds = require('./src/secure-credentials');
+const { activateConnection } = require('./src/connection-switch');
+const { runConnectionTest } = require('./src/connection-test');
 const { createIpcGuard } = require('./src/ipc-guard');
 
 /* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
@@ -471,12 +476,154 @@ ipcGuard.handle('config-open', () => {
 
 ipcGuard.handle('asset-check', () => assetReport || checkAssets(__dirname, CATALOG));
 
+/* ---------- Connection 管理（0.9.8 Z3）----------
+   安全硬边界：credential 只进不出 —— list/get 只回 hasCredential/keyEncrypted，
+   绝不返回 API Key / 解密结果 / 密文内容 / 文件路径 / namespace 解析结果。
+   renderer 不得指定 credentialRef（服务端生成）；删除语义：exclusive 联动删凭据、
+   legacy-mapped 只删连接（connections.js 已强制）。全部经 ipcGuard（SEC-01）。 */
+function connectionDto(c) {
+  const desc = secureCreds.describeCredential(c.credentialRef, {
+    dir: app.getPath('userData'),
+    getSS,
+    // legacy 明文降级只对 legacy-mapped ref 生效（防 A 的 key 被误判为 B 的凭据）
+    fallbackSecret: c.credentialOwnership === 'legacy-mapped' ? (cfg && cfg.apiKey) || '' : ''
+  });
+  return {
+    connectionId: c.connectionId,
+    displayName: c.displayName,
+    providerId: c.providerId,
+    protocol: c.protocol,
+    baseURL: c.baseURL,
+    models: c.models,
+    activeModel: c.activeModel,
+    capabilitySnapshot: c.capabilitySnapshot,
+    testState: c.testState,
+    hasCredential: desc.present,
+    keyEncrypted: desc.encrypted
+  };
+}
+
+// Z1-E：store 不存在时用旧平铺 cfg 幂等迁移（启动期 eager + 懒入口兜底；失败仍以旧 flat 为真源）
+function ensureConnectionStore() {
+  try {
+    const dir = app.getPath('userData');
+    if (connectionsMod.loadStore(dir).status === 'absent') {
+      connectionsMod.migrateLegacyConfig(dir, cfg || {});
+    }
+  } catch { /* fail-closed：迁移失败不影响旧配置路径 */ }
+}
+
+ipcGuard.handle('connections:list', () => {
+  ensureConnectionStore();
+  const st = connectionsMod.loadStore(app.getPath('userData'));
+  if (!st.ok) return { ok: false, error: st.error };
+  if (!st.store) return { ok: true, activeConnectionId: null, items: [] };
+  return {
+    ok: true,
+    activeConnectionId: st.store.activeConnectionId,
+    items: st.store.connections.map(connectionDto)
+  };
+});
+
+ipcGuard.handle('connections:get', (e, opts) => {
+  ensureConnectionStore();
+  const st = connectionsMod.loadStore(app.getPath('userData'));
+  if (!st.ok) return { ok: false, error: st.error };
+  const c = st.store && st.store.connections.find((x) => x.connectionId === (opts && opts.connectionId));
+  return c ? { ok: true, connection: connectionDto(c) } : { ok: false, error: 'CONNECTION_NOT_FOUND' };
+});
+
+ipcGuard.handle('connections:create', (e, opts = {}) => {
+  ensureConnectionStore();
+  // 白名单字段：credentialRef/connectionId/credentialOwnership 不接受 renderer 输入（服务端生成）
+  const r = connectionsMod.createConnection(app.getPath('userData'), {
+    displayName: opts.displayName,
+    providerId: opts.providerId,
+    protocol: opts.protocol,
+    baseURL: opts.baseURL,
+    model: opts.model
+  });
+  if (!r.ok) return r;
+  if (typeof opts.credential === 'string' && opts.credential) {
+    const w = secureCreds.setCredential(r.connection.credentialRef, opts.credential, { dir: app.getPath('userData'), getSS });
+    if (!w.ok) {
+      connectionsMod.deleteConnection(app.getPath('userData'), r.connection.connectionId, { deleteCredential: true, getSS });
+      return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
+    }
+  }
+  return { ok: true, connectionId: r.connection.connectionId };
+});
+
+ipcGuard.handle('connections:update', (e, opts = {}) => {
+  const { connectionId, patch = {}, credential } = opts;
+  // immutable 字段（credentialRef/connectionId/credentialOwnership）在模块层拒绝
+  const r = connectionsMod.updateConnection(app.getPath('userData'), connectionId, patch || {});
+  if (!r.ok) return r;
+  if (typeof credential === 'string' && credential) {
+    const w = secureCreds.setCredential(r.connection.credentialRef, credential, { dir: app.getPath('userData'), getSS });
+    if (!w.ok) return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
+  }
+  return { ok: true };
+});
+
+ipcGuard.handle('connections:delete', (e, opts = {}) => {
+  const r = connectionsMod.deleteConnection(app.getPath('userData'), opts.connectionId, {
+    deleteCredential: opts.deleteCredential !== false,
+    getSS
+  });
+  if (!r.ok) return r;
+  return { ok: true, credentialDeleted: r.credentialDeleted, credentialNote: r.credentialNote };
+});
+
+ipcGuard.handle('connections:test', async (e, opts = {}) => {
+  // 用户显式调用即代表点击 Test Connection：validateConfig -> healthCheck(若声明) -> authProbe(必要时)
+  const dir = app.getPath('userData');
+  const r = await runConnectionTest(dir, opts.connectionId, { getSS, fallbackSecret: (cfg && cfg.apiKey) || '' });
+  if (r.ok) {
+    try {
+      connectionsMod.updateConnection(dir, opts.connectionId, {
+        testState: { status: r.status, phase: r.phase, reason: r.reason || null, lastTestedAt: Date.now() }
+      });
+    } catch { /* 快照持久化失败不影响测试结果返回 */ }
+  }
+  return r;
+});
+
+ipcGuard.handle('connections:activate', (e, opts = {}) => {
+  const dir = app.getPath('userData');
+  const st = connectionsMod.loadStore(dir);
+  if (!st.ok) return { ok: false, swapped: false, error: st.error };
+  if (!st.store) return { ok: false, swapped: false, error: 'STORE_ABSENT' };
+  const targetId = opts && opts.connectionId;
+  if (st.store.activeConnectionId === targetId && brain) {
+    return { ok: true, activeConnectionId: targetId, swapped: false };
+  }
+  const r = activateConnection({
+    dir,
+    targetConnectionId: targetId,
+    oldBrain: brain,
+    oldCfg: cfg,
+    persistFlat: (c) => { persistCfg(c); },
+    createCandidate: (c) => new Brain(app.getPath('userData'), c),
+    bindCandidate: bindBrainDeps,
+    getSS,
+    fallbackSecret: (cfg && cfg.apiKey) || ''
+  });
+  if (!r.ok) {
+    return { ok: false, swapped: false, activeConnectionId: r.activeConnectionId, error: r.error };
+  }
+  cfg = r.cfg;
+  brain = r.brain;
+  return { ok: true, activeConnectionId: r.activeConnectionId, swapped: true };
+});
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   const r = secure.loadConfig(getSS, app.getPath('userData'),
     () => load(app.getPath('userData')));
   cfg = r.cfg;
   keyEncrypted = r.encrypted;
+  ensureConnectionStore(); // Z1-E：旧单配置 -> default connection（幂等，失败不阻塞）
   // 环境变量只注入当前进程，不自动持久化，避免临时 Key 变成磁盘凭据。
   if (!cfg.apiKey && process.env.DEEPSEEK_API_KEY) {
     cfg = { ...cfg, apiKey: process.env.DEEPSEEK_API_KEY };

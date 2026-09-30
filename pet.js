@@ -904,6 +904,123 @@ document.getElementById('keySave').addEventListener('click', async () => {
   say('好啦，现在能跟我说话了~');
 });
 
+/* ---------------- Connection 管理（0.9.8 Z3） ----------------
+   credential 只进不出：API Key 输入框永不回填；列表只显示 hasCredential/keyEncrypted。
+   Provider Identity 与 Protocol 是两个独立字段（不猜品牌；未知 protocol 由服务端拒绝）。 */
+let connItems = [];
+let connSelectedId = null;
+
+function connSay(text) {
+  const el = document.getElementById('connState');
+  if (el) el.textContent = text;
+}
+
+function fillConnEditor(connectionId) {
+  const c = connItems.find((x) => x.connectionId === connectionId);
+  if (!c) return;
+  connSelectedId = connectionId;
+  document.getElementById('connName').value = c.displayName || '';
+  document.getElementById('connProvider').value =
+    ['deepseek', 'local', 'custom'].includes(c.providerId) ? c.providerId : 'custom';
+  document.getElementById('connProtocol').value =
+    c.protocol === 'anthropic-native' ? 'anthropic-native' : 'openai-compatible';
+  document.getElementById('connUrl').value = c.baseURL || '';
+  document.getElementById('connModel').value = c.activeModel || '';
+  document.getElementById('connKey').value = ''; // 绝不回填 secret
+  connSay('凭据：' + (c.hasCredential ? (c.keyEncrypted ? '已加密存储' : '明文降级存储') : '未配置') +
+    '；测试状态：' + ((c.testState && c.testState.status) || 'unverified'));
+}
+
+async function refreshConnections() {
+  if (!api || !api.connections) return;
+  const r = await api.connections.list();
+  if (!r || r.ok === false) return connSay('连接列表读取失败：' + ((r && r.error) || '未知错误'));
+  connItems = Array.isArray(r.items) ? r.items : [];
+  const sel = document.getElementById('connList');
+  sel.textContent = '';
+  for (const c of connItems) {
+    const opt = document.createElement('option');
+    opt.value = c.connectionId;
+    opt.textContent = c.displayName + '（' + c.providerId + ' / ' + c.protocol + '）' +
+      (c.connectionId === r.activeConnectionId ? ' ★当前' : '');
+    sel.appendChild(opt);
+  }
+  const act = document.getElementById('connActive');
+  if (act) act.textContent = '';
+  if (connItems.length > 0) {
+    const pick = connItems.some((c) => c.connectionId === r.activeConnectionId)
+      ? r.activeConnectionId : connItems[0].connectionId;
+    sel.value = pick;
+    fillConnEditor(pick);
+  } else {
+    connSay('尚无连接');
+  }
+}
+
+function connEditorFields() {
+  return {
+    displayName: document.getElementById('connName').value.trim(),
+    providerId: document.getElementById('connProvider').value,
+    protocol: document.getElementById('connProtocol').value,
+    baseURL: document.getElementById('connUrl').value.trim(),
+    model: document.getElementById('connModel').value.trim()
+  };
+}
+
+document.getElementById('connList').addEventListener('change', (e) => fillConnEditor(e.target.value));
+
+document.getElementById('connNew').addEventListener('click', async () => {
+  if (!api || !api.connections) return;
+  const key = document.getElementById('connKey').value;
+  const r = await api.connections.create({ ...connEditorFields(), credential: key || undefined });
+  if (!r || r.ok === false) return connSay('新建失败：' + ((r && r.error) || '未知错误'));
+  document.getElementById('connKey').value = '';
+  connSay('已新建连接（credential 仅写入，不回显）');
+  await refreshConnections();
+});
+
+document.getElementById('connSave').addEventListener('click', async () => {
+  if (!api || !api.connections || !connSelectedId) return;
+  const key = document.getElementById('connKey').value;
+  const r = await api.connections.update(connSelectedId, connEditorFields(), key || undefined);
+  if (!r || r.ok === false) return connSay('保存失败：' + ((r && r.error) || '未知错误'));
+  document.getElementById('connKey').value = '';
+  connSay('已保存');
+  await refreshConnections();
+});
+
+document.getElementById('connTest').addEventListener('click', async () => {
+  if (!api || !api.connections || !connSelectedId) return;
+  connSay('测试中…（可能发起一次极小计费请求）');
+  const r = await api.connections.test(connSelectedId);
+  if (!r || r.ok === false) return connSay('测试失败：' + ((r && r.error) || '未知错误'));
+  if (r.status === 'verified') connSay('已验证成功（' + r.phase + '）');
+  else if (r.status === 'failed') connSay('验证失败（' + r.phase + '）：' + (r.reason || ''));
+  else connSay('未验证（证据不足）：' + (r.reason || r.phase));
+  await refreshConnections();
+});
+
+document.getElementById('connActivate').addEventListener('click', async () => {
+  if (!api || !api.connections || !connSelectedId) return;
+  const r = await api.connections.activate(connSelectedId);
+  if (!r || r.ok === false) return connSay('切换失败（保持原连接）：' + ((r && r.error) || '未知错误'));
+  connSay(r.swapped ? '已切换到该连接' : '该连接已是当前活动连接');
+  await refreshConnections();
+  refreshStats();
+});
+
+document.getElementById('connDelete').addEventListener('click', async () => {
+  if (!api || !api.connections || !connSelectedId) return;
+  const ok = window.confirm('此操作将删除该 Connection，并在该凭据属于 exclusive credential 时删除对应凭据（legacy-mapped 凭据只删除 Connection，不删除 legacy 凭据）。确定继续吗？');
+  if (!ok) return;
+  const r = await api.connections.delete(connSelectedId, true);
+  if (!r || r.ok === false) return connSay('删除失败：' + ((r && r.error) || '未知错误'));
+  connSay(r.credentialDeleted ? '连接及其独占凭据已删除' : '连接已删除（凭据保留：' + (r.credentialNote || '未删除') + '）');
+  await refreshConnections();
+});
+
+refreshConnections();
+
 if (creativeToggle) creativeToggle.addEventListener('click', async () => {
   if (!api || !api.creativeModeGet || !api.creativeModeSet) return;
   try {

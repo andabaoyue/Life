@@ -390,6 +390,9 @@ node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸
 node test/render-adapter.test.js       # 10 项：DOM 动画渲染适配器、数据驱动单向流动、异常隔离与无头渲染器
 node test/experience-schema.test.js # 22 项：Event / Observation / Interpretation 三层分离、合法性校验、复合经历封装与向后兼容转换
 node test/state-change.test.js      # 16 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改、N-11 maxDelta 语义一致（超幅拒绝/边界通过/legacy 保持 ±999）
+node test/connections.test.js       # 27 项：0.9.8 Z1 ConnectionStore/credentialRef（单/多连接、credential isolation、删除语义、共享 ref 拒绝、Legacy migration 幂等/零搬移/fail-closed、protocol 枚举、capabilitySnapshot ≠ runtime capability）
+node test/connection-switch.test.js # 17 项：0.9.8 Z2 Runtime Connection Switching（A→B 成功、初始化失败/credential 不可用 fail-closed、flat cfg + activeConnectionId 双回滚、同连接切 model 热读、跨连接 model isolation、DeepSeek↔custom 零搬移、runtime evidence 不串绑、Subject/provenance 零写入）
+node test/connection-ipc.test.js    # 25 项：0.9.8 Z3 Connection IPC/UI/Test Connection（list/get/create/update/delete/activate、credential 只进不出、renderer secret isolation、Test 三态 verified/failed/unverified、healthCheck 未实现不判 failed、authProbe 仅用户触发、IPC guard、UI 双字段与状态同步、同协议多 Key、protocol 分离、SEC-01 回归）
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
 node test/recovery.test.js          # 38 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
