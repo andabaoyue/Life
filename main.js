@@ -12,6 +12,10 @@ const secure = require('./src/secure');
 const layout = require('./src/layout');
 const { ResearchService } = require('./src/research-service');
 const { registerResearchIpc } = require('./src/research-ipc');
+// v0.9.9 Phase 3: Creative Core 接入 IPC（独立创作空间，与 Subject 数据零互通）
+const { createCreativeStore } = require('./src/creative/creative-store');
+const { createCreativeSession } = require('./src/creative/creative-session');
+const { registerCreativeIpc } = require('./src/creative-ipc');
 // 0.9.8 Z3：Connection 管理（Provider Identity ≠ Protocol ≠ Connection ≠ Model）
 const connectionsMod = require('./src/connections');
 const secureCreds = require('./src/secure-credentials');
@@ -42,6 +46,8 @@ let proactiveTimer = null;
 const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
 let keyEncrypted = false;   // 面板要如实显示「已加密 / 明文降级」，不吹安全状态
 let researchService = null;
+let creativeStore = null;
+let creativeSession = null;
 
 // SEC-01: 所有 IPC 统一经 sender/frame/URL 三重校验（src/ipc-guard.js）；
 // child frame / 外部 URL / 其他 webContents 一律拒绝，错误信息只有 UNTRUSTED_RENDERER。
@@ -430,6 +436,8 @@ ipcGuard.handle('config-set-key', (e, key) => {
   cfg = res.cfg;
   brain = res.brain;
   keyEncrypted = persisted.encrypted;
+  // v0.9.9 Phase 3: Creative session 重绑新 provider cfg（已开始的 generation 持旧引用继续，不受影响）
+  if (creativeStore) creativeSession = createCreativeSession({ store: creativeStore, cfg });
 
   return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
 });
@@ -615,6 +623,17 @@ app.whenReady().then(() => {
   }
   researchService = new ResearchService(app.getPath('userData'));
   registerResearchIpc(ipcGuard, researchService, { dialog }); // SEC-01: research IPC 同样经 sender 校验
+
+  // v0.9.9 Phase 3: Creative 创作空间（store + session + IPC，全部经既有 ipc-guard sender 校验）
+  creativeStore = createCreativeStore(app.getPath('userData'));
+  creativeSession = createCreativeSession({ store: creativeStore, cfg });
+  registerCreativeIpc(ipcGuard, {
+    getStore: () => creativeStore,
+    getSession: () => creativeSession,
+    getWebContents: () => (win && !win.isDestroyed() ? win.webContents : null),
+    skillsDir: path.join(app.getPath('userData'), 'creative', 'skills'),
+    dataRoot: app.getPath('userData')
+  });
   createWindow();
 });
 

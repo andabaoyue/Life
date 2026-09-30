@@ -76,7 +76,38 @@
       <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
       <div class="p-title">我的记忆</div>
       <div id="memList" class="memlist">—</div>
-      <div class="row btns"><button id="closePanel">关闭</button></div>
+      <div class="row btns"><button id="openCreative">创作空间</button><button id="closePanel">关闭</button></div>
+    </div>
+
+    <!-- 创作空间 (v0.9.9 Phase 3)：独立创作数据面（项目/历史/Context/Summary），
+         与初澜主体数据完全隔离；此处只谈「创作助手」，不与主体人格混同 -->
+    <div id="creativePanel" class="hidden">
+      <div class="p-title">创作空间</div>
+      <div class="row">
+        <select id="crProjectSelect"></select>
+        <button id="crCreateProject">新建项目</button>
+      </div>
+      <div class="row">
+        <input id="crNewProject" placeholder="新项目 id（字母/数字/_/-）">
+      </div>
+      <div class="p-title">History</div>
+      <div id="crHistory" class="memlist">—</div>
+      <div id="crStream" class="hint"></div>
+      <div class="row">
+        <textarea id="crInput" rows="3" placeholder="写给创作助手的需求…"></textarea>
+      </div>
+      <div class="row btns">
+        <button id="crSend">发送</button>
+        <button id="crAbort">中止</button>
+        <button id="crSummarize">生成小结</button>
+        <button id="crClose">关闭</button>
+      </div>
+      <div class="p-title">项目 Context</div>
+      <div class="row">
+        <textarea id="crContext" rows="3" placeholder='{"theme": "..."}'></textarea>
+      </div>
+      <div class="row btns"><button id="crSaveContext">保存 Context</button></div>
+      <div class="hint" id="crState">创作助手就绪</div>
     </div>
 
     <!-- 实验观测与可复盘工具面板 (v0.9.5) -->

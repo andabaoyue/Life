@@ -996,6 +996,120 @@ document.getElementById('connDelete').addEventListener('click', async () => {
 
 refreshConnections();
 
+/* ===== 创作空间（v0.9.9 Phase 3）：独立创作数据面，绝不读取/写入主体记忆与状态 ===== */
+const crPanel = document.getElementById('creativePanel');
+const crProjectSelect = document.getElementById('crProjectSelect');
+const crHistory = document.getElementById('crHistory');
+const crStream = document.getElementById('crStream');
+const crState = document.getElementById('crState');
+
+function crSay(msg) { if (crState) crState.textContent = msg; }
+
+async function crRefresh() {
+  if (!api || !api.creative) return;
+  const list = await api.creative.listProjects();
+  if (!list || !list.ok) return crSay('项目列表读取失败');
+  if (crProjectSelect) {
+    crProjectSelect.replaceChildren();
+    for (const id of list.projects) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = id + (id === list.activeProject ? '（当前）' : '');
+      opt.selected = id === list.activeProject;
+      crProjectSelect.appendChild(opt);
+    }
+  }
+  await crLoadHistory();
+}
+
+async function crLoadHistory() {
+  if (!api || !api.creative) return;
+  const id = crProjectSelect && crProjectSelect.value ? crProjectSelect.value : undefined;
+  const r = await api.creative.getHistory(id);
+  if (!r || !r.ok) return crSay('历史读取失败：' + ((r && r.error) || ''));
+  if (crHistory) {
+    crHistory.replaceChildren();
+    for (const rec of r.history) {
+      const line = document.createElement('div');
+      line.textContent = '[' + rec.role + '/' + rec.status + '] ' + rec.content;
+      crHistory.appendChild(line);
+    }
+    if (!r.history.length) crHistory.textContent = '（暂无历史）';
+  }
+  const proj = await api.creative.loadProject(id);
+  const ctx = document.getElementById('crContext');
+  if (ctx && proj && proj.ok) ctx.value = JSON.stringify(proj.context || {}, null, 2);
+}
+
+function crBind() {
+  if (!crPanel || !api || !api.creative) return;
+  const open = document.getElementById('openCreative');
+  if (open) open.addEventListener('click', () => {
+    crPanel.classList.remove('hidden');
+    crRefresh();
+  });
+  const close = document.getElementById('crClose');
+  if (close) close.addEventListener('click', () => crPanel.classList.add('hidden'));
+
+  const create = document.getElementById('crCreateProject');
+  if (create) create.addEventListener('click', async () => {
+    const input = document.getElementById('crNewProject');
+    const r = await api.creative.createProject(input ? input.value.trim() : '');
+    if (!r || !r.ok) return crSay('创建失败：' + ((r && r.error) || ''));
+    if (input) input.value = '';
+    crSay('已创建项目 ' + r.projectId);
+    crRefresh();
+  });
+
+  if (crProjectSelect) crProjectSelect.addEventListener('change', async () => {
+    const r = await api.creative.setActiveProject(crProjectSelect.value);
+    if (!r || !r.ok) return crSay('切换失败：' + ((r && r.error) || ''));
+    crSay('当前项目：' + r.activeProject);
+    crLoadHistory();
+  });
+
+  const send = document.getElementById('crSend');
+  if (send) send.addEventListener('click', async () => {
+    const input = document.getElementById('crInput');
+    const text = input ? input.value : '';
+    if (crStream) crStream.textContent = '';
+    const r = await api.creative.send(crProjectSelect ? crProjectSelect.value : undefined, text);
+    if (!r || !r.ok) return crSay('发送失败：' + ((r && r.error) || '') + '（' + ((r && r.code) || '') + '）');
+    crSay('创作助手生成中…');
+  });
+
+  const abort = document.getElementById('crAbort');
+  if (abort) abort.addEventListener('click', async () => {
+    const r = await api.creative.abort(crProjectSelect ? crProjectSelect.value : undefined);
+    if (!r || !r.ok) return crSay('中止失败：' + ((r && r.error) || ''));
+    crSay('已请求中止');
+  });
+
+  const summarize = document.getElementById('crSummarize');
+  if (summarize) summarize.addEventListener('click', async () => {
+    const r = await api.creative.summarize(crProjectSelect ? crProjectSelect.value : undefined);
+    if (!r || !r.ok) return crSay('小结失败：' + ((r && r.error) || ''));
+    crSay('小结已生成（' + r.summary.messageCount + ' 条历史）');
+    crLoadHistory();
+  });
+
+  const saveCtx = document.getElementById('crSaveContext');
+  if (saveCtx) saveCtx.addEventListener('click', async () => {
+    const ctx = document.getElementById('crContext');
+    let parsed;
+    try { parsed = JSON.parse(ctx ? ctx.value : '{}'); } catch { return crSay('Context 需为合法 JSON'); }
+    const r = await api.creative.updateContext(crProjectSelect ? crProjectSelect.value : undefined, parsed);
+    if (!r || !r.ok) return crSay('Context 保存失败：' + ((r && r.error) || ''));
+    crSay('Context 已保存');
+  });
+
+  api.creative.onDelta((p) => { if (crStream) crStream.textContent += p.text; });
+  api.creative.onCompleted(() => { crSay('创作助手生成完成'); crLoadHistory(); });
+  api.creative.onError((p) => { crSay('生成出错：' + (p && p.error ? p.error : '') + '（' + ((p && p.code) || '') + '）'); crLoadHistory(); });
+  api.creative.onAborted(() => { crSay('生成已中止（partial 已保留）'); crLoadHistory(); });
+}
+crBind();
+
 document.getElementById('openCfg').addEventListener('click', () => api && api.openConfig());
 
 document.getElementById('clearMem').addEventListener('click', async () => {

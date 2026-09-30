@@ -1,6 +1,25 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('deskpet', {
+  // Creative 创作空间（v0.9.9 Phase 3）：只暴露业务方法，不暴露 Node/Store/Adapter 对象
+  creative: {
+    listProjects: () => ipcRenderer.invoke('creative:list-projects'),
+    createProject: (projectId) => ipcRenderer.invoke('creative:create-project', projectId),
+    getActiveProject: () => ipcRenderer.invoke('creative:get-active-project'),
+    setActiveProject: (projectId) => ipcRenderer.invoke('creative:set-active-project', projectId),
+    loadProject: (projectId) => ipcRenderer.invoke('creative:load-project', projectId),
+    updateContext: (projectId, context) => ipcRenderer.invoke('creative:update-context', projectId, context),
+    summarize: (projectId) => ipcRenderer.invoke('creative:summarize', projectId),
+    getHistory: (projectId) => ipcRenderer.invoke('creative:get-history', projectId),
+    send: (projectId, content) => ipcRenderer.invoke('creative:send', { projectId, content }),
+    abort: (projectId) => ipcRenderer.invoke('creative:abort', projectId),
+    listSkills: () => ipcRenderer.invoke('creative:list-skills'),
+    loadSkill: (skillName) => ipcRenderer.invoke('creative:load-skill', skillName),
+    onDelta: (cb) => ipcRenderer.on('creative:delta', (e, p) => cb(p)),
+    onCompleted: (cb) => ipcRenderer.on('creative:completed', (e, p) => cb(p)),
+    onError: (cb) => ipcRenderer.on('creative:error', (e, p) => cb(p)),
+    onAborted: (cb) => ipcRenderer.on('creative:aborted', (e, p) => cb(p))
+  },
   // 窗口
   dragStart: () => ipcRenderer.send('drag-start'),
   dragEnd: () => ipcRenderer.send('drag-end'),
