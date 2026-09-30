@@ -297,7 +297,13 @@ ipcGuard.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
 // 自我成长记录只读展示；删除/覆盖留到 schema 和审计策略明确后再开放。
 ipcGuard.handle('self-ledger-list', () => (brain ? brain.listSelfLedger() : []));
 
-ipcGuard.handle('self-ledger-reset', () => {
+ipcGuard.handle('self-ledger-reset', (e, opts) => {
+  // N-08: reset 不可逆清空成长档案并重置出生点 —— 必须显式确认。
+  // 未确认请求一律拒绝；确认由调用方明示（UI 的 window.confirm 之后带 confirm: true），
+  // 裸调用/误触拿不到 reset。SEC-01 的 ipcGuard sender/frame/URL 防护不变。
+  if (!opts || opts.confirm !== true) {
+    return { ok: false, error: 'REQUIRES_EXPLICIT_CONFIRMATION' };
+  }
   if (!brain) return { ok: false, error: '程序尚未初始化' };
   brain.selfLedger.reset();
   brain.birthAt = brain.selfLedger.birthAt;
@@ -431,7 +437,18 @@ ipcGuard.handle('creative-mode-set', (e, enabled) => {
   const next = { ...cfg, writingMode: enabled === true };
   try {
     // 不调用 persistCfg：切换创作模式不应重复处理或降级保存 API Key。
-    save(app.getPath('userData'), next);
+    // N-03：但绝不裸 save —— 明文降级时 apiKey 唯一落盘点就是 config 文件，
+    // 裸 save（config.save 从源头摘 key）会把它抹掉，重启后用户凭据丢失。
+    // 这里按盘上 key 的原有形态回写：盘上 config 有 key（明文降级）就原样保留；
+    // 盘上没有（加密存 key 文件）就维持没有，绝不把内存明文 key 写回盘。
+    let diskKey = null;
+    try {
+      const raw = JSON.parse(fs.readFileSync(secure.cfgPath(app.getPath('userData')), 'utf8'));
+      if (raw && typeof raw.apiKey === 'string' && raw.apiKey !== '') diskKey = raw.apiKey;
+    } catch { /* 盘上无 config / 读不到：按无 key 处理，行为与裸 save 一致 */ }
+    const { apiKey, ...diskRest } = next;
+    save(app.getPath('userData'), next,
+      diskKey !== null ? { ...diskRest, apiKey: diskKey } : diskRest);
     Object.assign(cfg, next);
     brain.refreshConfig();
     return { ok: true, enabled: cfg.writingMode };

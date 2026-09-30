@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   clearMemory: () => ipcRenderer.invoke('memory-clear'),
   listMemory: () => ipcRenderer.invoke('memory-list'),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
-  resetSelfLedger: () => ipcRenderer.invoke('self-ledger-reset'),
+  resetSelfLedger: (confirm) => ipcRenderer.invoke('self-ledger-reset', { confirm: confirm === true }),
   deleteMemory: (i) => ipcRenderer.invoke('memory-delete', i),
   // Phase 0.5: 内部调节状态查询与事件监听
   getInternalRegulation: () => ipcRenderer.invoke('internal-regulation-get'),

@@ -28,6 +28,22 @@ const NON_STATE_RECORD_TYPES = new Set([
   'audit_log'
 ]);
 
+// N-05: 分页输入约束（防御 renderer 传入超大/负值/非整数）。
+// - offset / limit 必须是有限整数，否则回退安全默认值；
+// - offset 非负；limit 有明确最大值 MAX_QUERY_LIMIT；
+// - 默认值与正常分页语义保持不变（默认 50 条/页）。
+// MAX_QUERY_LIMIT 取 10000：与 Full Bundle 导出的内部批量上限一致，
+// 内部导出语义不受影响；renderer 侧任何单次查询都不再是无界规模。
+const DEFAULT_QUERY_LIMIT = 50;
+const MAX_QUERY_LIMIT = 10000;
+function normalizePaging(offset, limit) {
+  const off = Number.isInteger(offset) && offset >= 0 ? offset : 0;
+  const lim = Number.isInteger(limit) && limit >= 0
+    ? Math.min(limit, MAX_QUERY_LIMIT)
+    : DEFAULT_QUERY_LIMIT;
+  return { offset: off, limit: lim };
+}
+
 function getRecordWindowNo(rec) {
   if (!rec) return null;
   const p = rec.payload || rec;
@@ -282,7 +298,7 @@ class ResearchQuery {
   }
 
   getWindows(options = {}) {
-    const { offset = 0, limit = 50 } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const records = this._readArchiveRecords();
     const windowMap = new Map();
 
@@ -813,7 +829,8 @@ class ResearchQuery {
   // 分页列表查询方法
   // ---------------------------------------------------------------------------
   getEvents(options = {}) {
-    const { windowNo = null, type = null, source = null, offset = 0, limit = 50 } = options;
+    const { windowNo = null, type = null, source = null } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const records = this._readArchiveRecords();
     let events = [];
 
@@ -840,7 +857,8 @@ class ResearchQuery {
   }
 
   getObservations(options = {}) {
-    const { windowNo = null, source = null, offset = 0, limit = 50 } = options;
+    const { windowNo = null, source = null } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const records = this._readArchiveRecords();
     let items = [];
 
@@ -864,7 +882,8 @@ class ResearchQuery {
   }
 
   getInterpretations(options = {}) {
-    const { windowNo = null, perspective = null, offset = 0, limit = 50 } = options;
+    const { windowNo = null, perspective = null } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const records = this._readArchiveRecords();
     let items = [];
 
@@ -888,7 +907,8 @@ class ResearchQuery {
   }
 
   getEvidence(options = {}) {
-    const { windowNo = null, status = null, trait = null, offset = 0, limit = 50 } = options;
+    const { windowNo = null, status = null, trait = null } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const records = this._readArchiveRecords();
     let items = [];
 
@@ -917,7 +937,8 @@ class ResearchQuery {
   }
 
   getStateChanges(options = {}) {
-    const { windowNo = null, trait = null, offset = 0, limit = 50 } = options;
+    const { windowNo = null, trait = null } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const stateData = this._readSubjectState();
     let items = Array.isArray(stateData.stateChanges) ? [...stateData.stateChanges] : [];
 
@@ -938,7 +959,8 @@ class ResearchQuery {
     if (typeof options === 'string') {
       options = { query: options };
     }
-    const { query = '', type = null, offset = 0, limit = 50 } = options;
+    const { query = '', type = null } = options;
+    const { offset, limit } = normalizePaging(options.offset, options.limit);
     const q = String(query).trim().toLowerCase();
     const results = [];
 
@@ -1004,4 +1026,4 @@ class ResearchQuery {
   }
 }
 
-module.exports = { ResearchQuery };
+module.exports = { ResearchQuery, normalizePaging, DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT };

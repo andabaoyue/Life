@@ -105,5 +105,49 @@ check('自动生成的 StateChange 记录通过 validateStateChange',
 check('SubjectState.data.stateChanges 持久化包含该记录',
   Array.isArray(ss.data.stateChanges) && ss.data.stateChanges.length === 2);
 
+// 5. N-11: validateStateChange 与 reducer 的 maxDelta 语义一致
+const scOver = createStateChange({
+  stateChangeId: 'sc-over-max',
+  trait: 'quiet_preference',
+  previousValue: 0,
+  delta: 200,
+  newValue: 200,
+  maxDelta: 50
+});
+const vOver = validateStateChange(scOver);
+check('超过 reducer.maxDelta 的记录被拒绝（仅靠 ±999 算术自洽不得通过）',
+  vOver.valid === false && vOver.reason === 'DELTA_EXCEEDS_MAX_DELTA', JSON.stringify(vOver));
+
+const scAtMax = createStateChange({
+  stateChangeId: 'sc-at-max',
+  trait: 'quiet_preference',
+  previousValue: 10,
+  delta: -50,
+  newValue: -40,
+  maxDelta: 50
+});
+check('delta 恰好等于 maxDelta 时仍通过', validateStateChange(scAtMax).valid === true);
+
+const scLegacyOver = {
+  stateChangeId: 'sc-legacy-over',
+  trait: 'quiet_preference',
+  previousValue: 0,
+  delta: 200,
+  newValue: 200
+};
+check('无 maxDelta 元数据的 legacy 记录维持原有 ±999 语义',
+  validateStateChange(scLegacyOver).valid === true);
+
+const scRange = {
+  stateChangeId: 'sc-range',
+  trait: 'quiet_preference',
+  previousValue: 0,
+  delta: 1500,
+  newValue: 999,
+  reducer: { maxDelta: 2000 }
+};
+check('±999 总范围约束保持：newValue 越界仍拒绝',
+  validateStateChange({ ...scRange, newValue: 1000 }).valid === false);
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

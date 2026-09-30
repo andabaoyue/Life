@@ -30,6 +30,8 @@
  * Test H: IPC 白名单与历史版本兼容性
  *   - 严禁挂载任何写操作通道
  *   - 遗留旧格式平滑降级兼容
+ * Test I: 分页输入约束 (N-05)
+ *   - offset/limit 有限整数、非负 offset、limit 明确上限，异常值回退安全默认
  */
 
 const fs = require('fs');
@@ -651,6 +653,63 @@ function testH_IpcAndCompat() {
 }
 
 // -----------------------------------------------------------------------------
+// Test I: 分页输入约束 (N-05)
+// -----------------------------------------------------------------------------
+function testI_PagingConstraints() {
+  console.log('\n--- Test I: 分页输入约束（offset/limit 上限与异常值） ---');
+  const dir = tmpDir('paging-');
+  const archivePath = path.join(dir, 'experiences.jsonl');
+  const rec = {
+    type: 'window_archive',
+    windowNo: 1,
+    createdAt: 1000,
+    turns: 50,
+    events: [
+      { eventId: 'evt-p-01', messageId: 'm-p-01' },
+      { eventId: 'evt-p-02', messageId: 'm-p-02' },
+      { eventId: 'evt-p-03', messageId: 'm-p-03' }
+    ],
+    verifiedEvidence: [
+      { evidenceId: 'ev-p-01', trait: 'quiet_preference', direction: 1, strength: 0.5 },
+      { evidenceId: 'ev-p-02', trait: 'quiet_preference', direction: 1, strength: 0.5 },
+      { evidenceId: 'ev-p-03', trait: 'quiet_preference', direction: 1, strength: 0.5 },
+      { evidenceId: 'ev-p-04', trait: 'quiet_preference', direction: 1, strength: 0.5 },
+      { evidenceId: 'ev-p-05', trait: 'quiet_preference', direction: 1, strength: 0.5 }
+    ]
+  };
+  fs.writeFileSync(archivePath, JSON.stringify(rec) + '\n', 'utf8');
+
+  const q = new ResearchQuery(dir);
+
+  const def = q.getEvidence();
+  check('默认分页语义不变：limit=50 / offset=0', def.limit === 50 && def.offset === 0,
+    'limit=' + def.limit + ' offset=' + def.offset);
+
+  const page = q.getEvidence({ offset: 1, limit: 2 });
+  check('正常分页：offset/limit 原样生效',
+    page.offset === 1 && page.limit === 2 && page.items.length === 2,
+    'items=' + page.items.length);
+
+  const huge = q.getEvidence({ offset: 0, limit: 1e9 });
+  check('超大 limit 被钳制到 MAX_QUERY_LIMIT，不允许无界规模',
+    huge.limit === 10000 && huge.items.length <= 5, 'limit=' + huge.limit);
+
+  const neg = q.getEvidence({ offset: -5, limit: -3 });
+  check('负值 offset/limit 回退安全默认值', neg.offset === 0 && neg.limit === 50);
+
+  const frac = q.getEvidence({ offset: 1.5, limit: 2.7 });
+  check('非整数 offset/limit 回退安全默认值', frac.offset === 0 && frac.limit === 50);
+
+  const evs = q.getEvents({ limit: 1e9 });
+  check('getEvents 同样受上限约束', evs.limit === 10000, 'limit=' + evs.limit);
+
+  const zero = q.getEvidence({ offset: 0, limit: 0 });
+  check('limit=0 保持现有语义（显式空页）', zero.limit === 0 && zero.items.length === 0);
+
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+}
+
+// -----------------------------------------------------------------------------
 // 执行测试集
 // -----------------------------------------------------------------------------
 (async () => {
@@ -662,6 +721,7 @@ function testH_IpcAndCompat() {
   await testF_ReadOnlyIntegrity();
   testG_Export();
   testH_IpcAndCompat();
+  testI_PagingConstraints();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

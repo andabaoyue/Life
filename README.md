@@ -370,7 +370,7 @@ node test/brain.test.js          # 164 项：窗口边界、前缀不变式、�
 node test/memory.test.js         # 30 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
 node test/subject-state.test.js  # 19 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放
-node test/main.test.js           # 78 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚）
+node test/main.test.js           # 85 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 creative-mode-set 明文降级不丢 key、N-08 self-ledger-reset 显式确认门）
 node test/tracker.test.js        # 42 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟
 node test/wardrobe.test.js       # 55 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离
@@ -389,11 +389,11 @@ node test/animation-controller.test.js # 30 项：自然动画控制器、60fps 
 node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸/眨眼/打哈欠/伸懒腰权重分发、打断与状态互斥、确定性覆盖
 node test/render-adapter.test.js       # 10 项：DOM 动画渲染适配器、数据驱动单向流动、异常隔离与无头渲染器
 node test/experience-schema.test.js # 22 项：Event / Observation / Interpretation 三层分离、合法性校验、复合经历封装与向后兼容转换
-node test/state-change.test.js      # 12 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改
+node test/state-change.test.js      # 16 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改、N-11 maxDelta 语义一致（超幅拒绝/边界通过/legacy 保持 ±999）
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
 node test/recovery.test.js          # 38 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
-node test/research.test.js          # 70 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容）
+node test/research.test.js          # 77 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容、Test I 分页输入约束 N-05）
 node test/archive-schema.test.js      # 20 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）
 node test/research-fabrication.test.js # 19 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
 node test/event-source-validation.test.js # 20 项：v0.9.5.1 Event Source 正向白名单约束（5 种合法源、大小写容错、第三方拦截与黑名单防御）

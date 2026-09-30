@@ -73,6 +73,15 @@ function validateStateChange(sc) {
   if (sc.newValue !== Math.max(-999, Math.min(999, sc.previousValue + sc.delta))) {
     return { valid: false, reason: 'VALUE_ARITHMETIC_MISMATCH' };
   }
+  // N-11: 与 Reducer 语义一致 —— 单次跃迁的 delta 受 reducer.maxDelta 限幅，
+  // 仅靠 ±999 算术自洽的超幅记录（如 delta=200 而 maxDelta=50）必须拒绝。
+  // 记录未携带 maxDelta 元数据（legacy）时维持原有 ±999 约束，不追溯加码。
+  const reducerMax = (sc.reducer && typeof sc.reducer === 'object' && Number.isFinite(sc.reducer.maxDelta))
+    ? sc.reducer.maxDelta
+    : (Number.isFinite(sc.maxDelta) ? sc.maxDelta : null);
+  if (reducerMax !== null && Math.abs(sc.delta) > reducerMax) {
+    return { valid: false, reason: 'DELTA_EXCEEDS_MAX_DELTA' };
+  }
   return { valid: true };
 }
 

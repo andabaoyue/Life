@@ -419,6 +419,33 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('开口之后仍在冷却（重建 brain 也不会绕过冷却）',
     (await invoke('proactive-check')) === null);
 
+  /* ============ N-03: creative-mode-set 不得擦掉明文降级下的 apiKey ============ */
+  await invoke('config-set-key', 'sk-creative-keepme');
+  const cm = await invoke('creative-mode-set', true);
+  check('N-03 creative-mode-set 正常切换并持久化 writingMode（原语义不变）',
+    cm.ok === true && cm.enabled === true && JSON.parse(readCfg()).writingMode === true);
+  check('N-03 明文降级（safeStorage=null）下 creative-mode-set 后盘上 apiKey 保留',
+    JSON.parse(readCfg()).apiKey === 'sk-creative-keepme',
+    'apiKey=' + JSON.parse(readCfg()).apiKey);
+  const secureMod = require(path.join(ROOT, 'src/secure.js'));
+  const reread = secureMod.loadConfig(() => null, DIR, () => JSON.parse(readCfg()));
+  check('N-03 重启路径重新读取仍能得到原 apiKey',
+    reread.cfg.apiKey === 'sk-creative-keepme' && reread.encrypted === false,
+    'apiKey=' + reread.cfg.apiKey);
+  await invoke('creative-mode-set', false);
+
+  /* ============ N-08: self-ledger-reset 必须显式确认 ============ */
+  const birthBefore = brain.birthAt;
+  const noConfirm = await invoke('self-ledger-reset');
+  check('N-08 未确认的 reset 请求被拒绝',
+    !!noConfirm && noConfirm.ok === false && noConfirm.error === 'REQUIRES_EXPLICIT_CONFIRMATION');
+  const falseConfirm = await invoke('self-ledger-reset', { confirm: false });
+  check('N-08 confirm 非 true 一律拒绝', !!falseConfirm && falseConfirm.ok === false);
+  check('N-08 被拒请求不改变出生点/档案', brain.birthAt === birthBefore);
+  const confirmed = await invoke('self-ledger-reset', { confirm: true });
+  check('N-08 显式确认后 reset 生效',
+    confirmed.ok === true && confirmed.birthAt === brain.birthAt);
+
   check('本层跑完没有残留临时文件',
     fs.readdirSync(DIR).filter(x => x.includes('.tmp-')).length === 0);
   fs.rmSync(DIR, { recursive: true, force: true });

@@ -932,7 +932,8 @@ document.getElementById('resetSelf').addEventListener('click', async () => {
   if (!api || !api.resetSelfLedger) return;
   const ok = window.confirm('这会删除初澜出生以来的成长档案，并把她视为一次新的出生。确定继续吗？');
   if (!ok) return;
-  const res = await api.resetSelfLedger();
+  // confirm: true 携带上方 window.confirm 的用户明确确认（N-08：未确认的 reset 请求会被主进程拒绝）
+  const res = await api.resetSelfLedger(true);
   if (!res || !res.ok) return say('成长档案重置失败：' + ((res && res.error) || '未知错误'));
   refreshStats();
   say('好，我们从现在重新认识。');
