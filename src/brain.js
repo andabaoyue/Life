@@ -211,6 +211,9 @@ class Brain {
     // v0.9.9 P0: 关窗失败审计计数 —— 累计本窗口在成功关窗前经历的失败关窗次数，
     // 成功时铸入归档 payload 的 retryAttempts / delayedClose，绝不把补关粉饰成一帆风顺
     this.windowCloseAttempts = 0;
+    // v0.9.9 D3: 关窗失败退避保险丝 —— 失败后进入冷却，记录「第几轮起重试」。
+    // 网络抖动/服务端 504/限流时，绝不允许每轮对话都全价死磕一次小结（14 连败的制度化保险）
+    this.windowCloseRetryAfterTurn = 0;
   }
 
   restoreTelemetrySequence() {
@@ -847,7 +850,14 @@ class Brain {
 
     // 边界处理放在回答之后：本轮的 user+assistant 已经进了缓存
     let windowClosed = false, merged = false;
-    if (this.memory.needsWindowReset() && !this.boundary) {
+    // v0.9.9 D3: 关窗失败退避保险丝 —— 冷却期内不自动重试小结，防止限流/网络抖动时每轮全价死磕；
+    // 只约束自动触发，用户/脚本手动关窗不受冷却限制
+    const inCloseBackoff = Boolean(this.windowCloseRetryAfterTurn)
+      && this.memory.data.turnsInWindow < this.windowCloseRetryAfterTurn;
+    if (inCloseBackoff && this.memory.needsWindowReset() && !this.boundary) {
+      console.warn(`[Brain] 关窗处于失败退避冷却中（第 ${this.windowCloseRetryAfterTurn} 轮起重试），暂缓自动触发`);
+    }
+    if (this.memory.needsWindowReset() && !this.boundary && !inCloseBackoff) {
       // 小结要在飞一两秒，期间用户可能又聊满一个窗口。
       // 不做重入保护的话，两个快照的删除区间会互相重叠，可能吃掉尾部桥接。
       this.boundary = true;
@@ -871,7 +881,10 @@ class Brain {
       让「窗口为何拖超期」在盘面与日志上都可追查（数据不伪造、审计不失真） */
   _noteWindowCloseFailure(reason) {
     this.windowCloseAttempts = (this.windowCloseAttempts || 0) + 1;
-    console.warn(`[Brain] 关窗尝试失败 (#${this.windowCloseAttempts})：${reason || 'unknown'}，保留窗口内容待下一轮重试`);
+    // v0.9.9 D3: 一旦失败即进入退避冷却（至少隔 2 轮对话），冷却期内即使触发条件满足也不自动重试；
+    // 窗口宁可继续变长，也不把钱烧在连环失败的全价小结上（历史数据绝不丢）
+    this.windowCloseRetryAfterTurn = ((this.memory && this.memory.data) ? this.memory.data.turnsInWindow : 0) + 2;
+    console.warn(`[Brain] 关窗尝试失败 (#${this.windowCloseAttempts})：${reason || 'unknown'}，保留窗口内容待下一轮重试；退避至第 ${this.windowCloseRetryAfterTurn} 轮起重试`);
   }
 
   /** 生成本窗口小结并归档 */
@@ -1333,8 +1346,10 @@ class Brain {
       snap.generationContext = summaryGenerationContext;
       const done = this.memory.closeWindow(summaryTextForMemory, snap);
       if (done) {
-        // v0.9.9 P0: 关窗成功，审计计数复位（本窗口的失败历史已随 retryAttempts 铸入归档）
+        // v0.9.9 P0: 关窗成功，审计计数复位（本窗口的失败历史已随 retryAttempts 铸入归档）；
+        // v0.9.9 D3: 退避冷却一并复位，下一窗口恢复正常自动关窗节奏
         this.windowCloseAttempts = 0;
+        this.windowCloseRetryAfterTurn = 0;
         this.stats.compressions++;
         this.saveStats(true);
         this.pendingCacheBreakReason = 'window_boundary';
