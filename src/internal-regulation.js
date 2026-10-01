@@ -94,7 +94,12 @@ class InternalRegulationManager {
     this.persistenceHealthy = true;
     this.persistenceError = null;
 
-    this.load();
+    // v0.9.9 P0-3: 未启用时坚决不读盘。
+    // 原实现在 baseline 下也无条件 load()，会拿磁盘上残留的实验数值覆盖出厂默认值
+    // —— 对照组从源头就不干净，既违反 D-009 §2「基线隔离不变量」，
+    // 也与本文件 :22 的自述「未启用时状态保持基线默认值，不产生任何副作用」相反。
+    // 未启用就是出厂默认值，一个字都不许被历史残留污染。
+    if (this.enabled) this.load();
   }
 
   /**

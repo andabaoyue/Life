@@ -427,8 +427,8 @@ node test/canalization.test.js           # 27 项：v0.9.7 沃丁顿发育景观
 node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
 node test/dream-gate.test.js             # 30 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性）
 node test/dream-synthesis.test.js        # 34 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获）
-node test/lifecycle-wiring.test.js    # 47 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量）
-node test/internal-regulation.test.js # 23 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空）
+node test/lifecycle-wiring.test.js    # 50 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留）
+node test/internal-regulation.test.js # 26 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染）
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
 node test/attention-gate.test.js      # 33 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重）
 node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）

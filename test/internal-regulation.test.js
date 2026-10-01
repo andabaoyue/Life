@@ -130,5 +130,26 @@ baseManager.updateOnActivity('poke', { count: 5 });
 const basePost = baseManager.getState();
 check('基线模式下所有调节更新均为纯旁路空操作 (零副作用)', basePre.energy === basePost.energy && basePre.arousal === basePost.arousal);
 
+// 16. v0.9.9 P0-3：baseline 不得被磁盘残留的实验数值污染
+// 原实现在未启用时也无条件 load()，盘上有残留就覆盖出厂默认值 —— 对照组从
+// 源头就不干净，既违反 D-009 §2「基线隔离不变量」，也违反 internal-regulation.js:22
+// 的自述「未启用时状态保持基线默认值，不产生任何副作用」。
+const residueDir = makeTempDir();
+const residue = new InternalRegulationManager(residueDir, { enabled: true });
+residue.energy = 12;
+residue.restPressure = 77;
+residue.arousal = 91;
+residue.save();
+check('P0-3 前提：实验残留确实已落盘', fs.existsSync(residue.path));
+const baseline = new InternalRegulationManager(residueDir, { enabled: false });
+const bs = baseline.getState();
+check('P0-3 baseline 不加载磁盘残留（对照组不被历史污染）',
+  bs.energy === REGULATION_BOUNDS.energy.default &&
+  bs.restPressure === REGULATION_BOUNDS.restPressure.default &&
+  bs.arousal === REGULATION_BOUNDS.arousal.default,
+  `energy=${bs.energy}, restPressure=${bs.restPressure}, arousal=${bs.arousal}`);
+check('P0-3 前提：启用时同一目录确实读得到残留（否则上一条是空转）',
+  new InternalRegulationManager(residueDir, { enabled: true }).getState().energy === 12);
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

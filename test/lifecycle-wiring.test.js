@@ -338,6 +338,32 @@ check('离线重放：InternalRegulationManager.replay 能够从归档准确重�
            replayReport.finalState.energy === 62;
   })());
 
+// v0.9.9 P0-3: baseline 不得从归档自愈实验残留。
+// 原 _restoreInternalRegulationFromArchive 只判 fs.existsSync、完全不看 enabled，
+// 于是 baseline 下也会把归档里的实验残留灌回内态并 save() 落盘 —— 对照组被污染。
+const dirGBase = makeTempDir();
+const cfgGBase = {
+  experimentMode: 'baseline',
+  experimentModules: { internalRegulation: false, biographicalCanalization: false }
+};
+const seedGBase = new Brain(dirGBase, cfgG);
+seedGBase.internalRegulation.energy = 62;
+seedGBase.internalRegulation.restPressure = 38;
+seedGBase.internalRegulation.arousal = 68;
+seedGBase.internalRegulation.save();
+seedGBase.experiencesArchive.append(seedGBase.internalRegulation.createSnapshotRecord(1));
+seedGBase.shutdown();
+fs.unlinkSync(seedGBase.internalRegulation.path);   // 强制走「从归档恢复」那条路
+const brainGB = new Brain(dirGBase, cfgGBase);
+check('P0-3 前提：baseline 下内部调节模块确实未启用', brainGB.internalRegulation.enabled === false);
+check('P0-3 baseline 不从归档自愈实验残留（对照组不被历史污染）',
+  brainGB.internalRegulation.energy === 100 &&
+  brainGB.internalRegulation.restPressure === 0 &&
+  brainGB.internalRegulation.arousal === 50,
+  `energy=${brainGB.internalRegulation.energy}, restPressure=${brainGB.internalRegulation.restPressure}, arousal=${brainGB.internalRegulation.arousal}`);
+check('P0-3 baseline 下零副作用：不写出 internal-regulation.json',
+  !fs.existsSync(brainGB.internalRegulation.path));
+
 
 // =========================================================================
 // Test H: Path Dependency Formal Experiment Interface (Section XII)

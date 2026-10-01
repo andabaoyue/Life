@@ -394,6 +394,10 @@ class Brain {
 
   _restoreInternalRegulationFromArchive() {
     if (!this.internalRegulation || !this.experiencesArchive) return;
+    // v0.9.9 P0-3: 未启用的模块不做恢复、也不写盘。
+    // 原实现只判 fs.existsSync、完全不看 enabled，于是 baseline 下也会把
+    // 归档里的实验残留灌回内态并 save() 落盘 —— 对照组被污染。
+    if (!this.internalRegulation.enabled) return;
     try {
       if (fs.existsSync(this.internalRegulation.path)) return;
       const records = this.experiencesArchive.readAll();
