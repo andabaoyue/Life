@@ -156,5 +156,55 @@ function tmpDir(prefix = 'canalization-test-') {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+// -------------------------------------------------------------
+// 5. v0.9.9 P2-3: 单调性确证 + 源码扫描守卫（杜绝拟人化伪生命）
+// -------------------------------------------------------------
+{
+  // P2-3a: 「经历依赖的可塑性单调衰减」是本模块的核心命题，必须钉住性质本身，
+  // 而不只是几个散点的取值范围。
+  const W = [];
+  for (let i = 0; i <= 1000; i++) W.push(i);
+  const vals = W.map(w => computePlasticityMultiplier(w));
+  let mono = true;
+  for (let i = 1; i < vals.length; i++) { if (vals[i] > vals[i - 1]) { mono = false; break; } }
+  check('P2-3a：可塑性乘子随经历深度单调不增（0→1000 采样）',
+    mono, 'head=' + vals.slice(0, 5).join(',') + ' tail=' + vals.slice(-3).join(','));
+  check('P2-3a：W=0 时乘子为 1.0（出生即最大可塑性）',
+    computePlasticityMultiplier(0) === 1.0);
+  check('P2-3a：乘子值域恒在 (0, 1]（阻尼但永不锁死）',
+    vals.every(v => v > 0 && v <= 1),
+    'min=' + Math.min(...vals) + ' max=' + Math.max(...vals));
+  check('P2-3a：enabled=false 时恒为 1.0（基线零干预）',
+    [0, 1, 50, 500].every(w => computePlasticityMultiplier(w, { enabled: false }) === 1.0));
+
+  // P2-3c: 源码扫描守卫 —— 发育阶段标签永不升格为机制。
+  // DEVELOPMENTAL_STAGES（幼态期/发育期/稳定个体化期）是纯叙事标签、无生产消费方：
+  // 它说「她进入了稳定个体化期」，但背后没有任何机制变化 —— 那正是「拟人化伪生命」
+  // 的形状（叙事层比机制层厚）。这里把它物理锁死：生产代码不得引用它们。
+  //（手法与 test/wardrobe.test.js「正则扫源码执法服装不碰人格」一致）
+  const srcDir = path.join(__dirname, '..', 'src');
+  const offenders = [];
+  // 剥掉注释再扫：守卫要拦的是「被引用/被升级为机制」，不是「被提及」。
+  // 否则谁在注释里写一句 DEVELOPMENTAL_STAGES 就误报，守卫很快就没人信了。
+  const stripComments = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const walkSrc = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) { walkSrc(p); continue; }
+      if (!p.endsWith('.js')) continue;
+      if (path.basename(p) === 'canalization.js') continue;   // 定义处本身豁免
+      const text = stripComments(fs.readFileSync(p, 'utf8'));
+      for (const sym of ['DEVELOPMENTAL_STAGES', 'getDevelopmentalStage', 'getCanalizationMetrics']) {
+        if (text.includes(sym)) offenders.push(path.relative(srcDir, p) + ' -> ' + sym);
+      }
+    }
+  };
+  walkSrc(srcDir);
+  check('P2-3c：DEVELOPMENTAL_STAGES 等不得被生产代码引用（杜绝拟人化伪生命）',
+    offenders.length === 0, JSON.stringify(offenders));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

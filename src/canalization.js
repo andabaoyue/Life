@@ -14,6 +14,11 @@
  *    随 StateChange 完整持久化，确保离线 Replay 严格依照当时落盘参数 100% 确定性重现。
  * 4. 基线零干预原则（Baseline Invariant）：
  *    在 Baseline 模式或模块未激活时，plasticityMultiplier 恒为 1.0，完全等价于原生步长。
+ *    v0.9.9 P2-3b 更正：这条保证**不由本文件提供**。本函数是纯代数工具，
+ *    options.enabled 缺省为 true，裸调 computePlasticityMultiplier(50) 会返回衰减值。
+ *    真正的零干预保证在 subject-state.js reduce() 的 canalizationEnabled 门控
+ *    （缺省 false，fail-closed）。此处刻意保持纯函数天然行为，由权威门控守死 ——
+ *    与 internal-regulation.js 的 enabled 语义分工一致：工具不判断实验模式。
  */
 
 'use strict';
