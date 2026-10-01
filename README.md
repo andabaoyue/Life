@@ -356,7 +356,7 @@ key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key �
 ## 测试
 
 ```bash
-node test/brain.test.js          # 164 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer
+node test/brain.test.js          # 167 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user
 node test/memory.test.js         # 30 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
 node test/subject-state.test.js  # 24 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式

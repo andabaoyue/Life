@@ -744,8 +744,12 @@ class Brain {
     this.pendingUser = false;
 
     if (!text) {
-      // 主动搭话没追加过，也就没什么可回滚 —— 少一个「 rollback 删错人」的分支
-      if (!proactive) this.memory.rollback(1);
+      // v0.9.9 P1-b 更正：原注释写「主动搭话没追加过，也就没什么可回滚」，与上面
+      // 的 memory.append('user', …, {synthetic:true}) 直接矛盾 —— proactive 确实
+      // 追加过一条 synthetic user。空回复时不回滚，历史里就留下一条**没有回复的**
+      // synthetic user，下次请求出现连续两条 user（memory.rollback 的注释描述的
+      // 正是这个坏形状）。所以无条件回滚。
+      this.memory.rollback(1);
       throw new Error('返回空内容');
     }
 

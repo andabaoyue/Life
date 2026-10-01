@@ -1000,6 +1000,32 @@ async function main() {
       p0Brain.memory.data.windowNo === 2);
   }
 
+  // -------------------------------------------------------------
+  // v0.9.9 P1-b：主动搭话空回复必须回滚 synthetic user
+  // brain 在 proactive 分支会 append 一条 {synthetic:true} 的 user 消息；
+  // 原实现在空回复时只对非 proactive 回滚，于是在历史里留下一条**没有回复的**
+  // synthetic user，下次请求出现连续两条 user（memory.rollback 注释描述的坏形状）。
+  // -------------------------------------------------------------
+  {
+    const bP1B = new Brain(tmpDir(), { ...DEFAULTS, apiKey: 'sk-test', windowTurns: 999 });
+    bP1B.api = {
+      complete: async () => ({ text: '', usage: {} }),
+      stream: async () => ({ text: '', usage: {} })
+    };
+    bP1B.memory.append('user', '之前的对话');
+    const beforeP1B = bP1B.memory.data.history.length;
+    let threwP1B = false;
+    try {
+      await bP1B.ask('[自主感知触发]：hi', () => {}, { proactive: true, proactiveHint: '轻声' });
+    } catch { threwP1B = true; }
+    check('P1-b 前提：空回复确实抛错（否则下面是空转）', threwP1B);
+    check('P1-b：主动搭话空回复后历史无残留 synthetic user',
+      bP1B.memory.data.history.length === beforeP1B,
+      'historyLen=' + bP1B.memory.data.history.length + ' before=' + beforeP1B);
+    check('P1-b：历史里不出现连续两条 user（坏形状不残留）',
+      !bP1B.memory.data.history.some((m, i, a) => i > 0 && m.role === 'user' && a[i - 1].role === 'user'));
+  }
+
   server.close();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
