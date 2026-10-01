@@ -193,5 +193,52 @@ function tmpDir(prefix = 'window-boundary-test-') {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+// -------------------------------------------------------------
+// v0.9.9 扫雷: history <= keepTail 时关窗不得卡死
+// windowSnapshot 的 items 是「待裁剪清单」(history.slice(0, drop))，不是窗口内容。
+// history.length <= keepTail 时 drop=0、items 恒空，旧守卫据此判「无内容」并
+// 静默 return false —— 而 activeItems 明明有内容。不修这条，阶段 2 的
+// windowTurns=2 小窗口测试会直接卡死在第一次关窗。
+// -------------------------------------------------------------
+{
+  const dirSmall = fs.mkdtempSync(path.join(os.tmpdir(), 'close-small-'));
+  const memSmall = new Memory(dirSmall, { persona: 'p', windowTurns: 2, keepTailMessages: 6 });
+  memSmall.append('user', '消息一：你好初澜');
+  memSmall.append('assistant', '消息二：你好阿哲');
+  memSmall.append('user', '消息三：外面天气怎么样');
+  memSmall.append('assistant', '消息四：好像在下雨呢');
+
+  const snapSmall = memSmall.windowSnapshot({ closeReason: 'manual' });
+  check('前提：history(4) <= keepTail(6) → drop=0 且 items 为空（否则下面判不到卡死）',
+    snapSmall.drop === 0 && snapSmall.items.length === 0,
+    'drop=' + snapSmall.drop + ' items=' + snapSmall.items.length);
+  check('前提：activeItems 确实有内容（窗口真的有话可总结）',
+    snapSmall.activeItems.length === 4, 'activeItems=' + snapSmall.activeItems.length);
+
+  const okSmall = memSmall.closeWindow('第 1 窗口小结', snapSmall);
+  check('扫雷：history <= keepTail 时关窗仍成功（不再静默 return false）',
+    okSmall === true, 'closeWindow=' + okSmall);
+  check('扫雷：消息一条未丢（drop=0 时不裁剪）',
+    memSmall.data.history.length === 4, 'len=' + memSmall.data.history.length);
+  check('扫雷：4 条全部标为 bridge（正确归入已归档窗口）',
+    memSmall.data.history.every(m => m.bridge === true));
+  check('扫雷：窗口号推进且 turnsInWindow 归零',
+    memSmall.data.windowNo === 2 && memSmall.data.turnsInWindow === 0,
+    'windowNo=' + memSmall.data.windowNo + ' turns=' + memSmall.data.turnsInWindow);
+
+  // 反向守卫：history > keepTail 时旧行为一字不变（防止把修复做成「干脆不裁剪」）
+  const dirBig = fs.mkdtempSync(path.join(os.tmpdir(), 'close-big-'));
+  const memBig = new Memory(dirBig, { persona: 'p', windowTurns: 2, keepTailMessages: 2 });
+  for (let i = 1; i <= 4; i++) memBig.append(i % 2 ? 'user' : 'assistant', '消息' + i);
+  const snapBig = memBig.windowSnapshot({ closeReason: 'manual' });
+  const okBig = memBig.closeWindow('第 1 窗口小结', snapBig);
+  check('不变式：history > keepTail 时旧裁剪行为不变（drop=2、裁掉头部 2 条）',
+    okBig === true && snapBig.drop === 2 && memBig.data.history.length === 2,
+    'drop=' + snapBig.drop + ' len=' + memBig.data.history.length);
+
+  try { fs.rmSync(dirSmall, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(dirBig, { recursive: true, force: true }); } catch {}
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

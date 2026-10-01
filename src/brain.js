@@ -885,7 +885,10 @@ class Brain {
     // 先拍快照再调 API：小结要等一两秒，这期间用户可能又发消息进来，
     const closeReason = (opts && opts.closeReason) || (this.memory.data.turnsInWindow >= this.memory.windowTurns ? 'turn_limit' : (this.memory.needsWindowReset() ? 'token_limit' : 'turn_limit'));
     const snap = this.memory.windowSnapshot({ closeReason });
-    if (!snap.items.length) return false;
+    // v0.9.9 扫雷: 同 memory.closeWindow —— 判「窗口有没有内容」看 activeItems，
+    // 不是 items（待裁剪清单）。keepTail 被调大或消息数很少时 drop=0、items 恒空，
+    // 这道守卫会把一次该成功的关窗挡在这里（且是静默 return false）。
+    if (!(snap.activeItems && snap.activeItems.length) && !snap.items.length) return false;
 
     // P0-2: 若当前窗口已在 Archive 中成功归档且 SubjectState 已恢复/前进，直接推进 Memory 关窗完成幂等收尾
     if (this.experiencesArchive && this.experiencesArchive.hasWindowArchive &&

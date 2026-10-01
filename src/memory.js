@@ -444,7 +444,12 @@ class Memory {
    * epoch 对不上说明中途被 reset 过，快照作废，直接放弃。
    */
   closeWindow(summaryText, snap) {
-    if (!summaryText || !snap || !snap.items.length) return false;
+    if (!summaryText || !snap) return false;
+    // v0.9.9 扫雷: 判「窗口有没有内容」要看 activeItems（本窗口真实消息），
+    // 不是 items（待裁剪清单）。history.length <= keepTail 时 drop=0、items 恒空，
+    // 拿它当守卫会让关窗静默失败 —— 而此时 activeItems 明明有内容。
+    // 保留 items 兜底：既有用例会手工构造只带 items 的 snap。
+    if (!(snap.activeItems && snap.activeItems.length) && !snap.items.length) return false;
     if (snap.epoch !== this.data.epoch) return false;
 
     const closedWindowNo = this.data.windowNo;

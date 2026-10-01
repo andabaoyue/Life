@@ -356,7 +356,7 @@ key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key �
 ## 测试
 
 ```bash
-node test/brain.test.js          # 167 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user
+node test/brain.test.js          # 171 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user、history<=keepTail 时关窗不卡死
 node test/memory.test.js         # 30 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
 node test/subject-state.test.js  # 25 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式、internal_regulation_snapshot 不参与 maxArchiveWindow
@@ -384,7 +384,7 @@ node test/connection-switch.test.js # 17 项：0.9.8 Z2 Runtime Connection Switc
 node test/connection-ipc.test.js    # 25 项：0.9.8 Z3 Connection IPC/UI/Test Connection（list/get/create/update/delete/activate、credential 只进不出、renderer secret isolation、Test 三态 verified/failed/unverified、healthCheck 未实现不判 failed、authProbe 仅用户触发、IPC guard、UI 双字段与状态同步、同协议多 Key、protocol 分离、SEC-01 回归）
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
 node test/recovery.test.js          # 54 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）、主链锁死时紧急溢写 sidecar 保全对话（A+C）、memory reset 后旧小结绝不复活（epoch 门禁）
-node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
+node test/r1-scenarios.test.js      # 114 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性 + 场景 H-1/H-2 归档失败溢写保全与双重故障 fail-closed）
 node test/research.test.js          # 80 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容、Test I 分页输入约束 N-05、Test J NON_STATE 隔离：梦境与内态快照不得造出研究层窗口）
 node test/archive-schema.test.js      # 29 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）、self_ledger_evicted 强制 MODEL_NARRATIVE、subject_dream 认识论门禁查值（DREAM_GENERATED_ARTIFACT 专属，杜绝梦境冒充亲历）
 node test/research-fabrication.test.js # 19 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
@@ -403,7 +403,7 @@ node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Render
 node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
 node test/research-role-unknown.test.js     # 6 项：v0.9.7 (P1-03) Research Query role 映射反伪造（source=activity-tracker/desktop-motion/lifecycle 缺 role 一律 UNKNOWN/null、绝不默认成 user、UNKNOWN 消息不进 user/assistant 消息位）
 node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命实验层核心架构、Schema 契约、基线零干预、内部状态代理、纯函数 Reducer 确定性（100次无漂移与时钟隔离）、数字环周知觉候选界限、证据门禁自传记忆全可信链、睡眠三态分立与零假说门禁
-node test/window-boundary.test.js        # 33 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）
+node test/window-boundary.test.js        # 40 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）、history<=keepTail 时关窗不卡死（items 是待裁剪清单非窗口内容）
 node test/archive-integrity.test.js       # 75 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）+ P0-01 现代记录缺链字段绝不 CERTIFIED、P0-02 Archive Tail Anchor（尾部截断/篡改/锚点落后检测）、P1-02 EOI 深度引用一致性（悬空引用 NOT_RECORDED/UNRESOLVED/INVALID 绝不认证）、P1-1 legacy 逃逸口收紧（裸 sourceSchema 不再豁免链字段检查）
 node test/research-integrity-p0-1-p0-2.test.js # 19 项：v0.9.7.1 P0-1/P0-2 独立证据认证与 Genesis Anchor（结构自洽不得 CERTIFIED、自称 CERTIFIED 无效、write-time attestation、attestation 篡改、伪造 evidence、Genesis 创建/删头/篡改/缺失与 epistemicStatus 默认 UNKNOWN）
 node test/research-reproducibility-p1.test.js # 90 项：v0.9.8.1 P1 残余收口（F-15 Dream Identity 来源区分与确定性解耦、F-12 provider_response 运行时自证门禁与向后兼容 + WeakSet 唯一信任根反 marker 复制伪造 + provenanceStatus 语义一致、全历史 Attention Watermark 幂等与 save 失败完整 rollback、State-level Replay 确定性边界、Dream gate 显式时钟五类时间输入分类）+ v0.9.8.2 P2（F-12a 铸造权限收口至内部接口、F-12b runtime evidence 与 provider/adapter 绑定 fail-closed、F-15c caller identity 与 determinism 正交解耦、F-15d runtime_unique 语义澄清非全局唯一）

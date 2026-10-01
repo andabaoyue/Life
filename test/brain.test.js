@@ -1026,6 +1026,32 @@ async function main() {
       !bP1B.memory.data.history.some((m, i, a) => i > 0 && m.role === 'user' && a[i - 1].role === 'user'));
   }
 
+  // -------------------------------------------------------------
+  // v0.9.9 扫雷: brain 层 —— history <= keepTail 时关窗不得卡死
+  // （与 window-boundary 的 Memory 层判据互补：这里走真实生产路径）
+  // -------------------------------------------------------------
+  {
+    const bSmall = new Brain(tmpDir(), { ...DEFAULTS, apiKey: 'sk-test', windowTurns: 2, keepTailMessages: 6 });
+    bSmall.api = {
+      complete: async () => ({ text: '小结文本', usage: {} }),
+      stream: async () => ({ text: 'ok', usage: {} })
+    };
+    bSmall.memory.append('user', '消息一：你好初澜');
+    bSmall.memory.append('assistant', '消息二：你好阿哲');
+    bSmall.memory.append('user', '消息三：外面天气怎么样');
+    bSmall.memory.append('assistant', '消息四：好像在下雨呢');
+    const histBefore = bSmall.memory.history.length;
+    const resSmall = await bSmall.closeWindow();
+    check('扫雷 前提：history(4) <= keepTail(6)（否则下面是空转）',
+      histBefore <= 6, 'history=' + histBefore);
+    check('扫雷：brain 层关窗在 history <= keepTail 时仍成功',
+      resSmall === true, 'closeWindow=' + resSmall);
+    check('扫雷：小结确实写进 memory.windows',
+      bSmall.memory.windows.length === 1, 'windows=' + bSmall.memory.windows.length);
+    check('扫雷：activeItems 完整保留（无静默丢字）',
+      bSmall.memory.history.length === histBefore, 'history=' + bSmall.memory.history.length);
+  }
+
   server.close();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

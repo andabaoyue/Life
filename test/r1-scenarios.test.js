@@ -324,8 +324,8 @@ function testScenarioG() {
 // -----------------------------------------------------------------------------
 // 场景 H: 归档写入失败原子回滚 (Archive append 失败，Subject State 回滚不提交，不丢原始对话)
 // -----------------------------------------------------------------------------
-async function testScenarioH() {
-  const dir = tmpDir('r1-rollback-');
+async function makeScenarioHBrain(tag) {
+  const dir = tmpDir('r1-' + tag + '-');
   const mockApi = {
     complete: async () => ({
       text: JSON.stringify({
@@ -355,20 +355,60 @@ async function testScenarioH() {
   brain.memory.history[0].messageId = 'm-h-001';
   brain.memory.append('assistant', '消息二：好好休息哦');
   brain.memory.history[1].messageId = 'm-h-002';
+  return brain;
+}
 
+// 场景 H-1: 主链失败但侧链保全成功（P0-2 A+C 契约）
+// 关窗守卫改查 activeItems 之后，这段流程**第一次真的走到归档失败**（此前被
+// items 空守卫提前挡住，appendWindowArchive 桩一次都没被执行过 —— 空转测试）。
+// 按 P0-2 权威规范：主链失败时紧急溢写 sidecar，只要对话被保全，就放行关窗
+// 以避免 memory.json 无界膨胀悬崖。
+async function testScenarioH1() {
+  const brain = await makeScenarioHBrain('spill-ok');
   const initialValues = { ...brain.subjectState.values };
   const initialWindowNo = brain.subjectState.currentWindowNo;
   const initialHistoryLen = brain.memory.history.length;
 
-  // 模拟 Archive 写入失败 (例如磁盘满或无写权限)
+  // 模拟 Archive 写入失败 (例如磁盘满或无写权限)，侧链保持可用
   brain.experiencesArchive.appendWindowArchive = () => false;
 
   const result = await brain.closeWindow();
-  check('场景 H: 归档失败时 closeWindow 返回 false', result === false);
-  check('场景 H: SubjectState 状态未提交并成功回滚',
+  check('场景 H-1: 主链失败但溢写保全成功时 closeWindow 返回 true (P0-2 A+C)', result === true);
+  check('场景 H-1: 触发 ARCHIVE_SPILLOVER 告警（上层可读）',
+    brain.report().archiveSpilloverCount === 1 &&
+    brain.report().archiveSpilloverLast.errorReason === 'ARCHIVE_APPEND_FAILED',
+    JSON.stringify(brain.report().archiveSpilloverLast));
+  const spillPath = brain.experiencesArchive.path + '.recovery-audit.jsonl';
+  check('场景 H-1: sidecar 中确有溢写记录（对话被保全、不是只写个告警）',
+    require('fs').existsSync(spillPath) &&
+    require('fs').readFileSync(spillPath, 'utf8').includes('"sidecar_spillover":true'));
+  check('场景 H-1: 对话原始消息完整保留（绝不无保全丢弃）',
+    brain.memory.history.length === initialHistoryLen,
+    'history=' + brain.memory.history.length + ' before=' + initialHistoryLen);
+  check('场景 H-1 前提：状态确实随溢写推进（这是 A+C 授权的语义，与 H-2 对照）',
+    brain.subjectState.currentWindowNo !== initialWindowNo ||
+    brain.subjectState.values.quiet_preference !== initialValues.quiet_preference,
+    'windowNo=' + brain.subjectState.currentWindowNo);
+}
+
+// 场景 H-2: 主链与侧链双双失败（极危 fail-closed，绝不无保全丢对话）
+async function testScenarioH2() {
+  const brain = await makeScenarioHBrain('spill-fail');
+  const initialValues = { ...brain.subjectState.values };
+  const initialWindowNo = brain.subjectState.currentWindowNo;
+  const initialHistoryLen = brain.memory.history.length;
+
+  // 主链与侧链双双失败
+  brain.experiencesArchive.appendWindowArchive = () => false;
+  brain.experiencesArchive.spillWindowArchiveToSidecar = () => false;
+
+  const result = await brain.closeWindow();
+  check('场景 H-2: 主链与侧链双双失败时 closeWindow 严格返回 false (fail-closed)', result === false);
+  check('场景 H-2: SubjectState 状态未提交并成功回滚',
     brain.subjectState.values.quiet_preference === initialValues.quiet_preference &&
     brain.subjectState.currentWindowNo === initialWindowNo);
-  check('场景 H: 对话原始消息未被丢弃或裁剪', brain.memory.history.length === initialHistoryLen);
+  check('场景 H-2: 对话原始消息未被丢弃或裁剪', brain.memory.history.length === initialHistoryLen);
+  check('场景 H-2: 未产生虚假的 spillover 告警', brain.report().archiveSpilloverCount === 0);
 }
 
 // -----------------------------------------------------------------------------
@@ -1082,7 +1122,8 @@ async function runAll() {
   testScenarioE();
   testScenarioF();
   testScenarioG();
-  await testScenarioH();
+  await testScenarioH1();
+  await testScenarioH2();
   testScenarioI();
   await testScenarioJ_E2E();
 
