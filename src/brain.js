@@ -425,6 +425,20 @@ class Brain {
     }
   }
 
+  /**
+   * v0.9.9 P0-2（C 半）：记录一次「主链锁死、经历溢写到 sidecar」的告警。
+   * 只做记录与告警，不改任何数据语义；上层通过 report() 可读到最近若干次。
+   */
+  _noteArchiveSpillover(windowNo, errorReason) {
+    if (!Array.isArray(this.archiveSpillovers)) this.archiveSpillovers = [];
+    this.archiveSpillovers.push({
+      windowNo: Number.isFinite(windowNo) ? windowNo : null,
+      errorReason: String(errorReason || 'ARCHIVE_APPEND_FAILED'),
+      at: Date.now()
+    });
+    if (this.archiveSpillovers.length > 20) this.archiveSpillovers.shift();
+  }
+
   setWardrobe(nameOrBlock) {
     if (this.wardrobe && typeof this.wardrobe.applyProposal === 'function') {
       const wearChanged = this.wardrobe.applyProposal(nameOrBlock);
@@ -1141,48 +1155,61 @@ class Brain {
       }
 
       // P0-08 / P0-2: 先写入 Archive (experiences.jsonl)
+      const windowArchivePayload = {
+        windowNo: snap.windowNo,
+        targetTurnCount: snap.targetTurnCount || 100,
+        actualTurnCount: snap.actualTurnCount ?? snap.snapshotTurnCount,
+        closeReason: snap.closeReason || 'turn_limit',
+        turns: snap.actualTurnCount ?? snap.snapshotTurnCount,
+        messageCount: activeItems.length,
+        events,
+        observations,
+        interpretations,
+        segments,
+        windowSynthesis: syn,
+        stateEvidence: allEvidence,
+        verifiedEvidence,
+        rejectedEvidence,
+        stateChanges,
+        explanations,
+        rawSummaryText: text,
+        generationContext: summaryGenerationContext,
+        sourceMessageRange,
+        epistemicStatus: summaryEpistemicStatus,
+        structuredSummaryAvailable: Boolean(structured),
+        summaryFailureReason
+      };
       let archiveSuccess = false;
       if (this.experiencesArchive) {
         if (this.experiencesArchive.hasWindowArchive && this.experiencesArchive.hasWindowArchive(snap.windowNo)) {
           console.warn(`[Brain] 窗口 #${snap.windowNo} 经历已在 Archive 中，跳过重复写入`);
           archiveSuccess = true;
         } else {
-          archiveSuccess = this.experiencesArchive.appendWindowArchive({
-            windowNo: snap.windowNo,
-            targetTurnCount: snap.targetTurnCount || 100,
-            actualTurnCount: snap.actualTurnCount ?? snap.snapshotTurnCount,
-            closeReason: snap.closeReason || 'turn_limit',
-            turns: snap.actualTurnCount ?? snap.snapshotTurnCount,
-            messageCount: activeItems.length,
-            events,
-            observations,
-            interpretations,
-            segments,
-            windowSynthesis: syn,
-            stateEvidence: allEvidence,
-            verifiedEvidence,
-            rejectedEvidence,
-            stateChanges,
-            explanations,
-            rawSummaryText: text,
-            generationContext: summaryGenerationContext,
-            sourceMessageRange,
-            epistemicStatus: summaryEpistemicStatus,
-            structuredSummaryAvailable: Boolean(structured),
-            summaryFailureReason
-          });
+          archiveSuccess = this.experiencesArchive.appendWindowArchive(windowArchivePayload);
         }
       } else {
         archiveSuccess = true;
       }
 
       // P0-08: 失败保护：若 Archive 写入失败，绝不提交 Subject State，不删除原始消息，中止关窗
+      // v0.9.9 P0-2（A + C）：主链锁死时先紧急溢写保全，**绝不允许「无保全直接丢弃对话」**。
+      // 关窗会裁掉 memory.json 的 history 头部（memory.js closeWindow 的 splice），
+      // 而原始对话只有归档这一份 —— 所以必须 sidecar 写入**成功确认**之后才放行关窗；
+      // 溢写也失败就维持 fail-closed，宁可上下文膨胀也不丢经历。
       if (!archiveSuccess) {
-        console.error('[Brain] Archive 写入失败，回滚状态暂存并中止本次关窗 (保障数据一致性)');
-        if (this.subjectState && stateStaging) {
-          this.subjectState.rollbackStage(stateStaging);
+        const spilled = Boolean(this.experiencesArchive) &&
+          typeof this.experiencesArchive.spillWindowArchiveToSidecar === 'function' &&
+          this.experiencesArchive.spillWindowArchiveToSidecar(windowArchivePayload, 'ARCHIVE_APPEND_FAILED');
+        if (!spilled) {
+          console.error('[Brain] Archive 写入失败且紧急溢写也失败，回滚状态暂存并中止本次关窗 (保障数据一致性)');
+          if (this.subjectState && stateStaging) {
+            this.subjectState.rollbackStage(stateStaging);
+          }
+          return false;
         }
-        return false;
+        // C: 显式告警 —— 上层/人工需要知道主链已坏，本次是降级推进、经历落在 sidecar。
+        this._noteArchiveSpillover(snap.windowNo, 'ARCHIVE_APPEND_FAILED');
+        console.error(`[Brain] ARCHIVE_SPILLOVER 窗口 #${snap.windowNo}：主链写入失败，已紧急溢写至 recovery-audit sidecar，本次关窗降级推进，需人工/自愈检查`);
       }
 
       // v0.9.7.1: Archive 已成功后，先提交独立 provenance sidecar。
@@ -1664,7 +1691,12 @@ class Brain {
       archiveStatus: this.selfLedger.status,
       subjectState: this.subjectState ? this.subjectState.values : null,
       archiveEntries: this.experiencesArchive ? this.experiencesArchive.count() : 0,
-      bridgeCount: m.history.filter(x => x.bridge).length
+      bridgeCount: m.history.filter(x => x.bridge).length,
+      // v0.9.9 P0-2（C 半）：主链锁死导致经历溢写到 sidecar 的告警，供上层/人工检查
+      archiveSpilloverCount: Array.isArray(this.archiveSpillovers) ? this.archiveSpillovers.length : 0,
+      archiveSpilloverLast: (Array.isArray(this.archiveSpillovers) && this.archiveSpillovers.length)
+        ? this.archiveSpillovers[this.archiveSpillovers.length - 1]
+        : null
     };
   }
 

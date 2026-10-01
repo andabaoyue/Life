@@ -354,6 +354,82 @@ async function testFaultInjectionMatrix() {
   }
 }
 
+// -------------------------------------------------------------
+// v0.9.9 P0-2（A + C）：主链锁死时的紧急溢写保全
+//   A —— 主链写失败时把本窗口小结溢写到 recovery-audit sidecar，
+//        带 sidecar_spillover / errorReason 标记，且**不伪造链字段**；
+//   C —— 只有 sidecar 写入成功确认后才放行关窗；溢写也失败则维持 fail-closed。
+// 关键不变量：绝不允许「无保全直接丢弃对话」—— 关窗会裁掉 history 头部
+// （memory.js closeWindow 的 splice），而原始对话只有归档这一份。
+// -------------------------------------------------------------
+async function testArchiveSpilloverPreservesDialogue() {
+  const dir = tmpDir('spillover-ok-');
+  const brain = new Brain(dir, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+  brain.api = {
+    complete: async () => ({ text: '小结文本（非 JSON，走 UNCERTIFIED 降级继续归档）', usage: {} }),
+    stream: async () => ({ text: 'ok', usage: {} })
+  };
+
+  brain.memory.append('user', '消息一：你好初澜');
+  brain.memory.append('assistant', '消息二：你好阿哲');
+  brain.memory.append('user', '消息三：外面天气怎么样');
+  brain.memory.append('assistant', '消息四：好像在下雨呢');
+  const historyLenBefore = brain.memory.history.length;
+
+  // 主链锁死：appendWindowArchive 恒失败
+  let appendCalls = 0;
+  brain.experiencesArchive.appendWindowArchive = () => { appendCalls++; return false; };
+
+  const closeRes = await brain.closeWindow();
+
+  check('P0-2 前提：appendWindowArchive 确实被调用且被拦下（否则下面全是空转）', appendCalls === 1);
+  const spillPath = brain.experiencesArchive.path + '.recovery-audit.jsonl';
+  check('P0-2 A: 紧急溢写落盘 sidecar 文件', fs.existsSync(spillPath));
+  // 文件不存在时不要抛异常截断后续判据 —— 红态要能报出完整失败清单
+  const spilled = fs.existsSync(spillPath)
+    ? fs.readFileSync(spillPath, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
+    : [];
+  check('P0-2 A: 溢写记录带 sidecar_spillover 与 errorReason 标记',
+    spilled.some(r => r.sidecar_spillover === true && r.errorReason === 'ARCHIVE_APPEND_FAILED'));
+  check('P0-2 A: 溢写保全了本窗口小结正文（不是只写个告警）',
+    spilled.some(r => r.payload && typeof r.payload.rawSummaryText === 'string' && r.payload.rawSummaryText.length > 0));
+  check('P0-2 A: 溢写记录不伪造链字段（没进链就不许冒充进了链）',
+    spilled.every(r => r.archiveSeq === undefined && r.prevHash === undefined && r.recordHash === undefined));
+  check('P0-2 C: sidecar 写入确认后才放行关窗（history 已裁、窗口已推进）',
+    closeRes === true && brain.memory.history.length < historyLenBefore);
+  check('P0-2 C: 告警已上报（上层可读到 spillover 记录）',
+    brain.report().archiveSpilloverCount === 1 &&
+    brain.report().archiveSpilloverLast.errorReason === 'ARCHIVE_APPEND_FAILED');
+}
+
+async function testSpilloverFailureKeepsDialogue() {
+  const dir = tmpDir('spillover-fail-');
+  const brain = new Brain(dir, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+  brain.api = {
+    complete: async () => ({ text: '小结文本', usage: {} }),
+    stream: async () => ({ text: 'ok', usage: {} })
+  };
+
+  brain.memory.append('user', '消息一：你好初澜');
+  brain.memory.append('assistant', '消息二：你好阿哲');
+  brain.memory.append('user', '消息三：外面天气怎么样');
+  brain.memory.append('assistant', '消息四：好像在下雨呢');
+  const historyLenBefore = brain.memory.history.length;
+
+  // 主链与 sidecar 双双失败
+  let appendCalls = 0, spillCalls = 0;
+  brain.experiencesArchive.appendWindowArchive = () => { appendCalls++; return false; };
+  brain.experiencesArchive.spillWindowArchiveToSidecar = () => { spillCalls++; return false; };
+
+  const closeRes = await brain.closeWindow();
+
+  check('P0-2 前提：主链与溢写口都被尝试过（否则下面是空转）',
+    appendCalls === 1 && spillCalls === 1);
+  check('P0-2 C: 溢写也失败时维持 fail-closed（绝不无保全丢对话）', closeRes === false);
+  check('P0-2 C: 历史一条未裁（原始对话完整保留）', brain.memory.history.length === historyLenBefore);
+  check('P0-2 C: 未产生虚假的 spillover 告警', brain.report().archiveSpilloverCount === 0);
+}
+
 async function runAll() {
   await testSummaryFailurePreservesDialogue();
   testArchiveCorruptLineSkipping();
@@ -361,6 +437,8 @@ async function runAll() {
   testInFlightPostSnapshotIsolation();
   await testIdempotentRecoveryAndArchive();
   await testFaultInjectionMatrix();
+  await testArchiveSpilloverPreservesDialogue();
+  await testSpilloverFailureKeepsDialogue();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

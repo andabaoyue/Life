@@ -315,6 +315,38 @@ class ExperiencesArchive {
   }
 
   /**
+   * v0.9.9 P0-2（A 半）：主链锁死时的紧急溢写保全。
+   *
+   * 场景：experiences.jsonl 追加失败（坏尾 / 锚点失配 / 链断裂等）后主链进入
+   * fail-closed、再也写不进去。而关窗会裁掉 memory.json 的 history 头部
+   * （memory.js closeWindow 里的 splice），原始对话**只在归档这一份** ——
+   * 此时若直接放行关窗，就是「无保全直接丢弃对话」，既违反 D-005，
+   * 也违反「宁可少写一次，不可写坏一次」。
+   *
+   * 所以先把本窗口小结完整溢写到 recovery-audit sidecar（A），由调用方确认
+   * 写入成功后才放行关窗（C）；溢写也失败就必须维持 fail-closed。
+   *
+   * 认识论位置：溢写记录刻意**不伪造**链字段（archiveSeq / prevHash / recordHash
+   * 一概不编）。主链此刻不可信，编一个序号出来等于把「没进链」伪装成「进了链」。
+   * 记录显式带 sidecar_spillover 与 errorReason，完整性服务据此判 uncertified ——
+   * 这正是它该有的位置：数据保全住了，但绝不冒充已认证的经历。
+   */
+  spillWindowArchiveToSidecar(payload, errorReason) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    const record = {
+      schemaVersion: 1,
+      recordType: 'window_summary',
+      recordId: `spill-w${Number(payload.windowNo) || 0}-${Date.now().toString(36)}`,
+      timestamp: Date.now(),
+      windowNo: Number.isFinite(payload.windowNo) ? payload.windowNo : null,
+      payload,
+      sidecar_spillover: true,
+      errorReason: String(errorReason || 'ARCHIVE_APPEND_FAILED')
+    };
+    return this.appendRecoveryAudit(record);
+  }
+
+  /**
    * v0.9.7.1: 持久化 Archive 外的 provenance attestations。
    * 这不是第二套事实数据库，只保存写时 verifier 产生的 ID/hash 证明材料，
    * 用于在 State commit 失败/重启后仍能验证 Archive 中的引用来源。
