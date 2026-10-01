@@ -51,7 +51,9 @@ const GROWTH_SYS =
   + '例如明确形成的偏好、价值取向、边界、愿望、反思或关系理解；不要记录点击、拖拽、时间、'
   + '一次性情绪、模型猜测、用户普通事实或没有证据的意识宣称。'
   + '只输出 JSON 数组，每项格式为 {"trait":"简短倾向","support":[{"sourceType":"USER|EXPERIENCE|SELF_INFERRED|OBSERVATION|MODEL_PRIOR","window":0,"messageIds":[],"quote":"短证据摘录","confidence":0.0}],"oppose":[]}。'
-  + '没有足够证据就输出 []。support 与 oppose 都要保留，不能用最新值覆盖矛盾经历。';
+  + '没有足够证据就输出 []。support 与 oppose 都要保留，不能用最新值覆盖矛盾经历。'
+  + '提炼必须锚定初澜在对话中真实做出的取舍与自述（有 messageId 可查），从她的选择里归纳她特有的存在态度；'
+  + '严禁套用「友善、乐观、坚强、善良」等人类通用道德词或性格套话 —— 没有独特取舍支撑的漂亮话宁可不写。';
 
 function systemPersona(cfg) {
   return PERSONA; // v0.9.9: 旧 Creative Mode / DS Skill 已拆除，persona 无条件单一来源
@@ -629,10 +631,18 @@ class Brain {
     const ageHours = Math.max(0, Date.now() - this.birthAt) / 3600000;
     const projection = this.selfLedger.currentSelfText();
     const stateSnapshot = this.subjectState ? this.subjectState.formatSnapshot() : '';
+    // v0.9.9 五大方向·④：可塑性只作定性感知注入 —— 零数值、零研究标签；
+    // 取「实际生效」的吸收系数（缺省 1.0，与 reduce 的 fail-closed 门控同源），绝不虚构敏感度
+    const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
+      ? this.subjectState.data.history : [];
+    const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
+    const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+    const plasticitySense = '【内态感知】\n- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静');
     return '【出生与程序年龄】\n- 出生时刻：' + new Date(this.birthAt).toISOString()
       + '\n- 程序运行意义上的年龄：约 ' + ageHours.toFixed(1) + ' 小时'
       + (projection ? '\n' + projection : '')
-      + (stateSnapshot ? '\n' + stateSnapshot : '');
+      + (stateSnapshot ? '\n' + stateSnapshot : '')
+      + '\n' + plasticitySense;
   }
 
   /**
@@ -1496,6 +1506,17 @@ class Brain {
                 if (!Array.isArray(this.dreamHistory)) this.dreamHistory = [];
                 this.dreamHistory.push(dreamRecord);
                 this.experiencesArchive.append(dreamRecord);
+                // v0.9.9 五大方向·①：归档成功的离线重组碎片同步进心智视野（防伪标签由 systemText 负责）。
+                // 只在窗口轮转时刻更新、只留最近 3 条：窗口内逐字节稳定，且与关窗的缓存重置同刻发生
+                const fragText = String((dreamRecord.payload && (dreamRecord.payload.content || dreamRecord.payload.narrative)) || '').trim();
+                if (fragText && this.memory && this.memory.data) {
+                  if (!Array.isArray(this.memory.data.dreamFragments)) this.memory.data.dreamFragments = [];
+                  this.memory.data.dreamFragments.push(fragText.slice(0, 400));
+                  if (this.memory.data.dreamFragments.length > 3) {
+                    this.memory.data.dreamFragments = this.memory.data.dreamFragments.slice(-3);
+                  }
+                  this.memory.save();
+                }
                 if (dreamRecord.usage) {
                   this.track(dreamRecord.usage, true, 'dream');
                   // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记

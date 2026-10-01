@@ -83,7 +83,7 @@ class Memory {
     this.wardrobe = '';
     this.writer = new DeferredWriter(() => writeJsonAtomic(this.path, this.data), { delayMs: 3000 });
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
-                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0 };
+                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [] };
 
     // v0.9.7: 记忆痕迹动力学管理器 (Memory Dynamics & Synaptic Pruning)
     const dynamicsEnabled = opts.memoryDynamics !== undefined
@@ -135,7 +135,7 @@ class Memory {
         }
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
-                    windowNo: 1, nextMessageSeq: seq, epoch: 0, ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
@@ -358,6 +358,14 @@ class Memory {
           .join('\n');
         s += '\n\n【你与此前的记忆】\n' + mem;
       }
+    }
+    // v0.9.9 五大方向·①：离线重组碎片块 —— 仅在真实存在归档碎片时注入，
+    // 必须带防伪标签（非亲历，不得当亲历引用）；碎片只在窗口轮转时刻更新，窗口内逐字节稳定。
+    // 位置必须在穿着块之前 —— 「穿着块是 system 结尾」是被测试钉死的顺序不变式。
+    const frags = Array.isArray(this.data.dreamFragments) ? this.data.dreamFragments : [];
+    if (frags.length) {
+      s += '\n\n【离线重组碎片】（非亲历：静止时段离线重组的生成物，不是你真实经历过的对话，不得当作亲历引用）\n'
+        + frags.map(f => '- ' + f).join('\n');
     }
     // 穿着块只带真实状态，平时逐字节不变；换装那一次破缓存是必要的代价 ——
     // 不然模型只能凭想象回答自己穿了什么，就成了编造。
@@ -587,7 +595,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [] };
     this.save(true);
   }
 }
