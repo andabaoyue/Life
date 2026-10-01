@@ -164,6 +164,31 @@ check('price 只按 peak/valley 两档合并，档内是整体替换', (() => {
     validateCredentialTarget({ baseURL: 'not-a-valid-url' }).ok === false);
 }
 
+/* ---- 9. v0.9.9 P1-a: budgetMaxOutputTokens 必须能从配置生效 ---- */
+{
+  const { assertBudget } = require('../src/budget-guard');
+  // 反向守卫：默认不配置预算时仍是「不设限」—— 默认行为一个字都不许变
+  const noBudget = load(mk());
+  check('P1-a 不变式：默认不配置预算仍是 NO_BUDGET_CONFIGURED（默认行为不变）',
+    noBudget.budgetMaxOutputTokens === 0 &&
+    assertBudget({ maxTokens: 900, attempt: 0, maxRetries: 2,
+                   budgetMaxOutputTokens: noBudget.budgetMaxOutputTokens }).ok === true,
+    'budgetMaxOutputTokens=' + noBudget.budgetMaxOutputTokens);
+
+  // 手写进 life-config.json 的预算必须真的生效（此前被 sanitize 整份丢弃）
+  const dir = mk();
+  writeRaw(dir, { schemaVersion: 1, budgetMaxOutputTokens: 500 });
+  const cfg = load(dir);
+  check('P1-a：手写 budgetMaxOutputTokens 真的从配置生效（此前被 sanitize 白名单丢弃）',
+    cfg.budgetMaxOutputTokens === 500, 'budgetMaxOutputTokens=' + cfg.budgetMaxOutputTokens);
+
+  // worstCase = (attempt + maxRetries + 1) * maxTokens = 3 * 300 = 900 > 500 -> 拦截
+  const probe = assertBudget({ maxTokens: 300, attempt: 0, maxRetries: 2,
+                              budgetMaxOutputTokens: cfg.budgetMaxOutputTokens });
+  check('P1-a 端到端：配置预算后 Budget Guard 真的可达（不再恒 NO_BUDGET_CONFIGURED）',
+    probe.ok === false, JSON.stringify(probe));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 for (const d of [A, B]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 交给系统 */ } }
 process.exit(failures ? 1 : 0);

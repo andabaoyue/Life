@@ -48,6 +48,11 @@ const DEFAULTS = {
   currentSelfTokenBudget: 3000, // 只注入最新 user 尾部的有限自我投影
   requestTimeoutMs: 60000,   // 请求总超时，避免网络卡住永久锁死界面
   streamIdleTimeoutMs: 20000,// SSE 长时间无新数据时主动中止
+  // v0.9.9 P1-a: 发送前输出 token 预算（跨 retry 的最坏情况，见 budget-guard.assertBudget）。
+  // 0 = 不设限，与既有行为完全一致；配置为正数后 budget-guard 在发送前 fail-closed。
+  // 之前该键不在下面 sanitize 的白名单里，手写进 life-config.json 会被整份丢弃 ——
+  // 于是 README 声称的「Budget Guard 发送前 fail-closed」在生产恒不可达。
+  budgetMaxOutputTokens: 0,
 
   // ---- 桌面自主运动 ----
   motionEnabled: true,
@@ -143,6 +148,8 @@ function sanitize(raw = {}) {
     currentSelfTokenBudget: finiteInt(raw.currentSelfTokenBudget, DEFAULTS.currentSelfTokenBudget, 256, 10000),
     requestTimeoutMs: finiteInt(raw.requestTimeoutMs, DEFAULTS.requestTimeoutMs, 5000, 600000),
     streamIdleTimeoutMs: finiteInt(raw.streamIdleTimeoutMs, DEFAULTS.streamIdleTimeoutMs, 2000, 120000),
+    // v0.9.9 P1-a: 补进白名单，手写配置才真的生效（此前会被 sanitize 整份丢弃）
+    budgetMaxOutputTokens: finiteInt(raw.budgetMaxOutputTokens, DEFAULTS.budgetMaxOutputTokens, 0, 10000000),
     motionEnabled: raw.motionEnabled !== false,
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
