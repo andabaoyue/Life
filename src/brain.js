@@ -1483,6 +1483,8 @@ class Brain {
                 this.experiencesArchive.append(dreamRecord);
                 if (dreamRecord.usage) {
                   this.track(dreamRecord.usage, true, 'dream');
+                  // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记
+                  this.saveStats(true);
                 }
               }
             }
@@ -1554,6 +1556,8 @@ class Brain {
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'merge');
+      // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记
+      this.saveStats(true);
       if (this.shutdownRequested) return false;
       if (!text) return false;
 
@@ -1596,6 +1600,9 @@ class Brain {
       this.track(usage, true, 'growth');
       if (this.shutdownRequested) return 0;
       this.stats.growthCalls = (this.stats.growthCalls || 0) + 1;
+      // v0.9.9: 计数即落盘（同 summary 口径）—— 这笔成长调用已真实发生，立即持久化，
+      // 杜绝进程退出后 growthCalls 漏记（实测 1 笔成长调用就这么丢了）
+      this.saveStats(true);
       const raw = String(text || '').trim()
         .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
 
@@ -1688,10 +1695,15 @@ class Brain {
     const hitRateRatio = (hit + miss) ? hit / (hit + miss) : 0;
 
     let breakReason = null;
-    if (bucket === 'chat') {
-      if (miss > 0) {
+    if (miss > 0) {
+      if (bucket === 'chat') {
         breakReason = this.pendingCacheBreakReason || (hit === 0 ? 'unknown' : null);
         this.pendingCacheBreakReason = null;
+      } else {
+        // v0.9.9: 小结/合并/成长/梦境各是独立提示词家族，不消费 chat 的缓存破坏归因
+        //（否则会偷走下一轮 chat 的归因），但 0 命中同样要留痕 —— 此前只有 chat 桶标注，
+        // 离群的 0% 调用查无原因（实测 37 笔里 4 笔 0%，其中 1 笔至今无归因）
+        breakReason = hit === 0 ? 'unknown' : null;
       }
     }
 
@@ -1717,7 +1729,11 @@ class Brain {
 
     if (costKnown) this.stats.cost += c;
     if (summary) {
-      this.stats.summaryCalls = (this.stats.summaryCalls || 0) + 1;
+      // v0.9.9: 计数按桶如实分账 —— summaryCalls 只数「summary」小结调用，
+      // 成长/合并/梦境各有自己的口径；此前四类全挤进 summaryCalls，与遥测 requestType 对不上
+      if (bucket === 'summary') {
+        this.stats.summaryCalls = (this.stats.summaryCalls || 0) + 1;
+      }
       this.stats[bucket + 'PromptTokens'] = (this.stats[bucket + 'PromptTokens'] || 0)
         + (usage.prompt_tokens || hit + miss);
       this.stats[bucket + 'OutputTokens'] = (this.stats[bucket + 'OutputTokens'] || 0) + out;
