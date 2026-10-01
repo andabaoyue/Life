@@ -208,6 +208,9 @@ class Brain {
     this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
     this.telemetrySeq = this.restoreTelemetrySequence();
     this.pendingCacheBreakReason = null;
+    // v0.9.9 P0: 关窗失败审计计数 —— 累计本窗口在成功关窗前经历的失败关窗次数，
+    // 成功时铸入归档 payload 的 retryAttempts / delayedClose，绝不把补关粉饰成一帆风顺
+    this.windowCloseAttempts = 0;
   }
 
   restoreTelemetrySequence() {
@@ -858,6 +861,13 @@ class Brain {
              usage, windowClosed, merged };
   }
 
+  /** v0.9.9 P0: 关窗失败审计留痕 —— 小结解析失败、校验熔断、写入失败而放弃的关窗都计数并留日志，
+      让「窗口为何拖超期」在盘面与日志上都可追查（数据不伪造、审计不失真） */
+  _noteWindowCloseFailure(reason) {
+    this.windowCloseAttempts = (this.windowCloseAttempts || 0) + 1;
+    console.warn(`[Brain] 关窗尝试失败 (#${this.windowCloseAttempts})：${reason || 'unknown'}，保留窗口内容待下一轮重试`);
+  }
+
   /** 生成本窗口小结并归档 */
   async closeWindow(opts = {}) {
     if (this._closingWindow) {
@@ -883,7 +893,13 @@ class Brain {
     }
 
     // 先拍快照再调 API：小结要等一两秒，这期间用户可能又发消息进来，
-    const closeReason = (opts && opts.closeReason) || (this.memory.data.turnsInWindow >= this.memory.windowTurns ? 'turn_limit' : (this.memory.needsWindowReset() ? 'token_limit' : 'turn_limit'));
+    let closeReason = (opts && opts.closeReason) || (this.memory.data.turnsInWindow >= this.memory.windowTurns ? 'turn_limit' : (this.memory.needsWindowReset() ? 'token_limit' : 'turn_limit'));
+    // v0.9.9 P0: 关窗审计留痕 —— 若此前已有失败的关窗尝试且轮次确实已超标，
+    // 如实标记为 turn_limit_delayed（补关），不把多次失败后的补记粉饰成顺利的 turn_limit
+    if (!(opts && opts.closeReason) && this.windowCloseAttempts > 0
+        && this.memory.data.turnsInWindow > this.memory.windowTurns) {
+      closeReason = 'turn_limit_delayed';
+    }
     const snap = this.memory.windowSnapshot({ closeReason });
     // v0.9.9 扫雷: 同 memory.closeWindow —— 判「窗口有没有内容」看 activeItems，
     // 不是 items（待裁剪清单）。keepTail 被调大或消息数很少时 drop=0、items 恒空，
@@ -934,16 +950,22 @@ class Brain {
       return `${idPrefix}${roundPrefix}${speaker}：` + this.memory.cleanContentForSummary(m.content);
     }).join('\n');
 
+    // v0.9.9 P0: 结构化小结 (5×20 + WindowSynthesis) 输出上限，必须给足 JSON 完整裕度。
+    // 此前硬编码 900 会截断 JSON，触发 Fail-Stop 后关窗连败（窗口越拖越长）。
+    const summaryMaxTokens = (opts && opts.maxTokens) || this.cfg.summaryMaxTokens || 4000;
     try {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: SUMMARY_SYS },
          { role: 'user', content: '【对话】\n' + dialogue }],
-        { maxTokens: 900, temperature: 0.2 }
+        { maxTokens: summaryMaxTokens, temperature: 0.2 }
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'summary');
+      // v0.9.9 P0: 计数即落盘 —— 这笔 summary 的调用与花费已经真实发生，
+      // 无论后续解析/校验成败都立即持久化，杜绝失败路径与脚本进程退出后漏记（与遥测对不齐）
+      this.saveStats(true);
       if (this.shutdownRequested) return false;
-      if (!text) return false;
+      if (!text) { this._noteWindowCloseFailure('EMPTY_SUMMARY_TEXT'); return false; }
 
       const summaryPromptHashes = collectPromptHashes({
         summary: SUMMARY_SYS,
@@ -962,7 +984,7 @@ class Brain {
         kind: 'summary',
         cfg: this.cfg,
         promptHashes: summaryPromptHashes,
-        sampling: { maxTokens: 900, temperature: 0.2 },
+        sampling: { maxTokens: summaryMaxTokens, temperature: 0.2 },
         sourceWindowNo: snap.windowNo,
         sourceMessageRange,
         observedModel,
@@ -987,6 +1009,7 @@ class Brain {
           });
           if (!vSummary.valid) {
             console.error('[Brain] Summary 数据契约校验失败 (Fail-Stop):', vSummary.reason);
+            this._noteWindowCloseFailure('SUMMARY_SCHEMA_INVALID: ' + vSummary.reason);
             return false;
           }
         }
@@ -1198,6 +1221,8 @@ class Brain {
         targetTurnCount: snap.targetTurnCount || 100,
         actualTurnCount: snap.actualTurnCount ?? snap.snapshotTurnCount,
         closeReason: snap.closeReason || 'turn_limit',
+        // v0.9.9 P0: 关窗审计留痕 —— 只在真有失败历史时如实追加，正常关窗 payload 保持原样
+        ...(this.windowCloseAttempts > 0 ? { retryAttempts: this.windowCloseAttempts, delayedClose: true } : {}),
         turns: snap.actualTurnCount ?? snap.snapshotTurnCount,
         messageCount: activeItems.length,
         events,
@@ -1243,6 +1268,7 @@ class Brain {
           if (this.subjectState && stateStaging) {
             this.subjectState.rollbackStage(stateStaging);
           }
+          this._noteWindowCloseFailure('ARCHIVE_WRITE_AND_SPILL_FAILED');
           return false;
         }
         // C: 显式告警 —— 上层/人工需要知道主链已坏，本次是降级推进、经历落在 sidecar。
@@ -1263,6 +1289,7 @@ class Brain {
 
       if (!provenanceCommitSuccess) {
         console.error('[Brain] Archive 已写入但独立 provenance sidecar 提交失败，回滚暂存状态并中止本次关窗');
+        this._noteWindowCloseFailure('PROVENANCE_COMMIT_FAILED');
         if (this.subjectState && stateStaging) {
           this.subjectState.rollbackStage(stateStaging);
           this.subjectState.recoveryPending = true;
@@ -1293,12 +1320,15 @@ class Brain {
           });
         }
         // 禁止继续推进当前 Window，保留 Archive 与原始 Message，返回 false
+        this._noteWindowCloseFailure('STATE_COMMIT_FAILED');
         return false;
       }
 
       snap.generationContext = summaryGenerationContext;
       const done = this.memory.closeWindow(summaryTextForMemory, snap);
       if (done) {
+        // v0.9.9 P0: 关窗成功，审计计数复位（本窗口的失败历史已随 retryAttempts 铸入归档）
+        this.windowCloseAttempts = 0;
         this.stats.compressions++;
         this.saveStats(true);
         this.pendingCacheBreakReason = 'window_boundary';
@@ -1493,6 +1523,7 @@ class Brain {
     } catch (e) {
       // 小结失败就不动历史，下个周期再试；宁可窗口超长也不能丢对话
       console.error('window summary failed:', redactSecrets(e.message));
+      this._noteWindowCloseFailure('SUMMARY_EXCEPTION: ' + redactSecrets(e.message));
       return false;
     }
   }

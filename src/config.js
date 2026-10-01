@@ -53,6 +53,10 @@ const DEFAULTS = {
   // 之前该键不在下面 sanitize 的白名单里，手写进 life-config.json 会被整份丢弃 ——
   // 于是 README 声称的「Budget Guard 发送前 fail-closed」在生产恒不可达。
   budgetMaxOutputTokens: 0,
+  // v0.9.9 P0: 关窗小结 (5×20 分段 + WindowSynthesis) 的输出 token 上限。
+  // 实测完整结构化 JSON 约 1,740~2,500 token，4000 留足安全裕度；
+  // 此前该值硬编码 900 会截断 JSON，触发 Fail-Stop 后关窗连败、窗口越拖越长。
+  summaryMaxTokens: 4000,
 
   // ---- 桌面自主运动 ----
   motionEnabled: true,
@@ -150,6 +154,8 @@ function sanitize(raw = {}) {
     streamIdleTimeoutMs: finiteInt(raw.streamIdleTimeoutMs, DEFAULTS.streamIdleTimeoutMs, 2000, 120000),
     // v0.9.9 P1-a: 补进白名单，手写配置才真的生效（此前会被 sanitize 整份丢弃）
     budgetMaxOutputTokens: finiteInt(raw.budgetMaxOutputTokens, DEFAULTS.budgetMaxOutputTokens, 0, 10000000),
+    // v0.9.9 P0: 同上教训，补进白名单手写配置才生效
+    summaryMaxTokens: finiteInt(raw.summaryMaxTokens, DEFAULTS.summaryMaxTokens, 256, 100000),
     motionEnabled: raw.motionEnabled !== false,
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
