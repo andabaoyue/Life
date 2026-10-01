@@ -24,7 +24,7 @@ const {
 const { SubjectState, DEFAULT_TRAITS, ALLOWED_TRAITS } = require('./subject-state');
 const { normalizeArchiveRecord } = require('./experience-schema');
 const { symmetricRound } = require('./state-change');
-const { validateArchiveRecord, ArchiveIntegrityService } = require('./archive-integrity');
+const { validateArchiveRecord, ArchiveIntegrityService, isLegacyAdaptedRecord } = require('./archive-integrity');
 
 const REPLAY_CHUNK_SIZE = 500;
 
@@ -358,7 +358,9 @@ class ResearchService {
           break;
         }
 
-        if (normalized.compatibilityAdapter === 'LegacySchemaAdapter' || normalized.sourceSchema) {
+        // v0.9.9 P1-1: legacy 判据收敛到 isLegacyAdaptedRecord 单一出处，
+        // 裸 sourceSchema 不再构成逃逸口（原内联判据会放行它）。
+        if (isLegacyAdaptedRecord(normalized)) {
           hasLegacyAdapter = true;
         }
 

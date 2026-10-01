@@ -16,7 +16,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { ExperiencesArchive } = require('../src/experiences-archive');
-const { ArchiveIntegrityService, computeCanonicalRecordHash } = require('../src/archive-integrity');
+const { ArchiveIntegrityService, computeCanonicalRecordHash, isLegacyAdaptedRecord, findModernChainFieldDefects } = require('../src/archive-integrity');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -370,6 +370,42 @@ function tmpDir(prefix = 'archive-integrity-test-') {
 
   const relBad = ArchiveIntegrityService.checkRecords([makeRelRecord({ observations: [{ observationId: 'obs-y', eventIds: [''], content: 'y' }] })]);
   check('引用 ID 结构非法 (空串) -> INVALID 且 integrity=invalid', relBad.relationship_integrity === 'invalid' && relBad.integrity === 'invalid');
+}
+
+// -------------------------------------------------------------
+// v0.9.9 P1-1：legacy 判据的逃逸口 —— 裸 sourceSchema 不得豁免链字段检查
+// computeCanonicalRecordHash 只哈希 7 个字段、不含顶层 sourceSchema，所以注入
+// 该字段不会破链；若它还能豁免链字段检查，就能把「缺链字段」伪装成「合法旧数据」，
+// 而完整性报告被静默消除、链却依旧自洽。
+// -------------------------------------------------------------
+{
+  check('P1-1 逃逸口：裸 sourceSchema 不再被判为 legacy',
+    isLegacyAdaptedRecord({ sourceSchema: 'legacy-v0.9.4' }) === false);
+  const defects = findModernChainFieldDefects({ sourceSchema: 'legacy-v0.9.4' });
+  check('P1-1 逃逸口：注入 sourceSchema 不再豁免链字段检查',
+    Array.isArray(defects) && defects.length > 0, JSON.stringify(defects));
+  // 反向守卫：真正的 LegacySchemaAdapter 记录仍享受豁免（收紧不许误伤真实旧数据）
+  const legit = { compatibilityAdapter: 'LegacySchemaAdapter', sourceSchema: 'legacy-v0.9.4' };
+  check('P1-1 不变式：LegacySchemaAdapter 记录仍判 legacy 且链字段缺陷为空',
+    isLegacyAdaptedRecord(legit) === true &&
+    findModernChainFieldDefects(legit).length === 0);
+  // 端到端：注入 sourceSchema 的缺链字段记录绝不 CERTIFIED
+  const forged = {
+    schemaVersion: 1,
+    recordType: 'window_summary',
+    recordId: 'rec-forged-p11',
+    timestamp: Date.now(),
+    windowNo: 1,
+    payload: { rawSummaryText: '伪造记录' },
+    sourceSchema: 'legacy-v0.9.4'   // 旧实测：仅凭它就拿到 legacy 豁免
+    // 故意缺 archiveSeq / prevHash / recordHash
+  };
+  const forgedRes = ArchiveIntegrityService.checkRecords([forged]);
+  // 判据落在 modern_chain_integrity 上，而不是 integrity —— 后者对该记录本就恒为
+  // uncertified，写成它就是空转（红态也绿）。空转的判据等于没有判据。
+  check('P1-1 端到端：注入 sourceSchema 的缺链记录必须报出 missing_fields',
+    forgedRes.modern_chain_integrity === 'missing_fields',
+    'modern_chain_integrity=' + forgedRes.modern_chain_integrity);
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

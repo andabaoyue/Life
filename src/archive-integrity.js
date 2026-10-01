@@ -297,9 +297,16 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
  * 只有经 LegacySchemaAdapter 明确标记的旧数据才允许缺少 Canonical 链字段。
  */
 function isLegacyAdaptedRecord(record) {
+  // v0.9.9 P1-1: 收紧 legacy 判据 —— 只认明确的适配器标记。
+  // 原实现把裸 `sourceSchema` 也算 legacy，而 computeCanonicalRecordHash
+  // 只哈希 7 个字段、不含顶层 sourceSchema，于是注入该字段就能让
+  // findModernChainFieldDefects 静默返回 [] —— 把「缺链字段」伪装成「合法旧数据」，
+  // 而链依旧自洽、完整性报告被静默消除。
+  // 合法 legacy 记录由 experience-schema 的 LegacySchemaAdapter **同时**写入
+  // compatibilityAdapter 与 sourceSchema（见 experience-schema.js:283/286、299/302、327/330），
+  // 从不只带 sourceSchema，故收紧不会误伤真实旧数据。
   return !!record && (record.compatibilityAdapter === 'LegacySchemaAdapter'
-    || record.schemaOrigin === 'legacy-adapted'
-    || !!record.sourceSchema);
+    || record.schemaOrigin === 'legacy-adapted');
 }
 
 /**
@@ -450,7 +457,10 @@ function validateArchiveRecord(record, options = {}) {
     return { valid: false, reason: 'INVALID_OBJECT' };
   }
 
-  const isLegacy = record.compatibilityAdapter === 'LegacySchemaAdapter' || record.schemaOrigin === 'legacy-adapted';
+  // v0.9.9 P1-1: 单一事实来源 —— legacy 判据只在 isLegacyAdaptedRecord 一处定义。
+  // 同一判据在此前三处内联、两种语义（有的放行裸 sourceSchema、有的不放），
+  // 与 wardrobe 的 locked→required 是同一形状的坑（README「换装系统」记录过两种失效方向）。
+  const isLegacy = isLegacyAdaptedRecord(record);
 
   // 1. 公共最小字段集核验
   if (!options.allowLegacy || !isLegacy) {
@@ -759,7 +769,7 @@ class ArchiveIntegrityService {
         continue;
       }
 
-      if (norm.compatibilityAdapter === 'LegacySchemaAdapter' || norm.sourceSchema) {
+      if (isLegacyAdaptedRecord(norm)) {
         hasLegacyAdapter = true;
         if (norm.legacyStatus === 'LEGACY_UNKNOWN') {
           invalidCount++;
