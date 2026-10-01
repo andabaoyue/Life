@@ -125,6 +125,19 @@ class SubjectState {
           }
           this.committedFingerprints = new Set(this.data.seenFingerprints);
           this.committedEvidenceIds = new Set(this.data.seenEvidenceIds);
+          // v0.9.9 P0-1: evidenceGlobalSeq 是进程级计数器（subject-state.js 顶部 let），进程重启归零。
+          // 不从盘上已接受的号段续号，重启后第一轮签发的 ev-000001 必然撞上
+          // 上一会话的同号证据 —— 于是从第 K 次启动起，头 K-1 个窗口的状态证据
+          // 全被当成 DUPLICATE_EVIDENCE_ID 静默丢弃，主体状态不再演进。
+          // 这里从已持久化的号段续号，只负责「不再撞号」；
+          // 「撞号到底算不算重复」由 verifyEvidence 按 fingerprint 判定，两回事。
+          for (const existingId of this.committedEvidenceIds) {
+            const seqMatch = /(\d+)\s*$/.exec(String(existingId));
+            if (seqMatch) {
+              const seq = Number(seqMatch[1]);
+              if (Number.isFinite(seq) && seq > evidenceGlobalSeq) evidenceGlobalSeq = seq;
+            }
+          }
           this.recoveryStatus = this.data.recoveryStatus || 'NORMAL';
 
           // P0-01: 检查是否存在未决的 Archive 记录导致 Persisted State 落后于 Archive (Recovery Pending)
@@ -568,7 +581,12 @@ class SubjectState {
 
     for (const item of evidenceList) {
       evidenceGlobalSeq++;
-      const evidenceId = (item && item.evidenceId) || ('ev-' + String(evidenceGlobalSeq).padStart(6, '0'));
+      // v0.9.9 P0-1: 区分「调用方显式指定的 ID」与「我方计数器自动发的号」。
+      // 只有后者可能是号段撞车，前者是身份冲突，语义完全不同（见下方第 2 步）。
+      const callerSuppliedId = Boolean(item && item.evidenceId);
+      // 自动发号用 let：撞车时必须能换号，不能因为号撞了就把证据判成重复丢掉。
+      let evidenceId = callerSuppliedId ? item.evidenceId
+        : ('ev-' + String(evidenceGlobalSeq).padStart(6, '0'));
 
       if (!item || typeof item !== 'object') {
         rejected.push({
@@ -613,17 +631,35 @@ class SubjectState {
       }
 
       // 2. evidenceId 唯一性校验 (P0-01 联合四层校验：本调用 seenEvidenceIds + 持久化 committedEvidenceIds)
+      // v0.9.9 P0-1: 撞号有两种，处理方式相反，不能一刀切：
+      //   - 调用方显式指定的 ID 撞号 = 身份冲突。evidenceId 是归档全局唯一键，
+      //     StateChange.evidenceIds 还引用它（brain.js 把 rawExpl.evidenceIds 挂上跃迁记录），
+      //     悄悄换号会把因果引用换断 —— 必须照旧拒绝，让冲突浮上来。
+      //   - 自动发号撞号 = 我方计数器的产物。evidenceGlobalSeq 进程重启归零，
+      //     旧实测下第 K 次启动会把头 K-1 个窗口的证据全判成 DUPLICATE_EVIDENCE_ID
+      //     静默丢弃（指纹防线在下面第 6 步、根本轮不到执行），主体特质不再演进。
+      //     这里换一个未占用的号继续，证据本体一个字都不丢。
       if (seenEvidenceIds.has(evidenceId) || this.committedEvidenceIds.has(evidenceId)) {
-        rejected.push({
-          evidenceId,
-          status: 'rejected',
-          reason: 'DUPLICATE_EVIDENCE_ID',
-          windowNo,
-          trait: cleanTrait,
-          messageId: String(messageId || ''),
-          createdAt: Date.now()
-        });
-        continue;
+        if (callerSuppliedId) {
+          rejected.push({
+            evidenceId,
+            status: 'rejected',
+            reason: 'DUPLICATE_EVIDENCE_ID',
+            windowNo,
+            trait: cleanTrait,
+            messageId: String(messageId || ''),
+            createdAt: Date.now()
+          });
+          continue;
+        }
+        let bumped = evidenceGlobalSeq;
+        let candidate = evidenceId;
+        while (seenEvidenceIds.has(candidate) || this.committedEvidenceIds.has(candidate)) {
+          bumped++;
+          candidate = 'ev-' + String(bumped).padStart(6, '0');
+        }
+        evidenceGlobalSeq = bumped;
+        evidenceId = candidate;
       }
 
       // 3. messageId 检查（P0-2 & P1-4: 复用 experience-schema.checkMessageReference 单一事实来源）

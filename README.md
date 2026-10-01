@@ -359,7 +359,7 @@ key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key �
 node test/brain.test.js          # 164 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer
 node test/memory.test.js         # 30 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
-node test/subject-state.test.js  # 19 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放
+node test/subject-state.test.js  # 24 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式
 node test/main.test.js           # 87 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 明文降级配置保存不丢 key 与 writingMode 兼容淘汰、N-08 self-ledger-reset 显式确认门）
 node test/tracker.test.js        # 42 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟

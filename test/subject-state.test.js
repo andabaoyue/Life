@@ -172,5 +172,63 @@ check('Replay 最终输出 finalValues 正确',
   replayResult.finalValues.social_initiative === 10 &&
   replayResult.finalValues.attachment_need === 14);
 
+// 9. v0.9.9 P0-1：跨会话 evidenceId 号段碰撞不得吞掉新证据
+// evidenceGlobalSeq 是进程级计数器、进程重启归零，而 committedEvidenceIds 从盘上恢复。
+// 不续号时重启后签发的号必然撞上上一会话，旧实测会把**内容完全不同**的证据
+// 一并判成 DUPLICATE_EVIDENCE_ID 静默丢弃（指纹防线在第 6 步、轮不到执行）：
+// 于是从第 K 次启动起，头 K-1 个窗口的状态证据全部作废，主体特质不再演进。
+const dirP01 = tmpDir();
+const s1 = new SubjectState(dirP01);
+const msgsP01A = [{ messageId: 'm-p01-a', role: 'user', content: '初澜，我们今天就安安静静地待着吧。' }];
+const msgsP01B = [{ messageId: 'm-p01-b', role: 'user', content: '初澜，今天我们出去走走，活力满满。' }];
+const msgsP01C = [{ messageId: 'm-p01-c', role: 'user', content: '初澜，你觉得数字生命这件事本身值得好奇吗？' }];
+
+const r1 = s1.verifyEvidence(
+  [{ evidenceId: 'ev-000500', trait: 'quiet_preference', direction: 1, strength: 0.8,
+     messageId: 'm-p01-a', quote: '安安静静地' }],
+  msgsP01A, 1);
+check('P0-1 前提：首会话证据接受并写盘',
+  r1.verified.length === 1 && r1.rejected.length === 0);
+
+// 同目录新建实例 = 模拟进程重启：committedEvidenceIds 从盘上恢复，计数器不续号就必撞
+const s2 = new SubjectState(dirP01);
+const r2 = s2.verifyEvidence(
+  [{ trait: 'vitality', direction: 1, strength: 0.8, messageId: 'm-p01-b', quote: '活力满满' }],
+  msgsP01B, 2);
+check('P0-1 自动发号跨会话续号（模型不给 evidenceId 的生产路径）',
+  r2.verified.length === 1 && r2.rejected.length === 0 && r2.verified[0].evidenceId === 'ev-000501',
+  JSON.stringify(r2.rejected.map(x => x.reason)));
+
+// 自动发号撞车时必须换号而不是丢证据。这里往去重集合注入一个将要发出的号
+// 来强制撞车（手法与 initial-state-restore-symmetry 一致，属白盒注入）。
+s2.committedEvidenceIds.add('ev-000502');
+const r3 = s2.verifyEvidence(
+  [{ trait: 'philosophical_curiosity', direction: 1, strength: 0.7, messageId: 'm-p01-c', quote: '值得好奇' }],
+  msgsP01C, 3);
+check('P0-1 自动发号撞车时换号保证据（绝不静默丢弃）',
+  r3.verified.length === 1 && r3.rejected.length === 0 && r3.verified[0].evidenceId !== 'ev-000502',
+  JSON.stringify(r3.rejected.map(x => x.reason)));
+
+// 不变式守护：调用方显式指定的 ID 撞号是**身份冲突**，必须照旧拒绝。
+// evidenceId 是归档全局唯一键（archive-integrity 按它建索引）、且被
+// StateChange.evidenceIds 引用，悄悄换号会把因果引用换断 —— 所以 P0-1 的
+// 修法只许放过「我方自动发的号」，绝不能削弱 provenance-boundary 的规则 3。
+const r4 = s2.verifyEvidence(
+  [{ evidenceId: 'ev-000500', trait: 'vitality', direction: -1, strength: 0.4,
+     messageId: 'm-p01-b', quote: '出去走走' }],
+  msgsP01B, 4);
+check('P0-1 不变式：显式撞号仍是身份冲突，照旧拒绝（不许悄悄换号）',
+  r4.verified.length === 0 && r4.rejected.length === 1 &&
+  r4.rejected[0].reason === 'DUPLICATE_EVIDENCE_ID',
+  JSON.stringify(r4.rejected.map(x => x.reason)));
+
+const r5 = s2.verifyEvidence(
+  [{ evidenceId: 'ev-000500', trait: 'quiet_preference', direction: 1, strength: 0.8,
+     messageId: 'm-p01-a', quote: '安安静静地' }],
+  msgsP01A, 5);
+check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成来者不拒）',
+  r5.verified.length === 0 && r5.rejected.length === 1,
+  JSON.stringify(r5.rejected.map(x => x.reason)));
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
