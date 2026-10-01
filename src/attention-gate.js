@@ -21,6 +21,7 @@
 'use strict';
 
 const { isBaselineMode } = require('./experiment-run');
+const { MEMORY_EPISTEMIC_STATUS } = require('./experiment-types');
 
 /**
  * 注意力决策状态枚举
@@ -44,7 +45,13 @@ function assertNotSubjectAcquired(result) {
   if (result.subjectAccessible === true) {
     throw new Error('Epistemic boundary violation: Attention candidate cannot have subjectAccessible=true!');
   }
-  if (result.epistemicStatus === 'SUBJECT_ACQUIRED_MEMORY') {
+  // v0.9.9 P2-1c: 判据改用真实枚举 SUBJECT_ACQUIRED（experiment-types）。
+  // 原来比的是 'SUBJECT_ACQUIRED_MEMORY' —— 这个值全仓根本不存在，于是
+  // 「ATTENDED ≠ SUBJECT_ACQUIRED」铁律的守卫对真实枚举值完全不生效（判据空转），
+  // 而 test/attention-gate.test.js 也用同一个错值，测试与实现一起错、永远红不了。
+  // 并联保留历史字面量：既有用例仍断言它抛错，收紧不得打破既有测试（方案 A）。
+  if (result.epistemicStatus === MEMORY_EPISTEMIC_STATUS.SUBJECT_ACQUIRED
+      || result.epistemicStatus === 'SUBJECT_ACQUIRED_MEMORY') {
     throw new Error('Epistemic boundary violation: Attention candidate cannot bypass memory acquisition gates!');
   }
   return true;

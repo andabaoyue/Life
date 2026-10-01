@@ -222,5 +222,52 @@ check('合法 recovery_event 归档记录校验通过', validRecEvt.valid === tr
   check('P1-d：缺 evicted 列表的 self_ledger_evicted 必须被拒', !noEvicted.valid);
 }
 
+/* ---- v0.9.9 P2-1: subject_dream 认识论门禁（查值不查存在）---- */
+{
+  // 判据一律走 safeValidate：被测代码若抛异常，要报成 FAIL 而不是截断整个文件
+  // （否则红态只看到第一条，无法核对失败清单是否完整）。
+  const safeValidate = (r) => {
+    try { return validateArchiveRecord(r); }
+    catch (e) { return { valid: false, reason: 'THREW: ' + (e && e.message) }; }
+  };
+
+  // P2-1a: rec -> record，缺 dreamId 时应**返回拒绝**而不是抛 ReferenceError 逃逸
+  const noDreamId = safeValidate({
+    schemaVersion: 1, recordType: 'subject_dream', timestamp: 1000, windowNo: 1,
+    payload: { epistemicStatus: 'DREAM_GENERATED_ARTIFACT' }
+  });
+  check('P2-1a：缺 dreamId 时返回 MISSING_DREAM_ID 而非抛异常',
+    noDreamId.valid === false && noDreamId.reason === 'MISSING_DREAM_ID',
+    'reason=' + noDreamId.reason);
+
+  // P2-1b: 门禁必须查**值**。原实现只看真值，自称 SUBJECT_ACQUIRED（主体习得
+  // 自传记忆）也能过 —— 那正是「梦境冒充亲历」。
+  const impersonate = safeValidate({
+    schemaVersion: 1, recordType: 'subject_dream', timestamp: 1000, windowNo: 1,
+    payload: { dreamId: 'd-1', epistemicStatus: 'SUBJECT_ACQUIRED' }
+  });
+  check('P2-1b：梦境自称 SUBJECT_ACQUIRED（冒充亲历）必须被拒',
+    impersonate.valid === false, JSON.stringify(impersonate));
+  const selfCertDream = safeValidate({
+    schemaVersion: 1, recordType: 'subject_dream', timestamp: 1000, windowNo: 1,
+    payload: { dreamId: 'd-2', epistemicStatus: 'CERTIFIED' }
+  });
+  check('P2-1b：梦境自称 CERTIFIED 必须被拒', selfCertDream.valid === false, JSON.stringify(selfCertDream));
+  // 反向守卫：真实梦境仍通过、缺标记仍被拒（收紧不得误伤）
+  const realDream = safeValidate({
+    schemaVersion: 1, recordType: 'subject_dream', timestamp: 1000, windowNo: 1,
+    payload: { dreamId: 'd-3', epistemicStatus: 'DREAM_GENERATED_ARTIFACT' }
+  });
+  check('P2-1b 不变式：DREAM_GENERATED_ARTIFACT 仍通过（收紧不误伤真实梦境）',
+    realDream.valid === true, JSON.stringify(realDream));
+  const noEpistDream = safeValidate({
+    schemaVersion: 1, recordType: 'subject_dream', timestamp: 1000, windowNo: 1,
+    payload: { dreamId: 'd-4' }
+  });
+  check('P2-1b 不变式：缺 epistemicStatus 仍被拒',
+    noEpistDream.valid === false && noEpistDream.reason === 'MISSING_EPISTEMIC_STATUS',
+    'reason=' + noEpistDream.reason);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

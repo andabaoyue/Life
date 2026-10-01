@@ -386,7 +386,7 @@ node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、�
 node test/recovery.test.js          # 54 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）、主链锁死时紧急溢写 sidecar 保全对话（A+C）、memory reset 后旧小结绝不复活（epoch 门禁）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
 node test/research.test.js          # 77 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容、Test I 分页输入约束 N-05）
-node test/archive-schema.test.js      # 24 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）、self_ledger_evicted 强制 MODEL_NARRATIVE
+node test/archive-schema.test.js      # 29 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）、self_ledger_evicted 强制 MODEL_NARRATIVE、subject_dream 认识论门禁查值（DREAM_GENERATED_ARTIFACT 专属，杜绝梦境冒充亲历）
 node test/research-fabrication.test.js # 19 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
 node test/event-source-validation.test.js # 20 项：v0.9.5.1 Event Source 正向白名单约束（5 种合法源、大小写容错、第三方拦截与黑名单防御）
 node test/replay-cancel.test.js       # 13 项：v0.9.5.1 分块异步推演（CHUNK_SIZE=500）、事件循环协作让出、运行中途即时取消与非阻塞机制
@@ -430,7 +430,7 @@ node test/dream-synthesis.test.js        # 34 项：v0.9.7 弗洛伊德梦境合
 node test/lifecycle-wiring.test.js    # 50 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留）
 node test/internal-regulation.test.js # 26 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染）
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
-node test/attention-gate.test.js      # 33 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重）
+node test/attention-gate.test.js      # 36 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重、守卫拦真实枚举 SUBJECT_ACQUIRED）
 node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
 node test/path-dependency-preconditions.test.js # 45 项：Phase 0.5 路径依赖实验受控前置条件门禁（初始状态同一性、事件Multiset完全一致、函数事件可审计签名与不可审计裸函数拦截、实验配置一致、探测刺激一致、受控审计凭证完整性、确定性重放与throwOnError契约、对抗未知字段拒绝与语义负载保真）
  node test/archive-write-gate.test.js # 29 项：Phase 4 归档硬写门禁与防篡改防伪造（F-10 / User Constraint #3，拒绝伪造 archiveSeq、prevHash、recordHash、非法类型与损坏 payload，文件尾部损坏 fail-closed 与底座纯净保护）

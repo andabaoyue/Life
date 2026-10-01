@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const { ALLOWED_TRAITS } = require('./subject-state');
 const { validateEvent, ALLOWED_EVENT_TYPES, ALLOWED_EVENT_SOURCES } = require('./experience-schema');
 const { validateGenerationContext } = require('./experiment-metadata');
+const { MEMORY_EPISTEMIC_STATUS } = require('./experiment-types');
 
 const SCHEMA_VERSION = 1;
 
@@ -694,13 +695,25 @@ function validateArchiveRecord(record, options = {}) {
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_DREAM_PAYLOAD' };
       }
-      const dreamId = payload.dreamId || rec.dreamId || rec.recordId;
+      // v0.9.9 P2-1a: 此前写 rec.dreamId / rec.epistemicStatus，而本函数形参是
+      // record —— rec 在此作用域不存在。因 `payload.dreamId ||` 短路，只有 dreamId
+      // 缺失时才炸，语义从「拒绝」变成「抛 ReferenceError 逃逸」。
+      const dreamId = payload.dreamId || record.dreamId || record.recordId;
       if (typeof dreamId !== 'string' || !dreamId.trim()) {
         return { valid: false, reason: 'MISSING_DREAM_ID' };
       }
-      const epistemicStatus = payload.epistemicStatus || rec.epistemicStatus;
+      const epistemicStatus = payload.epistemicStatus || record.epistemicStatus;
       if (!epistemicStatus) {
         return { valid: false, reason: 'MISSING_EPISTEMIC_STATUS' };
+      }
+      // v0.9.9 P2-1b: 认识论门禁必须查**值**，不能只查「有没有」。
+      // 原实现 if (!epistemicStatus) 只看真值 —— 于是一条梦境记录自称
+      // 'SUBJECT_ACQUIRED'（主体习得自传记忆）也能过校验、合法进入 append-only
+      // 底座，正是 D-004 与 dream-system.js 头注释绝不允许的「梦境冒充亲历」。
+      // 写入侧（dream-system.js）本来就正确写了 DREAM_GENERATED_ARTIFACT，
+      // 缺的只是校验侧这道门。
+      if (epistemicStatus !== MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT) {
+        return { valid: false, reason: 'DREAM_REQUIRES_DREAM_GENERATED_ARTIFACT' };
       }
       break;
     }

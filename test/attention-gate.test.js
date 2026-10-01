@@ -257,5 +257,25 @@ check('全流程端到端绝对不包含操作系统物理裸信息 (containsLea
   check('显式未带 eventId 的感知事件正常连续响应', a3 > a2);
 }
 
+/* ---- v0.9.9 P2-1c: assertNotSubjectAcquired 必须拦真实枚举值 ---- */
+{
+  // 原判据比的是 'SUBJECT_ACQUIRED_MEMORY'，而真实枚举是 SUBJECT_ACQUIRED
+  // （experiment-types）—— 于是「ATTENDED ≠ SUBJECT_ACQUIRED」铁律的守卫
+  // 对真实值完全不生效（判据空转），且既有用例也用同一个错值、永远红不了。
+  let threwReal = false;
+  try {
+    assertNotSubjectAcquired({ ...strongRes, epistemicStatus: 'SUBJECT_ACQUIRED' });
+  } catch { threwReal = true; }
+  check('P2-1c：真实枚举 SUBJECT_ACQUIRED 越级必须被熔断（原判据对它空转）', threwReal === true);
+  // 反向守卫（方案 A）：正常候选仍放行、历史字面量仍抛 —— 收紧不得打破既有用例
+  check('P2-1c 不变式：ATTENDED_PERCEPTION_CANDIDATE 仍放行',
+    assertNotSubjectAcquired(strongRes) === true);
+  let threwLegacy = false;
+  try {
+    assertNotSubjectAcquired({ ...strongRes, epistemicStatus: 'SUBJECT_ACQUIRED_MEMORY' });
+  } catch { threwLegacy = true; }
+  check('P2-1c 不变式：历史字面量 SUBJECT_ACQUIRED_MEMORY 仍抛（既有用例不破）', threwLegacy === true);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
