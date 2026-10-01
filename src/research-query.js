@@ -25,7 +25,9 @@ const NON_STATE_RECORD_TYPES = new Set([
   'diagnostic',
   'replay_report',
   'internal_log',
-  'audit_log'
+  'audit_log',
+  // v0.9.9 P1-d: 账本淘汰条目是模型叙事产物，不参与状态轨迹
+  'self_ledger_evicted'
 ]);
 
 // N-05: 分页输入约束（防御 renderer 传入超大/负值/非整数）。

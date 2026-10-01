@@ -293,7 +293,18 @@ class SelfLedger {
       .filter(Boolean);
     if (!added.length) return 0;
     this.entries.push(...added);
-    if (this.entries.length > this.maxEntries) this.entries = this.entries.slice(-this.maxEntries);
+    if (this.entries.length > this.maxEntries) {
+      // v0.9.9 P1-d (D2)：淘汰不是删除。账本有容量上限（maxEntries），但被淘汰的
+      // 成长证据必须交回调用方转存归档 —— 遗忘是「不再活跃」，不是「从未存在」
+      // （D-005，见本文件 calculateRevisionPressure 头注释的立论）。
+      // 刻意用 meta.onEvict 回调传出：append() 的返回值必须仍是 added 条数，
+      // 既有测试严格断言它是数字。
+      const evicted = this.entries.slice(0, this.entries.length - this.maxEntries);
+      this.entries = this.entries.slice(-this.maxEntries);
+      if (evicted.length && typeof meta.onEvict === 'function') {
+        try { meta.onEvict(evicted); } catch { /* 转存失败不得影响账本本身 */ }
+      }
+    }
     this.save(false, true);
     return added.length;
   }

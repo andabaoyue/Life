@@ -439,6 +439,27 @@ class Brain {
     if (this.archiveSpillovers.length > 20) this.archiveSpillovers.shift();
   }
 
+  /**
+   * v0.9.9 P1-d (D2)：把自我账本因容量上限被淘汰的条目转存进经历归档。
+   * 遗忘是「不再活跃」，不是「从未存在」（D-005）—— 淘汰的东西必须留痕。
+   *
+   * epistemicStatus 强制 MODEL_NARRATIVE：这些是模型成长提炼的产物、不是主体亲历，
+   * 绝不与 verifiedEvidence / 亲历事件混同（否则转存这条路就成了
+   * 「模型生成内容冒充主体经历」的新入口）。
+   */
+  _archiveEvictedLedgerEntries(items, windowNo, generation) {
+    if (!this.experiencesArchive || typeof this.experiencesArchive.appendRecord !== 'function') return false;
+    if (!Array.isArray(items) || !items.length) return false;
+    return this.experiencesArchive.appendRecord('self_ledger_evicted', windowNo, {
+      evicted: items,
+      reason: 'LEDGER_CAPACITY_EVICTED',
+      maxEntries: this.selfLedger ? this.selfLedger.maxEntries : null,
+      entriesRemaining: this.selfLedger ? this.selfLedger.entries.length : null,
+      epistemicStatus: 'MODEL_NARRATIVE',
+      generationContext: generation || null
+    });
+  }
+
   setWardrobe(nameOrBlock) {
     if (this.wardrobe && typeof this.wardrobe.applyProposal === 'function') {
       const wearChanged = this.wardrobe.applyProposal(nameOrBlock);
@@ -1553,7 +1574,9 @@ class Brain {
       const appendMeta = {
         window,
         generation: growthGenCtx,
-        rejected
+        rejected,
+        // v0.9.9 P1-d (D2)：账本淘汰条目转存归档（遗忘非物理删除）
+        onEvict: (items) => this._archiveEvictedLedgerEntries(items, window, growthGenCtx)
       };
       if (opts.msgMap) {
         appendMeta.verify = {

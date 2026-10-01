@@ -481,6 +481,7 @@ class SubjectState {
         'internal_log',
         'audit_log',
         'self_projection',
+        'self_ledger_evicted',
         'subject_dream',
         'memory_dynamics_snapshot'
       ]);
@@ -1020,6 +1021,7 @@ class SubjectState {
       'internal_log',
       'audit_log',
       'self_projection',
+      'self_ledger_evicted',
       'subject_dream',
       'memory_dynamics_snapshot'
     ]);

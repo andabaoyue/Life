@@ -372,7 +372,7 @@ node test/layout.test.js         # 16 项：宽高比为常量、来回缩放收
 node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
 node test/deferred-writer.test.js # 8 项：脏标记、防抖延迟合并写盘、同步 flush、写失败保持 dirty、unref 定时器
 node test/migration.test.js       # 17 项：通用数据迁移、版本号升序执行、缺少迁移函数报错、版本防回退、自定义版本字段名
-node test/self-ledger.test.js   # 31 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线、sourceType与角色语义兼容核验
+node test/self-ledger.test.js   # 37 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线、sourceType与角色语义兼容核验、淘汰条目转存归档（D2 遗忘非物理删除）
 node test/agent_interfaces.test.js # 6 项：能力白名单、默认 deny、行动提案、审计日志和 Mock 禁止执行
 node test/animation-controller.test.js # 30 项：自然动画控制器、60fps 驱动循环、状态转移、多图层独立物理摆动、Poke 动力学与打断机制
 node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸/眨眼/打哈欠/伸懒腰权重分发、打断与状态互斥、确定性覆盖
@@ -386,7 +386,7 @@ node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、�
 node test/recovery.test.js          # 54 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）、主链锁死时紧急溢写 sidecar 保全对话（A+C）、memory reset 后旧小结绝不复活（epoch 门禁）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
 node test/research.test.js          # 77 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容、Test I 分页输入约束 N-05）
-node test/archive-schema.test.js      # 20 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）
+node test/archive-schema.test.js      # 24 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）、self_ledger_evicted 强制 MODEL_NARRATIVE
 node test/research-fabrication.test.js # 19 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
 node test/event-source-validation.test.js # 20 项：v0.9.5.1 Event Source 正向白名单约束（5 种合法源、大小写容错、第三方拦截与黑名单防御）
 node test/replay-cancel.test.js       # 13 项：v0.9.5.1 分块异步推演（CHUNK_SIZE=500）、事件循环协作让出、运行中途即时取消与非阻塞机制

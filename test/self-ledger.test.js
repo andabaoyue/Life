@@ -257,5 +257,75 @@ const mockMessages = new Map([
     return projs.length === 1 && projs[0].payload.rejectedEvidence.length > 0 && projs[0].payload.generationContext.kind === 'growth';
   });
 
+  // v0.9.9 P1-d (D2)：账本淘汰条目转存归档（遗忘非物理删除）
+  {
+    const { ExperiencesArchive } = require('../src/experiences-archive');
+    const mkEntry = (t) => ({ trait: t, support: [{ sourceType: 'SELF_STATEMENT', window: 1, messageIds: [1], quote: 'q', confidence: .9 }], oppose: [] });
+    const dirP1D = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-ledger-'));
+    const lg = new SelfLedger(dirP1D, { maxEntries: 2 });
+    const evicted = [];
+    const n = lg.append([mkEntry('quiet_preference'), mkEntry('vitality')], { window: 1, onEvict: (x) => evicted.push(...x) });
+    check('P1-d：append() 返回值仍是 added 条数（既有测试严格断言数字）', typeof n === 'number' && n === 2);
+    check('P1-d：未超容量时不触发 onEvict', evicted.length === 0);
+    lg.append([mkEntry('attachment_need')], { window: 1, onEvict: (x) => evicted.push(...x) });
+    check('P1-d：超容量时 onEvict 带出被淘汰条目（最旧的先走）',
+      evicted.length === 1 && evicted[0].trait === 'quiet_preference');
+    try { fs.rmSync(dirP1D, { recursive: true, force: true }); } catch {}
+
+    // 端到端：走**真实生产路径** growSelf -> append(超容量) -> onEvict -> 归档。
+    // 不许直接调 _archiveEvictedLedgerEntries —— 那样红态下也绿，是空转。
+    const dirE2E = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-e2e-'));
+    // selfLedgerMaxEntries 必须走 cfg：brain.refreshConfig() 会用 cfg 值覆盖
+    // selfLedger.maxEntries，直接赋实例属性会被刷回 200、永远触发不了淘汰。
+    const bE2E = new Brain(dirE2E, { ...require('../src/config').DEFAULTS, apiKey: 'sk-test', selfGrowthEnabled: true, selfLedgerMaxEntries: 1 });
+    bE2E.api = {
+      complete: async () => ({
+        text: JSON.stringify([
+          { trait: '倾向哲学对话', support: [{ sourceType: 'USER', messageIds: ['m-101'], quote: '喜欢安静地读哲学书', confidence: 0.9 }], oppose: [] },
+          { trait: '愿意理解自己', support: [{ sourceType: 'USER', messageIds: ['m-101'], quote: '读哲学书', confidence: 0.8 }], oppose: [] }
+        ]),
+        usage: {}
+      }),
+      stream: async () => ({ text: 'ok', usage: {} })
+    };
+    await bE2E.growSelf('对话文本', '窗口小结', 1, {
+      msgMap,
+      sourceMessageRange: { firstMessageId: 'm-101', lastMessageId: 'm-102', messageCount: 2 }
+    });
+    check('P1-d 端到端：淘汰条目已转存经历归档（不是物理丢弃）', () => {
+      const rs = bE2E.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'self_ledger_evicted');
+      return rs.length === 1 && rs[0].payload.evicted.length === 1 && bE2E.selfLedger.entries.length === 1;
+    });
+    check('P1-d 端到端：转存记录强制标 MODEL_NARRATIVE（模型产物，不冒充主体经历）', () => {
+      const rs = bE2E.experiencesArchive.readAll().filter(r => (r.recordType || r.type) === 'self_ledger_evicted');
+      return rs.length === 1 && rs[0].payload.epistemicStatus === 'MODEL_NARRATIVE';
+    });
+    try { fs.rmSync(dirE2E, { recursive: true, force: true }); } catch {}
+
+    // 生产接线：growSelf 必须把 onEvict 传进 selfLedger.append（否则上面全是空转）
+    const dirWire = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-wire-'));
+    const bWire = new Brain(dirWire, { ...require('../src/config').DEFAULTS, apiKey: 'sk-test', selfGrowthEnabled: true });
+    bWire.api = {
+      complete: async () => ({
+        text: JSON.stringify([{
+          trait: '倾向哲学对话',
+          support: [{ sourceType: 'USER', messageIds: ['m-101'], quote: '喜欢安静地读哲学书', confidence: 0.9 }],
+          oppose: []
+        }]),
+        usage: {}
+      }),
+      stream: async () => ({ text: 'ok', usage: {} })
+    };
+    let seenOnEvict = null;
+    const origAppend = bWire.selfLedger.append.bind(bWire.selfLedger);
+    bWire.selfLedger.append = (e, m) => { seenOnEvict = m && m.onEvict; return origAppend(e, m); };
+    await bWire.growSelf('对话文本', '窗口小结', 1, {
+      msgMap,
+      sourceMessageRange: { firstMessageId: 'm-101', lastMessageId: 'm-102', messageCount: 2 }
+    });
+    check('P1-d 生产接线：growSelf 把 onEvict 传进 selfLedger.append', typeof seenOnEvict === 'function');
+    try { fs.rmSync(dirWire, { recursive: true, force: true }); } catch {}
+  }
+
   console.log('self-ledger tests passed:', pass);
 })();

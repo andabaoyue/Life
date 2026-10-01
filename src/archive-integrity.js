@@ -51,6 +51,7 @@ const VALID_RECORD_TYPES = new Set([
   'evidence_rejected',
   'state_change',
   'self_projection',
+  'self_ledger_evicted',
   'subject_dream',
   'memory_dynamics_snapshot',
   'internal_regulation_snapshot'
@@ -668,6 +669,23 @@ function validateArchiveRecord(record, options = {}) {
     case 'self_projection': {
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_SELF_PROJECTION_PAYLOAD' };
+      }
+      break;
+    }
+
+    case 'self_ledger_evicted': {
+      // v0.9.9 P1-d (D2)：账本淘汰条目是**模型成长提炼的产物**，不是主体亲历。
+      // 必须显式标 MODEL_NARRATIVE，绝不与 verifiedEvidence / 亲历事件混同 ——
+      // 否则转存归档这条路就会变成「模型生成内容冒充主体经历」的新入口。
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_SELF_LEDGER_EVICTED_PAYLOAD' };
+      }
+      const evictedEpistemic = payload.epistemicStatus || record.epistemicStatus;
+      if (evictedEpistemic !== 'MODEL_NARRATIVE') {
+        return { valid: false, reason: 'SELF_LEDGER_EVICTED_REQUIRES_MODEL_NARRATIVE' };
+      }
+      if (!Array.isArray(payload.evicted) || payload.evicted.length === 0) {
+        return { valid: false, reason: 'MISSING_EVICTED_ENTRIES' };
       }
       break;
     }

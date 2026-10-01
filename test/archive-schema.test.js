@@ -198,5 +198,29 @@ const validRecEvt = validateArchiveRecord({
 });
 check('合法 recovery_event 归档记录校验通过', validRecEvt.valid === true);
 
+/* ---- v0.9.9 P1-d (D2): self_ledger_evicted 必须标 MODEL_NARRATIVE ---- */
+{
+  const okEvicted = validateArchiveRecord({
+    schemaVersion: 1, recordType: 'self_ledger_evicted', timestamp: 1000, windowNo: 1,
+    payload: { evicted: [{ trait: 'quiet_preference' }], epistemicStatus: 'MODEL_NARRATIVE' }
+  });
+  check('P1-d：self_ledger_evicted 带 MODEL_NARRATIVE 且有 evicted 时通过', okEvicted.valid === true);
+  const noEpistemic = validateArchiveRecord({
+    schemaVersion: 1, recordType: 'self_ledger_evicted', timestamp: 1000, windowNo: 1,
+    payload: { evicted: [{ trait: 'quiet_preference' }] }
+  });
+  check('P1-d：缺 epistemicStatus 的 self_ledger_evicted 必须被拒', !noEpistemic.valid);
+  const selfCertified = validateArchiveRecord({
+    schemaVersion: 1, recordType: 'self_ledger_evicted', timestamp: 1000, windowNo: 1,
+    payload: { evicted: [{ trait: 'quiet_preference' }], epistemicStatus: 'CERTIFIED' }
+  });
+  check('P1-d：自称 CERTIFIED 的 self_ledger_evicted 必须被拒（模型产物不许冒充）', !selfCertified.valid);
+  const noEvicted = validateArchiveRecord({
+    schemaVersion: 1, recordType: 'self_ledger_evicted', timestamp: 1000, windowNo: 1,
+    payload: { epistemicStatus: 'MODEL_NARRATIVE' }
+  });
+  check('P1-d：缺 evicted 列表的 self_ledger_evicted 必须被拒', !noEvicted.valid);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
