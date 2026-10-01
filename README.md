@@ -383,7 +383,7 @@ node test/connections.test.js       # 27 项：0.9.8 Z1 ConnectionStore/credenti
 node test/connection-switch.test.js # 17 项：0.9.8 Z2 Runtime Connection Switching（A→B 成功、初始化失败/credential 不可用 fail-closed、flat cfg + activeConnectionId 双回滚、同连接切 model 热读、跨连接 model isolation、DeepSeek↔custom 零搬移、runtime evidence 不串绑、Subject/provenance 零写入）
 node test/connection-ipc.test.js    # 25 项：0.9.8 Z3 Connection IPC/UI/Test Connection（list/get/create/update/delete/activate、credential 只进不出、renderer secret isolation、Test 三态 verified/failed/unverified、healthCheck 未实现不判 failed、authProbe 仅用户触发、IPC guard、UI 双字段与状态同步、同协议多 Key、protocol 分离、SEC-01 回归）
 node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
-node test/recovery.test.js          # 49 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）、主链锁死时紧急溢写 sidecar 保全对话（A+C）
+node test/recovery.test.js          # 54 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）、主链锁死时紧急溢写 sidecar 保全对话（A+C）、memory reset 后旧小结绝不复活（epoch 门禁）
 node test/r1-scenarios.test.js      # 108 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性）
 node test/research.test.js          # 77 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容、Test I 分页输入约束 N-05）
 node test/archive-schema.test.js      # 20 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）

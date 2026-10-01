@@ -430,6 +430,83 @@ async function testSpilloverFailureKeepsDialogue() {
   check('P0-2 C: 未产生虚假的 spillover 告警', brain.report().archiveSpilloverCount === 0);
 }
 
+// -------------------------------------------------------------
+// v0.9.9 P1-5：memory.reset() 后旧小结不得复活（epoch 门禁）
+// memory.reset() 会 epoch++ 并把 windowNo 归 1，与归档里的旧窗口撞号；
+// brain.js 的幂等收尾分支若无条件回填，「清空记忆」后第一次关窗就会把
+// 旧第 1 段小结复活进 L2/prompt。
+// -------------------------------------------------------------
+async function testResetDoesNotResurrectOldSummary() {
+  const marker = 'OLDSUMMARY-P15-唯一标识';
+  const mk = () => {
+    const dir = tmpDir('epoch-gate-');
+    const b = new Brain(dir, { ...DEFAULTS, windowTurnLimit: 2, keepTailMessages: 2 });
+    let n = 0;
+    b.api = {
+      // 首次小结产出带标记的旧小结；后续产出去标记的新小结，
+      // 这样「复活」才能与「正常关窗」区分开（否则新小结自己就带标记，判据成空转）
+      complete: async () => ({ text: (n++ === 0 ? '旧窗口小结：' + marker : '新窗口小结：无标记'), usage: {} }),
+      stream: async () => ({ text: 'ok', usage: {} })
+    };
+    return b;
+  };
+  // keepTail=2 时快照 items = history.slice(0, drop)，消息数必须 > keepTail
+  // 才有 drop>0、items 非空；否则 brain.js 会因 !snap.items.length 提前 return false。
+  const fill = (b) => {
+    b.memory.append('user', '消息一：你好初澜');
+    b.memory.append('assistant', '消息二：你好阿哲');
+    b.memory.append('user', '消息三：外面天气怎么样');
+    b.memory.append('assistant', '消息四：好像在下雨呢');
+  };
+  const seed = async (b) => { fill(b); await b.closeWindow(); };
+  const texts = (b) => JSON.stringify(b.memory.windows.map(w => String(w.text).slice(0, 24)));
+
+  // --- 场景 A：reset 后不得复活（红判据）---
+  const a = mk();
+  await seed(a);
+  const recA = a.experiencesArchive.getByWindow(1).find(r => r.payload && typeof r.payload.rawSummaryText === 'string');
+  check('P1-5 前提：归档记录的 payload.epoch 已写入且为整数',
+    !!recA && Number.isInteger(recA.payload.epoch),
+    recA ? 'epoch=' + recA.payload.epoch : 'no record');
+  check('P1-5 前提：reset 前小结确实进了 L2（否则下面判不到复活）',
+    a.memory.windows.some(w => w.text.includes(marker)), texts(a));
+
+  a.memory.reset();   // epoch++、windowNo 归 1
+  fill(a);
+  await a.closeWindow();
+  check('P1-5：memory.reset() 后旧小结绝不复活进 L2',
+    !a.memory.windows.some(w => w.text.includes(marker)), texts(a));
+
+  // --- 场景 B：同血脉（未 reset）时幂等回填照常发生（反向守卫）---
+  // 判据用「标记条数的前后变化」而不是「有没有」—— seed() 本身已把旧小结写进
+  // windows，用 some() 会天然为真，是空转。
+  const count = (b) => b.memory.windows.filter(w => w.text.includes(marker)).length;
+  const b = mk();
+  await seed(b);
+  const beforeB = count(b);
+  b.memory.data.windowNo = 1;   // 模拟「关窗结果未落盘、同一窗口重试」
+  fill(b);
+  await b.closeWindow();
+  check('P1-5 不变式：同血脉时幂等回填照常发生（守卫没把正常路径砍掉）',
+    count(b) === beforeB + 1, texts(b));
+
+  // --- 场景 C：历史记录缺 epoch（未记录）时不回填，绝不猜血脉 ---
+  const c = mk();
+  await seed(c);
+  const origGet = c.experiencesArchive.getByWindow.bind(c.experiencesArchive);
+  c.experiencesArchive.getByWindow = (n) => origGet(n).map(r => {
+    const clone = JSON.parse(JSON.stringify(r));
+    if (clone.payload) delete clone.payload.epoch;
+    return clone;
+  });
+  c.memory.data.windowNo = 1;
+  const beforeC = count(c);
+  fill(c);
+  await c.closeWindow();
+  check('P1-5：历史记录缺 epoch（未记录）时不回填，绝不猜血脉',
+    count(c) === beforeC, texts(c));
+}
+
 async function runAll() {
   await testSummaryFailurePreservesDialogue();
   testArchiveCorruptLineSkipping();
@@ -439,6 +516,7 @@ async function runAll() {
   await testFaultInjectionMatrix();
   await testArchiveSpilloverPreservesDialogue();
   await testSpilloverFailureKeepsDialogue();
+  await testResetDoesNotResurrectOldSummary();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

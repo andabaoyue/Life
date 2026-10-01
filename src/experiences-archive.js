@@ -477,7 +477,13 @@ class ExperiencesArchive {
       // v0.9.7.1: missing epistemic status is unknown, never an automatic certification.
       epistemicStatus: data.epistemicStatus || 'UNKNOWN',
       structuredSummaryAvailable: data.structuredSummaryAvailable !== false,
-      summaryFailureReason: data.summaryFailureReason || null
+      summaryFailureReason: data.summaryFailureReason || null,
+      // v0.9.9 P1-5: 记忆血脉标识。memory.reset() 会 epoch++ 并把 windowNo 归 1，
+      // 与归档里的旧窗口撞号；关窗的幂等回填必须据此判定「这条小结属不属于当前血脉」。
+      // 刻意放在 payload 内而不是记录顶层 —— computeCanonicalRecordHash 只哈希 payload，
+      // 放顶层就逃出哈希、守卫参数可被改写绕过（正是 P1-1 那个洞的形状）。
+      // 缺失保持 null（未记录），绝不补默认值冒充事实。
+      epoch: Number.isInteger(data.epoch) ? data.epoch : null
     };
     if (data.generationContext && typeof data.generationContext === 'object') {
       payload.generationContext = data.generationContext;

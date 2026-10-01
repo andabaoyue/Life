@@ -869,14 +869,22 @@ class Brain {
       console.warn(`[Brain] 窗口 #${snap.windowNo} 已经归档且状态已前进，直接推进 Memory 关窗完成幂等收尾`);
       const existing = this.experiencesArchive.getByWindow(snap.windowNo).find(r => r.recordType === 'window_summary' || r.recordType === 'window_archive' || r.type === 'window_archive');
       const p = (existing && existing.payload) || existing || {};
-      const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts && p.windowSynthesis.stableUserFacts.join('\n')) || '窗口小结已归档';
-      const done = this.memory.closeWindow(summaryText, snap);
-      if (done) {
-        this.stats.compressions++;
-        this.saveStats(true);
-        this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
+      // v0.9.9 P1-5: epoch 门禁 —— 只回填**同一条记忆血脉**的旧小结。
+      // memory.reset() 会 epoch++ 并把 windowNo 归 1，snap.windowNo 于是与归档里的
+      // 旧窗口撞号；无条件回填会让「清空记忆」后第一次关窗把旧第 1 段小结复活进
+      // L2/prompt。历史记录缺 epoch（未记录）时保持 null、不回填 —— 诚实降级，不猜。
+      const sameLineage = Number.isInteger(p.epoch) && p.epoch === this.memory.data.epoch;
+      if (sameLineage) {
+        const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts && p.windowSynthesis.stableUserFacts.join('\n')) || '窗口小结已归档';
+        const done = this.memory.closeWindow(summaryText, snap);
+        if (done) {
+          this.stats.compressions++;
+          this.saveStats(true);
+          this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
+        }
+        return done;
       }
-      return done;
+      console.warn(`[Brain] 窗口 #${snap.windowNo} 的归档记录不属于当前记忆血脉 (记录 epoch=${p.epoch} / 当前 epoch=${this.memory.data.epoch})，跳过回填、按新生命周期正常关窗`);
     }
 
     // 仅总结当前窗口的真实消息（排除上一窗口残留的 bridge 桥接消息）
@@ -1157,6 +1165,8 @@ class Brain {
       // P0-08 / P0-2: 先写入 Archive (experiences.jsonl)
       const windowArchivePayload = {
         windowNo: snap.windowNo,
+        // v0.9.9 P1-5: 记忆血脉标识，随记录进 payload 并被 recordHash 覆盖（不可篡改）
+        epoch: Number.isInteger(snap.epoch) ? snap.epoch : null,
         targetTurnCount: snap.targetTurnCount || 100,
         actualTurnCount: snap.actualTurnCount ?? snap.snapshotTurnCount,
         closeReason: snap.closeReason || 'turn_limit',
