@@ -32,6 +32,9 @@ function bindBrainDeps(brain) {
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
   if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock();
+  // v0.9.9 P2-2a: 方案 A —— 内态变更经 onChange 接到镜像推送。
+  // 这是「单一生命权威 -> 跨进程镜像」的唯一接线点，不要在别处再推一份。
+  if (brain.internalRegulation) brain.internalRegulation.onChange = pushRegulationState;
 }
 
 let win = null;
@@ -99,6 +102,15 @@ function syncMotionBlock(reason = 'user-priority') {
   const blocked = dragging || motionUi.bubble || motionUi.talking
     || motionUi.chatBusy || motionUi.hidden || !!(tracker && tracker.sleepMode);
   motion.setBlocked(blocked, reason);
+}
+
+// v0.9.9 P2-2a: 内态镜像推送的唯一出口。
+// 此前只有 activity 事件推送它，于是对话/入睡/唤醒/关窗造成的内态变化
+// 到不了渲染端 —— BehaviorScheduler 只能依据陈旧镜像做微动作倾斜（见 D-009 §1）。
+function pushRegulationState() {
+  if (win && !win.isDestroyed() && brain && brain.internalRegulation) {
+    win.webContents.send('internal-regulation-updated', brain.internalRegulation.getState());
+  }
 }
 
 function setupMotion() {
@@ -189,9 +201,9 @@ ipcGuard.on('activity', (e, type) => {
   if (tracker) tracker.record(type);
   // 用户有了新交互，重置空闲检查闹钟
   scheduleProactiveCheck(IDLE_MS);
-  if (win && !win.isDestroyed() && brain && brain.internalRegulation) {
-    win.webContents.send('internal-regulation-updated', brain.internalRegulation.getState());
-  }
+  // v0.9.9 P2-2a: 收敛到唯一出口（内态变更由 onChange 自动推送，这里保留一次
+  // 兜底推送，确保旧路径行为逐字不变）
+  pushRegulationState();
 });
 
 /* ---------- 对话 ---------- */

@@ -107,6 +107,23 @@ class InternalRegulationManager {
    * 唤醒度越高（警觉/紧张） -> 显著性门限越低（更易被环境刺激惊动/注意）
    * 唤醒度越低（从容/镇定） -> 显著性门限越高（滤掉细碎背景噪声）
    */
+  /**
+   * v0.9.9 P2-2a: 内态变更通知（单一生命权威 -> 跨进程镜像）。
+   * D-009 §1 要求「单一生命权威」，但权威在主进程、行为调度在渲染进程，
+   * 二者之间只有 internal-regulation-updated 这一条镜像通道，而它此前**只在
+   * activity 事件推送**（main.js），于是对话/入睡/唤醒/关窗造成的内态变化
+   * 根本到不了渲染端 —— 微动作调度器依据的是陈旧镜像，不是真实的她。
+   *
+   * 这里不加节流（严守 D-001「严格事件驱动、零后台 Timer」）：事件发生就推送。
+   * 回调异常必须隔离，绝不能影响内态更新本身。
+   */
+  _emitChange(state) {
+    if (typeof this.onChange === 'function') {
+      try { this.onChange(state); } catch { /* 推送失败不得影响内态更新 */ }
+    }
+    return state;
+  }
+
   _computeSalienceThreshold(arousal) {
     const raw = 70 - (arousal * 0.5);
     return clamp(symmetricRound(raw), REGULATION_BOUNDS.salienceThreshold.min, REGULATION_BOUNDS.salienceThreshold.max);
@@ -226,7 +243,7 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(`interaction_${role}`, deltas, prev, at);
-    return this.getState();
+    return this._emitChange(this.getState());
   }
 
   /**
@@ -281,7 +298,7 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(`activity_${activityKind}`, deltas, prev, at);
-    return this.getState();
+    return this._emitChange(this.getState());
   }
 
   /**
@@ -336,7 +353,7 @@ class InternalRegulationManager {
 
     if (eventId) {
       if (this.persistedConsumedAttentionEvents.has(eventId)) {
-        return this.getState();
+        return this._emitChange(this.getState());
       }
       this.persistedConsumedAttentionEvents.add(eventId);
       this.consumedAttentionEvents.add(eventId);
@@ -374,9 +391,9 @@ class InternalRegulationManager {
       this.history = before.history;
       this.consumedAttentionEvents = before.consumedAttentionEvents;
       this.persistedConsumedAttentionEvents = before.persistedConsumedAttentionEvents;
-      return this.getState();
+      return this._emitChange(this.getState());
     }
-    return this.getState();
+    return this._emitChange(this.getState());
   }
 
   /**
@@ -390,7 +407,7 @@ class InternalRegulationManager {
 
     const boolSleep = Boolean(isSleeping);
     if (this.isSleeping === boolSleep) {
-      return this.getState(); // 幂等保护：状态已处于目标睡眠/清醒状态，防止同一入睡/唤醒事件重复计量
+      return this._emitChange(this.getState()); // 幂等保护：状态已处于目标睡眠/清醒状态，防止同一入睡/唤醒事件重复计量
     }
     this.isSleeping = boolSleep;
 
@@ -429,7 +446,7 @@ class InternalRegulationManager {
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(isSleeping ? 'enter_sleep' : 'wake_up', deltas, prev, at);
     this.save();
-    return this.getState();
+    return this._emitChange(this.getState());
   }
 
   /**
@@ -451,7 +468,7 @@ class InternalRegulationManager {
 
     this._recordTransition(`window_close_${windowNo}`, {}, prev, at);
     this.save();
-    return this.getState();
+    return this._emitChange(this.getState());
   }
 
   /**

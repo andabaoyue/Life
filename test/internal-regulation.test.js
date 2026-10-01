@@ -151,5 +151,64 @@ check('P0-3 baseline 不加载磁盘残留（对照组不被历史污染）',
 check('P0-3 前提：启用时同一目录确实读得到残留（否则上一条是空转）',
   new InternalRegulationManager(residueDir, { enabled: true }).getState().energy === 12);
 
+// 17. v0.9.9 P2-2a: 内态变更 -> onChange 推送（跨进程镜像不得陈旧）
+// 权威内态在主进程、行为调度在渲染进程，二者只有 internal-regulation-updated
+// 一条镜像通道；此前它只在 activity 事件推送，对话/入睡/唤醒/关窗的变化根本
+// 到不了渲染端 —— 微动作调度器依据的是陈旧镜像，不是真实的她。
+{
+  let pushes = 0;
+  const mP = new InternalRegulationManager(makeTempDir(), { enabled: true });
+  mP.onChange = () => { pushes++; };
+  mP.updateOnInteractionTurn({ role: 'user', messageLength: 150 });
+  check('P2-2a：对话轮次触发 onChange 推送', pushes === 1, 'pushes=' + pushes);
+  const p0 = pushes;
+  mP.updateOnSleep(true); mP.updateOnSleep(false);
+  check('P2-2a：入睡/唤醒触发 onChange 推送', pushes > p0, 'pushes=' + pushes);
+  const p1 = pushes;
+  mP.updateOnWindowClose(1);
+  check('P2-2a：关窗排空触发 onChange 推送', pushes > p1, 'pushes=' + pushes);
+  const p2 = pushes;
+  mP.updateOnActivity('poke', { count: 3 });
+  check('P2-2a 不变式：物理活动仍触发推送（旧路径不破）', pushes > p2, 'pushes=' + pushes);
+
+  // 异常隔离：回调抛错绝不影响内态更新本身
+  const mX = new InternalRegulationManager(makeTempDir(), { enabled: true });
+  mX.onChange = () => { throw new Error('推送方炸了'); };
+  let threwX = false;
+  let sX = null;
+  try { sX = mX.updateOnActivity('poke', { count: 3 }); } catch { threwX = true; }
+  check('P2-2a 不变式：回调抛错不得影响内态更新（异常隔离）',
+    threwX === false && !!sX && typeof sX.arousal === 'number');
+}
+
+// 18. v0.9.9 P2-2b: Arousal <-> 显著性门限反向耦合（零实现改动，只补单调性判据）
+// 严禁改动耦合参数 —— 那会影响离线 Replay 确定性。
+{
+  const mC = new InternalRegulationManager(makeTempDir(), { enabled: true });
+  const th = (a) => mC._computeSalienceThreshold(a);
+  check('P2-2b：arousal 上升 -> 显著性门限单调不增（反向耦合）',
+    th(0) >= th(25) && th(25) >= th(50) && th(50) >= th(75) && th(75) >= th(100),
+    [0, 25, 50, 75, 100].map(a => th(a)).join(','));
+  check('P2-2b：arousal 下降 -> 显著性门限单调不减',
+    th(100) <= th(75) && th(75) <= th(50) && th(50) <= th(25));
+  const lo = REGULATION_BOUNDS.salienceThreshold.min;
+  const hi = REGULATION_BOUNDS.salienceThreshold.max;
+  check('P2-2b：门限始终夹在 REGULATION_BOUNDS 内',
+    [-1000, 0, 50, 100, 1000].every(a => th(a) >= lo && th(a) <= hi),
+    'lo=' + lo + ' hi=' + hi);
+
+  // 基线隔离（接 P0-3）：baseline 下门限保持出厂默认，不被实验残留污染
+  const dirB = makeTempDir();
+  const resid = new InternalRegulationManager(dirB, { enabled: true });
+  resid.arousal = 90;
+  resid.salienceThreshold = resid._computeSalienceThreshold(90);
+  resid.save();
+  const baseM = new InternalRegulationManager(dirB, { enabled: false });
+  const freshM = new InternalRegulationManager(makeTempDir(), { enabled: false });
+  check('P2-2b 不变式：baseline 下门限保持出厂默认（不被实验残留污染）',
+    baseM.getState().salienceThreshold === freshM.getState().salienceThreshold,
+    'base=' + baseM.getState().salienceThreshold + ' fresh=' + freshM.getState().salienceThreshold);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

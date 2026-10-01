@@ -338,6 +338,16 @@ check('离线重放：InternalRegulationManager.replay 能够从归档准确重�
            replayReport.finalState.energy === 62;
   })());
 
+// v0.9.9 P2-2a 反向守卫：不许把 BehaviorScheduler 接进主进程
+// 调度器活在渲染进程（pet.js），主进程侧的 brain.behaviorScheduler 生产恒为 null
+// （全仓只有测试会 bindBehaviorScheduler）。接进来会制造「第二个真相」，
+// 与 Test A 的装配路径再次分叉 —— 那正是本仓库反复记录过的老形状。
+{
+  const bGuard = new Brain(makeTempDir(), { experimentMode: 'baseline', experimentModules: {} });
+  check('P2-2a 不变式：生产装配下 brain.behaviorScheduler 仍为 null（不制造第二真相）',
+    bGuard.behaviorScheduler === null);
+}
+
 // v0.9.9 P0-3: baseline 不得从归档自愈实验残留。
 // 原 _restoreInternalRegulationFromArchive 只判 fs.existsSync、完全不看 enabled，
 // 于是 baseline 下也会把归档里的实验残留灌回内态并 save() 落盘 —— 对照组被污染。
