@@ -723,6 +723,41 @@ function testI_PagingConstraints() {
   testH_IpcAndCompat();
   testI_PagingConstraints();
 
+  // -------------------------------------------------------------
+  // Test J: NON_STATE 隔离（v0.9.9 P2-1d）
+  // 程序/模型生成产物（梦境、内部稳态快照等）不得凭空造出研究层窗口、
+  // 不得被当成主体状态证据计入轨迹 —— 与 subject-state.js 的 NON_STATE 统一。
+  // -------------------------------------------------------------
+  console.log('\n--- Test J: NON_STATE 隔离（P2-1d）---');
+  {
+    const dirJ = fs.mkdtempSync(path.join(os.tmpdir(), 'research-nonstate-'));
+    const awJ = new ExperiencesArchive(dirJ);
+    awJ.appendWindowArchive({ windowNo: 1, turns: 2, rawSummaryText: '窗口一', verifiedEvidence: [], stateChanges: [] });
+    // 梦境记录带 windowNo=2：修复前会被当成一个真实窗口计入研究层
+    awJ.appendRecord('subject_dream', 2, {
+      dreamId: 'd-p21', epistemicStatus: 'DREAM_GENERATED_ARTIFACT', narrative: '梦见一条河'
+    });
+    awJ.appendRecord('internal_regulation_snapshot', 4, {
+      state: { energy: 10, restPressure: 5, arousal: 50 }
+    });
+    awJ.appendWindowArchive({ windowNo: 3, turns: 2, rawSummaryText: '窗口三', verifiedEvidence: [], stateChanges: [] });
+
+    const qJ = new ResearchQuery(dirJ);
+    const rawWins = qJ.getWindows();
+    const listJ = Array.isArray(rawWins) ? rawWins
+      : (rawWins && Array.isArray(rawWins.items) ? rawWins.items : []);
+    const nosJ = listJ.map(w => w && (w.windowNo !== undefined ? w.windowNo : w.window))
+      .filter(n => typeof n === 'number');
+    check('P2-1d：subject_dream 不得凭空造出研究层窗口',
+      !nosJ.includes(2), JSON.stringify(nosJ));
+    check('P2-1d：internal_regulation_snapshot 不得凭空造出研究层窗口',
+      !nosJ.includes(4), JSON.stringify(nosJ));
+    check('P2-1d 不变式：真实 window_summary 仍照常计入窗口（隔离不误伤）',
+      nosJ.includes(1) && nosJ.includes(3), JSON.stringify(nosJ));
+
+    try { fs.rmSync(dirJ, { recursive: true, force: true }); } catch {}
+  }
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();

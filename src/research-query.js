@@ -27,7 +27,13 @@ const NON_STATE_RECORD_TYPES = new Set([
   'internal_log',
   'audit_log',
   // v0.9.9 P1-d: 账本淘汰条目是模型叙事产物，不参与状态轨迹
-  'self_ledger_evicted'
+  'self_ledger_evicted',
+  // v0.9.9 P2-1d: 与 subject-state.js 的 NON_STATE 统一收敛 —— 程序/模型生成产物
+  // 一律不参与状态轨迹，否则梦境、内部稳态快照等会被当成主体状态证据计入。
+  'self_projection',
+  'subject_dream',
+  'memory_dynamics_snapshot',
+  'internal_regulation_snapshot'
 ]);
 
 // N-05: 分页输入约束（防御 renderer 传入超大/负值/非整数）。
