@@ -483,7 +483,9 @@ class SubjectState {
         'self_projection',
         'self_ledger_evicted',
         'subject_dream',
-        'memory_dynamics_snapshot'
+        'memory_dynamics_snapshot',
+        // v0.9.9 P2-1d 收尾：与研究层两处清单统一，四方 100% 一致
+        'internal_regulation_snapshot'
       ]);
       let maxArchiveWindow = 0;
       for (const r of records) {
@@ -1023,7 +1025,9 @@ class SubjectState {
       'self_projection',
       'self_ledger_evicted',
       'subject_dream',
-      'memory_dynamics_snapshot'
+      'memory_dynamics_snapshot',
+      // v0.9.9 P2-1d 收尾：与研究层两处清单统一，四方 100% 一致
+      'internal_regulation_snapshot'
     ]);
 
     // 标准化并按 archiveSeq（优先）或时间戳升序排序 (v0.9.6 P0-05)

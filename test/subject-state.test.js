@@ -230,5 +230,23 @@ check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成�
   r5.verified.length === 0 && r5.rejected.length === 1,
   JSON.stringify(r5.rejected.map(x => x.reason)));
 
+// 10. v0.9.9 P2-1d 收尾：internal_regulation_snapshot 不得参与 maxArchiveWindow
+// 它的 windowNo 若计入，就会伪造「持久化状态落后于归档」，触发一次不必要的
+// 全量 Replay 自愈。补齐后四方 NON_STATE 清单 100% 一致。
+{
+  const { ExperiencesArchive } = require('../src/experiences-archive');
+  const dirSnap = tmpDir();
+  const arcSnap = new ExperiencesArchive(dirSnap);
+  arcSnap.appendRecord('internal_regulation_snapshot', 9, {
+    state: { energy: 10, restPressure: 5, arousal: 50 }
+  });
+  const stSeed = new SubjectState(dirSnap);
+  stSeed.data.windowNo = 3;
+  stSeed.save(true);
+  const stAfter = new SubjectState(dirSnap);   // load() -> checkAndAutoRecoverConsistency
+  check('P2-1d：internal_regulation_snapshot 不得参与 maxArchiveWindow（不伪造状态落后）',
+    stAfter.data.windowNo === 3, 'windowNo=' + stAfter.data.windowNo);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
