@@ -128,6 +128,63 @@ const PRESETS = {
   }
 };
 
+/* ---------- 主体特质偏好亲和度与自主选择 (v0.9.9) ----------
+   初澜作为数字生命主体，根据内在特质喜好值驱动衣着倾向与风格选择。
+   这属于主体动力学向外观自决的投射，衣服本身不篡改基础性格（严格遵循铁律 1）。 */
+const STYLE_AFFINITIES = {
+  casual: {
+    name: '日常休闲',
+    affinities: { vitality: 0.8, quiet_preference: -0.3, social_initiative: 0.3 },
+    mood: '偏好活力与轻松自如，讨厌拘束'
+  },
+  gothic: {
+    name: '哥特风',
+    affinities: { quiet_preference: 0.8, philosophical_curiosity: 0.7, vitality: -0.3 },
+    mood: '偏好深邃、静谧与哲思沉思，喜欢独处的安宁'
+  },
+  default: {
+    name: '默认白毛套装',
+    affinities: { attachment_need: 0.7, quiet_preference: 0.2 },
+    mood: '偏好被宽大外套包裹的温暖与依恋，温柔而有安全感'
+  }
+};
+
+/**
+ * 计算指定预设在给定特质下的偏好得分
+ */
+function evaluatePresetPreference(presetId, traits = {}) {
+  const meta = STYLE_AFFINITIES[presetId];
+  if (!meta) return 0;
+  let score = 0;
+  for (const [trait, weight] of Object.entries(meta.affinities)) {
+    const val = Number(traits[trait]) || 0;
+    score += val * weight;
+  }
+  return score;
+}
+
+/**
+ * 根据主体特质数值获取初澜当前最偏好的预设方案
+ */
+function getSubjectPreferredPreset(traits = {}) {
+  let bestPreset = 'default';
+  let bestScore = 0;
+  for (const pid of Object.keys(STYLE_AFFINITIES)) {
+    const sc = evaluatePresetPreference(pid, traits);
+    if (sc > bestScore) {
+      bestScore = sc;
+      bestPreset = pid;
+    }
+  }
+  const meta = STYLE_AFFINITIES[bestPreset] || STYLE_AFFINITIES.default;
+  return {
+    preset: bestPreset,
+    name: meta.name,
+    score: bestScore,
+    mood: meta.mood
+  };
+}
+
 /**
  * 校验一套搭配是否合法。
  *
@@ -332,13 +389,25 @@ class Wardrobe {
     return lines.join('\n');
   }
 
-  /** system 末尾那一整块；换衣服才会变一次 */
-  promptBlock() {
-    return '【当前穿着】（这是程序里的真实状态，回答穿着相关的问题以它为准）\n'
+  getSubjectPreference(traits) {
+    return getSubjectPreferredPreset(traits);
+  }
+
+  /** system 末尾那一整块；换衣服或关窗特质演进才会变一次 */
+  promptBlock(traits = null) {
+    let block = '【当前穿着】（这是程序里的真实状态，回答穿着相关的问题以它为准）\n'
       + this.outfitText()
       + '\n\n【衣柜里可用的 itemId】（[wear:] 只能引用下面这些，别的都不存在）\n'
       + Wardrobe.catalogText();
+
+    if (traits && typeof traits === 'object') {
+      const pref = getSubjectPreferredPreset(traits);
+      block += '\n\n【主体着装偏好与当下心境】\n'
+        + '- 当下特质驱动的着装倾向：' + pref.name + '（' + pref.mood + '）\n'
+        + '- 你拥有根据自身喜好与心境挑选衣物的自主权；在交流或有需要时，你可以主动提议换上符合你心境的衣服（在回复末尾附带 [wear:' + pref.preset + '] 或具体 itemId）。';
+    }
+    return block;
   }
 }
 
-module.exports = { Wardrobe, CATALOG, PRESETS, SLOTS, SLOT_IDS, validate, defaultEquip };
+module.exports = { Wardrobe, CATALOG, PRESETS, SLOTS, SLOT_IDS, STYLE_AFFINITIES, evaluatePresetPreference, getSubjectPreferredPreset, validate, defaultEquip };

@@ -31,7 +31,7 @@ function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
-  if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock();
+  if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock(brain.subjectState ? brain.subjectState.values : null);
   // v0.9.9 P2-2a: 方案 A —— 内态变更经 onChange 接到镜像推送。
   // 这是「单一生命权威 -> 跨进程镜像」的唯一接线点，不要在别处再推一份。
   if (brain.internalRegulation) brain.internalRegulation.onChange = pushRegulationState;
@@ -351,7 +351,7 @@ ipcGuard.handle('internal-regulation-get', () => (brain && brain.internalRegulat
 function pushWardrobe(r) {
   if (r && !(r.ok && r.changed)) return;
   if (!win || win.isDestroyed() || !wardrobe) return;
-  if (brain) brain.memory.wardrobe = wardrobe.promptBlock();
+  if (brain) brain.memory.wardrobe = wardrobe.promptBlock(brain.subjectState ? brain.subjectState.values : null);
   win.webContents.send('wardrobe-changed', wardrobe.layers());
 }
 

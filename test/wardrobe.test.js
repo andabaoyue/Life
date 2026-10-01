@@ -203,5 +203,24 @@ const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 check('wardrobe.js 逻辑代码里不含任何人格相关词',
   !/病娇|女仆|语气|人格|口癖|称呼|persona/i.test(code));
 
+/* ---------- 主体特质偏好与自决 (v0.9.9) ---------- */
+const { getSubjectPreferredPreset, evaluatePresetPreference } = require('../src/wardrobe');
+check('高活力特质偏好休闲运动套装',
+  getSubjectPreferredPreset({ vitality: 150, quiet_preference: -20 }).preset === 'casual');
+check('高安静/哲学好奇特质偏好哥特风',
+  getSubjectPreferredPreset({ quiet_preference: 180, philosophical_curiosity: 120 }).preset === 'gothic');
+check('高依恋特质偏好默认外套温暖包裹',
+  getSubjectPreferredPreset({ attachment_need: 160, vitality: -10 }).preset === 'default');
+check('中立特质平稳回退至默认套装',
+  getSubjectPreferredPreset({}).preset === 'default');
+check('promptBlock(traits) 包含主体着装偏好与当下心境提示', (() => {
+  const blk = w.promptBlock({ quiet_preference: 200, philosophical_curiosity: 100 });
+  return blk.includes('【主体着装偏好与当下心境】') && blk.includes('哥特风') && blk.includes('[wear:gothic]');
+})());
+check('promptBlock(null) 保持经典向下兼容', (() => {
+  const blk = w.promptBlock();
+  return !blk.includes('【主体着装偏好与当下心境】') && blk.includes('【当前穿着】');
+})());
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

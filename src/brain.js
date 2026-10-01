@@ -463,11 +463,17 @@ class Brain {
     });
   }
 
+  getWardrobePrompt() {
+    if (!this.wardrobe || typeof this.wardrobe.promptBlock !== 'function') return '';
+    const traits = this.subjectState ? this.subjectState.values : null;
+    return this.wardrobe.promptBlock(traits);
+  }
+
   setWardrobe(nameOrBlock) {
     if (this.wardrobe && typeof this.wardrobe.applyProposal === 'function') {
       const wearChanged = this.wardrobe.applyProposal(nameOrBlock);
       if (wearChanged) {
-        this.memory.wardrobe = this.wardrobe.promptBlock();
+        this.memory.wardrobe = this.getWardrobePrompt();
         this.pendingCacheBreakReason = 'wardrobe_change';
       }
       return wearChanged;
@@ -804,7 +810,7 @@ class Brain {
       }
       // 穿着块只在真有事发生时重建一次，不必每条提案都算一遍
       if (wearChanged) {
-        this.memory.wardrobe = this.wardrobe.promptBlock();
+        this.memory.wardrobe = this.getWardrobePrompt();
         this.pendingCacheBreakReason = 'wardrobe_change';
       }
     }
@@ -1492,6 +1498,10 @@ class Brain {
           });
 
         if (done) {
+          // 关窗后主体特质可能演进，根据最新特质喜好值刷新衣柜偏好提示块
+          if (this.wardrobe) {
+            this.memory.wardrobe = this.getWardrobePrompt();
+          }
           // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
           const diskCfg = tryLoad(this.dir);
           const nextExp = diskCfg ? sanitize({
