@@ -99,7 +99,7 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('注册了对话/配置/衣柜三组通道，且无 memory-delete / memory-clear 旁路（D-005）',
     ['chat-send', 'chat-report', 'config-get', 'config-set-key', 'config-open',
      'wardrobe-state', 'wardrobe-set', 'wardrobe-preset', 'memory-list',
-     'toggle-pin']
+     'chat-history', 'toggle-pin']
       .every(c => handlers.has(c))
     && !handlers.has('memory-delete') && !handlers.has('memory-clear'));
   check('没有残留 wardrobe-apply（AI 换装只能走 chat-send 提案）',
@@ -457,6 +457,12 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('本层跑完没有残留临时文件',
     fs.readdirSync(DIR).filter(x => x.includes('.tmp-')).length === 0);
   fs.rmSync(DIR, { recursive: true, force: true });
+  /* ============ chat-history 投影白名单（v1.0 笔 2） ============ */
+  const chList = await invoke('chat-history');
+  check('chat-history 返回非空数组且投影恰为 7 字段白名单（多一字段即红）',
+    Array.isArray(chList) && chList.length > 0
+    && chList.every(m => Object.keys(m).sort().join(',') === 'bridge,content,messageId,role,synthetic,t,windowNo'));
+
   console.log('\n' + (failures ? failures + ' 项失败' : 'main 层测试全部通过'));
   process.exit(failures ? 1 : 0);
 })().catch(e => {

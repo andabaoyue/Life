@@ -317,6 +317,21 @@ ipcGuard.handle('chat-report', () => {
 // 窗口摘要属受保护历史，记忆面板只读；重新诞生只走带二次确认的 self-ledger-reset。
 ipcGuard.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
 
+// v1.0 笔 2：气泡流数据层只读通道 —— 单一事实源是 memory.history（她眼里的真实对话史）。
+// synthetic 显式保留：主动搭话的程序触发不得伪装成用户发言；t 缺失即 null，绝不伪造时间。
+ipcGuard.handle('chat-history', () => {
+  if (!brain || !brain.memory) return [];
+  return (brain.memory.history || []).map(m => ({
+    role: m.role,
+    content: m.content,
+    messageId: m.messageId,
+    windowNo: m.windowNo,
+    bridge: Boolean(m.bridge),
+    synthetic: Boolean(m.synthetic),
+    t: Number.isFinite(m.t) ? m.t : null
+  }));
+});
+
 // 自我成长记录只读展示；删除/覆盖留到 schema 和审计策略明确后再开放。
 ipcGuard.handle('self-ledger-list', () => (brain ? brain.listSelfLedger() : []));
 
