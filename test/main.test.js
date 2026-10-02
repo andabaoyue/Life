@@ -99,7 +99,7 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('注册了对话/配置/衣柜三组通道，且无 memory-delete / memory-clear 旁路（D-005）',
     ['chat-send', 'chat-report', 'config-get', 'config-set-key', 'config-open',
      'wardrobe-state', 'wardrobe-set', 'wardrobe-preset', 'memory-list',
-     'chat-history', 'toggle-pin']
+     'chat-history', 'chat-viewport', 'toggle-pin']
       .every(c => handlers.has(c))
     && !handlers.has('memory-delete') && !handlers.has('memory-clear'));
   check('没有残留 wardrobe-apply（AI 换装只能走 chat-send 提案）',
@@ -457,6 +457,13 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('本层跑完没有残留临时文件',
     fs.readdirSync(DIR).filter(x => x.includes('.tmp-')).length === 0);
   fs.rmSync(DIR, { recursive: true, force: true });
+  /* ============ chat-viewport 通道（v1.0 笔 3b-a） ============ */
+  const badOpen = await invoke('chat-viewport', 'yes');
+  const goodOpen = await invoke('chat-viewport', true);
+  check('chat-viewport 拒绝非法 open 值且合法展开为 380×720',
+    badOpen && badOpen.ok === false && badOpen.error === 'INVALID_OPEN'
+    && goodOpen && goodOpen.ok === true && goodOpen.w === 380 && goodOpen.h === 720);
+
   /* ============ chat-history 投影白名单（v1.0 笔 2） ============ */
   const chList = await invoke('chat-history');
   check('chat-history 返回非空数组且投影恰为 7 字段白名单（多一字段即红）',
