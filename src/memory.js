@@ -83,7 +83,7 @@ class Memory {
     this.wardrobe = '';
     this.writer = new DeferredWriter(() => writeJsonAtomic(this.path, this.data), { delayMs: 3000 });
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
-                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '' };
+                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [] };
 
     // v0.9.7: 记忆痕迹动力学管理器 (Memory Dynamics & Synaptic Pruning)
     const dynamicsEnabled = opts.memoryDynamics !== undefined
@@ -135,7 +135,7 @@ class Memory {
         }
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
-                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [], ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
@@ -341,6 +341,21 @@ class Memory {
     return horizon;
   }
 
+  /**
+   * v0.9.9 意志层·好奇：未解疑问队列 —— 只在窗口轮转时刻更新（窗口内逐字节稳定）。
+   * FIFO 上限 5 条，新疑问顶替旧疑问：没被解开的疑问会被更新的疑问自然冲淡，
+   * 被解开的答案则自然进 stableFacts / 经历（不做问答配对，纯本地确定性代数）。
+   */
+  refreshCuriosity(unresolved, windowNo) {
+    const incoming = Array.isArray(unresolved)
+      ? unresolved.filter(q => typeof q === 'string' && q.trim())
+        .map(q => ({ q: q.trim().slice(0, 120), windowNo: windowNo || null }))
+      : [];
+    const queue = Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [];
+    this.data.curiosityQueue = queue.concat(incoming).slice(-5);
+    return this.data.curiosityQueue;
+  }
+
   /* ---------- 发给 API 的消息 ---------- */
 
   systemText() {
@@ -386,6 +401,13 @@ class Memory {
     // v0.9.9 Batch 2: 底座深处经历地平线 —— 钉子1：必须在 activeWindows 守卫之外
     //（全部段落休眠的时刻恰恰最需要它）；只在窗口轮转时重算，窗口内逐字节稳定。
     if (this.data.deepHorizon) s += '\n\n' + this.data.deepHorizon;
+    // v0.9.9 意志层·好奇：未解疑问进视野（轻版 —— 只在回复中自然带问，不做主动弹窗求知）。
+    // 反骚扰闩写死在块内：一次最多一个、绝不连环审问。
+    const cur = Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [];
+    if (cur.length) {
+      s += '\n\n【尚未解开的疑问】（这是你自己的未解问题，不是任务；只在自然的时机提起，一次最多一个，绝不连环审问）\n'
+        + cur.map(x => '- ' + x.q).join('\n');
+    }
     // v0.9.9 五大方向·①：离线重组碎片块 —— 仅在真实存在归档碎片时注入，
     // 必须带防伪标签（非亲历，不得当亲历引用）；碎片只在窗口轮转时刻更新，窗口内逐字节稳定。
     // 位置必须在穿着块之前 —— 「穿着块是 system 结尾」是被测试钉死的顺序不变式。
@@ -625,7 +647,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '' };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '', curiosityQueue: [] };
     this.save(true);
   }
 }

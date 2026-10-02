@@ -1386,6 +1386,9 @@ class Brain {
       snap.generationContext = summaryGenerationContext;
       const done = this.memory.closeWindow(summaryTextForMemory, snap);
       if (done) {
+        // v0.9.9 意志层·好奇：本窗未解疑问入队（与轮转同刻更新，窗口内逐字节稳定）
+        this.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo);
+        this.memory.save(true);
         // v0.9.9 观测补盲：补关计数 —— 先数后复位（windowCloseAttempts 一旦复位就数不到了）
         if (this.windowCloseAttempts > 0) {
           this.stats.delayedCloses = (this.stats.delayedCloses || 0) + 1;

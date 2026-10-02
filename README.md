@@ -363,6 +363,7 @@ node test/subject-state.test.js  # 25 项：subject-state.json、[-999, 999] 极
 node test/main.test.js           # 87 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 明文降级配置保存不丢 key 与 writingMode 兼容淘汰、N-08 self-ledger-reset 显式确认门）
 node test/tracker.test.js        # 42 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟
+node test/life-will-layer.test.js      # 5 项：意志层补全 Phase 1A（未解疑问 FIFO 队列与反骚扰闩、失败关窗不污染队列、零注入兼容）
 node test/nonhuman-framework-prompt.test.js # 34 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话）
 node test/wardrobe.test.js       # 61 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离、主体特质偏好与自决换装提案
 node test/secure.test.js         # 38 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚
