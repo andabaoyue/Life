@@ -57,6 +57,16 @@ const GROWTH_SYS =
   + '对照【当前自我投影】审视本次窗口中初澜真实做出的取舍与自述；若与既有特质态度发生真实分歧或转变，必须提取并归入 oppose 数组（附带 messageId、quote）。'
   + '无真实态度分歧或行为转变，严禁为迎合指令虚构对立；无明确反向证据时，oppose 必须输出 []，严禁制造伪证伪。';
 
+/* v0.9.9: 小结分段计划 —— 分段数随窗口规模自适应，绝不写死「3~5 段」：
+   满 100 轮走标准 5 段（严格分支钉死 1-20…81-100），小窗口只写覆盖实际轮数的段。
+   既省输出（43 轮实测白写五段把输出顶到 3,923/4,000），又不撞 validateWindowSummary。 */
+function summarySegmentPlan(turnCount) {
+  const n = Number.isFinite(turnCount) && turnCount > 0 ? Math.floor(turnCount) : 1;
+  if (n >= 100) return { segments: 5, note: '按标准 5 段划分（1-20、21-40、41-60、61-80、81-100）' };
+  const seg = Math.max(1, Math.min(5, Math.ceil(n / 20)));
+  return { segments: seg, note: '共 ' + seg + ' 段，range 依次覆盖 1~' + n + ' 轮（每段最多 20 轮）' };
+}
+
 function systemPersona(cfg) {
   return PERSONA; // v0.9.9: 旧 Creative Mode / DS Skill 已拆除，persona 无条件单一来源
 }
@@ -990,11 +1000,14 @@ class Brain {
 
     // v0.9.9 P0: 结构化小结 (5×20 + WindowSynthesis) 输出上限，必须给足 JSON 完整裕度。
     // 此前硬编码 900 会截断 JSON，触发 Fail-Stop 后关窗连败（窗口越拖越长）。
-    const summaryMaxTokens = (opts && opts.maxTokens) || this.cfg.summaryMaxTokens || 4000;
+    const summaryMaxTokens = (opts && opts.maxTokens) || this.cfg.summaryMaxTokens || 10000;
+    // v0.9.9: 分段随窗口规模自适应（见 summarySegmentPlan 注释）
+    const segPlan = summarySegmentPlan(snap.actualTurnCount);
     try {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: SUMMARY_SYS },
-         { role: 'user', content: '【对话】\n' + dialogue }],
+         { role: 'user', content: '【对话】\n' + dialogue
+           + '\n\n【窗口规模】本窗口共 ' + (snap.actualTurnCount || 0) + ' 轮，请' + segPlan.note + '；紧凑输出，不写空段、不铺陈冗余字句。' }],
         { maxTokens: summaryMaxTokens, temperature: 0.2 }
       );
       const { text, usage, observedModel } = apiCompleteRes;
@@ -1645,7 +1658,7 @@ class Brain {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: GROWTH_SYS },
          { role: 'user', content: userContent }],
-        { maxTokens: 420, temperature: 0.15 }
+        { maxTokens: this.cfg.growthMaxTokens || 1500, temperature: 0.15 }
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'growth');
@@ -1668,7 +1681,7 @@ class Brain {
         kind: 'growth',
         cfg: this.cfg,
         promptHashes: growthPromptHashes,
-        sampling: { maxTokens: 420, temperature: 0.15 },
+        sampling: { maxTokens: this.cfg.growthMaxTokens || 1500, temperature: 0.15 },
         sourceWindowNo: window,
         sourceMessageRange: opts.sourceMessageRange || null,
         observedModel,
@@ -1853,4 +1866,4 @@ class Brain {
   listSelfLedger() { return this.selfLedger.list(); }
 }
 
-module.exports = { Brain, parseState, parseWear, STATES };
+module.exports = { Brain, parseState, parseWear, STATES, summarySegmentPlan };

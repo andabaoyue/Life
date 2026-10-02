@@ -139,6 +139,22 @@ check('FB 五格数中文定名、零英文代码键', (() => {
     && !/quiet_preference=|social_initiative=|attachment_need=|vitality=|philosophical_curiosity=/.test(snap);
 })());
 
+/* ---------- Fix C: 输出预算扩容与分段自适应 ---------- */
+check('FC growthMaxTokens/summaryMaxTokens 双注册（DEFAULTS + 白名单）', (() => {
+  const cfgSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8');
+  return /growthMaxTokens: 1500/.test(cfgSrc) && /summaryMaxTokens: 10000/.test(cfgSrc)
+    && /growthMaxTokens: finiteInt/.test(cfgSrc) && /summaryMaxTokens: finiteInt/.test(cfgSrc);
+})());
+check('FC 小结分段随窗口规模自适应（小窗紧凑、满窗标准五段）', (() => {
+  const { summarySegmentPlan } = require('../src/brain');
+  const p43 = summarySegmentPlan(43);
+  const p100 = summarySegmentPlan(100);
+  const p121 = summarySegmentPlan(121);
+  return p43.segments === 3 && /1~43/.test(p43.note)
+    && p100.segments === 5 && /1-20、21-40、41-60、61-80、81-100/.test(p100.note)
+    && p121.segments === 5;
+})());
+
 /* ---------- Batch 3: 成长调用 oppose 反凑数闭环 ---------- */
 check('B3 GROWTH_SYS 含对照既有态度指令', growthSys.includes('对照【当前自我投影】'));
 check('B3 GROWTH_SYS 含反凑数闩（无分歧严禁虚构对立、严禁伪证伪）',

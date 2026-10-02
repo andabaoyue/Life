@@ -53,10 +53,13 @@ const DEFAULTS = {
   // 之前该键不在下面 sanitize 的白名单里，手写进 life-config.json 会被整份丢弃 ——
   // 于是 README 声称的「Budget Guard 发送前 fail-closed」在生产恒不可达。
   budgetMaxOutputTokens: 0,
-  // v0.9.9 P0: 关窗小结 (5×20 分段 + WindowSynthesis) 的输出 token 上限。
-  // 实测完整结构化 JSON 约 1,740~2,500 token，4000 留足安全裕度；
-  // 此前该值硬编码 900 会截断 JSON，触发 Fail-Stop 后关窗连败、窗口越拖越长。
-  summaryMaxTokens: 4000,
+  // v0.9.9 P0: 关窗小结 (分段 + WindowSynthesis) 的输出 token 上限。
+  // 实测 43 轮窗口小结已用 3,923 token（4000 上限的 98%）——按满窗 100 轮预留 10000；
+  // 硬编码 900 截断 JSON 触发 Fail-Stop 连败、4000 又濒临熔断，教训全在裕度上。
+  summaryMaxTokens: 10000,
+  // v0.9.9: 成长提炼 (GROWTH_SYS JSON 数组) 的输出上限。实测 420 硬顶把 JSON 腰斩、
+  // self-ledger 空转；含投影对照与 oppose 证据后 1500 留足裕度。
+  growthMaxTokens: 1500,
 
   // ---- 桌面自主运动 ----
   motionEnabled: true,
@@ -156,6 +159,7 @@ function sanitize(raw = {}) {
     budgetMaxOutputTokens: finiteInt(raw.budgetMaxOutputTokens, DEFAULTS.budgetMaxOutputTokens, 0, 10000000),
     // v0.9.9 P0: 同上教训，补进白名单手写配置才生效
     summaryMaxTokens: finiteInt(raw.summaryMaxTokens, DEFAULTS.summaryMaxTokens, 256, 100000),
+    growthMaxTokens: finiteInt(raw.growthMaxTokens, DEFAULTS.growthMaxTokens, 256, 100000),
     motionEnabled: raw.motionEnabled !== false,
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
