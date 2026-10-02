@@ -131,12 +131,12 @@ const snap2 = mem.windowSnapshot();
 check('snap2.activeItems 严格只包含第 2 窗口的新消息，完全剔除旧 bridge',
   snap2.activeItems.length === 4 && snap2.activeItems.every(m => !m.bridge && m.windowNo === 2));
 
-// 8. 记忆查看与删除
+// 8. 记忆查看与删除守卫（v0.9.9 F-099-01 / D-005：物理删除入口已拔除，旧「真删」契约反转）
 const memList = mem.listMemory();
 check('listMemory 列出第 1 段记忆', memList.length === 1 && memList[0].label === '第1段');
 const delRes = mem.deleteWindow(0);
-check('deleteWindow 成功物理删除记忆', delRes && mem.windows.length === 0);
-check('删除后 systemText 不再包含已删除小结', !mem.systemText().includes('阿哲是程序员'));
+check('deleteWindow 一律拒绝物理删除（D-005 守卫）', delRes === false && mem.windows.length === 1);
+check('被拒后记忆完好：systemText 仍包含该段小结', mem.systemText().includes('阿哲是程序员'));
 
 // 9. reset
 mem.reset();

@@ -78,5 +78,11 @@ for (const f of srcFiles) {
 }
 check('源码中坚决杜绝后台连续代谢 Tick (无 setInterval energy/arousal decay)', !hasBackgroundDecayTick);
 
+// 5. D-005 执行规则延伸（v0.9.9 F-099-01）：窗口摘要同属受保护历史，严禁物理删除
+check('D-005 执行规则覆盖窗口摘要（只增不减、面板只读）',
+  content.includes('窗口摘要') && content.includes('只增不减'));
+check('源码中不存在窗口摘要物理删除（windows.splice 拔除）',
+  !srcFiles.some(f => fs.readFileSync(path.join(srcDir, f), 'utf8').includes('windows.splice')));
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

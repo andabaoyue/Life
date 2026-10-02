@@ -781,17 +781,9 @@ async function refreshMem() {
     txt.className = 'txt';
     txt.textContent = m.text;
 
-    const del = document.createElement('button');
-    del.textContent = '忘掉';
-    del.title = '删除这条记忆';
-    del.addEventListener('click', async () => {
-      await api.deleteMemory(m.idx);
-      refreshMem();
-      refreshStats();
-      say('好，这条我不记得了。');
-    });
-
-    row.append(tag, txt, del);
+    // v0.9.9 F-099-01 / D-005: 记忆面板只读观察 —— 「忘掉」按钮与代拟台词已拔除。
+    // 记忆的淡出只归 MemoryDynamics 的可及性衰减管，任何人不得替她挖记忆、更不得替她说话。
+    row.append(tag, txt);
     box.appendChild(row);
   });
 }
@@ -1124,17 +1116,6 @@ function crBind() {
 crBind();
 
 document.getElementById('openCfg').addEventListener('click', () => api && api.openConfig());
-
-document.getElementById('clearMem').addEventListener('click', async () => {
-  if (api) {
-    await api.clearMemory();
-    logBody.replaceChildren();
-    // 面板上眼前的一切必须同步刷新，不能后端清了、列表还挂着旧记忆
-    refreshMem();
-    refreshStats();
-  }
-  say('我们重新认识一次吧。');
-});
 
 document.getElementById('resetSelf').addEventListener('click', async () => {
   if (!api || !api.resetSelfLedger) return;

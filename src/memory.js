@@ -634,14 +634,13 @@ class Memory {
   }
 
   /**
-   * 真删除某条记忆片段 —— 从数据里去掉并落盘，不是回答里假装忘记。
-   * system 会变，破一次缓存，这是诚实删除的必要代价。
+   * v0.9.9 F-099-01 / D-005「遗忘不删除历史」：物理删除入口已拔除。
+   * 旧语义（v0.4 玩具时代的「真删落盘」）与 D-005 直接冲突，还被 UI 代拟台词放大成表演性遗忘；
+   * 现在一切删除请求一律拒绝 —— 窗口摘要只增不减，淡出交给 MemoryDynamics 的可及性衰减。
    */
   deleteWindow(i) {
-    if (!Number.isInteger(i) || i < 0 || i >= this.data.windows.length) return false;
-    this.data.windows.splice(i, 1);
-    this.save(true);
-    return true;
+    console.warn('[Memory] deleteWindow 已移除（D-005 遗忘不删除历史）：拒绝物理删除窗口摘要');
+    return false;
   }
 
   reset() {

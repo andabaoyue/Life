@@ -343,19 +343,18 @@ async function main() {
   check('listMemory 返回 2 条带标签的记忆',
     list.length === 2 && list[0].label === '第1段' && list[0].text.length > 0
     && typeof list[0].tokens === 'number', JSON.stringify(list.map(l => l.label)));
-  check('deleteWindow 越界返回 false',
+  check('deleteWindow 任何调用一律拒绝（D-005 守卫，含越界与合法下标）',
     brain.memory.deleteWindow(9) === false && brain.memory.deleteWindow(-1) === false
-    && brain.memory.deleteWindow(1.5) === false);
-  brain.memory.deleteWindow(0);
+    && brain.memory.deleteWindow(1.5) === false && brain.memory.deleteWindow(0) === false);
   const saved = JSON.parse(fs.readFileSync(brain.memory.path, 'utf8'));
-  check('删除真实落盘（不是假装忘记）',
-    saved.windows.length === 1 && saved.windows[0].no === 2,
+  check('拒绝后记忆真实落盘完好（2 段俱在，物理删除不存在）',
+    saved.windows.length === 2,
     JSON.stringify(saved.windows.map(w => w.no)));
   const reloaded = new (require('../src/memory').Memory)(
     path.dirname(brain.memory.path), { persona: 'P', windowTurns: 2 });
-  check('重读文件确认只剩 1 条', reloaded.windows.length === 1);
-  check('删除后 system 不再含被删片段',
-    brain.memory.systemText().indexOf('【第1段】') < 0);
+  check('重读文件确认 2 段俱在', reloaded.windows.length === 2);
+  check('被拒后 system 仍含全部片段',
+    brain.memory.systemText().indexOf('【第1段】') >= 0);
 
   /* ---- 用例 11：换装提案 —— 语言状态 ≠ 程序状态 ---- */
   check('parseWear 剥离合法单品并小写化',

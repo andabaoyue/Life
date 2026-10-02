@@ -47,11 +47,9 @@ contextBridge.exposeInMainWorld('deskpet', {
   onProactiveOffer: (cb) => ipcRenderer.on('proactive-offer', (e, o) => cb(o)),
   proactiveDeclined: (offer) => ipcRenderer.send('proactive-declined', offer),
   report: () => ipcRenderer.invoke('chat-report'),
-  clearMemory: () => ipcRenderer.invoke('memory-clear'),
   listMemory: () => ipcRenderer.invoke('memory-list'),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
   resetSelfLedger: (confirm) => ipcRenderer.invoke('self-ledger-reset', { confirm: confirm === true }),
-  deleteMemory: (i) => ipcRenderer.invoke('memory-delete', i),
   // Phase 0.5: 内部调节状态查询与事件监听
   getInternalRegulation: () => ipcRenderer.invoke('internal-regulation-get'),
   onInternalRegulation: (cb) => ipcRenderer.on('internal-regulation-updated', (e, s) => cb(s)),

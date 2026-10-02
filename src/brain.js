@@ -504,10 +504,12 @@ class Brain {
     return false;
   }
 
+  /**
+   * v0.9.9 F-099-01 / D-005: 物理删除入口已拔除 —— 只拒绝、不动数据、不标缓存破坏原因。
+   * 保留方法只为让旧调用面（脚本 / 渲染端）拿到明确的「不被允许」，而不是静默消失。
+   */
   deleteWindow(i) {
-    const res = this.memory ? this.memory.deleteWindow(i) : false;
-    this.pendingCacheBreakReason = 'manual_memory_delete';
-    return res;
+    return this.memory ? this.memory.deleteWindow(i) : false;
   }
 
   recordCacheBreak(reason) {

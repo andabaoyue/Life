@@ -264,8 +264,8 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
 小结提示词按「正确第一」：只存用户明确说出的事实；纠正必须覆盖旧值；去重；
 寒暄与一次性情绪不入长期记忆；称呼/偏好/项目/约定/用户点名要记的必须保。
 
-记忆可见可管理：设置面板「我的记忆」列出全部片段（textContent 渲染防注入），
-每条可单独「忘掉」——真删文件落盘，不是回答里假装忘记。
+记忆遵循 D-005「遗忘不删除历史」铁律：设置面板「我的记忆」只读展示，
+淡出由 MemoryDynamics 依艾宾浩斯动力学自主演化进入休眠（DORMANT），严禁人工物理删除。
 
 ## 本地活动与主动搭话（v0.8）
 
@@ -424,7 +424,7 @@ node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对�
 node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
 node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
 node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
-node test/decision-log.test.js           # 31 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
+node test/decision-log.test.js           # 33 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
 node test/canalization.test.js           # 32 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay、0→1000 单调性确证、源码扫描守卫杜绝拟人化伪生命）
 node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
 node test/dream-gate.test.js             # 30 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性）

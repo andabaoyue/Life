@@ -96,11 +96,12 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   await new Promise(r => setImmediate(r));
 
   /* ============ 1. IPC 注册面：别开出旁路 ============ */
-  check('注册了对话/配置/衣柜三组通道',
+  check('注册了对话/配置/衣柜三组通道，且无 memory-delete / memory-clear 旁路（D-005）',
     ['chat-send', 'chat-report', 'config-get', 'config-set-key', 'config-open',
      'wardrobe-state', 'wardrobe-set', 'wardrobe-preset', 'memory-list',
-     'memory-clear', 'memory-delete', 'toggle-pin']
-      .every(c => handlers.has(c)));
+     'toggle-pin']
+      .every(c => handlers.has(c))
+    && !handlers.has('memory-delete') && !handlers.has('memory-clear'));
   check('没有残留 wardrobe-apply（AI 换装只能走 chat-send 提案）',
     !handlers.has('wardrobe-apply'));
   check('注册了 drag-start / drag-move / drag-end',

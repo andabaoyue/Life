@@ -12,7 +12,7 @@
  *    - memory_merge (长期记忆合并)
  *    - wardrobe_change (换装改变)
  *    - writing_mode_change (创作模式切换)
- *    - manual_memory_delete (手动删除窗口)
+ *    - manual_memory_delete (手动删除窗口；v0.9.9 F-099-01 起物理删除路径已拔除，此类别保留为历史口径)
  *    - config_prompt_change (配置/人设调整)
  *    - unknown (冷启动或无因由未命中)
  */
@@ -142,11 +142,12 @@ async function testCacheBreakAttribution() {
   records = fs.readFileSync(brain.telemetryPath, 'utf8').trim().split('\n').map(l => JSON.parse(l));
   check('配置提示词调整归因为 config_prompt_change', records[records.length - 1].cacheBreakReason === 'config_prompt_change');
 
-  // 2.7 手动删除记忆窗口: manual_memory_delete
-  brain.deleteWindow(1);
-  brain.track({ prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 90, completion_tokens: 10 }, false, 'chat');
-  records = fs.readFileSync(brain.telemetryPath, 'utf8').trim().split('\n').map(l => JSON.parse(l));
-  check('手动删除窗口后归因为 manual_memory_delete', records[records.length - 1].cacheBreakReason === 'manual_memory_delete');
+  // 2.7 删除路径已拔除（D-005）：deleteWindow 拒绝执行、记忆完好、不再标记 manual_memory_delete
+  //（该归因类别保留为历史口径，物理删除路径消失后不再可达）
+  const winBefore = brain.memory.data.windows.length;
+  const delRefused = brain.deleteWindow(1) === false && brain.memory.data.windows.length === winBefore;
+  check('手动删除路径已拔除：拒绝执行、记忆完好、不标 manual_memory_delete',
+    delRefused && brain.pendingCacheBreakReason === null);
 
   // 2.8 缓存命中 (miss === 0) 时无破坏原因 (null)
   brain.track({ prompt_cache_hit_tokens: 100, prompt_cache_miss_tokens: 0, completion_tokens: 10 }, false, 'chat');

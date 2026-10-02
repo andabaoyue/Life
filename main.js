@@ -313,12 +313,8 @@ ipcGuard.handle('chat-report', () => {
   return brain ? brain.report() : null;
 });
 
-ipcGuard.handle('memory-clear', () => {
-  if (!brain) return false;
-  brain.clearMemory();
-  return true;
-});
-
+// v0.9.9 F-099-01 / D-005: memory-clear / memory-delete 裸通道已拔除 ——
+// 窗口摘要属受保护历史，记忆面板只读；重新诞生只走带二次确认的 self-ledger-reset。
 ipcGuard.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
 
 // 自我成长记录只读展示；删除/覆盖留到 schema 和审计策略明确后再开放。
@@ -335,11 +331,6 @@ ipcGuard.handle('self-ledger-reset', (e, opts) => {
   brain.selfLedger.reset();
   brain.birthAt = brain.selfLedger.birthAt;
   return { ok: true, birthAt: brain.birthAt };
-});
-
-ipcGuard.handle('memory-delete', (e, idx) => {
-  if (!brain) return false;
-  return brain.memory.deleteWindow(idx);
 });
 
 // Phase 0.5: 内部调节中枢权威状态只读查询通道
