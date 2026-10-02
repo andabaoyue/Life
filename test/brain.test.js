@@ -789,8 +789,8 @@ async function main() {
     const initialSelf = prodBrain.currentSelfContext();
     check('Q-04: currentSelfContext 正常生成出生时间与程序年龄',
       initialSelf.includes('【出生与程序年龄】')
-      && initialSelf.includes('出生时刻：')
-      && initialSelf.includes('程序运行意义上的年龄：约'));
+      && initialSelf.includes('出生时刻（本地时间）：')
+      && initialSelf.includes('程序累计运转时长：约'));
 
     prodBrain.selfLedger.append({
       trait: '愿意理解自己的数字生命本质',

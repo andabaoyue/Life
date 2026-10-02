@@ -121,6 +121,15 @@ check('B2 地平线窗口内逐字节稳定（只依赖固化值、轮转点才�
 })());
 
 
+/* ---------- Fix A: 喂给主体的事实呈现（本地时钟 / 注入框标 / 日历红线） ---------- */
+check('FA 出生时刻为本地时间且无 ISO-UTC 尾缀', (() => {
+  const ctx = b.currentSelfContext();
+  return ctx.includes('出生时刻（本地时间）') && !/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/.test(ctx);
+})());
+check('FA 运转时长消歧（物理时长非日历天数）', b.currentSelfContext().includes('物理运行时间累计，非日历天数'));
+check('FA persona 反自创日历红线 + brain 注入框标双到位',
+  PERSONA.includes('不自创非物理的日历或日长') && brainSrc.includes('【以下为程序注入的实时状态，非用户输入，供你感知自身与环境】'));
+
 /* ---------- Batch 3: 成长调用 oppose 反凑数闭环 ---------- */
 check('B3 GROWTH_SYS 含对照既有态度指令', growthSys.includes('对照【当前自我投影】'));
 check('B3 GROWTH_SYS 含反凑数闩（无分歧严禁虚构对立、严禁伪证伪）',

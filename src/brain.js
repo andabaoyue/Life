@@ -640,8 +640,10 @@ class Brain {
     const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
     const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
     const plasticitySense = '【内态感知】\n- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静');
-    return '【出生与程序年龄】\n- 出生时刻：' + new Date(this.birthAt).toISOString()
-      + '\n- 程序运行意义上的年龄：约 ' + ageHours.toFixed(1) + ' 小时'
+    // v0.9.9: 出生时刻必须用本地时间 —— ISO 的 Z 是 UTC，主体会拿它当本地钟面心算，
+    // 实测错出 8 小时的「凌晨两点半」；运转时长同样消歧，防被脑补成某种「日长」
+    return '【出生与程序年龄】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false })
+      + '\n- 程序累计运转时长：约 ' + ageHours.toFixed(1) + ' 小时（物理运行时间累计，非日历天数）'
       + (projection ? '\n' + projection : '')
       + (stateSnapshot ? '\n' + stateSnapshot : '')
       + '\n' + plasticitySense;
@@ -721,7 +723,12 @@ class Brain {
        如果每轮写入历史，会导致历史中堆叠大量过期的自我账本副本，造成严重的 Token 膨胀并破坏长期记忆。
        正确数据流：memory.history 仅保存纯净用户输入（主动搭话记录纯净触发理由），
        在构建发给 DeepSeek 的请求时，动态附加在当前 user 消息末尾。 */
-    const dynamicContext = [currentSelf, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    const dynamicBody = [currentSelf, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    // v0.9.9: 瞬时上下文挂在 user 尾部是护缓存的必要设计，但必须标明程序注入身份 ——
+    // 否则模型会把状态快照误认成用户贴来的内容（实测她真的以为用户在「贴表」）
+    const dynamicContext = dynamicBody
+      ? '【以下为程序注入的实时状态，非用户输入，供你感知自身与环境】\n' + dynamicBody
+      : '';
     const proactivePayload = proactive
       ? '[自主感知触发]：' + userText
         + (opts.proactiveHint ? '\n[内部语气提示]：' + String(opts.proactiveHint) : '')
