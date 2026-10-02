@@ -154,7 +154,7 @@ function clampCardBox(pos, viewW, cardW = 300) {
     return { dx: CARD_DEFAULT.dx, dyFromBottom: CARD_DEFAULT.dyFromBottom };
   }
   const w = Number.isFinite(viewW) && viewW > 0 ? viewW : 380;
-  const cw = Number.isFinite(cardW) && cardW > 0 ? cardW : 340;
+  const cw = Number.isFinite(cardW) && cardW > 0 ? cardW : 300;
   const dx = Math.max(6, Math.min(w - 6 - cw, Math.round(pos.dx)));
   const dyFromBottom = Math.max(CARD_MIN_BOTTOM, Math.round(pos.dyFromBottom));
   return { dx, dyFromBottom };
