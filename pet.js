@@ -629,10 +629,67 @@ function renderI18nPanel() {
 if (langSelect) langSelect.addEventListener('change', () => {
   setLocale(langSelect.value);
   renderI18nPanel();
+  renderProviderPanel();
   if (chatTitle) chatTitle.textContent = t('chat.title');
   renderChat();   // t() 文案（分界线等）随语言刷新
 });
 renderI18nPanel();
+
+/* ---------- 服务商预设与 Key 智能识别（v1.0 笔 7 / UX-01） ----------
+   识别纯本地内存、只建议不强制；绝不回显/落盘 Key 本身；
+   点提示行一键套用，手填内容绝不被覆写（高级玩家自由度）。 */
+const connPresetSelect = document.getElementById('connPresetSelect');
+const presetLabel = document.getElementById('presetLabel');
+const presetHint = document.getElementById('presetHint');
+let pendingDetect = null;
+
+function renderProviderPanel() {
+  if (presetLabel) presetLabel.textContent = t('preset.section');
+  if (connPresetSelect) {
+    for (const opt of connPresetSelect.options) {
+      const p = getPreset(opt.value);
+      if (p) opt.textContent = t(p.nameKey);
+    }
+  }
+}
+
+function applyPreset(id) {
+  const p = getPreset(id);
+  if (!p) return;
+  const set = (gid, v) => { const el = document.getElementById(gid); if (el && v) el.value = v; };
+  set('connName', t(p.nameKey));
+  set('connProvider', p.providerId);
+  set('connProtocol', p.protocol);
+  set('connUrl', p.baseURL);
+  set('connModel', p.model);
+}
+
+if (connPresetSelect) connPresetSelect.addEventListener('change', () => applyPreset(connPresetSelect.value));
+
+function onKeyDetect(e) {
+  const det = detectProviderByKey(e.target.value);
+  pendingDetect = det;
+  if (presetHint) {
+    presetHint.textContent = det
+      ? (t('detect.suggest') + ' ' + t(det.reasonKey) + ' [' + t('detect.apply') + ']')
+      : '';
+  }
+}
+const connKeyEl = document.getElementById('connKey');
+if (connKeyEl) {
+  connKeyEl.addEventListener('input', onKeyDetect);
+  connKeyEl.addEventListener('paste', () => setTimeout(() => onKeyDetect({ target: connKeyEl }), 0));
+}
+// 一键套用：点提示行套用建议（只建议不强制）
+if (presetHint) presetHint.addEventListener('click', () => {
+  if (pendingDetect) {
+    applyPreset(pendingDetect.presetId);
+    if (connPresetSelect) connPresetSelect.value = pendingDetect.presetId;
+    pendingDetect = null;
+    presetHint.textContent = '';
+  }
+});
+renderProviderPanel();
 
 function show(t) {
   render(t);

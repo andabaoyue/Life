@@ -25,7 +25,18 @@ const I18N = {
     'panel.i18nTitle': '国际化与物理时空',
     'panel.language': '界面语言',
     'panel.timezone': '创世时区',
-    'panel.tzLocked': '创世已锚定，不可修改'
+    'panel.tzLocked': '创世已锚定，不可修改',
+    'preset.section': '服务商预设',
+    'preset.deepseek': 'DeepSeek 官方',
+    'preset.mimo': '小米 MiMo（按量）',
+    'preset.mimoTokenPlan': '小米 MiMo（Token Plan 套餐）',
+    'preset.local': '本地服务（Ollama / Local）',
+    'preset.custom': '自定义高级端点',
+    'detect.suggest': '检测到可能的服务商，点击套用：',
+    'detect.apply': '一键套用',
+    'detect.reason.tp': '检测到小米 Token Plan 订阅套餐凭据前缀',
+    'detect.reason.mimo': '检测到小米 MiMo 专属凭据前缀',
+    'detect.reason.sk': '检测到标准 sk- 前缀（建议 DeepSeek 官方或兼容服务）',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
   'en': {
@@ -41,7 +52,18 @@ const I18N = {
     'panel.i18nTitle': 'Language & Space-Time',
     'panel.language': 'Language',
     'panel.timezone': 'Genesis Timezone',
-    'panel.tzLocked': 'Anchored at genesis, not editable'
+    'panel.tzLocked': 'Anchored at genesis, not editable',
+    'preset.section': 'Provider Preset',
+    'preset.deepseek': 'DeepSeek Official',
+    'preset.mimo': 'Xiaomi MiMo (Pay-as-you-go)',
+    'preset.mimoTokenPlan': 'Xiaomi MiMo (Token Plan)',
+    'preset.local': 'Local (Ollama / Local)',
+    'preset.custom': 'Custom Endpoint',
+    'detect.suggest': 'Provider detected, click to apply:',
+    'detect.apply': 'Apply',
+    'detect.reason.tp': 'Xiaomi Token Plan subscription credential prefix detected',
+    'detect.reason.mimo': 'Xiaomi MiMo credential prefix detected',
+    'detect.reason.sk': 'Standard sk- prefix detected (DeepSeek official or compatible)',
   }
 };
 

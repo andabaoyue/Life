@@ -32,6 +32,18 @@
         <select id="connList"></select>
         <span class="hint" id="connActive"></span>
       </div>
+      <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
+      <label id="presetLabel">服务商预设</label>
+      <div class="row">
+        <select id="connPresetSelect">
+          <option value="custom">自定义高级端点</option>
+          <option value="deepseek">DeepSeek 官方</option>
+          <option value="mimo">小米 MiMo（按量）</option>
+          <option value="mimo-token-plan">小米 MiMo（Token Plan 套餐）</option>
+          <option value="local">本地服务（Ollama / Local）</option>
+        </select>
+      </div>
+      <div class="hint" id="presetHint"></div>
       <label>显示名</label>
       <div class="row"><input id="connName" type="text" spellcheck="false"></div>
       <label>Provider Identity</label>
@@ -276,6 +288,7 @@
     <script src="ui-i18n.js"></script>
   <script src="ui-chat-store.js"></script>
   <script src="ui-chat-render.js"></script>
+  <script src="ui-provider-presets.js"></script>
   <script src="pet.js"></script>
 </body>
 </html>
