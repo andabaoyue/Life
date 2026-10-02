@@ -699,7 +699,7 @@ v1.0
     ├── 实机使用验证
     ├── Import / Export
     ├── Documentation
-    └── Packaging
+    └── Packaging（✓ 启动体验优化：`启动初澜.vbs` 双击无黑框静默唤醒器落地；后续演进：桌面快捷方式 / electron-builder 免安装独立打包）
          │
          ▼
 Public Release Preparation
