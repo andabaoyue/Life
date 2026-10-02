@@ -71,5 +71,21 @@ check('① 碎片块带防伪标签（非亲历、不得当亲历引用）',
 check('① 碎片块位于穿着块之前、穿着块仍是 system 结尾',
   sysFrag.indexOf('【离线重组碎片】') < sysFrag.indexOf('【当前穿着】') && sysFrag.endsWith('外套：落肩白色外套'));
 
+/* ---------- Batch 1: 反思压力质性化（数字标量零泄漏） ---------- */
+const { SelfLedger } = require('../src/self-ledger');
+const mkLedger = () => new SelfLedger(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-ledger-')));
+const ledHi = mkLedger();
+ledHi.append({ trait: '示例倾向甲', support: [{ sourceType: 'USER', quote: '支持证据', confidence: 0.9 }] });
+ledHi.recordOpposingEvidence('示例倾向甲', { sourceType: 'EXPERIENCE', quote: '反向证据', confidence: 0.9 });
+const txtHi = ledHi.currentSelfText();
+check('B1 反思压力零百分比标量（数字+%不出现）', !/\d+%/.test(txtHi), JSON.stringify(txtHi.slice(0, 120)));
+check('B1 高分歧映射定性档「显著分歧」', txtHi.includes('（反思压力：显著分歧）'));
+const ledMid = mkLedger();
+ledMid.append({ trait: '示例倾向乙', support: [{ sourceType: 'USER', quote: '支持证据', confidence: 0.9 }] });
+ledMid.recordOpposingEvidence('示例倾向乙', { sourceType: 'EXPERIENCE', quote: '反向证据', confidence: 0.3 });
+const txtMid = ledMid.currentSelfText();
+check('B1 中等分歧映射定性档「有所动摇」', txtMid.includes('（反思压力：有所动摇）'));
+
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

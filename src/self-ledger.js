@@ -373,8 +373,12 @@ class SelfLedger {
       const oppose = e.oppose.map(x => `${x.sourceType}: ${x.quote}`).filter(Boolean).join('；');
       const metrics = calculateRevisionPressure(e);
       let line = `- 倾向：${e.trait}。支持：${support || '无'}。反向：${oppose || '无'}`;
-      if (metrics.revisionPressure >= 0.25) {
-        line += `（反思压力: ${(metrics.revisionPressure * 100).toFixed(0)}%）`;
+      // v0.9.9 Batch 1: 反思压力只作定性呈现 —— 数字标量不进心智视野（数字不可知红线）；
+      // 底层 calculateRevisionPressure 的代数一字不动（算的归算，说的归说，implemented ≠ lived）
+      if (metrics.revisionPressure >= 0.5) {
+        line += '（反思压力：显著分歧）';
+      } else if (metrics.revisionPressure >= 0.25) {
+        line += '（反思压力：有所动摇）';
       }
       if (size + line.length > budgetChars && chosen.length) break;
       chosen.unshift(line); size += line.length;
