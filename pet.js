@@ -124,6 +124,7 @@ function setKnownWear(ids) {
   // 半截标记要不要藏，判据是"它还有没有可能长成一个合法标记"，
   // 所以这里预生成候选串，逐帧比对前缀。
   wearCandidates = [...knownWear].map(id => 'wear:' + String(id).toLowerCase());
+  setMarkContext({ STATES, knownWear, wearCandidates });   // 同步遮蔽词表（唯一出处在 ui-chat-render）
 }
 let wearCandidates = [];
 
@@ -137,80 +138,12 @@ function wearIdsFrom(cat) {
   return itemIds.concat(presetIds, offIds);
 }
 
-const MARK_RE = {
-  state: /^\s*(?:state)\s*[:：]\s*([a-z]+)\s*$/iu,
-  wear: /^\s*(?:wear)\s*[:：]\s*([a-z0-9_]+)\s*$/iu
-};
-
-function stripState(t, partial = streaming) {
-  /* 剥尾部标记要**整体迭代**，不是"先剥完整标记一轮、再藏半截一次"就完事：
-     把末尾的半截藏起来之后，露出来的新尾巴可能又是一条完整的可剥标记。
-     "[wear:gothic_black_01][s" 就是这一类：瞬态判据把 '[s' 藏掉，尾巴变成
-     "[wear:gothic_black_01]"，本该继续剥 —— 单轮写法的结果是整条 wear
-     标记重新出现在屏幕上，实测吐到 [state: 那段时泄漏 11 帧。
-     每轮要么变短要么停住，所以不会死循环。 */
-  for (;;) {
-    const before = t;
-    // 循环剥尾部：模型可能先提案（可多条）再收尾 state
-    for (;;) {
-      // 内容不允许跨 ']'，否则 "[wear:a][state:b]" 会被当成一整个标记，
-      // 里面的 ']' 让两个子正则都匹配不上，结果一个都剥不掉。
-      const m = t.match(/\[([^\]]*)\]([\s\p{P}~]*)$/iu);
-      if (!m) break;
-      const recognized =
-        (MARK_RE.state.test(m[1]) && STATES.includes((m[1].match(MARK_RE.state)[1] || '').toLowerCase()))
-        || (MARK_RE.wear.test(m[1]) && knownWear.has((m[1].match(MARK_RE.wear)[1] || '').toLowerCase()));
-      if (!recognized) break;   // 未知值：原样留在正文，和后端行为一致
-      const next = t.slice(0, m.index);
-      // 后端 parseState/parseWear 有「掏空保护」（clean || text）：
-      // 整条消息只剩标记时不剥空。这里不跟着停，前后端就会一个显示空、
-      // 一个显示标记 —— 两边必须剥同一批。
-      if (!next.trim()) break;
-      t = next;
-    }
-    /* 流式瞬态：最后一个 [ 之后没有闭合的 ]。要不要藏起来，判据是
-       "它还有没有可能长成一条后端会剥掉的标记"：
-         state → 'state:' + 已知状态词的前缀
-         wear  → 'wear:' + 衣柜里真实 itemId 的前缀（启动时注入 knownWear）
-       刻意不是把字符集放宽成 [a-z0-9_]*：那样连 [wear:maid_dress_01 这种
-       后端根本不认的幻觉 id 也会被整条藏起来（实测 14 帧，直到流结束再凭空
-       长回来），按衣柜前缀只藏"确实还可能长成合法标记"的那几帧。
-       决定性差别其实不在判据而在结构：单轮写法换掉字符集仍漏 11 帧（见函数头）。
-
-       **只在还在吐字的时候藏**（partial 默认跟着 streaming）。这是上面那条
-       "两边剥同一批"的推论，v0.7.1 第一版漏了：判据用的是"还可能长成合法
-       标记"，可流一旦结束它就再也长不成了 —— 这时还藏，屏幕上没有、历史里
-       有，正是我拿来否掉放宽字符集的那个理由。真实成因不稀有：max_tokens
-       截断、用户点停止，都会让回复正好停在半截标记上。实测衣柜里的真 id
-       silver_wavy_01 被截断成 "[wear:silver_wavy_" 时，收尾那一帧整条被吞掉。 */
-    if (!partial) return t;
-    const i = t.lastIndexOf('[');
-    if (i >= 0 && t.indexOf(']', i) < 0 && transientMarker(t.slice(i + 1))) {
-      t = t.slice(0, i);
-    }
-    if (t === before) return t;   // 这一整轮什么都没剥掉 → 收尾
-  }
-}
-
-/* 半截标记判定。忽略空白是沿袭旧写法的宽容（词中间的空格后端本来也不认，
-   所以这里多藏只可能藏一帧，闭合后仍按原样出现，前后端最终一致）。 */
-function transientMarker(tail) {
-  // 全角冒号归一 + 去空白：旧写法用 [:：] 和 \s* 容错，这里保持同样宽容
-  const s = tail.toLowerCase().replace(/[：]/g, ':').replace(/\s+/g, '');
-  if (!s) return true;                      // 光一个 '['：模型刚起头
-  for (const w of ['state', 'wear']) {
-    if (w.startsWith(s)) return true;       // 's' / 'wea' / 'stat'
-    if (!s.startsWith(w + ':')) continue;
-    const val = s.slice(w.length + 1);
-    if (w === 'state') return val === '' || STATES.some(v => v.startsWith(val));
-    return wearCandidates.some(c => c.startsWith(s));   // 含 'wear:' 本身
-  }
-  return false;
-}
+/* 标记遮蔽三件套（MARK_RE / stripState / transientMarker）已逐字迁移至 ui-chat-render.js ——
+   全库唯一出处，本文件只准调用其导出，禁止再养第二份正则（test/ui-chat-render.test.js 钉死防漂移）。 */
 
 function render(text, withCursor = streaming) {
   lastText = text;
-  const shown = stripState(text);
+  const shown = stripState(text, streaming);
   bubble.textContent = '';
   // 正文必须装进一个真实的子元素：#bubble 用 flex + justify-content:flex-end
   // 把溢出裁在顶部，靠的是"有一个可对齐的盒子"。
@@ -273,6 +206,8 @@ window.addEventListener('resize', () => {
    CSS 按属性播动画。解析失败一律 idle，动画缺失也只是不动，不会崩。 */
 const STATES = ['idle', 'happy', 'curious', 'thinking', 'sleepy',
                 'embarrassed', 'annoyed', 'sad'];
+// 遮蔽词表首同步（STATES 此刻才就绪；此后由 setKnownWear 保持同步）
+setMarkContext({ STATES, knownWear, wearCandidates });
 
 /* 表情之间切换的"衔接"：上一次状态动画跑到峰值时切走，姿态会被硬拉到新动画的
    0% —— 实测 tilt 峰值（3°）切到 idle 一帧内跳 3.0°，bounce 顶点切 curious
@@ -506,7 +441,7 @@ let liveNode = null;      // 流式期间正在写入的那条记录
 function show(t) {
   render(t);
   if (liveNode) {
-    liveNode.textContent = '初澜：' + stripState(t);
+    liveNode.textContent = '初澜：' + stripState(t, streaming);
     scrollLog();
   }
 }

@@ -364,6 +364,7 @@ node test/main.test.js           # 88 项：主进程 IPC 面（衣柜推送一�
 node test/tracker.test.js        # 42 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟
 node test/life-will-layer.test.js      # 9 项：意志层补全 Phase 1（未解疑问 FIFO 队列与反骚扰闩、失败关窗不污染队列、initiativeBias 有界权重、冷却铁律不可绕过）
+node test/ui-chat-render.test.js    # 8 项：气泡流纯函数决策层（分流、synthetic 契约、零伪造时间戳、标记遮蔽含流式半截容错、单份正则防漂移）
 node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投影契约、synthetic 双态保留、零伪造时间戳、SYNTHETIC_RENDER 契约、双环境守卫与边界铁律）
 node test/ui-i18n.test.js           # 6 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
 node test/nonhuman-framework-prompt.test.js # 36 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话）
