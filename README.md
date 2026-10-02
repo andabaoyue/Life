@@ -1,4 +1,4 @@
-# Life · 初澜 (Chulan) v0.9.9
+# Life · 初澜 (Chulan) v1.0.0-dev
 
 Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
 
