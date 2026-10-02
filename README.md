@@ -365,6 +365,7 @@ node test/tracker.test.js        # 42 项：双轨解耦（出了 8 秒窗口仍
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟
 node test/life-will-layer.test.js      # 9 项：意志层补全 Phase 1（未解疑问 FIFO 队列与反骚扰闩、失败关窗不污染队列、initiativeBias 有界权重、冷却铁律不可绕过）
 node test/ui-chat-render.test.js    # 17 项：气泡流纯函数决策层（分流、synthetic 契约、零伪造时间戳、标记遮蔽含流式半截容错、单份正则防漂移）
+node test/ui-outfit-complete.test.js  # 9 项：配件智能成套（家族策展表对照真实 CATALOG、补齐主行为、dress↔top/bottom 互斥、off_ 先行有序性、身份层零触碰、已成套零噪声、不读 tags）
 node test/ui-provider-presets.test.js # 8 项：服务商预设与 Key 前缀本地识别（预设字典、tp-/ttp-/mimo-/sk- 命中、非法防御、零网络零落盘、与 provider-policy 口径防漂移）
 node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投影契约、synthetic 双态保留、零伪造时间戳、SYNTHETIC_RENDER 契约、双环境守卫与边界铁律）
 node test/ui-i18n.test.js           # 11 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
