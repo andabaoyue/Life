@@ -149,7 +149,7 @@ function dividerNeeded(prev, cur) {
 const CARD_DEFAULT = { dx: 6, dyFromBottom: 336 };
 const CARD_MIN_BOTTOM = 336;
 
-function clampCardBox(pos, viewW, cardW = 340) {
+function clampCardBox(pos, viewW, cardW = 300) {
   if (!pos || !Number.isFinite(pos.dx) || !Number.isFinite(pos.dyFromBottom)) {
     return { dx: CARD_DEFAULT.dx, dyFromBottom: CARD_DEFAULT.dyFromBottom };
   }

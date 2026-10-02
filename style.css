@@ -758,6 +758,10 @@ body.showlog #bubble { display: none !important; }
    卡片底边放 336px → 恒定 8px 呼吸缝，零像素重叠，她始终可见、可戳、可右键。 */
 #chatStream {
   position: absolute; left: 6px; right: 6px; top: 8px; bottom: 336px;
+  /* 卡片实体化：限宽不限高 —— 宽 300 留出左右游隙（拖拽自由度）；
+     高度维持 top/bottom 拉伸，336 天空域下限天然守住（交互不变式）。
+     历史教训（B1 红灯）：拉伸态正好撑满天空时自由度为 0，拖拽等于撞墙。 */
+  max-width: 300px;
   display: flex; flex-direction: column;
   background: rgba(18, 20, 28, .82); border: 1px solid rgba(255, 255, 255, .12);
   border-radius: 14px; backdrop-filter: blur(10px); overflow: hidden;
