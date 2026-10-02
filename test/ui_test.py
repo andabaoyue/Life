@@ -956,15 +956,17 @@ with sync_playwright() as p:
     check("正常 mouseup 仍即时收尾（兜底没把拖拽弄钝）",
           not pg.evaluate("document.getElementById('pet').classList.contains('dragging')"))
 
-    # ---- 立绘宽与窗口宽必须同出处（放大到顶时不能一个卡住一个还在长） ----
-    # Electron 下 #pet 的宽度由 resize 监听按 innerWidth × 210/340 重算，
-    # grow() 只在预览模式生效。这里用 viewport 变化模拟窗口缩放。
+    # ---- 立绘尺寸唯一权威 = 显式缩放指令（v1.0 实机反馈：「越拖越大」的根治）----
+    # 旧契约「立绘随 innerWidth × 210/340 跟随」正是病根：对话视窗拓宽（340→440）
+    # 与 DWM 贴边抖动都会被误当缩放指令，把她的体型逐次撑大固化。
+    # 新契约：窗口 resize 绝不动体型（zoomPet 是唯一权威）——窗口怎么变，她都纹丝不动。
+    base_pet_w = pg.evaluate("Math.round(document.getElementById('pet').getBoundingClientRect().width)")
     for w, h in ((391, 552), (552, 779), (760, 1073), (200, 282)):
         pg.set_viewport_size({"width": w, "height": h})
         pg.wait_for_timeout(200)
         got = pg.evaluate("Math.round(document.getElementById('pet').getBoundingClientRect().width)")
-        check("窗口 %s 宽时立绘按 210/340 跟随" % w,
-              abs(got - w * 210 / 340) <= 1, "got=%s want=%.1f" % (got, w * 210 / 340))
+        check("窗口 %s 宽时立绘体型纹丝不动（显式缩放是唯一权威）" % w,
+              abs(got - base_pet_w) <= 1, "got=%s base=%s" % (got, base_pet_w))
     pg.set_viewport_size({"width": 340, "height": 480})
     pg.wait_for_timeout(200)
 
