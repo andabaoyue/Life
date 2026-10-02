@@ -611,6 +611,29 @@ if (typeof ChatStore !== 'undefined') {
 const _savedCardPos = loadCardPos();
 if (_savedCardPos) applyCardPos(_savedCardPos);   // 有记忆才脱离拉伸模式；无记忆保持 CSS 默认家
 
+/* ---------- 国际化与物理时空面板（v1.0 笔 6 / UX-05） ----------
+   时区只读展示（创世锁定 🔒）；语言切换只动 t() 文案层，不碰任何主体数据。 */
+const langSelect = document.getElementById('langSelect');
+const tzDisplay = document.getElementById('tzDisplay');
+const tzNote = document.getElementById('tzNote');
+const i18nTitle = document.getElementById('i18nTitle');
+const langLabel = document.getElementById('langLabel');
+const tzLabel = document.getElementById('tzLabel');
+function renderI18nPanel() {
+  if (tzDisplay) tzDisplay.value = getTimezoneLabel() + ' 🔒';
+  if (tzNote) tzNote.textContent = t('panel.tzLocked');
+  if (i18nTitle) i18nTitle.textContent = t('panel.i18nTitle');
+  if (langLabel) langLabel.textContent = t('panel.language');
+  if (tzLabel) tzLabel.textContent = t('panel.timezone');
+}
+if (langSelect) langSelect.addEventListener('change', () => {
+  setLocale(langSelect.value);
+  renderI18nPanel();
+  if (chatTitle) chatTitle.textContent = t('chat.title');
+  renderChat();   // t() 文案（分界线等）随语言刷新
+});
+renderI18nPanel();
+
 function show(t) {
   render(t);
   if (liveNode) {

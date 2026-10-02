@@ -366,7 +366,7 @@ node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、e
 node test/life-will-layer.test.js      # 9 项：意志层补全 Phase 1（未解疑问 FIFO 队列与反骚扰闩、失败关窗不污染队列、initiativeBias 有界权重、冷却铁律不可绕过）
 node test/ui-chat-render.test.js    # 17 项：气泡流纯函数决策层（分流、synthetic 契约、零伪造时间戳、标记遮蔽含流式半截容错、单份正则防漂移）
 node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投影契约、synthetic 双态保留、零伪造时间戳、SYNTHETIC_RENDER 契约、双环境守卫与边界铁律）
-node test/ui-i18n.test.js           # 6 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
+node test/ui-i18n.test.js           # 11 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
 node test/nonhuman-framework-prompt.test.js # 36 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话）
 node test/wardrobe.test.js       # 61 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离、主体特质偏好与自决换装提案
 node test/secure.test.js         # 38 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚

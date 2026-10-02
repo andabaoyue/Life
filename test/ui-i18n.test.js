@@ -11,7 +11,7 @@ function check(name, cond, extra) {
   if (!cond) failures++;
 }
 
-const { I18N, t, formatDisplayTime, UI_LOCALE, UI_TIMEZONE } = require(path.join(__dirname, '..', 'ui-i18n.js'));
+const { I18N, t, setLocale, getTimezone, getTimezoneLabel, getTimezoneStatus, formatDisplayTime } = require(path.join(__dirname, '..', 'ui-i18n.js'));
 
 check('t() 命中已知键、未知键回退 fallback / 原键',
   t('chat.title') === '对话' && t('nope.key', '备用') === '备用' && t('nope.key') === 'nope.key');
@@ -33,6 +33,42 @@ check('双环境守卫 + 边界铁律：Node 可 require、不依赖 electron、
   const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   return code.includes('module.exports')
     && !/require\(['"]electron['"]\)/.test(code) && !/src\//.test(code);
+})());
+
+/* ---------- 笔 6: UX-05 双语与创世时区锁定 ---------- */
+check('7 en 与 zh-CN 键集 100% 对称（双语契约）', (() => {
+  const zh = Object.keys(I18N['zh-CN']).sort().join(',');
+  const en = Object.keys(I18N['en']).sort().join(',');
+  return zh === en && zh.length > 0;
+})());
+check('8 getTimezone 返回可用时区（合法即锚定，非法回退机器本地）', (() => {
+  const z = getTimezone();
+  if (z === null) return true;
+  try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch (e) { return false; }
+})());
+check('9 时区创世锁定不可逆（已锚定值优先于机器时区）', (() => {
+  const store = {
+    _v: { genesisTimezone: 'Asia/Tokyo' },
+    getItem(k) { return (k in this._v) ? this._v[k] : null; },
+    setItem(k, v) { this._v[k] = v; },
+    removeItem(k) { delete this._v[k]; }
+  };
+  const had = ('localStorage' in globalThis) ? globalThis.localStorage : undefined;
+  globalThis.localStorage = store;
+  const z = getTimezone();
+  if (had === undefined) { delete globalThis.localStorage; } else { globalThis.localStorage = had; }
+  return z === 'Asia/Tokyo';
+})());
+check('10 setLocale 双语切流（en 生效、zh-CN 回切）', (() => {
+  const zhTitle = t('chat.title');
+  setLocale('en');
+  const enTitle = t('chat.title');
+  setLocale('zh-CN');
+  return zhTitle !== enTitle && enTitle === 'Chat' && t('chat.title') === zhTitle;
+})());
+check('11 getTimezoneStatus 锁定契约（locked 恒真 + 标签含 UTC）', (() => {
+  const s = getTimezoneStatus();
+  return s.locked === true && getTimezoneLabel().includes('UTC');
 })());
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
