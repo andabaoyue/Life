@@ -544,13 +544,16 @@ function applyCardPos(pos) {
   const saved = loadCardPos();
   const p = clampCardBox(pos || saved || CARD_DEFAULT, window.innerWidth, chatStream ? chatStream.getBoundingClientRect().width : undefined);
   if (!chatStream) return p;
-  // 顶部护栏：高度沿用当前渲染高度，不让卡片飞出窗顶
-  const h = chatStream.getBoundingClientRect().height || 240;
-  const top = Math.max(8, window.innerHeight - p.dyFromBottom - h);
+  // 底边钉在 dyFromBottom、高度封顶在天空域内 —— 内容再长也不许下压（交互不变式）
+  const bottomY = window.innerHeight - p.dyFromBottom;
+  const curH = chatStream.getBoundingClientRect().height || 240;
+  const h = Math.max(120, Math.min(curH, bottomY - 8));
+  const top = Math.max(8, bottomY - h);
   chatStream.style.left = p.dx + 'px';
   chatStream.style.right = 'auto';
   chatStream.style.top = top + 'px';
   chatStream.style.bottom = 'auto';
+  chatStream.style.height = h + 'px';
   return p;
 }
 
@@ -595,7 +598,9 @@ if (chatHead && chatStream) {
   chatHead.addEventListener('pointercancel', endDrag);
   chatHead.addEventListener('dblclick', () => {
     try { localStorage.removeItem(CARD_POS_KEY); } catch (e) {}
-    applyCardPos(CARD_DEFAULT);   // 双击标题栏瞬回默认家
+    // 双击标题栏瞬回默认家：清空内联定位，恢复 CSS 的 top:8 / bottom:336 拉伸模式
+    chatStream.style.left = chatStream.style.top = chatStream.style.right = chatStream.style.bottom = '';
+    chatStream.style.width = chatStream.style.height = '';
   });
 }
 
@@ -603,7 +608,8 @@ if (typeof ChatStore !== 'undefined') {
   ChatStore.onChange(() => renderChat());
   ChatStore.load();
 }
-applyCardPos();   // 恢复位置记忆（无记录回默认家）
+const _savedCardPos = loadCardPos();
+if (_savedCardPos) applyCardPos(_savedCardPos);   // 有记忆才脱离拉伸模式；无记忆保持 CSS 默认家
 
 function show(t) {
   render(t);

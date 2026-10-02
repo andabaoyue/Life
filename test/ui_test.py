@@ -1051,6 +1051,131 @@ with sync_playwright() as p:
           blank == '好[wear:gothic_black_01', repr(blank))
     pg.evaluate("setKnownWear(%s)" % __import__("json").dumps(real_ids))
 
+
+    # =====================================================================
+    # 第一战役封关（v1.0 笔 5）：交互不变式 + 伴随卡片实操 + 数据层契约（15 项）
+    # 不变式（碑文）：初澜立绘永远不被任何面板遮挡——她始终可见、可戳、可右键。
+    # =====================================================================
+    pg.evaluate("openChat()")
+    pg.wait_for_timeout(300)
+
+    # ---- A 组：交互不变式（5 项）----
+    # A1/A2 先灌满长内容再测几何：卡片不得因内容生长而下压
+    pg.evaluate("""() => {
+      ChatStore.messages = Array.from({length: 30}, (_, i) => ({
+        role: i % 2 ? 'assistant' : 'user',
+        content: '很长很长的第 ' + i + ' 段内容，'.repeat(10),
+        messageId: 'm-long-' + i, windowNo: 1, bridge: false, synthetic: false, t: 1790000000000 + i
+      }));
+      renderChat();
+    }""")
+    pg.wait_for_timeout(200)
+    geo = pg.evaluate("""() => {
+      const pet = document.querySelector('#pet').getBoundingClientRect();
+      const card = document.querySelector('#chatStream').getBoundingClientRect();
+      return { petTop: pet.top, cardBottom: card.bottom, gap: pet.top - card.bottom };
+    }""")
+    check("A1 交互不变式：长内容下卡片仍不遮挡立绘（零重叠）",
+          geo["cardBottom"] <= geo["petTop"] + 0.5, repr(geo))
+    check("A2 交互不变式：立绘头顶保留呼吸缝（gap ≥ 0）",
+          geo["gap"] >= 0, repr(geo["gap"]))
+    hit = pg.evaluate("""() => {
+      const r = document.querySelector('#pet').getBoundingClientRect();
+      const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return el ? (el.closest('#pet') ? 'pet' : (el.id || el.className || el.tagName)) : 'none';
+    }""")
+    check("A3 交互不变式：指针直达立绘（无面板拦截）", hit == "pet", repr(hit))
+    pg.click("#pet", button="right")
+    pg.wait_for_timeout(250)
+    check("A4 交互不变式：展开态下立绘可右键出菜单（历史断言显式复活）",
+          pg.is_visible("#menu"))
+    pg.evaluate("document.getElementById('menu').classList.add('hidden')")
+    pg.wait_for_timeout(100)
+    check("A5 默认（480 预览态）尺寸下同样零重叠",
+          pg.evaluate("""() => { const pet = document.querySelector('#pet').getBoundingClientRect(); const card = document.querySelector('#chatStream').getBoundingClientRect(); return card.bottom <= pet.top + 0.5; }"""))
+
+    # ---- B 组：伴随卡片实操（7 项）----
+    def card_box():
+        return pg.evaluate("() => { const r = document.getElementById('chatStream').getBoundingClientRect(); return {left:r.left, top:r.top, right:r.right, bottom:r.bottom}; }")
+    head = pg.evaluate("() => { const r = document.getElementById('chatHead').getBoundingClientRect(); return {x: r.left + r.width/2, y: r.top + r.height/2}; }")
+    before = card_box()
+    pg.mouse.move(head["x"], head["y"])
+    pg.mouse.down()
+    pg.mouse.move(head["x"] + 60, head["y"] + 40, steps=6)
+    pg.mouse.up()
+    pg.wait_for_timeout(200)
+    after = card_box()
+    check("B1 #chatHead 真实拖拽生效（位置发生变化）",
+          abs(after["left"] - before["left"]) > 10 or abs(after["top"] - before["top"]) > 10,
+          repr((before, after)))
+    pg.mouse.move(head["x"] + 60, head["y"] + 40)
+    pg.mouse.down()
+    pg.mouse.move(head["x"] + 60, 2000, steps=8)
+    pg.mouse.up()
+    pg.wait_for_timeout(200)
+    bb = card_box()
+    winH = pg.evaluate("window.innerHeight")
+    check("B2 垂直越界钳位：拖向立绘仍被天空域下限（336）拦住",
+          bb["bottom"] <= winH - 336 + 0.5, repr((bb, winH)))
+    pg.mouse.move(head["x"] + 60, 2000)
+    pg.mouse.down()
+    pg.mouse.move(2000, 2000, steps=8)
+    pg.mouse.up()
+    pg.wait_for_timeout(200)
+    bb2 = card_box()
+    winW = pg.evaluate("window.innerWidth")
+    check("B3 水平越界钳位：拖出右缘仍被窗口边界拦住",
+          bb2["right"] <= winW + 0.5 and bb2["left"] >= -0.5, repr((bb2, winW)))
+    pos = pg.evaluate("() => { try { return JSON.parse(localStorage.getItem('chatCardPos')); } catch (e) { return null; } }")
+    check("B4 位置记忆落盘（{ dx, dyFromBottom } 数值契约）",
+          pos and isinstance(pos.get("dx"), (int, float)) and isinstance(pos.get("dyFromBottom"), (int, float)),
+          repr(pos))
+    saved = pos
+    pg.reload()
+    pg.wait_for_timeout(600)
+    pg.evaluate("openChat()")
+    pg.wait_for_timeout(300)
+    bb3 = card_box()
+    restore_ok = abs(bb3["left"] - saved["dx"]) <= 2 and abs((pg.evaluate("window.innerHeight") - bb3["bottom"]) - saved["dyFromBottom"]) <= 2
+    pg.evaluate("""() => { ChatStore.messages = Array.from({length: 30}, (_, i) => ({role:'assistant', content:'长内容'.repeat(50), messageId:'m-x'+i, windowNo:1, bridge:false, synthetic:false, t:1790000000000+i})); renderChat(); }""")
+    pg.wait_for_timeout(200)
+    bb3b = card_box()
+    growth_ok = bb3b["bottom"] <= pg.evaluate("window.innerHeight") - 336 + 0.5
+    check("B5 刷新还原 + 记忆态长内容高度封顶（不越天空域）",
+          restore_ok and growth_ok, repr((bb3, bb3b, saved)))
+    pg.evaluate("localStorage.setItem('chatCardPos', '{bad json!!!')")
+    pg.reload()
+    pg.wait_for_timeout(600)
+    pg.evaluate("openChat()")
+    pg.wait_for_timeout(300)
+    check("B6 损坏记忆防御：垃圾数据回默认家、零 JS 报错",
+          not errs, "; ".join(errs[:3]))
+    head2 = pg.evaluate("() => { const r = document.getElementById('chatHead').getBoundingClientRect(); return {x: r.left + r.width/2, y: r.top + r.height/2}; }")
+    pg.mouse.dblclick(head2["x"], head2["y"])
+    pg.wait_for_timeout(200)
+    bb4 = card_box()
+    check("B7 双击标题栏瞬回默认家（左边距 6px）",
+          abs(bb4["left"] - 6) <= 2, repr(bb4))
+
+    # ---- C 组：数据层渲染契约（3 项）----
+    pg.evaluate("""() => {
+      ChatStore.messages = [
+        {role:'user', content:'[自主感知触发]：用户戳了你 5 下', messageId:'m-s1', windowNo:1, bridge:true, synthetic:true, t:null},
+        {role:'user', content:'你好', messageId:'m-u1', windowNo:1, bridge:true, synthetic:false, t:null},
+        {role:'assistant', content:'嗯', messageId:'m-a1', windowNo:2, bridge:false, synthetic:false, t:1790000000000}
+      ];
+      renderChat();
+    }""")
+    pg.wait_for_timeout(150)
+    check("C1 synthetic 渲染为居中 note（剥前缀、绝不冒充用户气泡）",
+          pg.evaluate("() => { const rows = [...document.querySelectorAll('#chatList .b-row')]; const note = rows.find(r => r.classList.contains('b-note')); return !!note && note.textContent.includes('用户戳了你') && !note.textContent.includes('[自主感知触发]'); }"))
+    check("C2 时间严格条件渲染（t 缺失省略时间 DOM）",
+          pg.evaluate("() => [...document.querySelectorAll('#chatList .b-row')].filter(r => r.querySelector('.b-ts')).length === 1"))
+    check("C3 bridge→非 bridge 边界渲染窗口分界线",
+          pg.evaluate("() => document.querySelectorAll('#chatList .win-divider').length === 1"))
+    pg.evaluate("() => { ChatStore.messages = []; renderChat(); }")
+    pg.wait_for_timeout(100)
+
     pg.screenshot(path="/tmp/pw_final.png")
     check("收尾仍无 JS 报错", not errs, "; ".join(errs[:3]))
     b.close()
