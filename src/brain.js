@@ -610,6 +610,8 @@ class Brain {
     // 否则 undefined++ 会变 NaN，面板上一串 NaN。
     const base = { requests: 0, hit: 0, miss: 0, out: 0, cost: 0,
                    compressions: 0, merges: 0, summaryCalls: 0, growthCalls: 0,
+    // v0.9.9 观测补盲：关窗失败率 / 带病归档占比 / 补关发生率（长期健康度指标）
+    windowCloseFailures: 0, summaryUncertified: 0, delayedCloses: 0,
                    lastHitRate: 0, history: [] };
     try { return { ...base, ...JSON.parse(fs.readFileSync(this.statsPath, 'utf8')) }; }
     catch { return base; }
@@ -910,6 +912,9 @@ class Brain {
       让「窗口为何拖超期」在盘面与日志上都可追查（数据不伪造、审计不失真） */
   _noteWindowCloseFailure(reason) {
     this.windowCloseAttempts = (this.windowCloseAttempts || 0) + 1;
+    // v0.9.9 观测补盲：关窗失败率计数，即刻落盘（进程退出不丢账）
+    this.stats.windowCloseFailures = (this.stats.windowCloseFailures || 0) + 1;
+    this.saveStats(true);
     // v0.9.9 D3: 一旦失败即进入退避冷却（至少隔 2 轮对话），冷却期内即使触发条件满足也不自动重试；
     // 窗口宁可继续变长，也不把钱烧在连环失败的全价小结上（历史数据绝不丢）
     this.windowCloseRetryAfterTurn = ((this.memory && this.memory.data) ? this.memory.data.turnsInWindow : 0) + 2;
@@ -1068,6 +1073,8 @@ class Brain {
         // 保全纯文本，但明确标记为不可认证的非结构化摘要。
         summaryEpistemicStatus = 'UNCERTIFIED';
         summaryFailureReason = 'NON_JSON_SUMMARY';
+        // v0.9.9 观测补盲：带病归档占比 —— 小结质量的长期监控指标
+        this.stats.summaryUncertified = (this.stats.summaryUncertified || 0) + 1;
       }
 
       let summaryTextForMemory = text;
@@ -1378,6 +1385,10 @@ class Brain {
       snap.generationContext = summaryGenerationContext;
       const done = this.memory.closeWindow(summaryTextForMemory, snap);
       if (done) {
+        // v0.9.9 观测补盲：补关计数 —— 先数后复位（windowCloseAttempts 一旦复位就数不到了）
+        if (this.windowCloseAttempts > 0) {
+          this.stats.delayedCloses = (this.stats.delayedCloses || 0) + 1;
+        }
         // v0.9.9 P0: 关窗成功，审计计数复位（本窗口的失败历史已随 retryAttempts 铸入归档）；
         // v0.9.9 D3: 退避冷却一并复位，下一窗口恢复正常自动关窗节奏
         this.windowCloseAttempts = 0;

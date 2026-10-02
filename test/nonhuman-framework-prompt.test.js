@@ -167,6 +167,24 @@ check('B3 GROWTH_SYS 含反凑数闩（无分歧严禁虚构对立、严禁伪�
     keepTailMessages: 6, memoryCapTokens: 1e9, currentSelfTokenBudget: 3000,
     selfGrowthEnabled: false, price: { peak: {}, valley: {} }
   });
+
+/* ---------- Fix B2: 观测补盲（关窗失败率 / UNCERTIFIED 占比 / 补关计数） ---------- */
+const mkObsBrain = () => new Brain(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-obs-')), {
+  apiKey: 'sk-test', model: 'mock', windowTurns: 2, windowMaxTokens: 1e9,
+  keepTailMessages: 6, memoryCapTokens: 1e9, selfGrowthEnabled: false,
+  summaryMaxTokens: 10000, price: { peak: {}, valley: {} }
+});
+const obsFill = (bb) => {
+  bb.memory.append('user', '一', { messageId: 'm-000001', roundNo: 1 });
+  bb.memory.append('assistant', '二', { messageId: 'm-000002', roundNo: 1 });
+  bb.memory.append('user', '三', { messageId: 'm-000003', roundNo: 2 });
+  bb.memory.append('assistant', '四', { messageId: 'm-000004', roundNo: 2 });
+};
+const obsStats = (bb) => JSON.parse(fs.readFileSync(path.join(bb.dir, 'stats.json'), 'utf8'));
+const OBS_VALID = JSON.stringify({
+  segments: [{ range: '1-2', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] }],
+  windowSynthesis: { stableUserFacts: [], subjectExperiences: [], stateChangesSuggested: [], unresolved: [] }
+});
   let captured = null;
   lb.api = { complete: async (msgs) => { captured = msgs; return { text: '[]', usage: {} }; } };
   lb.selfLedger.append({ trait: '示例倾向丙', support: [{ sourceType: 'USER', quote: '证据', confidence: 0.9 }] });
@@ -176,6 +194,30 @@ check('B3 GROWTH_SYS 含反凑数闩（无分歧严禁虚构对立、严禁伪�
     && captured[1].content.startsWith('【当前自我投影】')
     && captured[1].content.includes('示例倾向丙')
     && captured[1].content.includes('【窗口小结】') && captured[1].content.includes('【窗口对话】'));
+
+  const ob1 = mkObsBrain();
+  obsFill(ob1);
+  ob1.api = { complete: async () => ({ text: JSON.stringify({ segments: 'x' }), usage: {} }) };
+  await ob1.closeWindow();
+  const s1 = obsStats(ob1);
+  check('OBS 关窗失败计数递增且即刻落盘', s1.windowCloseFailures === 1, 'failures=' + s1.windowCloseFailures);
+
+  const ob2 = mkObsBrain();
+  obsFill(ob2);
+  ob2.api = { complete: async () => ({ text: '{"segments":[{"range"', usage: {} }) };
+  await ob2.closeWindow();
+  const s2 = obsStats(ob2);
+  check('OBS 带病归档（UNCERTIFIED）计数递增', s2.summaryUncertified === 1, 'uncertified=' + s2.summaryUncertified);
+
+  const ob3 = mkObsBrain();
+  obsFill(ob3);
+  let n3 = 0;
+  ob3.api = { complete: async () => ({ text: (++n3 === 1) ? JSON.stringify({ segments: 'x' }) : OBS_VALID, usage: {} }) };
+  await ob3.closeWindow();
+  const ok3 = await ob3.closeWindow();
+  const s3 = obsStats(ob3);
+  check('OBS 补关计数先数后复位（先败后成）', ok3 === true && s3.delayedCloses === 1 && s3.windowCloseFailures === 1,
+    JSON.stringify({ delayed: s3.delayedCloses, failures: s3.windowCloseFailures }));
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
