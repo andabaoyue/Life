@@ -11,7 +11,7 @@ function check(name, cond, extra) {
   if (!cond) failures++;
 }
 
-const { MARK_RE, setMarkContext, stripState, decideBubble, bubbleView, shouldStickToBottom, dividerNeeded } = require(path.join(__dirname, '..', 'ui-chat-render.js'));
+const { MARK_RE, setMarkContext, stripState, decideBubble, bubbleView, shouldStickToBottom, dividerNeeded, CARD_DEFAULT, clampCardBox } = require(path.join(__dirname, '..', 'ui-chat-render.js'));
 setMarkContext({
   STATES: ['idle', 'happy'],
   knownWear: new Set(['gray_tee_01', 'gothic_black_01']),
@@ -69,6 +69,28 @@ check('12 dividerNeeded 窗口分界时机（bridge→非 bridge 处且仅此）
   dividerNeeded({ bridge: true }, { bridge: false }) === true
   && dividerNeeded({ bridge: false }, { bridge: false }) === false
   && dividerNeeded(null, { bridge: false }) === false);
+
+/* ---------- 笔 4: 伴随卡片几何与记忆契约 ---------- */
+check('13 clampCardBox 垂直下限钳制（dyFromBottom 100 → 336，交互不变式）',
+  clampCardBox({ dx: 6, dyFromBottom: 100 }, 380).dyFromBottom === 336);
+check('14 clampCardBox 水平两端钳制（越左 / 越右 / 卡宽外）',
+  clampCardBox({ dx: -50, dyFromBottom: 400 }, 380, 340).dx === 6
+  && clampCardBox({ dx: 999, dyFromBottom: 400 }, 380, 340).dx === 34);
+check('15 clampCardBox 合法位置原样通过', (() => {
+  const p = clampCardBox({ dx: 20, dyFromBottom: 350 }, 380, 340);
+  return p.dx === 20 && p.dyFromBottom === 350;
+})());
+check('16 clampCardBox 非法输入回 CARD_DEFAULT（NaN / 缺键）', (() => {
+  const a = clampCardBox({ dx: NaN, dyFromBottom: 350 }, 380);
+  const b = clampCardBox(null, 380);
+  return a.dx === CARD_DEFAULT.dx && a.dyFromBottom === CARD_DEFAULT.dyFromBottom
+    && b.dx === CARD_DEFAULT.dx && b.dyFromBottom === CARD_DEFAULT.dyFromBottom;
+})());
+check('17 位置记忆契约：{ dx, dyFromBottom } 两键数值', (() => {
+  const p = clampCardBox({ dx: 12, dyFromBottom: 340 }, 380);
+  return Object.keys(p).sort().join(',') === 'dx,dyFromBottom'
+    && Number.isFinite(p.dx) && Number.isFinite(p.dyFromBottom);
+})());
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

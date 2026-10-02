@@ -524,11 +524,86 @@ function renderChat() {
   if (stick) chatList.scrollTop = chatList.scrollHeight;
 }
 
-if (chatClose) chatClose.addEventListener('click', closeChat);
+
+/* ---------- 伴随卡片拖拽与位置记忆（v1.0 笔 4） ----------
+   锚底坐标记忆（dx / dyFromBottom）：她锚窗底，卡片跟着锚底记，
+   480↔720 扩容切换位置不漂移；UI 状态只进 localStorage，不碰主体数据。 */
+const CARD_POS_KEY = 'chatCardPos';
+const chatHead = document.getElementById('chatHead');
+
+function loadCardPos() {
+  try {
+    const raw = localStorage.getItem(CARD_POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return (p && Number.isFinite(p.dx) && Number.isFinite(p.dyFromBottom)) ? p : null;
+  } catch (e) { return null; }   // 损坏数据不致命：回默认家
+}
+
+function applyCardPos(pos) {
+  const saved = loadCardPos();
+  const p = clampCardBox(pos || saved || CARD_DEFAULT, window.innerWidth, chatStream ? chatStream.getBoundingClientRect().width : undefined);
+  if (!chatStream) return p;
+  // 顶部护栏：高度沿用当前渲染高度，不让卡片飞出窗顶
+  const h = chatStream.getBoundingClientRect().height || 240;
+  const top = Math.max(8, window.innerHeight - p.dyFromBottom - h);
+  chatStream.style.left = p.dx + 'px';
+  chatStream.style.right = 'auto';
+  chatStream.style.top = top + 'px';
+  chatStream.style.bottom = 'auto';
+  return p;
+}
+
+if (chatClose) chatClose.addEventListener('click', (e) => {
+  e.stopPropagation();          // 关闭按钮绝不触发拖拽抓手
+  closeChat();
+});
+
+if (chatHead && chatStream) {
+  let drag = null;
+  chatHead.addEventListener('pointerdown', (e) => {
+    if (e.target === chatClose) return;
+    const r = chatStream.getBoundingClientRect();
+    drag = { x0: e.clientX, y0: e.clientY, top: r.top, w: r.width, h: r.height, cur: null };
+    chatStream.style.width = r.width + 'px';
+    chatStream.style.height = r.height + 'px';
+    chatStream.classList.add('dragging');
+    if (chatHead.setPointerCapture) chatHead.setPointerCapture(e.pointerId);
+  });
+  chatHead.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const left = (parseFloat(chatStream.style.left) || 0) + (e.clientX - drag.x0);
+    const top = drag.top + (e.clientY - drag.y0);
+    drag.x0 = e.clientX;
+    drag.y0 = e.clientY;
+    drag.top = top;
+    const dyFromBottom = window.innerHeight - top - drag.h;
+    const pos = clampCardBox({ dx: Math.round(left), dyFromBottom: Math.round(dyFromBottom) }, window.innerWidth, drag.w);
+    const y = Math.max(8, window.innerHeight - pos.dyFromBottom - drag.h);
+    chatStream.style.left = pos.dx + 'px';
+    chatStream.style.top = y + 'px';
+    drag.cur = pos;
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    const cur = drag.cur;
+    drag = null;
+    chatStream.classList.remove('dragging');
+    if (cur) { try { localStorage.setItem(CARD_POS_KEY, JSON.stringify(cur)); } catch (e) { /* 存不下不致命 */ } }
+  };
+  chatHead.addEventListener('pointerup', endDrag);
+  chatHead.addEventListener('pointercancel', endDrag);
+  chatHead.addEventListener('dblclick', () => {
+    try { localStorage.removeItem(CARD_POS_KEY); } catch (e) {}
+    applyCardPos(CARD_DEFAULT);   // 双击标题栏瞬回默认家
+  });
+}
+
 if (typeof ChatStore !== 'undefined') {
   ChatStore.onChange(() => renderChat());
   ChatStore.load();
 }
+applyCardPos();   // 恢复位置记忆（无记录回默认家）
 
 function show(t) {
   render(t);

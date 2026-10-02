@@ -141,7 +141,26 @@ function dividerNeeded(prev, cur) {
   return Boolean(prev && prev.bridge && cur && !cur.bridge);
 }
 
+
+/* ---------- 伴随卡片几何（v1.0 笔 4） ----------
+   锚底坐标系：dx（左边距）+ dyFromBottom（底边离窗底高度）。
+   垂直下限 336 = 交互不变式的机械化：她头顶 328 + 8px 呼吸缝，
+   天空才是卡片的活动域，拖拽再自由也飞不进她的身体。 */
+const CARD_DEFAULT = { dx: 6, dyFromBottom: 336 };
+const CARD_MIN_BOTTOM = 336;
+
+function clampCardBox(pos, viewW, cardW = 340) {
+  if (!pos || !Number.isFinite(pos.dx) || !Number.isFinite(pos.dyFromBottom)) {
+    return { dx: CARD_DEFAULT.dx, dyFromBottom: CARD_DEFAULT.dyFromBottom };
+  }
+  const w = Number.isFinite(viewW) && viewW > 0 ? viewW : 380;
+  const cw = Number.isFinite(cardW) && cardW > 0 ? cardW : 340;
+  const dx = Math.max(6, Math.min(w - 6 - cw, Math.round(pos.dx)));
+  const dyFromBottom = Math.max(CARD_MIN_BOTTOM, Math.round(pos.dyFromBottom));
+  return { dx, dyFromBottom };
+}
+
 // 双环境守卫：Node 测试可 require；浏览器侧全局照常生效（同 ui-i18n / ui-chat-store 先例）
 if (typeof module === 'object' && module.exports) {
-  module.exports = { MARK_RE, MarkContext, setMarkContext, stripState, transientMarker, decideBubble, bubbleView, shouldStickToBottom, dividerNeeded };
+  module.exports = { MARK_RE, MarkContext, setMarkContext, stripState, transientMarker, decideBubble, bubbleView, shouldStickToBottom, dividerNeeded, CARD_DEFAULT, CARD_MIN_BOTTOM, clampCardBox };
 }
