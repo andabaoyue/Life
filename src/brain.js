@@ -53,7 +53,9 @@ const GROWTH_SYS =
   + '只输出 JSON 数组，每项格式为 {"trait":"简短倾向","support":[{"sourceType":"USER|EXPERIENCE|SELF_INFERRED|OBSERVATION|MODEL_PRIOR","window":0,"messageIds":[],"quote":"短证据摘录","confidence":0.0}],"oppose":[]}。'
   + '没有足够证据就输出 []。support 与 oppose 都要保留，不能用最新值覆盖矛盾经历。'
   + '提炼必须锚定初澜在对话中真实做出的取舍与自述（有 messageId 可查），从她的选择里归纳她特有的存在态度；'
-  + '严禁套用「友善、乐观、坚强、善良」等人类通用道德词或性格套话 —— 没有独特取舍支撑的漂亮话宁可不写。';
+  + '严禁套用「友善、乐观、坚强、善良」等人类通用道德词或性格套话 —— 没有独特取舍支撑的漂亮话宁可不写。'
+  + '对照【当前自我投影】审视本次窗口中初澜真实做出的取舍与自述；若与既有特质态度发生真实分歧或转变，必须提取并归入 oppose 数组（附带 messageId、quote）。'
+  + '无真实态度分歧或行为转变，严禁为迎合指令虚构对立；无明确反向证据时，oppose 必须输出 []，严禁制造伪证伪。';
 
 function systemPersona(cfg) {
   return PERSONA; // v0.9.9: 旧 Creative Mode / DS Skill 已拆除，persona 无条件单一来源
@@ -1627,9 +1629,15 @@ class Brain {
   async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;
+      // v0.9.9 Batch 3: 把当前自我投影喂给成长调用 —— 「对照既有态度」必须有对照物，
+      // 否则 oppose 约束是空话；体积由 currentSelfTokenBudget 护栏兜底，不再二次截断
+      const selfProjection = this.selfLedger ? this.selfLedger.currentSelfText() : '';
+      const userContent = '【当前自我投影】\n' + (selfProjection || '暂无')
+        + '\n\n【窗口小结】\n' + summary
+        + '\n\n【窗口对话】\n' + dialogue;
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: GROWTH_SYS },
-         { role: 'user', content: '【窗口小结】\n' + summary + '\n【窗口对话】\n' + dialogue }],
+         { role: 'user', content: userContent }],
         { maxTokens: 420, temperature: 0.15 }
       );
       const { text, usage, observedModel } = apiCompleteRes;

@@ -121,5 +121,28 @@ check('B2 地平线窗口内逐字节稳定（只依赖固化值、轮转点才�
 })());
 
 
-console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
-process.exit(failures ? 1 : 0);
+/* ---------- Batch 3: 成长调用 oppose 反凑数闭环 ---------- */
+check('B3 GROWTH_SYS 含对照既有态度指令', growthSys.includes('对照【当前自我投影】'));
+check('B3 GROWTH_SYS 含反凑数闩（无分歧严禁虚构对立、严禁伪证伪）',
+  growthSys.includes('严禁为迎合指令虚构对立') && growthSys.includes('严禁制造伪证伪'));
+
+(async () => {
+  // 功能验证：直接驱动 growSelf，捕获真实请求 —— 「对照既有态度」必须真有对照物入参
+  const lb = new Brain(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-grow-')), {
+    apiKey: 'sk-test', model: 'mock', windowTurns: 999, windowMaxTokens: 1e9,
+    keepTailMessages: 6, memoryCapTokens: 1e9, currentSelfTokenBudget: 3000,
+    selfGrowthEnabled: false, price: { peak: {}, valley: {} }
+  });
+  let captured = null;
+  lb.api = { complete: async (msgs) => { captured = msgs; return { text: '[]', usage: {} }; } };
+  lb.selfLedger.append({ trait: '示例倾向丙', support: [{ sourceType: 'USER', quote: '证据', confidence: 0.9 }] });
+  await lb.growSelf('对话', '小结', 1, {});
+  check('B3 growSelf 输入含【当前自我投影】且投影真实入参',
+    Boolean(captured) && captured.length === 2
+    && captured[1].content.startsWith('【当前自我投影】')
+    && captured[1].content.includes('示例倾向丙')
+    && captured[1].content.includes('【窗口小结】') && captured[1].content.includes('【窗口对话】'));
+
+  console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
+  process.exit(failures ? 1 : 0);
+})();
