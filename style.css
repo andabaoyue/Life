@@ -753,9 +753,11 @@ body.showlog #bubble { display: none !important; }
 /* ---------------- 对话流（v1.0 笔 3b-b） ----------------
    双轨：#bubble 头顶短气泡照旧（日常轻感知）；#chatStream 展开态深度会话。
    时间戳严格条件渲染（t 缺失不出时间 DOM）；synthetic 走 note 样式，绝不冒充用户。 */
+/* B′（2026-10）：交互不变式——初澜立绘永远不被面板遮挡。
+   几何账（两者都锚窗口底边，任意窗口高度成立）：立绘 bottom 52 + 高约 276 → 顶边 328px；
+   卡片底边放 336px → 恒定 8px 呼吸缝，零像素重叠，她始终可见、可戳、可右键。 */
 #chatStream {
-  position: absolute; left: 6px; right: 6px; bottom: 52px;
-  height: 60vh; max-height: 560px;
+  position: absolute; left: 6px; right: 6px; top: 8px; bottom: 336px;
   display: flex; flex-direction: column;
   background: rgba(18, 20, 28, .82); border: 1px solid rgba(255, 255, 255, .12);
   border-radius: 14px; backdrop-filter: blur(10px); overflow: hidden;
