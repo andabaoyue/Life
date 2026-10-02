@@ -83,9 +83,9 @@
       <div id="stats" class="stats">—</div>
       <div class="p-title">衣柜</div>
       <div id="wdPresets" class="wd-presets"></div>
-      <div id="wdSlots" class="wd-slots"></div>
-      <!-- 智能成套建议条（v1.0 UX-02b）：只建议不强制 -->
+      <!-- 智能成套建议条（v1.0 UX-02b）：只建议不强制，置于槽位上方显眼位置 -->
       <div id="wdSuggest" class="hint hidden"><span id="wdSuggestText"></span><button id="wdSuggestBtn">一键成套</button></div>
+      <div id="wdSlots" class="wd-slots"></div>
       <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
       <div class="p-title">我的记忆</div>
       <div id="memList" class="memlist">—</div>
@@ -259,7 +259,7 @@
 
     <!-- 对话流（v1.0 笔 3b-b）：展开态深度会话；#inputBar 原地不动、CSS 联动 -->
     <div id="chatStream" class="hidden">
-      <div id="chatHead"><span id="chatTitle"></span><button id="chatClose">×</button></div>
+      <div id="chatHead"><span id="chatTitle"></span><span class="chat-head-tools"><button id="chatDragWin" class="chat-tool-btn" title="按住拖拽移动窗口">✥</button><button id="chatClose">×</button></span></div>
       <div id="chatList"></div>
     </div>
 

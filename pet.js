@@ -256,7 +256,11 @@ function applyLayers(layers) {
   layerSrcs = layers || [];
   if (!layerSrcs.length) return showFallbackSprite();
 
-  const srcs = ['assets/character/base/base.png', ...layerSrcs.map(l => l.src)];
+  // 若穿戴默认白毛系衣物，因早期切片缺失由完整体 base_legacy_full 兜底，避免透明图层导致躯干下装镂空。
+  // 已知局限：混搭（默认件 + 非默认件）时母版可能在切片边缘透出——可接受的过渡性权衡，根治是补齐切片资产。
+  const isDefaultLook = layerSrcs.some(l => l.itemId === 'lace_corset_01' || l.itemId === 'black_shorts_01');
+  const baseImg = isDefaultLook ? 'assets/character/base/base_legacy_full.png' : 'assets/character/base/base.png';
+  const srcs = [baseImg, ...layerSrcs.map(l => l.src)];
   const imgs = srcs.map(src => new Promise((res, rej) => {
     const im = new Image();
     im.onload = () => res();
@@ -365,15 +369,19 @@ function updateOutfitSuggest(cat) {
 
 if (wdSuggestBtn) wdSuggestBtn.addEventListener('click', async () => {
   const hint = document.getElementById('wdHint');
+  let allOk = true;
   try {
     for (const op of wdPendingPlan) {
       const val = op.itemId.startsWith('off_') ? null : op.itemId;
       const r = await api.wardrobeSet(op.slot, val);
       if (!r || !r.ok) {
+        // 如实报告失败，绝不「假装换好」（ui_test 互斥契约同源）
         if (hint) hint.textContent = t('wardrobe.completeFailed') + ((r && r.error) || '');
+        allOk = false;
         break;
       }
     }
+    if (allOk && hint) hint.textContent = t('wardrobe.completeSuccess');
   } catch (e) {
     if (hint) hint.textContent = t('wardrobe.completeFailed') + e.message;
   }
@@ -525,6 +533,7 @@ function openChat() {
 function closeChat() {
   if (chatOpen) {
     chatOpen = false;
+    if (streaming && api && api.abort) api.abort();
     if (chatStream) chatStream.classList.add('hidden');
     if (api && api.chatViewport) api.chatViewport(false);
   }
@@ -625,9 +634,9 @@ if (chatClose) chatClose.addEventListener('click', (e) => {
 if (chatHead && chatStream) {
   let drag = null;
   chatHead.addEventListener('pointerdown', (e) => {
-    if (e.target === chatClose) return;
+    if (e.target === chatClose || (e.target && e.target.id === 'chatDragWin')) return;
     const r = chatStream.getBoundingClientRect();
-    drag = { x0: e.clientX, y0: e.clientY, top: r.top, w: r.width, h: r.height, cur: null };
+    drag = { x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, w: r.width, h: r.height, cur: null };
     chatStream.style.width = r.width + 'px';
     chatStream.style.height = r.height + 'px';
     chatStream.classList.add('dragging');
@@ -635,10 +644,11 @@ if (chatHead && chatStream) {
   });
   chatHead.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const left = (parseFloat(chatStream.style.left) || 0) + (e.clientX - drag.x0);
+    const left = drag.left + (e.clientX - drag.x0);
     const top = drag.top + (e.clientY - drag.y0);
     drag.x0 = e.clientX;
     drag.y0 = e.clientY;
+    drag.left = left;
     drag.top = top;
     const dyFromBottom = window.innerHeight - top - drag.h;
     const pos = clampCardBox({ dx: Math.round(left), dyFromBottom: Math.round(dyFromBottom) }, window.innerWidth, drag.w);
@@ -661,6 +671,39 @@ if (chatHead && chatStream) {
     // 双击标题栏瞬回默认家：清空内联定位，恢复 CSS 的 top:8 / bottom:336 拉伸模式
     chatStream.style.left = chatStream.style.top = chatStream.style.right = chatStream.style.bottom = '';
     chatStream.style.width = chatStream.style.height = '';
+  });
+}
+
+const chatDragWin = document.getElementById('chatDragWin');
+if (chatDragWin) {
+  let winDragging = false, lastWinX = 0, lastWinY = 0;
+  chatDragWin.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    winDragging = true;
+    lastWinX = e.screenX;
+    lastWinY = e.screenY;
+    if (api && api.dragStart) api.dragStart();
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!winDragging) return;
+    if (e.buttons === 0) {
+      winDragging = false;
+      if (api && api.dragEnd) api.dragEnd();
+      return;
+    }
+    const dx = e.screenX - lastWinX;
+    const dy = e.screenY - lastWinY;
+    lastWinX = e.screenX;
+    lastWinY = e.screenY;
+    if (api && api.dragMove) api.dragMove(dx, dy);
+  });
+  window.addEventListener('mouseup', () => {
+    if (winDragging) {
+      winDragging = false;
+      if (api && api.dragEnd) api.dragEnd();
+    }
   });
 }
 
@@ -769,7 +812,9 @@ if (api) {
     if (chatOpen && chatStreamNode) {
       const el = chatStreamNode.querySelector('.b-text');
       if (el) el.textContent = stripState(acc, true);
-      if (chatList) chatList.scrollTop = chatList.scrollHeight;
+      if (chatList && (typeof shouldStickToBottom !== 'function' || shouldStickToBottom(chatList.scrollTop, chatList.scrollHeight, chatList.clientHeight, 80))) {
+        chatList.scrollTop = chatList.scrollHeight;
+      }
     }
   });
 }
@@ -897,6 +942,14 @@ input.addEventListener('keydown', (e) => {
   e.stopPropagation();
   if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); }
   if (e.key === 'Escape') setTalking(false);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (log && !log.classList.contains('hidden')) { toggleLog(false); return; }
+    if (menu && !menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
+    if (document.body.classList.contains('talking')) { setTalking(false); return; }
+  }
 });
 
 function setTalking(on) {

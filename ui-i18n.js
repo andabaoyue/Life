@@ -40,6 +40,7 @@ const I18N = {
     'wardrobe.suggestPrefix': '建议补齐成套：',
     'wardrobe.applyComplete': '一键成套',
     'wardrobe.completeFailed': '补齐未完成：',
+    'wardrobe.completeSuccess': '已自动补齐成套搭配，穿戴完毕~',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
   'en': {
@@ -70,6 +71,7 @@ const I18N = {
     'wardrobe.suggestPrefix': 'Suggested to complete the outfit: ',
     'wardrobe.applyComplete': 'Complete Outfit',
     'wardrobe.completeFailed': 'Completion failed: ',
+    'wardrobe.completeSuccess': 'Outfit completed and dressed~',
   }
 };
 

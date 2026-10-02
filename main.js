@@ -176,6 +176,24 @@ ipcGuard.handle('toggle-pin', () => {
   return on;   // 返回新状态，菜单文案才能区分「已置顶/已取消置顶」
 });
 
+function setSafeWindowSize(targetWin, w, h) {
+  if (!targetWin || targetWin.isDestroyed()) return;
+  if (typeof targetWin.setResizable === 'function') targetWin.setResizable(true);
+  targetWin.setSize(w, h);
+  if (typeof targetWin.setResizable === 'function') targetWin.setResizable(false);
+}
+
+function getWorkArea(x, y) {
+  try {
+    const display = (typeof screen.getDisplayNearestPoint === 'function')
+      ? screen.getDisplayNearestPoint({ x, y })
+      : screen.getPrimaryDisplay();
+    return display.workArea || { x: 0, y: 0, ...display.workAreaSize };
+  } catch {
+    return { x: 0, y: 0, width: 1920, height: 1080 };
+  }
+}
+
 ipcGuard.on('resize-pet', (e, factor) => {
   if (!win) return;
   const [w, h] = win.getSize();
@@ -183,8 +201,12 @@ ipcGuard.on('resize-pet', (e, factor) => {
   if (next.w === w && next.h === h) return;   // 已经到边界，不用再动
   const [x, y] = win.getPosition();
   // 脚钉住：桌宠是 bottom 定位，只改尺寸会让她在放大时往屏幕底下陷。
-  win.setPosition(x, layout.anchorBottom(y, h, next.h));
-  win.setSize(next.w, next.h);
+  let targetY = layout.anchorBottom(y, h, next.h);
+  // 屏幕工作区保护：防止窗口顶部顶出屏幕上沿，导致记录面板关闭按钮 (x) 被推出屏幕不可见
+  const area = getWorkArea(x, y);
+  if (targetY < area.y) targetY = area.y;
+  win.setPosition(x, targetY);
+  setSafeWindowSize(win, next.w, next.h);
   reconfigureMotion();
   syncMotionBlock('resize');
 });
@@ -200,8 +222,11 @@ ipcGuard.handle('chat-viewport', (e, open) => {
   const [w, h] = win.getSize();
   if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };
   const [x, y] = win.getPosition();
-  win.setPosition(x, layout.anchorBottom(y, h, target.h));
-  win.setSize(target.w, target.h);
+  let targetY = layout.anchorBottom(y, h, target.h);
+  const area = getWorkArea(x, y);
+  if (targetY < area.y) targetY = area.y;
+  win.setPosition(x, targetY);
+  setSafeWindowSize(win, target.w, target.h);
   reconfigureMotion();
   syncMotionBlock('resize');
   return { ok: true, w: target.w, h: target.h, changed: true };
