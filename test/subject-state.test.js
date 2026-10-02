@@ -41,8 +41,8 @@ check('初始基准特质全为 0',
 const snapshot = state.formatSnapshot();
 check('formatSnapshot 包含标题与特质键值',
   snapshot.includes('【当前主体状态快照】') &&
-  snapshot.includes('quiet_preference=0') &&
-  snapshot.includes('social_initiative=0'));
+  snapshot.includes('安静偏好=0') &&
+  snapshot.includes('社交主动=0'));
 
 // 3. Provenance 强验证
 const mockMessages = [
@@ -109,8 +109,8 @@ check('状态值正确累加',
   state.values.vitality === -10);
 check('窗口号推进至 2', state.currentWindowNo === 2);
 check('快照同步更新并反映新状态',
-  state.formatSnapshot().includes('quiet_preference=16') &&
-  state.formatSnapshot().includes('vitality=-10'));
+  state.formatSnapshot().includes('安静偏好=16') &&
+  state.formatSnapshot().includes('生命活力=-10'));
 
 // 5. maxDeltaPerWindow 边界限额截断
 // 强行注入单窗口极大证据：增量预期 1 * 1.0 * 200 = 200，但 maxDeltaPerWindow 为 50

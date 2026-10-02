@@ -130,6 +130,15 @@ check('FA 运转时长消歧（物理时长非日历天数）', b.currentSelfCon
 check('FA persona 反自创日历红线 + brain 注入框标双到位',
   PERSONA.includes('不自创非物理的日历或日长') && brainSrc.includes('【以下为程序注入的实时状态，非用户输入，供你感知自身与环境】'));
 
+/* ---------- Fix B: 主体状态快照中文定名（拔除代码键进口吻） ---------- */
+check('FB 五格数中文定名、零英文代码键', (() => {
+  const { SubjectState } = require('../src/subject-state');
+  const ss = new SubjectState(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-ss-')));
+  const snap = ss.formatSnapshot();
+  return snap.includes('依恋渴望=') && snap.includes('安静偏好=') && snap.includes('生命活力=')
+    && !/quiet_preference=|social_initiative=|attachment_need=|vitality=|philosophical_curiosity=/.test(snap);
+})());
+
 /* ---------- Batch 3: 成长调用 oppose 反凑数闭环 ---------- */
 check('B3 GROWTH_SYS 含对照既有态度指令', growthSys.includes('对照【当前自我投影】'));
 check('B3 GROWTH_SYS 含反凑数闩（无分歧严禁虚构对立、严禁伪证伪）',

@@ -984,7 +984,7 @@ async function main() {
     const selfCtx = p0Brain.currentSelfContext();
     check('P0-07: currentSelfContext 瞬时尾部包含当前主体状态快照',
       selfCtx.includes('【当前主体状态快照】') &&
-      selfCtx.includes('quiet_preference=18'));
+      selfCtx.includes('安静偏好=18'));
     check('P0-07: systemText 保持纯净人设与小结，绝不包含主体状态快照（保卫前缀缓存）',
       !p0Brain.memory.systemText().includes('【当前主体状态快照】'));
 

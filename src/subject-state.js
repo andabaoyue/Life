@@ -276,8 +276,17 @@ class SubjectState {
    * 生成窗口内冻结的快照文本
    */
   updateSnapshot() {
+    // v0.9.9: 五格数中文定名 —— 她看到的不该是程序员的变量名（实测她会照着念 attachment_need）；
+    // 数值原样保留（五格数是你们的纽带），未知键回退原键（防未来新特质裸奔）
+    const TRAIT_NAMES = {
+      quiet_preference: '安静偏好',
+      social_initiative: '社交主动',
+      attachment_need: '依恋渴望',
+      vitality: '生命活力',
+      philosophical_curiosity: '哲学好奇'
+    };
     const lines = Object.entries(this.data.values)
-      .map(([k, v]) => `${k}=${v}`);
+      .map(([k, v]) => `${TRAIT_NAMES[k] || k}=${v}`);
     this.frozenSnapshot = '【当前主体状态快照】\n' + lines.join('\n');
     return this.frozenSnapshot;
   }
