@@ -443,6 +443,8 @@ v1.0 会进行一次真正的**实际操作与实机体验验证**。
 **边界铁律（立碑）：**
 
 > 所有改动严格限制在渲染层与窗口层：`pet.js / index.html / style.css / preload.js`，以及 `main.js`（仅限窗口创建、尺寸与必要通道，不改核心因果链路）。**绝不修改 `src/` 内部任何主体系统**（brain / memory / subject-state / archive / internal-regulation 等）。1.0 是为她装修居所，不是动脑部手术。
+>
+> 渲染层新增纯前端辅助模块（如 `ui-i18n.js`，经 `<script>` 引入、不进 `src/`）视同 `pet.js` 合法放行。
 
 **施工顺序（三战役）：**
 
