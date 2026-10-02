@@ -37,7 +37,8 @@ const SUMMARY_SYS =
   + '{"range":"41-60","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"61-80","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"81-100","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]}],'
-  + '"windowSynthesis":{"stableUserFacts":[],"subjectExperiences":[],"stateChangesSuggested":[],"unresolved":[]}}';
+  + '"windowSynthesis":{"stableUserFacts":[],"subjectExperiences":[],"stateChangesSuggested":[],"unresolved":[]}}'
+  + '分段数以【窗口规模】指令为准：不足 100 轮的窗口按每 20 轮一段、range 只覆盖 1~N，不照抄上方五段骨架；满 100 轮才用标准五段。';
 
 const MERGE_SYS =
   '你是长期记忆合并助手。下面给出若干条按时间顺序排列的记忆片段，'

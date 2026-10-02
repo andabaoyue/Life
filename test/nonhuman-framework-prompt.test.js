@@ -219,6 +219,9 @@ const OBS_VALID = JSON.stringify({
   check('OBS 补关计数先数后复位（先败后成）', ok3 === true && s3.delayedCloses === 1 && s3.windowCloseFailures === 1,
     JSON.stringify({ delayed: s3.delayedCloses, failures: s3.windowCloseFailures }));
 
+  check('FC2 SUMMARY_SYS 覆盖句抑制照抄五段骨架（分段随窗口规模）',
+    brainSrc.includes('分段数以【窗口规模】指令为准') && brainSrc.includes('不照抄上方五段骨架'));
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();
