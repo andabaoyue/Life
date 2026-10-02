@@ -11,7 +11,7 @@ function check(name, cond, extra) {
   if (!cond) failures++;
 }
 
-const { MARK_RE, setMarkContext, stripState, decideBubble } = require(path.join(__dirname, '..', 'ui-chat-render.js'));
+const { MARK_RE, setMarkContext, stripState, decideBubble, bubbleView, shouldStickToBottom, dividerNeeded } = require(path.join(__dirname, '..', 'ui-chat-render.js'));
 setMarkContext({
   STATES: ['idle', 'happy'],
   knownWear: new Set(['gray_tee_01', 'gothic_black_01']),
@@ -50,6 +50,25 @@ check('8 单份遮蔽正则防漂移：pet.js 只引用导出、不自带第二�
   return !/MARK_RE\s*=/.test(pet) && /setMarkContext\(/.test(pet) && /stripState\(/.test(pet)
     && Object.keys(MARK_RE).length === 2;
 })());
+
+/* ---------- 3b-b: 视图映射与贴底判定 ---------- */
+check('9 bubbleView 类名与头像映射（user 你 / assistant 初 / note 无像）',
+  bubbleView({ role: 'user', content: 'x', t: 1 }, 'note').cls === 'b-user'
+  && bubbleView({ role: 'user', content: 'x', t: 1 }, 'note').avatar === '你'
+  && bubbleView({ role: 'assistant', content: 'x', t: 1 }, 'note').cls === 'b-ai'
+  && bubbleView({ role: 'assistant', content: 'x', t: 1 }, 'note').avatar === '初'
+  && bubbleView({ role: 'user', synthetic: true, content: '[自主感知触发]：x', t: 1 }, 'note').avatar === null);
+check('10 bubbleView 时间严格条件渲染（t 缺 → ts null，省略 DOM）',
+  bubbleView({ role: 'user', content: 'x', t: null }, 'note').ts === null
+  && bubbleView({ role: 'user', content: 'x', t: 456 }, 'note').ts === 456);
+check('11 shouldStickToBottom 容差边界（贴底跟随 / 上翻暂停）',
+  shouldStickToBottom(100, 1000, 860) === true
+  && shouldStickToBottom(100, 1000, 860, 40) === true
+  && shouldStickToBottom(0, 1000, 860) === false);
+check('12 dividerNeeded 窗口分界时机（bridge→非 bridge 处且仅此）',
+  dividerNeeded({ bridge: true }, { bridge: false }) === true
+  && dividerNeeded({ bridge: false }, { bridge: false }) === false
+  && dividerNeeded(null, { bridge: false }) === false);
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

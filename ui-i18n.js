@@ -16,6 +16,8 @@ const I18N = {
     'chat.title': '对话',
     'chat.placeholder': '说点什么…',
     'chat.empty': '（还没有对话）',
+    'chat.windowBreak': '—— 以下为当前窗口 ——',
+    'chat.sendFailed': '（这条没送出去，稍后再试）',
     'card.dragHint': '拖到舒服的位置',
     'archive.title': '生命档案',
     'archive.windows': '窗口小结',

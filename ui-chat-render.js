@@ -114,7 +114,34 @@ function decideBubble(m, mode) {
   return { kind, text: stripState(String(m.content || ''), false), at, bridge };
 }
 
+
+/**
+ * 视图映射（纯）：decideBubble 结果 → 渲染描述（类名 / 头像 / 时间是否渲染）。
+ * ts 为 null 表示「严格省略时间 DOM」——t 缺失不伪造（零伪造铁律）。
+ */
+function bubbleView(m, mode) {
+  const d = decideBubble(m, mode);
+  return {
+    kind: d.kind,
+    text: d.text,
+    bridge: d.bridge,
+    cls: d.kind === 'user' ? 'b-user' : (d.kind === 'assistant' ? 'b-ai' : 'b-note'),
+    avatar: d.kind === 'user' ? '你' : (d.kind === 'assistant' ? '初' : null),
+    ts: d.at === undefined ? null : d.at
+  };
+}
+
+/** 智能贴底：用户上翻超过容差就暂停跟随（否则新消息把人拽回底部），回到底部恢复 */
+function shouldStickToBottom(scrollTop, scrollHeight, clientHeight, tolerance = 40) {
+  return (scrollHeight - scrollTop - clientHeight) <= tolerance;
+}
+
+/** 窗口分界线：上一条是 bridge（上一窗口尾部）而当前条不是 → 该处插分界 */
+function dividerNeeded(prev, cur) {
+  return Boolean(prev && prev.bridge && cur && !cur.bridge);
+}
+
 // 双环境守卫：Node 测试可 require；浏览器侧全局照常生效（同 ui-i18n / ui-chat-store 先例）
 if (typeof module === 'object' && module.exports) {
-  module.exports = { MARK_RE, MarkContext, setMarkContext, stripState, transientMarker, decideBubble };
+  module.exports = { MARK_RE, MarkContext, setMarkContext, stripState, transientMarker, decideBubble, bubbleView, shouldStickToBottom, dividerNeeded };
 }

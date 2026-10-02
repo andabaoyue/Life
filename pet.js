@@ -438,6 +438,98 @@ let busy = false;
 let acc = '';
 let liveNode = null;      // 流式期间正在写入的那条记录
 
+
+/* ---------------- 对话流（v1.0 笔 3b-b） ----------------
+   双轨铁律：#bubble 头顶短气泡是日常轻感知，#chatStream 是展开态深度会话；
+   两者共存互不替代（ui_test.py 的日常气泡断言因此保全）。
+   权威对账：流式与乐观气泡只是显示临时态，回合结束一律 ChatStore.load() 覆盖，
+   她脑子里的历史（memory.history）永远是唯一事实源。 */
+const chatStream = document.getElementById('chatStream');
+const chatList = document.getElementById('chatList');
+const chatTitle = document.getElementById('chatTitle');
+const chatClose = document.getElementById('chatClose');
+let chatOpen = false;
+let chatStreamNode = null;     // 流式临时 assistant 气泡（展开态）
+let chatLastError = null;      // 发送失败提示（随 renderChat 附在末尾，不进历史）
+
+function openChat() {
+  if (!chatOpen) {
+    chatOpen = true;
+    if (chatStream) chatStream.classList.remove('hidden');
+    if (chatTitle) chatTitle.textContent = t('chat.title');
+    if (api && api.chatViewport) api.chatViewport(true);
+    ChatStore.load();
+  }
+}
+
+function closeChat() {
+  if (chatOpen) {
+    chatOpen = false;
+    if (chatStream) chatStream.classList.add('hidden');
+    if (api && api.chatViewport) api.chatViewport(false);
+  }
+}
+
+function buildBubble(v, extraCls) {
+  const row = document.createElement('div');
+  row.className = 'b-row ' + v.cls + (v.bridge ? ' b-bridged' : '') + (extraCls ? ' ' + extraCls : '');
+  if (v.avatar) {
+    const av = document.createElement('div');
+    av.className = 'b-av';
+    av.textContent = v.avatar;
+    row.appendChild(av);
+  }
+  const col = document.createElement('div');
+  col.className = 'b-col';
+  const txt = document.createElement('div');
+  txt.className = 'b-text';
+  txt.textContent = v.text;          // textContent 渲染，防注入
+  col.appendChild(txt);
+  if (v.ts !== null && v.ts !== undefined) {
+    const ts = document.createElement('div');
+    ts.className = 'b-ts';
+    ts.textContent = formatDisplayTime(v.ts);   // 时间单点（UX-05 改一处）
+    col.appendChild(ts);
+  }
+  row.appendChild(col);
+  return row;
+}
+
+function renderChat() {
+  if (!chatList) return;
+  const stick = shouldStickToBottom(chatList.scrollTop, chatList.scrollHeight, chatList.clientHeight);
+  chatList.innerHTML = '';
+  let prev = null;
+  for (const m of ChatStore.messages) {
+    const v = bubbleView(m, SYNTHETIC_RENDER);
+    if (v.kind === 'skip') { prev = m; continue; }
+    if (dividerNeeded(prev, m)) {
+      const dv = document.createElement('div');
+      dv.className = 'win-divider';
+      dv.textContent = t('chat.windowBreak');
+      chatList.appendChild(dv);
+    }
+    chatList.appendChild(buildBubble(v));
+    prev = m;
+  }
+  if (chatLastError) {
+    const ev = document.createElement('div');
+    ev.className = 'b-row b-note b-error';
+    const et = document.createElement('div');
+    et.className = 'b-text';
+    et.textContent = chatLastError;
+    ev.appendChild(et);
+    chatList.appendChild(ev);
+  }
+  if (stick) chatList.scrollTop = chatList.scrollHeight;
+}
+
+if (chatClose) chatClose.addEventListener('click', closeChat);
+if (typeof ChatStore !== 'undefined') {
+  ChatStore.onChange(() => renderChat());
+  ChatStore.load();
+}
+
 function show(t) {
   render(t);
   if (liveNode) {
@@ -452,6 +544,12 @@ if (api) {
   api.onDelta((d) => {
     acc += d;
     if (streaming) show(acc);
+    // v1.0 笔 3b-b：展开态同步流式临时气泡（权威对账时统一替换）
+    if (chatOpen && chatStreamNode) {
+      const el = chatStreamNode.querySelector('.b-text');
+      if (el) el.textContent = stripState(acc, true);
+      if (chatList) chatList.scrollTop = chatList.scrollHeight;
+    }
   });
 }
 
@@ -487,6 +585,18 @@ async function runChat(text, opts) {
   if (!proactive) addLog('u', '你：' + text);
   liveNode = addLog('a', '初澜：');
   render('');
+
+  // v1.0 笔 3b-b：Optimistic 上屏（用户气泡即刻可见）+ 流式临时 assistant 气泡；
+  // 两者都是显示临时态，回合结束 ChatStore.load() 权威对账统一替换。
+  chatLastError = null;
+  if (chatOpen) {
+    if (!proactive) {
+      chatList.appendChild(buildBubble({ kind: 'user', text, bridge: false, cls: 'b-user', avatar: '你', ts: null }, 'b-pending'));
+    }
+    chatStreamNode = buildBubble({ kind: 'assistant', text: '', bridge: false, cls: 'b-ai', avatar: '初', ts: null }, 'b-streaming');
+    chatList.appendChild(chatStreamNode);
+    chatList.scrollTop = chatList.scrollHeight;
+  }
 
   try {
     if (!api) {                              // 浏览器预览：假回复，验证逐字渲染
@@ -531,10 +641,12 @@ async function runChat(text, opts) {
       } else if (res.aborted) {
         finish('(已取消)');
       } else {
+        chatLastError = t('chat.sendFailed');
         finish('(出错了：' + res.error + ')');
       }
     }
   } catch (e) {
+    chatLastError = t('chat.sendFailed');
     finish('(异常：' + e.message + ')');
   } finally {
     streaming = false;
@@ -545,6 +657,9 @@ async function runChat(text, opts) {
     sendBtn.disabled = false;
     pet.classList.remove('thinking');
     syncMotionPriority();
+    // v1.0 笔 3b-b：权威对账 —— 用 memory.history 的真实投影覆盖一切临时态
+    chatStreamNode = null;
+    if (chatOpen && typeof ChatStore !== 'undefined') ChatStore.load();
   }
 
   function finish(t) {
@@ -565,6 +680,8 @@ input.addEventListener('keydown', (e) => {
 
 function setTalking(on) {
   document.body.classList.toggle('talking', on);
+  // v1.0 笔 3b-b：输入态即对话流展开态（单一挂钩点，ESC / 菜单都收口于此）
+  if (on) openChat(); else closeChat();
   syncMotionPriority();
   if (on) setTimeout(() => input.focus(), 30);
   else input.blur();
