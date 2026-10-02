@@ -270,12 +270,16 @@ function applyLayers(layers) {
   layerSrcs = layers || [];
   if (!layerSrcs.length) return showFallbackSprite();
 
-  // 视觉兜底（资产补齐前的过渡规则，实机反馈三连修）：11 张衣物切片目前是 3KB 全透明占位，
-  // 只要身上还穿着任何衣物（发型除外），底衬一律用 base_legacy_full 防内衣素体透出；
-  // 只有全部脱下成素体才显示 base.png。「勾选多少穿多少」的像素级呈现待切片资产补齐后自然成立。
+  // 视觉策略（资产实况驱动，实机截图实证）：
+  // 现状——11 张衣物切片是 3KB 全透明占位，外套切片更是「摊开的空衣服」平铺图（760×1000 无身体）；
+  // 任何衣物切片叠上身体都会把人穿乱（平铺外套盖脸）。母版 base_legacy_full 是唯一完整着装成图。
+  // 策略——穿衣（发型除外）：只显示母版，不叠任何衣物切片；全脱成素体：base + 身体对齐的发/发饰切片。
+  // 「勾选多少穿多少」的像素级呈现待逐件切片资产补齐后恢复（收尾清单：资产补全计划）。
   const clothed = layerSrcs.some(l => l.slot && l.slot !== 'hair');
   const baseImg = clothed ? 'assets/character/base/base_legacy_full.png' : 'assets/character/base/base.png';
-  const srcs = [baseImg, ...layerSrcs.map(l => l.src)];
+  const srcs = clothed
+    ? [baseImg]
+    : [baseImg, ...layerSrcs.filter(l => l.slot === 'hair' || l.slot === 'hairAccessory').map(l => l.src)];
   const imgs = srcs.map(src => new Promise((res, rej) => {
     const im = new Image();
     im.onload = () => res();
