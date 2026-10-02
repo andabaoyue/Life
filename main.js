@@ -31,6 +31,8 @@ function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
+  // v0.9.9 意志层：启动 / 热替换时用当前特质校准主动性权重（缺省中立 1.0，既有行为零变化）
+  if (trigger) trigger.updateTraits(brain.subjectState ? brain.subjectState.values : null);
   if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock(brain.subjectState ? brain.subjectState.values : null);
   // v0.9.9 P2-2a: 方案 A —— 内态变更经 onChange 接到镜像推送。
   // 这是「单一生命权威 -> 跨进程镜像」的唯一接线点，不要在别处再推一份。
@@ -232,6 +234,8 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     // 这里只在真的换上了时把新图层推给渲染端，
     // 保证屏幕上穿的、系统提示里说的、历史里记的三者是同一件事。
     if (res.wearChanged) pushWardrobe();
+    // v0.9.9 意志层：关窗后特质可能演进，刷新主动性权重（只动权重，不动闸门）
+    if (res.windowClosed && trigger && brain && brain.subjectState) trigger.updateTraits(brain.subjectState.values);
     return { ok: true, text: res.text, state: res.state,
              wears: res.wears, wearNote: res.wearNote,
              windowClosed: res.windowClosed, merged: res.merged,

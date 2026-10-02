@@ -32,6 +32,38 @@ check('1A 疑问块含反骚扰闩（一次最多一个、绝不连环审问）'
   sysQ.includes('【尚未解开的疑问】') && sysQ.includes('一次最多一个') && sysQ.includes('绝不连环审问'));
 check('1A 无疑问时零注入（向下兼容）', !mkMem().systemText().includes('【尚未解开的疑问】'));
 
+/* ---------- 1B: 性格驱动主动性 ---------- */
+const { TriggerEngine, computeInitiativeBias } = require('../src/trigger');
+check('1B initiativeBias 中立为 1.0、方向正确、有界', (() => {
+  const n = computeInitiativeBias({});
+  const hi = computeInitiativeBias({ attachment_need: 300, social_initiative: 300 });
+  const lo = computeInitiativeBias({ quiet_preference: 300 });
+  return n === 1 && hi > 1 && hi <= 1.5 && lo < 1 && lo >= 0.5;
+})());
+const mkTracker = (clicks, idleMs) => ({
+  sleepMode: false,
+  spokenDuringIdle: false,
+  lastInteractionAt: 1000000 - idleMs,
+  recentClicks: () => clicks
+});
+check('1B 高依恋降低意愿阈值（4 戳即应答），默认仍 5 戳', (() => {
+  const t1 = new TriggerEngine(mkTracker(4, 0), { now: () => 1000000, traits: { attachment_need: 300 } });
+  const t2 = new TriggerEngine(mkTracker(4, 0), { now: () => 1000000, traits: {} });
+  return t1.evaluate() !== null && t2.evaluate() === null;
+})());
+check('1B 冷却铁律不可绕过（最大 bias 也受冷却管）', (() => {
+  const t = new TriggerEngine(mkTracker(50, 0), { now: () => 1000000, traits: { attachment_need: 999 } });
+  t.lastFiredAt = 999000;
+  return t.evaluate() === null;
+})());
+check('1B 默认参数与既有常量完全一致（5 戳 / 30 分钟）', (() => {
+  const t = new TriggerEngine(mkTracker(0, 29 * 60000), { now: () => 1000000 });
+  const t2 = new TriggerEngine(mkTracker(0, 31 * 60000), { now: () => 1000000 });
+  const r1 = t.evaluate();
+  const r2 = t2.evaluate();
+  return r1 === null && r2 !== null && r2.kind === 'idle';
+})());
+
 (async () => {
   const { Brain } = require('../src/brain');
   const mkWillBrain = () => {

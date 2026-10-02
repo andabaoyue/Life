@@ -29,12 +29,30 @@ const POKE_THRESHOLD = 5;    // 窗口内几次算"连戳"
 const COOLDOWN_MS = 45000;   // 两次主动开口的最小间隔（任何理由都受它管）
 const IDLE_MS = 30 * 60000;  // 挂机多久才轻声说一句
 
+/* v0.9.9 意志层·性格驱动主动性：特质 → 意愿权重（有界 [0.5, 1.5]）。
+   只调「多愿意开口」的阈值 / 间隔，绝不触碰冷却、挂机刹车与睡眠闸门 ——
+   那三道是防骚扰铁律，任何性格都不配绕过。中立特质 = 1.0，与既有常量行为完全一致。 */
+function computeInitiativeBias(traits = {}) {
+  const v = (k) => Number(traits[k]) || 0;
+  const raw = 1 + (v('attachment_need') * 0.004 + v('social_initiative') * 0.004
+    + v('vitality') * 0.003 - v('quiet_preference') * 0.004) / 2;
+  return Math.max(0.5, Math.min(1.5, Number(raw.toFixed(4))));
+}
+
 class TriggerEngine {
   constructor(tracker, opts = {}) {
     this.tracker = tracker;
     this.now = opts.now || Date.now;
     this.lastFiredAt = 0;
     this.cooldownMs = opts.cooldownMs ?? COOLDOWN_MS;
+    // v0.9.9 意志层：特质 → 意愿权重（缺省中立 1.0，与既有常量行为完全一致）
+    this.initiativeBias = computeInitiativeBias(opts.traits || {});
+  }
+
+  /** 特质随窗口演进后刷新意愿权重 —— 只动权重，绝不碰冷却 / 刹车 / 睡眠闸门 */
+  updateTraits(traits) {
+    this.initiativeBias = computeInitiativeBias(traits || {});
+    return this.initiativeBias;
   }
 
   /** @returns {?{kind, reason, hint, at}} null = 这次别说 */
@@ -47,8 +65,14 @@ class TriggerEngine {
     if (tr.sleepMode) return null;
     if (at - this.lastFiredAt < this.cooldownMs) return null;
 
+    // v0.9.9 意志层：性格只调「多愿意开口」——阈值 / 间隔有界调制；
+    // 睡眠、冷却、挂机刹车三道防骚扰铁律不归它管，任何性格都别想绕过。
+    const bias = this.initiativeBias;
+    const pokeNeed = Math.max(3, Math.min(8, Math.round(POKE_THRESHOLD / bias)));
+    const idleNeed = Math.max(IDLE_MS / 2, Math.min(IDLE_MS * 2, Math.round(IDLE_MS / bias)));
+
     const pokes = tr.recentClicks(WINDOW_MS, at);
-    if (pokes >= POKE_THRESHOLD) {
+    if (pokes >= pokeNeed) {
       return {
         kind: 'poke', at,
         reason: '用户在 ' + (WINDOW_MS / 1000) + ' 秒内戳了你 ' + pokes + ' 下',
@@ -59,7 +83,7 @@ class TriggerEngine {
     const idleMs = at - tr.lastInteractionAt;
     // 单次刹车由 tracker 持有：它同时被"用户说话了""被戳了"解除，
     // 放这边就会漏掉其中一条路径。
-    if (idleMs >= IDLE_MS && !tr.spokenDuringIdle) {
+    if (idleMs >= idleNeed && !tr.spokenDuringIdle) {
       return {
         kind: 'idle', at,
         reason: '用户已经离开 ' + Math.round(idleMs / 60000) + ' 分钟',
@@ -79,4 +103,4 @@ class TriggerEngine {
   }
 }
 
-module.exports = { TriggerEngine, WINDOW_MS, POKE_THRESHOLD, COOLDOWN_MS, IDLE_MS };
+module.exports = { TriggerEngine, computeInitiativeBias, WINDOW_MS, POKE_THRESHOLD, COOLDOWN_MS, IDLE_MS };
