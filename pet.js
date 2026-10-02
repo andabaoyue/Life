@@ -270,16 +270,10 @@ function applyLayers(layers) {
   layerSrcs = layers || [];
   if (!layerSrcs.length) return showFallbackSprite();
 
-  // 视觉策略（资产实况驱动，实机截图实证）：
-  // 现状——11 张衣物切片是 3KB 全透明占位，外套切片更是「摊开的空衣服」平铺图（760×1000 无身体）；
-  // 任何衣物切片叠上身体都会把人穿乱（平铺外套盖脸）。母版 base_legacy_full 是唯一完整着装成图。
-  // 策略——穿衣（发型除外）：只显示母版，不叠任何衣物切片；全脱成素体：base + 身体对齐的发/发饰切片。
-  // 「勾选多少穿多少」的像素级呈现待逐件切片资产补齐后恢复（收尾清单：资产补全计划）。
-  const clothed = layerSrcs.some(l => l.slot && l.slot !== 'hair');
-  const baseImg = clothed ? 'assets/character/base/base_legacy_full.png' : 'assets/character/base/base.png';
-  const srcs = clothed
-    ? [baseImg]
-    : [baseImg, ...layerSrcs.filter(l => l.slot === 'hair' || l.slot === 'hairAccessory').map(l => l.src)];
+  // 纸娃娃式自由搭配（v1.0 资产补全方案 B）：素体打底，衣物切片逐件叠穿（z 序由 layers() 排好）。
+  // 衣物切片由 scripts/gen-garment-slices.py 按素体轮廓分带生成（程序绘制的过渡资产，
+  // 像素级美术资产补齐后按同路径整体替换即可，代码零改动）。勾选多少穿多少，如实呈现。
+  const srcs = ['assets/character/base/base.png', ...layerSrcs.map(l => l.src)];
   const imgs = srcs.map(src => new Promise((res, rej) => {
     const im = new Image();
     im.onload = () => res();
