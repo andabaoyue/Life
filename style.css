@@ -766,8 +766,9 @@ body.showlog #bubble { display: none !important; }
   border-radius: 14px; backdrop-filter: blur(12px); overflow: hidden;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+/* 视窗拓宽后卡片可占满天空宽度；340 预览态维持 300 以守住 ui_test B1 拖拽游隙 */
 @media (min-width: 370px) {
-  #chatStream { max-width: 330px; }
+  #chatStream { max-width: calc(100% - 16px); }
 }
 #chatStream.hidden { display: none; }
 #chatHead { display: flex; align-items: center; justify-content: space-between;

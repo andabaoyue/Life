@@ -301,16 +301,19 @@ with sync_playwright() as p:
           "加密" in (pg2.text_content("#keyState") or ""),
           repr(pg2.text_content("#keyState")))
 
-    # 互斥：穿着上装时直接点连衣裙 → 数据层拒绝，屏幕不许偷偷换
+    # 互斥自动解绑（v1.0 实机反馈）：穿着上装时点连衣裙 → 前端先脱上下装再穿裙，无缝不报错
+    # （数据层校验一字未动：src/wardrobe.js 仍是互斥铁律的唯一权威）
     before = pg2.evaluate("JSON.stringify(window.__wd.equip)")
     pg2.evaluate("""(() => {const r=[...document.querySelectorAll('#wdSlots .wd-row')]
         .find(r => r.querySelector('.wd-slot').textContent === '连衣裙');
       r.querySelector('.wd-item').click();})()""")
     pg2.wait_for_timeout(400)
-    check("被拒的搭配不改动真实状态",
-          pg2.evaluate("JSON.stringify(window.__wd.equip)") == before)
-    check("被拒时气泡如实说明而不是假装换好",
-          "穿不上" in (pg2.text_content("#bubble") or ""),
+    after = pg2.evaluate("JSON.stringify(window.__wd.equip)")
+    check("互斥自动解绑：点连衣裙自动脱上下装并穿上（状态如实变化）",
+          after != before and '"dress":"gothic_black_01"' in after
+          and '"top":null' in after and '"bottom":null' in after, repr(after))
+    check("自动解绑丝滑无报错（气泡没有「穿不上」）",
+          "穿不上" not in (pg2.text_content("#bubble") or ""),
           repr((pg2.text_content("#bubble") or "")[:30]))
 
     # 对话触发换装：程序状态、图层、历史记录三者一致

@@ -214,7 +214,7 @@ ipcGuard.on('resize-pet', (e, factor) => {
 /* v1.0 笔 3b-a：对话流视窗扩容通道（拍板：展开 380×720 / 收起回基准 340×480）。
    复用 layout.anchorBottom 钉住下边缘（她脚踩屏幕，绝不因长高而下陷）；
    尺寸常量放窗口层、不动 src/layout.js —— 边界铁律：src/ 一行不改。 */
-const CHAT_W = 380, CHAT_H = 720;
+const CHAT_W = 440, CHAT_H = 780;   // v1.0 实机反馈：对话视窗拓宽（原 380×720）
 ipcGuard.handle('chat-viewport', (e, open) => {
   if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
   if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };

@@ -460,9 +460,9 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   /* ============ chat-viewport 通道（v1.0 笔 3b-a） ============ */
   const badOpen = await invoke('chat-viewport', 'yes');
   const goodOpen = await invoke('chat-viewport', true);
-  check('chat-viewport 拒绝非法 open 值且合法展开为 380×720',
+  check('chat-viewport 拒绝非法 open 值且合法展开为 440×780',
     badOpen && badOpen.ok === false && badOpen.error === 'INVALID_OPEN'
-    && goodOpen && goodOpen.ok === true && goodOpen.w === 380 && goodOpen.h === 720);
+    && goodOpen && goodOpen.ok === true && goodOpen.w === 440 && goodOpen.h === 780);
 
   /* ============ chat-history 投影白名单（v1.0 笔 2） ============ */
   const chList = await invoke('chat-history');

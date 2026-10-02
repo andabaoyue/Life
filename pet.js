@@ -196,8 +196,22 @@ const BUBBLE_MIN = 48;    // 一行字 + 上下 padding：再小就不是气泡�
    预览模式的小代价：手动放大后再扭浏览器窗口，手动尺寸会被按比例覆盖 ——
    预览页是测试用的，不是用户界面，这个方向比"两个尺寸各长各的"清楚。 */
 const PET_RATIO = 210 / 340;
+/* v1.0 实机反馈修复：立绘尺寸的唯一权威 = 显式缩放指令（右键放大 / 缩小）。
+   旧写法让 pet.style.width 跟随 window.innerWidth —— 对话视窗一拓宽（340→440）
+   或 DWM 贴边抖动一下，她就被误撑大并逐次固化（实测「越拖越大」）。
+   现在 zoom 只在显式指令时变；窗口 resize 只 relayout，绝不动她的体型。 */
+const PET_BASE_W = 210;
+let petZoom = 1;
+function applyPetSize() {
+  pet.style.width = Math.round(PET_BASE_W * petZoom) + 'px';
+}
+function zoomPet(factor) {
+  // 与主进程 nextSize 的宽度边界（200..760）大致对齐
+  petZoom = Math.min(2.24, Math.max(0.59, petZoom * factor));
+  applyPetSize();
+  if (api && api.resize) api.resize(factor);
+}
 window.addEventListener('resize', () => {
-  pet.style.width = Math.round(window.innerWidth * PET_RATIO) + 'px';
   relayout();
 });
 
@@ -256,10 +270,11 @@ function applyLayers(layers) {
   layerSrcs = layers || [];
   if (!layerSrcs.length) return showFallbackSprite();
 
-  // 若穿戴默认白毛系衣物，因早期切片缺失由完整体 base_legacy_full 兜底，避免透明图层导致躯干下装镂空。
-  // 已知局限：混搭（默认件 + 非默认件）时母版可能在切片边缘透出——可接受的过渡性权衡，根治是补齐切片资产。
-  const isDefaultLook = layerSrcs.some(l => l.itemId === 'lace_corset_01' || l.itemId === 'black_shorts_01');
-  const baseImg = isDefaultLook ? 'assets/character/base/base_legacy_full.png' : 'assets/character/base/base.png';
+  // 视觉兜底（资产补齐前的过渡规则，实机反馈三连修）：11 张衣物切片目前是 3KB 全透明占位，
+  // 只要身上还穿着任何衣物（发型除外），底衬一律用 base_legacy_full 防内衣素体透出；
+  // 只有全部脱下成素体才显示 base.png。「勾选多少穿多少」的像素级呈现待切片资产补齐后自然成立。
+  const clothed = layerSrcs.some(l => l.slot && l.slot !== 'hair');
+  const baseImg = clothed ? 'assets/character/base/base_legacy_full.png' : 'assets/character/base/base.png';
   const srcs = [baseImg, ...layerSrcs.map(l => l.src)];
   const imgs = srcs.map(src => new Promise((res, rej) => {
     const im = new Image();
@@ -435,8 +450,24 @@ const slotBox = document.getElementById('wdSlots');
       b.className = 'wd-item' + (cur === it.id ? ' on' : '');
       b.title = it.id;
       b.addEventListener('click', async () => {
+        // 实机反馈：点已穿的单品 = 脱下（身份槽除外）；互斥槽自动解绑后落子，不再报错卡死
+        if (!slot.required && cur === it.id) {
+          wdAnchor = null;
+          const ro = await api.wardrobeSet(slot.id, null);
+          if (!ro.ok) say('这件脱不掉：' + ro.error);
+          refreshWardrobe();
+          return;
+        }
         wdAnchor = it.id;
-        const r = await api.wardrobeSet(slot.id, it.id);
+        const target = { ...cat.equip, [slot.id]: it.id };
+        if (slot.id === 'dress') { target.top = null; target.bottom = null; }
+        if (slot.id === 'top' || slot.id === 'bottom') { target.dress = null; }
+        const plan = planOutfit(cat.equip, target);
+        let r = { ok: true };
+        for (const op of plan) {
+          r = await api.wardrobeSet(op.slot, op.itemId.startsWith('off_') ? null : op.itemId);
+          if (!r.ok) break;
+        }
         if (!r.ok) say('这件穿不上：' + r.error);
         refreshWardrobe();
       });
@@ -667,11 +698,76 @@ if (chatHead && chatStream) {
   chatHead.addEventListener('pointerup', endDrag);
   chatHead.addEventListener('pointercancel', endDrag);
   chatHead.addEventListener('dblclick', () => {
-    try { localStorage.removeItem(CARD_POS_KEY); } catch (e) {}
+    try { localStorage.removeItem(CARD_POS_KEY); localStorage.removeItem('chatCardSize'); } catch (e) {}
     // 双击标题栏瞬回默认家：清空内联定位，恢复 CSS 的 top:8 / bottom:336 拉伸模式
     chatStream.style.left = chatStream.style.top = chatStream.style.right = chatStream.style.bottom = '';
     chatStream.style.width = chatStream.style.height = '';
   });
+}
+
+
+/* ---------- 对话卡边框拉伸手柄（v1.0 实机反馈） ----------
+   边缘 8px 热区（四边 + 四角）自由拉伸；捕获阶段拦截，不与标题栏拖拽 / 列表滚动抢手势。
+   钳位修正（对任务书的勘误）：高度与位置必须守交互不变式 ——
+   top ≥ 8 且 bottom ≤ 窗底 - 336（天空域），绝不许把卡片拉到她头顶以下。 */
+const CHAT_RS_EDGE = 8;
+const CHAT_SIZE_KEY = 'chatCardSize';
+if (chatStream) {
+  let rs = null;
+  chatStream.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const r = chatStream.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const onHead = chatHead && (e.target === chatHead || chatHead.contains(e.target));
+    let dir = '';
+    if (y <= CHAT_RS_EDGE && !onHead) dir += 'n';
+    else if (y >= r.height - CHAT_RS_EDGE) dir += 's';
+    if (x <= CHAT_RS_EDGE) dir += 'w';
+    else if (x >= r.width - CHAT_RS_EDGE) dir += 'e';
+    if (!dir) return;
+    rs = { dir, x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, w: r.width, h: r.height };
+    chatStream.classList.add('dragging');
+    if (chatStream.setPointerCapture) chatStream.setPointerCapture(e.pointerId);
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  chatStream.addEventListener('pointermove', (e) => {
+    if (!rs) return;
+    const dx = e.clientX - rs.x0, dy = e.clientY - rs.y0;
+    let w = rs.w, h = rs.h, left = rs.left, top = rs.top;
+    if (rs.dir.indexOf('e') >= 0) w = rs.w + dx;
+    if (rs.dir.indexOf('s') >= 0) h = rs.h + dy;
+    if (rs.dir.indexOf('w') >= 0) { w = rs.w - dx; left = rs.left + dx; }
+    if (rs.dir.indexOf('n') >= 0) { h = rs.h - dy; top = rs.top + dy; }
+    // 宽度钳位
+    w = Math.max(280, w);
+    left = Math.max(6, Math.min(left, window.innerWidth - 6 - w));
+    w = Math.min(w, window.innerWidth - 12);
+    // 高度钳位：天空域不变式（top ≥ 8，bottom ≤ innerHeight - 336）
+    top = Math.max(8, top);
+    const maxBottom = window.innerHeight - 336;
+    h = Math.max(120, h);
+    if (top + h > maxBottom) h = Math.max(120, maxBottom - top);
+    chatStream.style.left = Math.round(left) + 'px';
+    chatStream.style.top = Math.round(top) + 'px';
+    chatStream.style.right = 'auto';
+    chatStream.style.bottom = 'auto';
+    chatStream.style.width = Math.round(w) + 'px';
+    chatStream.style.height = Math.round(h) + 'px';
+  });
+  const endRs = () => {
+    if (!rs) return;
+    rs = null;
+    chatStream.classList.remove('dragging');
+    try {
+      localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({
+        w: Math.round(parseFloat(chatStream.style.width) || 0),
+        h: Math.round(parseFloat(chatStream.style.height) || 0)
+      }));
+    } catch (err) { /* 存不下不致命 */ }
+  };
+  chatStream.addEventListener('pointerup', endRs);
+  chatStream.addEventListener('pointercancel', endRs);
 }
 
 const chatDragWin = document.getElementById('chatDragWin');
@@ -713,6 +809,16 @@ if (typeof ChatStore !== 'undefined') {
 }
 const _savedCardPos = loadCardPos();
 if (_savedCardPos) applyCardPos(_savedCardPos);   // 有记忆才脱离拉伸模式；无记忆保持 CSS 默认家
+const _savedCardSize = (() => {
+  try {
+    const s = JSON.parse(localStorage.getItem('chatCardSize'));
+    return (s && Number.isFinite(s.w) && Number.isFinite(s.h)) ? s : null;
+  } catch (e) { return null; }
+})();
+if (_savedCardSize && chatStream) {
+  chatStream.style.width = Math.round(_savedCardSize.w) + 'px';
+  chatStream.style.height = Math.round(_savedCardSize.h) + 'px';
+}
 
 /* ---------- 国际化与物理时空面板（v1.0 笔 6 / UX-05） ----------
    时区只读展示（创世锁定 🔒）；语言切换只动 t() 文案层，不碰任何主体数据。 */
@@ -2243,8 +2349,8 @@ menu.addEventListener('click', (e) => {
   // Electron 下只改窗口，立绘宽由 resize 监听按窗口宽重算（单一出处）；
   // 预览模式没有窗口可改，才由 grow() 自己管。
   // 两边都做的老写法会让窗口和立绘各自夹取，放大到顶时比例脱钩。
-  if (act === 'bigger') { api ? api.resize(1.15) : grow(1.15); return; }
-  if (act === 'smaller') { api ? api.resize(1 / 1.15) : grow(1 / 1.15); return; }
+  if (act === 'bigger') { zoomPet(1.15); return; }
+  if (act === 'smaller') { zoomPet(1 / 1.15); return; }
 });
 
 function grow(f) {
