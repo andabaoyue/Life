@@ -87,5 +87,39 @@ const txtMid = ledMid.currentSelfText();
 check('B1 中等分歧映射定性档「有所动摇」', txtMid.includes('（反思压力：有所动摇）'));
 
 
+/* ---------- Batch 2: 底座深处经历地平线与反幻觉闩 ---------- */
+const mkMem = () => {
+  const mm = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-mem2-')), { windowTurns: 999 });
+  mm.persona = '人格文本';
+  mm.wardrobe = '【当前穿着】\n- 外套：落肩白色外套';
+  return mm;
+};
+const mh = mkMem();
+mh.data.windows = [{ no: 1, text: '早期经历一' }, { no: 2, text: '早期经历二' }, { no: 3, text: '近期经历三' }];
+mh.engramManager = { getDormantTraces: () => [{ sourceWindowNo: 1 }, { sourceWindowNo: 2 }], getFadingTraces: () => [] };
+mh.refreshDeepHorizon();
+const sysH = mh.systemText();
+check('B2 地平线文案含反幻觉闩（不得虚构细节 + 不知道如实说）',
+  sysH.includes('【底座深处沉淀】') && sysH.includes('不得据此虚构未曾发生过的细节') && sysH.includes('如实说明不知道'));
+check('B2 地平线含休眠段范围且零研究标签',
+  /第 1~2 段/.test(sysH) && !/DORMANT|FADING|ENGRAM/i.test(sysH));
+check('B2 全休眠场景地平线独立渲染（不被活跃段守卫吞掉）', (() => {
+  const ma = mkMem();
+  ma.data.windows = [{ no: 1, text: '一' }, { no: 2, text: '二' }];
+  ma.engramManager = { getDormantTraces: () => [{ sourceWindowNo: 1 }, { sourceWindowNo: 2 }], getFadingTraces: () => [] };
+  ma.refreshDeepHorizon();
+  const s2 = ma.systemText();
+  return s2.includes('【底座深处沉淀】') && !s2.includes('【你与此前的记忆】');
+})());
+check('B2 地平线窗口内逐字节稳定（只依赖固化值、轮转点才重算）', (() => {
+  // 不变式：地平线文本只来自 data.deepHorizon（轮转时固化），外界休眠集怎么变都不影响它
+  const grabHorizon = (s) => { const i = s.indexOf('【底座深处沉淀】'); return i < 0 ? '' : s.slice(i).split('\n\n')[0]; };
+  const before = grabHorizon(mh.systemText());
+  mh.engramManager = { getDormantTraces: () => [{ sourceWindowNo: 3 }], getFadingTraces: () => [] };
+  const after = grabHorizon(mh.systemText());
+  return before.length > 0 && before === after;
+})());
+
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

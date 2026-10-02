@@ -83,7 +83,7 @@ class Memory {
     this.wardrobe = '';
     this.writer = new DeferredWriter(() => writeJsonAtomic(this.path, this.data), { delayMs: 3000 });
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
-                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [] };
+                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '' };
 
     // v0.9.7: 记忆痕迹动力学管理器 (Memory Dynamics & Synaptic Pruning)
     const dynamicsEnabled = opts.memoryDynamics !== undefined
@@ -135,7 +135,7 @@ class Memory {
         }
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
-                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
@@ -317,6 +317,30 @@ class Memory {
     return this.memoryTokens() > this.memoryCap && this.data.windows.length > 1;
   }
 
+  /**
+   * v0.9.9 Batch 2: 底座深处经历地平线 —— 只在窗口轮转时刻重算（窗口内逐字节稳定，护前缀缓存）。
+   * 钉子2：只统计休眠段编号（真删除的段不报；「完整沉淀在底座」以归档层为准恒真）；
+   * 钉子3：FADING 渐褪段仍走 systemText 的截断显示，这里只管深层沉淀段；
+   * 零研究标签：DORMANT/FADING/ENGRAM 等字样绝不进心智视野。
+   */
+  refreshDeepHorizon() {
+    let horizon = '';
+    if (this.engramManager && this.data.windows.length) {
+      const dormantNos = [...new Set(this.engramManager.getDormantTraces().map(t => t.sourceWindowNo))]
+        .filter(no => this.data.windows.some(w => w.no === no))
+        .sort((a, b) => a - b);
+      if (dormantNos.length) {
+        const lo = dormantNos[0];
+        const hi = dormantNos[dormantNos.length - 1];
+        const range = lo === hi ? '第 ' + lo + ' 段' : '第 ' + lo + '~' + hi + ' 段';
+        horizon = '【底座深处沉淀】\n- 包含更早期的' + range + '经历：它们完整沉淀在你的底座中，当前未在近处调起；'
+          + '你知晓其真实存在并以此如实表达距离感，但不得据此虚构未曾发生过的细节；未曾发生的事情依然如实说明不知道。';
+      }
+    }
+    this.data.deepHorizon = horizon;
+    return horizon;
+  }
+
   /* ---------- 发给 API 的消息 ---------- */
 
   systemText() {
@@ -359,6 +383,9 @@ class Memory {
         s += '\n\n【你与此前的记忆】\n' + mem;
       }
     }
+    // v0.9.9 Batch 2: 底座深处经历地平线 —— 钉子1：必须在 activeWindows 守卫之外
+    //（全部段落休眠的时刻恰恰最需要它）；只在窗口轮转时重算，窗口内逐字节稳定。
+    if (this.data.deepHorizon) s += '\n\n' + this.data.deepHorizon;
     // v0.9.9 五大方向·①：离线重组碎片块 —— 仅在真实存在归档碎片时注入，
     // 必须带防伪标签（非亲历，不得当亲历引用）；碎片只在窗口轮转时刻更新，窗口内逐字节稳定。
     // 位置必须在穿着块之前 —— 「穿着块是 system 结尾」是被测试钉死的顺序不变式。
@@ -484,6 +511,9 @@ class Memory {
       });
       this.lastDecayReport = this.engramManager.decayAll(closedWindowNo);
     }
+    // v0.9.9 Batch 2: 窗口轮转时刻刷新「底座深处经历地平线」（与 decayAll 同刻更新休眠集；
+    // 无记忆动力学时置空，绝不留陈旧地平线）
+    this.refreshDeepHorizon();
 
     this.data.windowNo++;
     // 快照之后可能被 rollback 弹掉几条，drop 不能越过当前长度
@@ -595,7 +625,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [] };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '' };
     this.save(true);
   }
 }
