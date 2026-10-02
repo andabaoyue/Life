@@ -328,7 +328,62 @@ if (api && api.onWardrobe) {
    全部 textContent 写入；条目名来自数据层，但依然按不可信文本对待。 */
 async function refreshWardrobe() {
   const presetBox = document.getElementById('wdPresets');
-  const slotBox = document.getElementById('wdSlots');
+  /* ---------- 智能成套建议（v1.0 UX-02b） ----------
+   只建议不强制：单品点击后算差量、出建议条，用户点一键才逐槽落子。
+   失败走 UI 提示（#wdHint），绝不 say() 冒充她说话（铁律 2）。 */
+const wdSuggest = document.getElementById('wdSuggest');
+const wdSuggestText = document.getElementById('wdSuggestText');
+const wdSuggestBtn = document.getElementById('wdSuggestBtn');
+let wdAnchor = null;
+let wdPendingPlan = [];
+
+function wdCatalogLookup(cat) {
+  const map = {};
+  for (const [s, arr] of Object.entries((cat && cat.items) || {})) {
+    for (const it of (arr || [])) map[it.id] = { slot: s, name: it.name };
+  }
+  return map;
+}
+
+function updateOutfitSuggest(cat) {
+  if (!wdSuggest) return;
+  wdPendingPlan = [];
+  const hide = () => { wdSuggest.classList.add('hidden'); };
+  if (!wdAnchor || !cat || !cat.equip) return hide();
+  const lookup = wdCatalogLookup(cat);
+  const desired = completeOutfit(cat.equip, lookup, wdAnchor);
+  const plan = desired ? planOutfit(cat.equip, desired) : [];
+  const names = plan
+    .filter(p => !p.itemId.startsWith('off_'))
+    .map(p => (lookup[p.itemId] && lookup[p.itemId].name) || p.itemId);
+  if (!plan.length || !names.length) return hide();
+  wdPendingPlan = plan;
+  wdSuggestText.textContent = t('wardrobe.suggestPrefix') + names.join(' + ');
+  wdSuggestBtn.textContent = t('wardrobe.applyComplete');
+  wdSuggest.classList.remove('hidden');
+}
+
+if (wdSuggestBtn) wdSuggestBtn.addEventListener('click', async () => {
+  const hint = document.getElementById('wdHint');
+  try {
+    for (const op of wdPendingPlan) {
+      const val = op.itemId.startsWith('off_') ? null : op.itemId;
+      const r = await api.wardrobeSet(op.slot, val);
+      if (!r || !r.ok) {
+        if (hint) hint.textContent = t('wardrobe.completeFailed') + ((r && r.error) || '');
+        break;
+      }
+    }
+  } catch (e) {
+    if (hint) hint.textContent = t('wardrobe.completeFailed') + e.message;
+  }
+  wdAnchor = null;
+  wdPendingPlan = [];
+  if (wdSuggest) wdSuggest.classList.add('hidden');
+  refreshWardrobe();
+});
+
+const slotBox = document.getElementById('wdSlots');
   presetBox.textContent = '';
   slotBox.textContent = '';
   if (!api) {
@@ -347,6 +402,7 @@ async function refreshWardrobe() {
     b.textContent = pname;
     b.className = 'wd-preset' + (cat.preset === pid ? ' on' : '');
     b.addEventListener('click', async () => {
+      wdAnchor = null;
       const r = await api.wardrobePreset(pid);
       if (!r.ok) say('这套我换不上：' + r.error);
       refreshWardrobe();
@@ -371,6 +427,7 @@ async function refreshWardrobe() {
       b.className = 'wd-item' + (cur === it.id ? ' on' : '');
       b.title = it.id;
       b.addEventListener('click', async () => {
+        wdAnchor = it.id;
         const r = await api.wardrobeSet(slot.id, it.id);
         if (!r.ok) say('这件穿不上：' + r.error);
         refreshWardrobe();
@@ -385,6 +442,7 @@ async function refreshWardrobe() {
       off.textContent = '脱下';
       off.className = 'wd-off' + (cur ? '' : ' on');
       off.addEventListener('click', async () => {
+        wdAnchor = null;
         const r = await api.wardrobeSet(slot.id, null);
         if (!r.ok) say('这件脱不掉：' + r.error);
         refreshWardrobe();
@@ -393,6 +451,8 @@ async function refreshWardrobe() {
     }
     slotBox.appendChild(row);
   }
+
+  updateOutfitSuggest(cat);   // UX-02b：渲染收尾算成套差量（只建议不强制）
 }
 
 function say(text, ms = 3600) {

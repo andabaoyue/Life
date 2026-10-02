@@ -37,6 +37,9 @@ const I18N = {
     'detect.reason.tp': '检测到小米 Token Plan 订阅套餐凭据前缀',
     'detect.reason.mimo': '检测到小米 MiMo 专属凭据前缀',
     'detect.reason.sk': '检测到标准 sk- 前缀（建议 DeepSeek 官方或兼容服务）',
+    'wardrobe.suggestPrefix': '建议补齐成套：',
+    'wardrobe.applyComplete': '一键成套',
+    'wardrobe.completeFailed': '补齐未完成：',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
   'en': {
@@ -64,6 +67,9 @@ const I18N = {
     'detect.reason.tp': 'Xiaomi Token Plan subscription credential prefix detected',
     'detect.reason.mimo': 'Xiaomi MiMo credential prefix detected',
     'detect.reason.sk': 'Standard sk- prefix detected (DeepSeek official or compatible)',
+    'wardrobe.suggestPrefix': 'Suggested to complete the outfit: ',
+    'wardrobe.applyComplete': 'Complete Outfit',
+    'wardrobe.completeFailed': 'Completion failed: ',
   }
 };
 
