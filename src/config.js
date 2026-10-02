@@ -38,9 +38,9 @@ const DEFAULTS = {
      V4.1 Flash 上下文上限 1M token，所以窗口大小不是模型限制，
      纯粹是「多久破一次缓存」的权衡：
        windowTurns 越大 -> system 越久不变 -> 命中率越高，但单次请求越贵
-       100 轮 ≈ 4000~8000 token 上下文，命中率能稳在 95%+  */
+       100 轮实测 ≈ 250 token/轮 × 100 ≈ 25K token 上下文，命中率能稳在 95%+（v0.9.9 实测校准） */
   windowTurns: 100,          // 每 100 轮关一次窗口并生成小结
-  windowMaxTokens: 8000,     // 兜底：单窗口超此 token 也提前关窗
+  windowMaxTokens: 30000,    // 兜底：单窗口超此 token 也提前关窗（30K = 满 100 轮 + 裕度，让 windowTurns 成为真约束）
   keepTailMessages: 6,       // 关窗时保留最近 6 条原文，避免突然失忆
   memoryCapTokens: 6000,     // Prompt Memory 长期记忆预算（基线 6000），超了就把旧片段合并
   selfGrowthEnabled: true,   // 每个记忆窗口结束时，提炼一次主体成长证据
@@ -57,9 +57,9 @@ const DEFAULTS = {
   // 实测 43 轮窗口小结已用 3,923 token（4000 上限的 98%）——按满窗 100 轮预留 10000；
   // 硬编码 900 截断 JSON 触发 Fail-Stop 连败、4000 又濒临熔断，教训全在裕度上。
   summaryMaxTokens: 10000,
-  // v0.9.9: 成长提炼 (GROWTH_SYS JSON 数组) 的输出上限。实测 420 硬顶把 JSON 腰斩、
-  // self-ledger 空转；含投影对照与 oppose 证据后 1500 留足裕度。
-  growthMaxTokens: 1500,
+  // v0.9.9: 成长提炼 (GROWTH_SYS JSON 数组) 的输出上限。实测 420 与 1500 两度被撞顶腰斩、
+  // self-ledger 空转（截断无声失败 ×3）；按紧凑纪律 + 最坏情况预留 4000。
+  growthMaxTokens: 4000,
 
   // ---- 桌面自主运动 ----
   motionEnabled: true,

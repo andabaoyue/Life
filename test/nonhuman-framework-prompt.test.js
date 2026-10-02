@@ -140,10 +140,10 @@ check('FB 五格数中文定名、零英文代码键', (() => {
 })());
 
 /* ---------- Fix C: 输出预算扩容与分段自适应 ---------- */
-check('FC growthMaxTokens/summaryMaxTokens 双注册（DEFAULTS + 白名单）', (() => {
+check('FC 三项预算双注册（DEFAULTS + 白名单：growth 4000 / summary 10000 / window 30000）', (() => {
   const cfgSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8');
-  return /growthMaxTokens: 1500/.test(cfgSrc) && /summaryMaxTokens: 10000/.test(cfgSrc)
-    && /growthMaxTokens: finiteInt/.test(cfgSrc) && /summaryMaxTokens: finiteInt/.test(cfgSrc);
+  return /growthMaxTokens: 4000/.test(cfgSrc) && /summaryMaxTokens: 10000/.test(cfgSrc) && /windowMaxTokens: 30000/.test(cfgSrc)
+    && /growthMaxTokens: finiteInt/.test(cfgSrc) && /summaryMaxTokens: finiteInt/.test(cfgSrc) && /windowMaxTokens: finiteInt/.test(cfgSrc);
 })());
 check('FC 小结分段随窗口规模自适应（小窗紧凑、满窗标准五段）', (() => {
   const { summarySegmentPlan } = require('../src/brain');
@@ -153,6 +153,21 @@ check('FC 小结分段随窗口规模自适应（小窗紧凑、满窗标准五�
   return p43.segments === 3 && /1~43/.test(p43.note)
     && p100.segments === 5 && /1-20、21-40、41-60、61-80、81-100/.test(p100.note)
     && p121.segments === 5;
+})());
+
+/* ---------- Fix C2: 输出预算标定与撞顶检测 ---------- */
+check('FC3 GROWTH_SYS 紧凑纪律（最多 3 条 trait、引文 ≤40 字）',
+  growthSys.includes('最多提炼 3 条 trait') && growthSys.includes('每条引文不超过 40 字'));
+check('FC3 撞顶检测：打满上限计数并落盘、未打满不计', (() => {
+  const bt = new Brain(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-trunc-')), {
+    apiKey: 'sk-test', model: 'mock', windowTurns: 999, windowMaxTokens: 1e9,
+    keepTailMessages: 6, memoryCapTokens: 1e9, selfGrowthEnabled: false,
+    summaryMaxTokens: 10000, price: { peak: {}, valley: {} }
+  });
+  bt._notePossibleTruncation({ completion_tokens: 4000 }, 4000, '测试撞顶');
+  bt._notePossibleTruncation({ completion_tokens: 100 }, 4000, '测试正常');
+  const st = JSON.parse(fs.readFileSync(path.join(bt.dir, 'stats.json'), 'utf8'));
+  return st.truncatedCalls === 1;
 })());
 
 /* ---------- Batch 3: 成长调用 oppose 反凑数闭环 ---------- */

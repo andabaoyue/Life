@@ -56,7 +56,8 @@ const GROWTH_SYS =
   + '提炼必须锚定初澜在对话中真实做出的取舍与自述（有 messageId 可查），从她的选择里归纳她特有的存在态度；'
   + '严禁套用「友善、乐观、坚强、善良」等人类通用道德词或性格套话 —— 没有独特取舍支撑的漂亮话宁可不写。'
   + '对照【当前自我投影】审视本次窗口中初澜真实做出的取舍与自述；若与既有特质态度发生真实分歧或转变，必须提取并归入 oppose 数组（附带 messageId、quote）。'
-  + '无真实态度分歧或行为转变，严禁为迎合指令虚构对立；无明确反向证据时，oppose 必须输出 []，严禁制造伪证伪。';
+  + '无真实态度分歧或行为转变，严禁为迎合指令虚构对立；无明确反向证据时，oppose 必须输出 []，严禁制造伪证伪。'
+  + '紧凑输出：最多提炼 3 条 trait，每条引文不超过 40 字，不重复铺陈、不写解释性废话 —— 宁可少而准，不要多而空。';
 
 /* v0.9.9: 小结分段计划 —— 分段数随窗口规模自适应，绝不写死「3~5 段」：
    满 100 轮走标准 5 段（严格分支钉死 1-20…81-100），小窗口只写覆盖实际轮数的段。
@@ -614,7 +615,7 @@ class Brain {
     const base = { requests: 0, hit: 0, miss: 0, out: 0, cost: 0,
                    compressions: 0, merges: 0, summaryCalls: 0, growthCalls: 0,
     // v0.9.9 观测补盲：关窗失败率 / 带病归档占比 / 补关发生率（长期健康度指标）
-    windowCloseFailures: 0, summaryUncertified: 0, delayedCloses: 0,
+    windowCloseFailures: 0, summaryUncertified: 0, delayedCloses: 0, truncatedCalls: 0,
                    lastHitRate: 0, history: [] };
     try { return { ...base, ...JSON.parse(fs.readFileSync(this.statsPath, 'utf8')) }; }
     catch { return base; }
@@ -911,6 +912,16 @@ class Brain {
              usage, windowClosed, merged };
   }
 
+  /** v0.9.9: 撞顶检测 —— 输出恰好打满上限即视为疑似截断（900 / 420 / 1500 三次无声失败的教训），
+      计数并留警告，绝不让「截断腰斩 JSON」再无声溜走。 */
+  _notePossibleTruncation(usage, cap, label) {
+    if (usage && cap > 0 && Number(usage.completion_tokens) >= cap) {
+      this.stats.truncatedCalls = (this.stats.truncatedCalls || 0) + 1;
+      this.saveStats(true);
+      console.warn(`[Brain] ${label} 输出撞满上限 ${cap}（completion_tokens=${usage.completion_tokens}）：疑似截断，产物可能不可解析`);
+    }
+  }
+
   /** v0.9.9 P0: 关窗失败审计留痕 —— 小结解析失败、校验熔断、写入失败而放弃的关窗都计数并留日志，
       让「窗口为何拖超期」在盘面与日志上都可追查（数据不伪造、审计不失真） */
   _noteWindowCloseFailure(reason) {
@@ -1020,6 +1031,7 @@ class Brain {
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'summary');
+      this._notePossibleTruncation(usage, summaryMaxTokens, '关窗小结');
       // v0.9.9 P0: 计数即落盘 —— 这笔 summary 的调用与花费已经真实发生，
       // 无论后续解析/校验成败都立即持久化，杜绝失败路径与脚本进程退出后漏记（与遥测对不齐）
       this.saveStats(true);
@@ -1631,6 +1643,7 @@ class Brain {
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'merge');
+      this._notePossibleTruncation(usage, 400, '记忆合并');
       // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记
       this.saveStats(true);
       if (this.shutdownRequested) return false;
@@ -1675,12 +1688,13 @@ class Brain {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: GROWTH_SYS },
          { role: 'user', content: userContent }],
-        { maxTokens: this.cfg.growthMaxTokens || 1500, temperature: 0.15 }
+        { maxTokens: this.cfg.growthMaxTokens || 4000, temperature: 0.15 }
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'growth');
       if (this.shutdownRequested) return 0;
       this.stats.growthCalls = (this.stats.growthCalls || 0) + 1;
+      this._notePossibleTruncation(usage, this.cfg.growthMaxTokens || 4000, '成长提炼');
       // v0.9.9: 计数即落盘（同 summary 口径）—— 这笔成长调用已真实发生，立即持久化，
       // 杜绝进程退出后 growthCalls 漏记（实测 1 笔成长调用就这么丢了）
       this.saveStats(true);
@@ -1698,7 +1712,7 @@ class Brain {
         kind: 'growth',
         cfg: this.cfg,
         promptHashes: growthPromptHashes,
-        sampling: { maxTokens: this.cfg.growthMaxTokens || 1500, temperature: 0.15 },
+        sampling: { maxTokens: this.cfg.growthMaxTokens || 4000, temperature: 0.15 },
         sourceWindowNo: window,
         sourceMessageRange: opts.sourceMessageRange || null,
         observedModel,
