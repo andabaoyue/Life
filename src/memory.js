@@ -368,18 +368,21 @@ class Memory {
      3. v1 只收自创（coinage/metaphor/nickname）—— adopted 仅枚举占位，明确拒收；
      4. 状态三态对齐 EngramTrace 梯队：ACTIVE | FADING | DORMANT，只淡化不删除（D-005）。
      防工具化红线：本层零定时器、零提醒。 */
-  _resolveMessage(messageId) {
-    return (this.data.history || []).some((m) => m && m.messageId === messageId);
+  _resolveMessage(messageId, opts) {
+    if ((this.data.history || []).some((m) => m && m.messageId === messageId)) return true;
+    // v1.0 快照引证（架构评审提醒 1）：关窗时历史已裁到 keepTail=6，
+    // 本窗合法 ID 需对照快照白名单解析，防止裁头误判成伪造。
+    return !!(opts && Array.isArray(opts.knownIds) && opts.knownIds.indexOf(messageId) >= 0);
   }
 
-  addLexicon(entry = {}) {
+  addLexicon(entry = {}, opts = {}) {
     const kind = String(entry.kind || '');
     if (!['coinage', 'metaphor', 'nickname', 'adopted'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
     if (kind === 'adopted') return { ok: false, error: 'ADOPTED_NOT_YET' };   // v1 拍板：只收自创，占位声明
     const word = String(entry.word || '').trim();
     if (!word) return { ok: false, error: 'EMPTY_WORD' };
     const messageId = String(entry.messageId || '');
-    if (!this._resolveMessage(messageId)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    if (!this._resolveMessage(messageId, opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
     const list = Array.isArray(this.data.lexicon) ? this.data.lexicon : (this.data.lexicon = []);
     const hit = list.find((x) => x && x.word === word);
     if (hit) {
@@ -408,7 +411,7 @@ class Memory {
      2. 状态流转主权归关窗小结（fulfilled/broken 在 Window Synthesis 判定，实时只注入）；
      3. broken 不硬扣特质 —— 作为高权重客观事件进 GROWTH_SYS 成长反思（oppose 由她自己长出）；
      4. 承诺（pledge）是预期的第一公民，不另立账本（#6 并入）。 */
-  addExpectation(entry = {}) {
+  addExpectation(entry = {}, opts = {}) {
     const kind = String(entry.kind || '');
     if (!['external', 'pledge'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
     const source = String(entry.source || '');
@@ -416,7 +419,7 @@ class Memory {
     const text = String(entry.text || '').trim();
     if (!text) return { ok: false, error: 'EMPTY_TEXT' };
     const messageId = String(entry.messageId || '');
-    if (!this._resolveMessage(messageId)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    if (!this._resolveMessage(messageId, opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
     const list = Array.isArray(this.data.expectations) ? this.data.expectations : (this.data.expectations = []);
     const n = list.reduce((a, x) => Math.max(a, Number(String((x && x.id) || '').replace(/\D/g, '')) || 0), 0) + 1;
     const rec = {
@@ -434,7 +437,7 @@ class Memory {
     return { ok: true, entry: rec };
   }
 
-  resolveExpectation(id, outcome = {}) {
+  resolveExpectation(id, outcome = {}, opts = {}) {
     const list = Array.isArray(this.data.expectations) ? this.data.expectations : [];
     const hit = list.find((x) => x && x.id === id);
     if (!hit) return { ok: false, error: 'NOT_FOUND' };
@@ -442,7 +445,7 @@ class Memory {
     const status = String(outcome.status || '');
     if (!['fulfilled', 'broken', 'moot'].includes(status)) return { ok: false, error: 'INVALID_STATUS' };
     const messageId = outcome.messageId == null ? null : String(outcome.messageId);
-    if (status !== 'moot' && !this._resolveMessage(messageId || '')) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    if (status !== 'moot' && !this._resolveMessage(messageId || '', opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
     hit.status = status;
     hit.outcome = {
       at: Number.isFinite(outcome.at) ? outcome.at : null,

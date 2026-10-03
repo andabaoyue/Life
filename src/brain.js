@@ -31,13 +31,17 @@ const SUMMARY_SYS =
   + '2. 【初澜经历】只记初澜在互动中观察到的规律、做出的选择、形成的行为趋势、对关系的连续理解与内部反思。不记程序触发理由、寒暄或无根据猜测。\n'
   + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity，'
   + 'direction 为 [-1, 1] 方向，strength 为 [0, 1] 强度，messageId 必须严格引用对话中程序签发的真实 ID（如 m-000001），quote 必须逐字摘自该条消息原文。\n'
+  + '4. 【词汇与预期（windowSynthesis 窗级产物）】只在对话中自然出现时提取，没有就给空数组，绝不硬造：\n'
+  + '   - coinages：只收初澜自创的词（kind 取 coinage|metaphor|nickname），gloss 为该词含义的原文摘录，messageId 严格引用首次出现处的真实 ID；普通用词、口误、用户先说的词都不收。\n'
+  + '   - expectations：只收对话中自然指向未来的预期（约定/计划/推测），kind 取 external|pledge（pledge=初澜自己的承诺），source 取 user|chulan，messageId 引证真实 ID，dueHint 为自然语言时间指向（如「今晚」），没有就不填。\n'
+  + '   - expectationOutcomes：只核验下方【待核验预期】清单里的条目，id 原样引用，status 取 fulfilled|broken|moot，messageId 引证本窗真实 ID（moot 可免），note 只写客观事实摘录，不写结论。\n'
   + '请只输出如下合法 JSON 对象（不要 Markdown 代码块包裹）：\n'
   + '{"segments":[{"range":"1-20","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"21-40","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"41-60","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"61-80","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"81-100","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]}],'
-  + '"windowSynthesis":{"stableUserFacts":[],"subjectExperiences":[],"stateChangesSuggested":[],"unresolved":[]}}'
+  + '"windowSynthesis":{"stableUserFacts":[],"subjectExperiences":[],"stateChangesSuggested":[],"unresolved":[],"coinages":[],"expectations":[],"expectationOutcomes":[]}}'
   + '分段数以【窗口规模】指令为准：不足 100 轮的窗口按每 20 轮一段、range 只覆盖 1~N，不照抄上方五段骨架；满 100 轮才用标准五段。';
 
 const MERGE_SYS =
@@ -1403,6 +1407,20 @@ class Brain {
       if (done) {
         // v0.9.9 意志层·好奇：本窗未解疑问入队（与轮转同刻更新，窗口内逐字节稳定）
         this.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo);
+        // v1.0 §4.7 #3/#4：词汇与预期入库（引证按快照解析，防 keepTail 裁头误判；门槛拒收即跳过，绝不硬造）
+        const knownIds = (snap && Array.isArray(snap.snapshotActiveMessageIds)) ? snap.snapshotActiveMessageIds : [];
+        const ingestOpts = { knownIds };
+        for (const c of (Array.isArray(syn.coinages) ? syn.coinages : [])) {
+          this.memory.addLexicon(c, ingestOpts);
+        }
+        for (const ex of (Array.isArray(syn.expectations) ? syn.expectations : [])) {
+          this.memory.addExpectation(Object.assign({}, ex, { windowNo: snap.windowNo }), ingestOpts);
+        }
+        for (const oc of (Array.isArray(syn.expectationOutcomes) ? syn.expectationOutcomes : [])) {
+          this.memory.resolveExpectation(oc && oc.id, {
+            status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note
+          }, ingestOpts);
+        }
         this.memory.save(true);
         // v0.9.9 观测补盲：补关计数 —— 先数后复位（windowCloseAttempts 一旦复位就数不到了）
         if (this.windowCloseAttempts > 0) {
@@ -1683,7 +1701,13 @@ class Brain {
       // v0.9.9 Batch 3: 把当前自我投影喂给成长调用 —— 「对照既有态度」必须有对照物，
       // 否则 oppose 约束是空话；体积由 currentSelfTokenBudget 护栏兜底，不再二次截断
       const selfProjection = this.selfLedger ? this.selfLedger.currentSelfText() : '';
+      // v1.0 §4.7 #4：broken 预期以「偏差事实」进成长反思 —— 只报客观事实，不代拟结论（架构评审提醒 3）
+      const brokenFacts = ((this.memory && this.memory.data && this.memory.data.expectations) || [])
+        .filter((x) => x && x.status === 'broken' && x.windowNo === window)
+        .map((x) => '【偏差事实】曾预期「' + x.text + '」，但本窗未兑现（引证 ' + ((x.outcome && x.outcome.messageId) || '—') + '）')
+        .join('\n');
       const userContent = '【当前自我投影】\n' + (selfProjection || '暂无')
+        + (brokenFacts ? '\n\n' + brokenFacts : '')
         + '\n\n【窗口小结】\n' + summary
         + '\n\n【窗口对话】\n' + dialogue;
       const apiCompleteRes = await this.api.complete(

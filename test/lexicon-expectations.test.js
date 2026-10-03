@@ -108,10 +108,24 @@ check('16 词汇三态对齐 EngramTrace：ACTIVE/FADING/DORMANT 语义在册',
 // 17 落盘往返保留两表
 m.save(true);
 const m3 = new Memory(dir);
+// 18 快照引证（架构评审提醒 1）：关窗裁头后，本窗合法 ID 按快照白名单解析
+check('18 快照引证：knownIds 白名单内的本窗 ID 不被裁头误判为伪造',
+  m.addLexicon({ word: '雨声', kind: 'metaphor', messageId: 'm-snap-01' }, { knownIds: ['m-snap-01'] }).ok === true
+  && m.addLexicon({ word: '真伪造', kind: 'metaphor', messageId: 'm-snap-X' }, { knownIds: ['m-snap-01'] }).ok === false);
+
+// 19 提示词契约防漂移：三键在 SUMMARY_SYS 模板里（windowSynthesis 窗级产物）
+const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+check('19 提示词契约防漂移：模板含 coinages/expectations/expectationOutcomes',
+  /coinages/.test(brainSrc) && /expectationOutcomes/.test(brainSrc) && /"expectations":\[\]/.test(brainSrc));
+
+// 20 偏差事实防漂移：broken 进成长反思且「只报事实不代拟」格式在册
+check('20 偏差事实防漂移：【偏差事实】客观格式进 GROWTH 输入',
+  /【偏差事实】曾预期/.test(brainSrc));
+
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
 console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 17)
+  ? ('lexicon-expectations tests passed: ' + 20)
   : ('lexicon-expectations tests FAILED: ' + failures));
 process.exit(failures === 0 ? 0 : 1);
