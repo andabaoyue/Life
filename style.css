@@ -850,6 +850,11 @@ body.showlog #bubble { display: none !important; }
 .fg-cell select, .fg-cell input { width: 100%; min-width: 0; box-sizing: border-box; }
 .fg-cell label { display: block; margin-bottom: 4px; }
 .fg-btn-cell { flex: 0 0 92px; }
+/* 时空罗盘行（v1.0）：键左值右，值等宽对齐 */
+.tz-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; }
+.tz-row + .tz-row { border-top: 1px dashed rgba(255,255,255,.08); }
+.tz-k { color: #97a0b0; font-size: 11.5px; flex: none; }
+.tz-v { color: #e6ebf3; font-size: 12px; text-align: right; word-break: break-all; }
 .danger-zone .p-sub { color: #e08a84; }
 .danger-hint { color: #9a6b66; }
 .panel-hint { text-align: center; color: #626b7c; font-size: 10.5px; margin-top: 12px; }

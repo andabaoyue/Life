@@ -658,7 +658,8 @@ class Brain {
     const plasticitySense = '【内态感知】\n- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静');
     // v0.9.9: 出生时刻必须用本地时间 —— ISO 的 Z 是 UTC，主体会拿它当本地钟面心算，
     // 实测错出 8 小时的「凌晨两点半」；运转时长同样消歧，防被脑补成某种「日长」
-    return '【出生与程序年龄】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false })
+    // v1.0: 显式按 birthTimezone（创世时区）格式化 —— 宿主出国也不漂移（拍板 b）
+    return '【出生与程序年龄】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false, timeZone: (this.selfLedger && this.selfLedger.birthTimezone) || undefined })
       + '\n- 程序累计运转时长：约 ' + ageHours.toFixed(1) + ' 小时（物理运行时间累计，非日历天数）'
       + (projection ? '\n' + projection : '')
       + (stateSnapshot ? '\n' + stateSnapshot : '')

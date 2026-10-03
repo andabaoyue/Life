@@ -579,8 +579,41 @@ const tzNote = document.getElementById('tzNote');
 const i18nTitle = document.getElementById('i18nTitle');
 const langLabel = document.getElementById('langLabel');
 const tzLabel = document.getElementById('tzLabel');
+/* 时空罗盘（v1.0 拍板 c）：创世时刻 / 创世时区 / 陪伴时长 / 宿主同步 —— 只读投影，数据归 self-ledger */
+let compassBirthAt = null;
+function tzOffsetHours(tz) {
+  try {
+    const now = new Date();
+    const lt = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+    const ut = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+    return Math.round((lt - ut) / 3600000 * 10) / 10;
+  } catch (e) { return null; }
+}
+function fmtOff(h) {
+  if (h === null || h === undefined) return '?';
+  return (h >= 0 ? '+' : '') + h;
+}
+function renderTimezonePanel() {
+  const home = getTimezone();
+  const host = (Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+  const setV = (id, s) => { const el = document.getElementById(id); if (el) el.textContent = s; };
+  setV('tzZone', (home || '?') + ' (UTC' + fmtOff(tzOffsetHours(home)) + ') 🔒');
+  setV('tzBirth', compassBirthAt ? formatDisplayTime(compassBirthAt) : '—');
+  setV('tzUptime', compassBirthAt
+    ? ('约 ' + ((Date.now() - compassBirthAt) / 3600000).toFixed(1) + ' ' + t('tz.hours'))
+    : '—');
+  if (host && home && host !== home) {
+    const diff = Math.round((tzOffsetHours(home) - tzOffsetHours(host)) * 10) / 10;
+    setV('tzSync', t('tz.travelA') + ' ' + host + '（UTC' + fmtOff(tzOffsetHours(host)) + '）· '
+      + t('tz.travelC') + ' ' + Math.abs(diff) + ' ' + t('tz.hours') + ' · '
+      + t('tz.travelD') + ' ' + new Date().toLocaleTimeString('en-GB', { timeZone: home, hour12: false }));
+  } else {
+    setV('tzSync', '● ' + t('tz.synced'));
+  }
+}
+
 function renderI18nPanel() {
-  if (tzDisplay) tzDisplay.value = getTimezoneLabel() + ' 🔒';
+  renderTimezonePanel();
   if (tzNote) tzNote.textContent = t('panel.tzLocked');
   if (i18nTitle) i18nTitle.textContent = t('panel.i18nTitle');
   if (langLabel) langLabel.textContent = t('panel.language');
@@ -593,6 +626,11 @@ function renderI18nPanel() {
   setText('secDanger', 'sec.danger');
   setText('wardrobeTitle', 'sec.wardrobe');   // 衣橱面板标题
   setText('dangerHint', 'sec.dangerHint');
+  setText('tzCompassTitle', 'tz.compass');
+  setText('tzKBirth', 'tz.birth');
+  setText('tzKZone', 'tz.zone');
+  setText('tzKUptime', 'tz.uptime');
+  setText('tzKSync', 'tz.sync');
   setText('panelCloseHint', 'panel.closeHint');
   setText('connDelete', 'conn.delete');
 }
@@ -2137,6 +2175,18 @@ if (api && api.onMotionState) {
   if (api) {
     const g = await api.getConfig();
     hasKey = g.hasKey;
+    // v1.0 时区真源同步（拍板 b）：self-ledger 权威，localStorage 只作同步缓存
+    if (api.selfTimezone) {
+      try {
+        const tzRes = await api.selfTimezone(localStorage.getItem('genesisTimezone')
+          || (Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '');
+        if (tzRes && tzRes.ok && tzRes.birthTimezone) {
+          try { localStorage.setItem('genesisTimezone', tzRes.birthTimezone); } catch (e) { /* 存不下不致命 */ }
+          compassBirthAt = tzRes.birthAt || compassBirthAt;
+          renderTimezonePanel();
+        }
+      } catch (e) { /* 同步失败不影响启动 */ }
+    }
     // 启动就拉一次衣柜：图层上屏 + 合法 wear id 注入（决定哪些标记会被遮蔽），
     // 不能等用户第一次打开面板才生效。
     try {

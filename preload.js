@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   onChatBusy: (cb) => ipcRenderer.on('chat-busy', (e, p) => cb(p)),
   onChatHidden: (cb) => ipcRenderer.on('chat-window-hidden', () => cb()),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
+  selfTimezone: (clientTz) => ipcRenderer.invoke('self-timezone', clientTz || ''),
   resetSelfLedger: (confirm) => ipcRenderer.invoke('self-ledger-reset', { confirm: confirm === true }),
   // Phase 0.5: 内部调节状态查询与事件监听
   getInternalRegulation: () => ipcRenderer.invoke('internal-regulation-get'),

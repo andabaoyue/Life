@@ -167,6 +167,7 @@ class SelfLedger {
     this.currentSelfTokenBudget = opts.currentSelfTokenBudget || 3000;
     this.entries = [];
     this.birthAt = null;
+    this.birthTimezone = null;   // v1.0：创世时区升格为生命档案字段（与 birthAt 同级，拍板 b）
     this.status = { ok: true, recovered: false, error: null };
     this._preserveBackupPending = false;
     this.writer = new DeferredWriter(() => this._writeActual(), { delayMs: 3000 });
@@ -178,7 +179,7 @@ class SelfLedger {
       try { fs.copyFileSync(this.path, this.backupPath); } catch { /* 原子写仍优先 */ }
     }
     this._preserveBackupPending = false;
-    writeJsonAtomic(this.path, { version: SCHEMA_VERSION, birthAt: this.birthAt, entries: this.entries });
+    writeJsonAtomic(this.path, { version: SCHEMA_VERSION, birthAt: this.birthAt, birthTimezone: this.birthTimezone, entries: this.entries });
   }
 
   loadFile(file) {
@@ -193,6 +194,7 @@ class SelfLedger {
         return {
           version: 2,
           birthAt: Number.isFinite(d && d.birthAt) ? d.birthAt : null,
+          birthTimezone: typeof (d && d.birthTimezone) === 'string' && d.birthTimezone ? d.birthTimezone : null,
           entries: Array.isArray(d && d.entries) ? d.entries : (Array.isArray(d) ? d : [])
         };
       }
@@ -200,6 +202,7 @@ class SelfLedger {
     const list = Array.isArray(data) ? data : data && data.entries;
     if (!Array.isArray(list)) throw new Error('生命档案 entries 不是数组');
     this.birthAt = Number.isFinite(data && data.birthAt) ? data.birthAt : this.birthAt;
+    this.birthTimezone = typeof (data && data.birthTimezone) === 'string' && data.birthTimezone ? data.birthTimezone : this.birthTimezone;
     return list.map(normalizeEntry).filter(Boolean);
   }
 
@@ -228,8 +231,24 @@ class SelfLedger {
 
   setBirthAt(at) {
     if (!this.status.ok) return this.birthAt || at;
-    if (!this.birthAt) { this.birthAt = at; this.save(false, true); }
+    if (!this.birthAt) {
+      this.birthAt = at;
+      // v1.0：出生即锚定时区（与 birthAt 同级）；取不到宿主时区时不硬造
+      if (!this.birthTimezone) {
+        try { this.birthTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* 不致命 */ }
+      }
+      this.save(false, true);
+    }
     return this.birthAt;
+  }
+
+  /** v1.0 时区平移（拍板 b）：旧档案缺时区时采纳创世锁定值固化；已有值绝不覆盖 */
+  adoptBirthTimezone(tz) {
+    if (!this.status.ok || this.birthTimezone) return false;
+    if (typeof tz !== 'string' || !tz) return false;
+    this.birthTimezone = tz;
+    this.save(false, true);
+    return true;
   }
 
   save(preserveBackup = false, immediate = false) {
@@ -388,7 +407,7 @@ class SelfLedger {
   }
 
   estimatedRawChars() {
-    return JSON.stringify({ version: SCHEMA_VERSION, birthAt: this.birthAt, entries: this.entries }).length;
+    return JSON.stringify({ version: SCHEMA_VERSION, birthAt: this.birthAt, birthTimezone: this.birthTimezone, entries: this.entries }).length;
   }
   list() { return this.entries.map((e, i) => ({ index: i, ...e })); }
 }

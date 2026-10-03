@@ -478,6 +478,14 @@ ipcGuard.handle('chat-report', () => {
 // 窗口摘要属受保护历史，记忆面板只读；重新诞生只走带二次确认的 self-ledger-reset。
 ipcGuard.handle('memory-list', () => (brain ? brain.memory.listMemory() : []));
 
+// v1.0 时区真源（拍板 b）：birthTimezone 固化于 self-ledger；渲染层只读投影 + 平移入口
+ipcGuard.handle('self-timezone', (e, clientTz = '') => {
+  if (!brain || !brain.selfLedger) return { ok: false, error: 'NO_LEDGER' };
+  const ledger = brain.selfLedger;
+  if (!ledger.birthTimezone && ledger.adoptBirthTimezone) ledger.adoptBirthTimezone(clientTz);
+  return { ok: true, birthTimezone: ledger.birthTimezone || null, birthAt: Number.isFinite(ledger.birthAt) ? ledger.birthAt : null };
+});
+
 // v1.0 笔 2：气泡流数据层只读通道 —— 单一事实源是 memory.history（她眼里的真实对话史）。
 // synthetic 显式保留：主动搭话的程序触发不得伪装成用户发言；t 缺失即 null，绝不伪造时间。
 ipcGuard.handle('chat-history', () => {
