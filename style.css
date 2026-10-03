@@ -813,6 +813,23 @@ body.showlog #bubble { display: none !important; }
 .p-section { border-top: 1px solid rgba(255, 255, 255, .08); padding-top: 10px; margin-top: 12px; }
 .p-sub { font-size: 12.5px; font-weight: 600; color: #cfd6e4; margin: 2px 0 8px; }
 .p-sub2 { color: #97a0b0; font-size: 11px; margin: 4px 0 8px; letter-spacing: .04em; }   /* 区内分组小标题 */
+/* 连接区分组卡（v1.0 方案 A：分组一定要明显，视觉上也要） */
+.fgroup {
+  background: rgba(255, 255, 255, .055);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+  margin-bottom: 12px;
+}
+.fg-title {
+  font-size: 12px; font-weight: 700; letter-spacing: .06em;
+  color: #aab6ff; margin: 0 0 10px; padding-bottom: 7px;
+  border-bottom: 1px solid rgba(122, 140, 255, .28);
+}
+.fg-row { display: flex; gap: 10px; }
+.fg-cell { flex: 1; min-width: 0; }
+.fg-cell label { display: block; margin-bottom: 4px; }
+.fg-btn-cell { flex: 0 0 92px; }
 .danger-zone .p-sub { color: #e08a84; }
 .danger-hint { color: #9a6b66; }
 .panel-hint { text-align: center; color: #626b7c; font-size: 10.5px; margin-top: 12px; }

@@ -42,65 +42,95 @@
         <div class="panel-content">
           <!-- ① 连接与模型 -->
           <div class="psec on" data-sec="conn">
-            <div class="p-sub2">快速连接</div>
-            <label>API Key</label>
-            <div class="row">
-              <input id="keyInput" type="password" placeholder="sk-..." spellcheck="false">
-              <button id="keySave" class="btn-primary">保存</button>
+            <!-- 快速连接（v1.0 方案 A：分组卡 + 两列栅格，分组要狠） -->
+            <div class="fgroup">
+              <div class="fg-title">快速连接</div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>API Key</label>
+                  <div class="row">
+                    <input id="keyInput" type="password" placeholder="sk-..." spellcheck="false">
+                  </div>
+                </div>
+                <div class="fg-cell fg-btn-cell"><label>&nbsp;</label>
+                  <div class="row"><button id="keySave" class="btn-primary">保存</button></div>
+                </div>
+              </div>
+              <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
             </div>
-            <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
-            <!-- 0.9.8 Z3：Connection 管理（Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
-            <div class="p-title">连接管理</div>
-            <div class="row">
-              <select id="connList"></select>
-              <span class="hint" id="connActive"></span>
+
+            <!-- 连接（0.9.8 Z3：Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
+            <div class="fgroup">
+              <div class="fg-title">连接</div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>连接列表</label>
+                  <div class="row"><select id="connList"></select></div>
+                </div>
+                <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
+                <div class="fg-cell"><label id="presetLabel">服务商预设</label>
+                  <div class="row">
+                    <select id="connPresetSelect">
+                      <option value="custom">CUSTOM</option>
+                      <option value="deepseek">DEEPSEEK</option>
+                      <option value="mimo">MIMO</option>
+                      <option value="gpt">GPT</option>
+                      <option value="local">LOCAL</option>
+                      <option value="mimo-token-plan" hidden>MIMO (TOKEN PLAN)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="row"><span class="hint" id="connActive"></span><div class="hint" id="presetHint"></div></div>
+              <label>连接名称</label>
+              <div class="row"><input id="connName" type="text" placeholder="给它起个名（比如：家用 / 公司）" spellcheck="false"></div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>Provider Identity</label>
+                  <div class="row">
+                    <select id="connProvider">
+                      <option value="deepseek">DeepSeek</option>
+                      <option value="local">Local</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="fg-cell"><label>Protocol</label>
+                  <div class="row">
+                    <select id="connProtocol">
+                      <option value="openai-compatible">OpenAI-compatible</option>
+                      <option value="anthropic-native">Anthropic-native（未实现）</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             </div>
-            <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
-            <label id="presetLabel">服务商预设</label>
-            <div class="row">
-              <select id="connPresetSelect">
-                <option value="custom">自定义高级端点</option>
-                <option value="deepseek">DeepSeek 官方</option>
-                <option value="mimo">小米 MiMo（按量）</option>
-                <option value="mimo-token-plan">小米 MiMo（Token Plan 套餐）</option>
-                <option value="local">本地服务（Ollama / Local）</option>
-              </select>
+
+            <!-- 高级 -->
+            <div class="fgroup">
+              <div class="fg-title">高级</div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>API Key</label>
+                  <div class="row"><input id="connKey" type="password" placeholder="仅写入，不回显" spellcheck="false"></div>
+                </div>
+                <div class="fg-cell"><label>Endpoint</label>
+                  <div class="row"><input id="connUrl" type="text" placeholder="https://..." spellcheck="false"></div>
+                </div>
+              </div>
+              <label>Model</label>
+              <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
+              <div class="row btns">
+                <button id="connNew" class="btn-ghost">新建</button>
+                <button id="connSave" class="btn-primary">保存</button>
+                <button id="connTest" class="btn-ghost">测试连接</button>
+                <button id="connActivate" class="btn-ghost">设为当前</button>
+              </div>
+              <div class="hint" id="connState">—</div>
+              <div class="row btns"><button id="openCfg" class="btn-ghost">打开配置文件</button></div>
             </div>
-            <div class="hint" id="presetHint"></div>
-            <label>显示名</label>
-            <div class="row"><input id="connName" type="text" spellcheck="false"></div>
-            <label>Provider Identity</label>
-            <div class="row">
-              <select id="connProvider">
-                <option value="deepseek">DeepSeek</option>
-                <option value="local">Local</option>
-                <option value="custom">Custom</option>
-              </select>
+
+            <!-- 用量（拍板：排在连接区最下面） -->
+            <div class="fgroup">
+              <div class="fg-title">用量</div>
+              <div id="stats" class="stats">—</div>
             </div>
-            <label>Protocol</label>
-            <div class="row">
-              <select id="connProtocol">
-                <option value="openai-compatible">OpenAI-compatible</option>
-                <option value="anthropic-native">Anthropic-native（未实现）</option>
-              </select>
-            </div>
-            <label>API Key</label>
-            <div class="row"><input id="connKey" type="password" placeholder="仅写入，不回显" spellcheck="false"></div>
-            <label>Endpoint</label>
-            <div class="row"><input id="connUrl" type="text" placeholder="https://..." spellcheck="false"></div>
-            <label>Model</label>
-            <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
-            <div class="row btns">
-              <button id="connNew" class="btn-ghost">新建</button>
-              <button id="connSave" class="btn-primary">保存</button>
-              <button id="connTest" class="btn-ghost">测试连接</button>
-              <button id="connActivate" class="btn-ghost">设为当前</button>
-            </div>
-            <div class="hint" id="connState">—</div>
-            <div class="row btns"><button id="openCfg" class="btn-ghost">打开配置文件</button></div>
-            <!-- 用量沉底（拍板：排在连接与模型最下面） -->
-            <div class="p-title">用量</div>
-            <div id="stats" class="stats">—</div>
           </div>
 
           <!-- ③ 记忆（v1.0 拆分：记忆与时区分家） -->

@@ -20,6 +20,10 @@ const PRESETS = {
     id: 'mimo-token-plan', nameKey: 'preset.mimoTokenPlan', providerId: 'custom', protocol: 'openai-compatible',
     baseURL: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-flash'
   },
+  'gpt': {
+    id: 'gpt', nameKey: 'preset.gpt', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini'
+  },
   'local': {
     id: 'local', nameKey: 'preset.local', providerId: 'local', protocol: 'openai-compatible',
     baseURL: 'http://localhost:11434/v1', model: 'qwen2.5'
