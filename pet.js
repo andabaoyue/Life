@@ -1306,7 +1306,51 @@ document.getElementById('connActivate').addEventListener('click', async () => {
   refreshStats();
 });
 
-document.getElementById('connDelete').addEventListener('click', async () => {
+/* 危险区保险（v1.0 用户拍板，二版加冷静期）：首点后强制 5 秒冷静 —— 按钮锁死倒计时，
+   归零才解锁为「再次点击确认执行」（防手滑连点/暴击瞬间穿过两段）；
+   武装态 8 秒不点第二下自动上保险；确认框（window.confirm）保留 = 三重保险。 */
+function armDangerButton(btn, onFire) {
+  if (!btn) return;
+  let state = 'idle';   // idle → cooling（锁死）→ armed（可执行）
+  let timer = null;
+  let tick = null;
+  let label = btn.textContent;
+  const reset = () => {
+    state = 'idle';
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (tick) { clearInterval(tick); tick = null; }
+    btn.classList.remove('armed', 'cooling');
+    btn.disabled = false;
+    btn.textContent = label;
+  };
+  btn.addEventListener('click', () => {
+    if (state === 'cooling') return;   // 冷却期按钮本就 disabled，双保险
+    if (state === 'idle') {
+      state = 'cooling';
+      label = btn.textContent;
+      btn.classList.add('cooling');
+      btn.disabled = true;   // 冷却期不可交互：连点无效
+      let left = 5;
+      btn.textContent = t('danger.cooling') + '（' + left + 's）';
+      tick = setInterval(() => {
+        left -= 1;
+        if (left > 0) { btn.textContent = t('danger.cooling') + '（' + left + 's）'; return; }
+        if (tick) { clearInterval(tick); tick = null; }
+        state = 'armed';
+        btn.disabled = false;
+        btn.classList.remove('cooling');
+        btn.classList.add('armed');
+        btn.textContent = t('danger.armAgain');
+        timer = setTimeout(reset, 8000);   // 武装态 8 秒后自动上保险
+      }, 1000);
+      return;
+    }
+    reset();
+    onFire();
+  });
+}
+
+async function doDeleteConnection() {
   if (!api || !api.connections || !connSelectedId) return;
   const ok = window.confirm('此操作将删除该 Connection，并在该凭据属于 exclusive credential 时删除对应凭据（legacy-mapped 凭据只删除 Connection，不删除 legacy 凭据）。确定继续吗？');
   if (!ok) return;
@@ -1314,13 +1358,14 @@ document.getElementById('connDelete').addEventListener('click', async () => {
   if (!r || r.ok === false) return connSay('删除失败：' + ((r && r.error) || '未知错误'));
   connSay(r.credentialDeleted ? '连接及其独占凭据已删除' : '连接已删除（凭据保留：' + (r.credentialNote || '未删除') + '）');
   await refreshConnections();
-});
+}
+armDangerButton(document.getElementById('connDelete'), doDeleteConnection);
 
 refreshConnections();
 
 document.getElementById('openCfg').addEventListener('click', () => api && api.openConfig());
 
-document.getElementById('resetSelf').addEventListener('click', async () => {
+async function doResetSelf() {
   if (!api || !api.resetSelfLedger) return;
   const ok = window.confirm('这会删除初澜出生以来的成长档案，并把她视为一次新的出生。确定继续吗？');
   if (!ok) return;
@@ -1329,7 +1374,8 @@ document.getElementById('resetSelf').addEventListener('click', async () => {
   if (!res || !res.ok) return say('成长档案重置失败：' + ((res && res.error) || '未知错误'));
   refreshStats();
   say('好，我们从现在重新认识。');
-});
+}
+armDangerButton(document.getElementById('resetSelf'), doResetSelf);
 
 /* 面板关闭（v1.0 设计变更）：「关闭」按钮移除（不好看），ESC / 面板右键双通道关闭 */
 function closePanel() {

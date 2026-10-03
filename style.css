@@ -868,6 +868,14 @@ body.showlog #bubble { display: none !important; }
 .btn-ghost:hover { background: rgba(255, 255, 255, .08) !important; }
 .btn-danger { background: transparent !important; border: 1px solid rgba(196, 82, 72, .55) !important; color: #e08a84 !important; }
 .btn-danger:hover { background: rgba(196, 82, 72, .16) !important; }
+/* 危险区保险冷却态（v1.0 二版）：锁死等待，倒计时可见 */
+.btn-danger.cooling { opacity: .55; cursor: wait; }
+/* 危险区保险武装态（v1.0）：红光脉冲，一眼可辨「保险已解除」 */
+.btn-danger.armed { animation: dangerArm 0.9s ease-in-out infinite; border-color: #ff6b6b; color: #fff; background: rgba(224, 90, 90, .32); }
+@keyframes dangerArm {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, .5); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 107, 107, 0); }
+}
 /* 两栏布局（v1.0 用户设计）：左导航 + 右详情 */
 #panel { display: flex; flex-direction: column; overflow: hidden; }
 .panel-body { flex: 1; min-height: 0; display: flex; gap: 10px; }
