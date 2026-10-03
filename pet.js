@@ -225,11 +225,12 @@ function flushZoomDebt() {
 function syncPanelViewport() {
   if (!api || !api.panelViewport) return;
   const open = anyOverlayOpen();
-  // 按面板定宽（用户拍板）：记录 520、衣橱 560、其余 440×680
+  // 按面板定宽（用户拍板）：设置/衣橱 560、记录 520、基础 440×680（最宽者胜）
   const wdEl = document.getElementById('wardrobe');
   let w = 440;
   if (log && !log.classList.contains('hidden')) w = 520;
-  if (wdEl && !wdEl.classList.contains('hidden')) w = 560;
+  if ((wdEl && !wdEl.classList.contains('hidden'))
+      || (panel && !panel.classList.contains('hidden'))) w = 560;
   api.panelViewport(open, w, 680).then(() => {
     if (!open) {
       zoomResizeDebt = 1;
@@ -598,7 +599,7 @@ function renderI18nPanel() {
 
 /* ---------- 设置面板两栏导航（v1.0 用户设计） ----------
    左栏四区点击切换 + 右侧详情；记住上次分区（localStorage，UI 状态）。 */
-const PANEL_SECTIONS = ['conn', 'wardrobe', 'memory', 'danger'];
+const PANEL_SECTIONS = ['conn', 'memory', 'timezone', 'danger'];   // v1.0 分区重构后换血（时区点不出的病根）
 function selectPanelSection(key) {
   const k = PANEL_SECTIONS.includes(key) ? key : 'conn';
   for (const it of document.querySelectorAll('.pnav-item')) it.classList.toggle('on', it.dataset.sec === k);
