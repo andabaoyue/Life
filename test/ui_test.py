@@ -535,7 +535,7 @@ with sync_playwright() as p:
     pg2.close()
 
     # 状态机：发送后 body 应挂上 data-state
-    pg.evaluate("runChat('再测一句状态', {})")   # v1.0 方案二：输入条退役，直驱 runChat
+    pg.evaluate("void runChat('再测一句状态', {})")   # v1.0：直驱 runChat；void 防 evaluate 等完 promise（否则查不到 thinking 中途态）
     pg.wait_for_timeout(400)
     state = pg.evaluate("document.body.dataset.state")
     check("发送时进入 thinking 状态", state == "thinking", repr(state))
