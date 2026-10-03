@@ -2217,8 +2217,8 @@ menu.addEventListener('click', (e) => {
   if (act === 'talk') { setTalking(true); if (api && api.chatWindowOpen) api.chatWindowOpen(); return; }   // v1.0 方案二：对话入独立窗
   if (act === 'log') return toggleLog();
 if (act === 'wardrobe') return toggleWardrobe();   // v1.0：衣橱自设置独立，入菜单
-  if (act === 'panel') return openPanel();
-  if (act === 'research') return openResearchPanel();
+  if (act === 'panel') return (panel && !panel.classList.contains('hidden')) ? closePanel() : openPanel();   // v1.0 toggle：再点即收
+  if (act === 'research') return (researchPanel && !researchPanel.classList.contains('hidden')) ? closeResearchPanel() : openResearchPanel();   // v1.0 toggle：再点即收
   if (act === 'pin') {
     if (!api) return say('预览模式没有窗口可固定');
     api.togglePin().then((on) => {
