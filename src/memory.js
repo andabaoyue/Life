@@ -83,7 +83,8 @@ class Memory {
     this.wardrobe = '';
     this.writer = new DeferredWriter(() => writeJsonAtomic(this.path, this.data), { delayMs: 3000 });
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
-                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [] };
+                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
+                  lexicon: [], expectations: [] };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
 
     // v0.9.7: 记忆痕迹动力学管理器 (Memory Dynamics & Synaptic Pruning)
     const dynamicsEnabled = opts.memoryDynamics !== undefined
@@ -135,7 +136,11 @@ class Memory {
         }
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
-                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [], ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
+                    lexicon: [], expectations: [], ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+      // v1.0 兼容平移：旧档案缺字段 → 空表；脏数据 → 归一为数组（绝不静默丢历史）
+      this.data.lexicon = Array.isArray(this.data.lexicon) ? this.data.lexicon : [];
+      this.data.expectations = Array.isArray(this.data.expectations) ? this.data.expectations : [];
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
@@ -354,6 +359,98 @@ class Memory {
     const queue = Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [];
     this.data.curiosityQueue = queue.concat(incoming).slice(-5);
     return this.data.curiosityQueue;
+  }
+
+  /* ---------- v1.0 生命机制（§4.7 #3 词汇表）：语言指纹的唯一入库口 ----------
+     门槛（设计书拍板 + 架构评审）：
+     1. 零先验：初始空表，唯一来源是她自己的话（messageId 引证）；
+     2. 不可伪造：messageId 必须解析到真实历史，解析不到拒收；
+     3. v1 只收自创（coinage/metaphor/nickname）—— adopted 仅枚举占位，明确拒收；
+     4. 状态三态对齐 EngramTrace 梯队：ACTIVE | FADING | DORMANT，只淡化不删除（D-005）。
+     防工具化红线：本层零定时器、零提醒。 */
+  _resolveMessage(messageId) {
+    return (this.data.history || []).some((m) => m && m.messageId === messageId);
+  }
+
+  addLexicon(entry = {}) {
+    const kind = String(entry.kind || '');
+    if (!['coinage', 'metaphor', 'nickname', 'adopted'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
+    if (kind === 'adopted') return { ok: false, error: 'ADOPTED_NOT_YET' };   // v1 拍板：只收自创，占位声明
+    const word = String(entry.word || '').trim();
+    if (!word) return { ok: false, error: 'EMPTY_WORD' };
+    const messageId = String(entry.messageId || '');
+    if (!this._resolveMessage(messageId)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    const list = Array.isArray(this.data.lexicon) ? this.data.lexicon : (this.data.lexicon = []);
+    const hit = list.find((x) => x && x.word === word);
+    if (hit) {
+      hit.weight = Math.min(3, (Number(hit.weight) || 1) + 0.2);
+      hit.status = 'ACTIVE';
+      this.save();
+      return { ok: true, entry: hit, created: false };
+    }
+    const rec = {
+      word, kind,
+      gloss: String(entry.gloss || ''),
+      messageId,
+      firstAt: Number.isFinite(entry.firstAt) ? entry.firstAt : null,
+      uses: [],
+      weight: 1,
+      status: 'ACTIVE'
+    };
+    list.push(rec);
+    this.save();
+    return { ok: true, entry: rec, created: true };
+  }
+
+  /* ---------- v1.0 生命机制（§4.7 #4 预期与意外）：时间的矢量 ----------
+     门槛（设计书拍板 + 架构评审）：
+     1. 防 Siri 化：零定时器、零提醒 —— 预期只进她的视野，说不说归她；
+     2. 状态流转主权归关窗小结（fulfilled/broken 在 Window Synthesis 判定，实时只注入）；
+     3. broken 不硬扣特质 —— 作为高权重客观事件进 GROWTH_SYS 成长反思（oppose 由她自己长出）；
+     4. 承诺（pledge）是预期的第一公民，不另立账本（#6 并入）。 */
+  addExpectation(entry = {}) {
+    const kind = String(entry.kind || '');
+    if (!['external', 'pledge'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
+    const source = String(entry.source || '');
+    if (!['user', 'chulan'].includes(source)) return { ok: false, error: 'INVALID_SOURCE' };
+    const text = String(entry.text || '').trim();
+    if (!text) return { ok: false, error: 'EMPTY_TEXT' };
+    const messageId = String(entry.messageId || '');
+    if (!this._resolveMessage(messageId)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    const list = Array.isArray(this.data.expectations) ? this.data.expectations : (this.data.expectations = []);
+    const n = list.reduce((a, x) => Math.max(a, Number(String((x && x.id) || '').replace(/\D/g, '')) || 0), 0) + 1;
+    const rec = {
+      id: 'exp-' + String(n).padStart(6, '0'),
+      kind, text, source, messageId,
+      windowNo: Number.isFinite(entry.windowNo) ? entry.windowNo : this.data.windowNo,
+      createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : null,
+      dueHint: entry.dueHint == null ? null : String(entry.dueHint),
+      status: 'open',
+      outcome: null
+    };
+    list.push(rec);
+    if (list.length > 10) list.splice(0, list.length - 10);   // FIFO 上限 10（设计书）
+    this.save();
+    return { ok: true, entry: rec };
+  }
+
+  resolveExpectation(id, outcome = {}) {
+    const list = Array.isArray(this.data.expectations) ? this.data.expectations : [];
+    const hit = list.find((x) => x && x.id === id);
+    if (!hit) return { ok: false, error: 'NOT_FOUND' };
+    if (hit.status !== 'open') return { ok: false, error: 'ALREADY_RESOLVED' };
+    const status = String(outcome.status || '');
+    if (!['fulfilled', 'broken', 'moot'].includes(status)) return { ok: false, error: 'INVALID_STATUS' };
+    const messageId = outcome.messageId == null ? null : String(outcome.messageId);
+    if (status !== 'moot' && !this._resolveMessage(messageId || '')) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    hit.status = status;
+    hit.outcome = {
+      at: Number.isFinite(outcome.at) ? outcome.at : null,
+      messageId,
+      note: String(outcome.note || '')
+    };
+    this.save();
+    return { ok: true, entry: hit };
   }
 
   /* ---------- 发给 API 的消息 ---------- */
@@ -646,7 +743,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '', curiosityQueue: [] };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [] };
     this.save(true);
   }
 }
