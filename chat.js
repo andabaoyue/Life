@@ -69,13 +69,13 @@ function buildBubble(v, extraCls) {
   txt.className = 'b-text';
   txt.textContent = v.text;          // textContent 渲染，防注入
   col.appendChild(txt);
-  row.appendChild(col);
   if (v.ts !== null && v.ts !== undefined) {
     const ts = document.createElement('div');
     ts.className = 'b-ts';
     ts.textContent = formatDisplayTime(v.ts);
-    row.appendChild(ts);   // v1.0：时间挂行级，由 CSS 统一定位到各自消息右下角
+    col.appendChild(ts);   // v1.0：时间贴在消息框正下方、右对齐（不出框）
   }
+  row.appendChild(col);
   return row;
 }
 
