@@ -490,6 +490,13 @@ ipcGuard.handle('self-timezone', (e, clientTz = '') => {
   return { ok: true, birthTimezone: ledger.birthTimezone || null, birthAt: Number.isFinite(ledger.birthAt) ? ledger.birthAt : null };
 });
 
+// v1.0 §4.7 只读视图数据口：词汇表 + 预期账本（观察层只读，不写任何数据、不碰完整性哈希）
+ipcGuard.handle('life-mechanisms', () => ({
+  ok: true,
+  lexicon: (brain && brain.memory && brain.memory.data && brain.memory.data.lexicon) || [],
+  expectations: (brain && brain.memory && brain.memory.data && brain.memory.data.expectations) || []
+}));
+
 // v1.0 笔 2：气泡流数据层只读通道 —— 单一事实源是 memory.history（她眼里的真实对话史）。
 // synthetic 显式保留：主动搭话的程序触发不得伪装成用户发言；t 缺失即 null，绝不伪造时间。
 ipcGuard.handle('chat-history', () => {

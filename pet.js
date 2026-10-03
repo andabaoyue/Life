@@ -619,6 +619,38 @@ const tzDisplay = document.getElementById('tzDisplay');
 const tzNote = document.getElementById('tzNote');
 const i18nTitle = document.getElementById('i18nTitle');
 const langLabel = document.getElementById('langLabel');
+/* 个体观测·只读视图（v1.0 §4.7）：词汇表 + 预期账本 —— 纯只读渲染（textContent 防注入），
+   不写任何数据、不碰退出时的完整性哈希校验。 */
+async function refreshLifeMechanisms() {
+  if (!api || !api.lifeMechanisms) return;
+  try {
+    const r = await api.lifeMechanisms();
+    if (!r || !r.ok) return;
+    const lx = document.getElementById('rLexiconList');
+    if (lx) {
+      lx.textContent = '';
+      (r.lexicon || []).forEach((x) => {
+        const row = document.createElement('div');
+        row.textContent = '[' + x.status + '] ' + x.word + (x.gloss ? ' — ' + x.gloss : '')
+          + '（' + x.kind + ' · 引证 ' + x.messageId + '）';
+        lx.appendChild(row);
+      });
+      if (!lx.children.length) lx.textContent = '（暂无 —— 词汇表零先验，等她自己长词）';
+    }
+    const ex = document.getElementById('rExpectList');
+    if (ex) {
+      ex.textContent = '';
+      (r.expectations || []).forEach((x) => {
+        const row = document.createElement('div');
+        row.textContent = '[' + x.status + '] ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')
+          + ' · ' + x.kind + ' · 引证 ' + x.messageId;
+        ex.appendChild(row);
+      });
+      if (!ex.children.length) ex.textContent = '（暂无）';
+    }
+  } catch (e) { /* 只读渲染失败不影响面板其余部分 */ }
+}
+
 const tzLabel = document.getElementById('tzLabel');
 /* 时空罗盘（v1.0 拍板 c）：创世时刻 / 创世时区 / 陪伴时长 / 宿主同步 —— 只读投影，数据归 self-ledger */
 let compassBirthAt = null;
@@ -1440,6 +1472,7 @@ async function openResearchPanel() {
   if (!researchPanel) return;
   closeOtherOverlays('research');
   researchPanel.classList.remove('hidden');
+  refreshLifeMechanisms();   // v1.0 §4.7：只读视图（词汇 + 预期）
   syncPanelViewport();   // v1.0 家族补全：个体观测开时也同步视窗（此前只关不合，大体型下布局炸）
   syncMotionPriority();
 

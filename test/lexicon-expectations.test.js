@@ -122,10 +122,27 @@ check('19 提示词契约防漂移：模板含 coinages/expectations/expectation
 check('20 偏差事实防漂移：【偏差事实】客观格式进 GROWTH 输入',
   /【偏差事实】曾预期/.test(brainSrc));
 
+// 21 注入契约（提醒 2）：双段在册 + 克制语气原文 + 预算截断（词 Top5 / 预期最新3）
+const m4 = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'lex-inject-')));
+m4.append('user', '她说市里');
+const idX = m4.data.history[0].messageId;
+for (let i = 0; i < 7; i++) m4.addLexicon({ word: '词' + i, kind: 'coinage', messageId: idX, gloss: '释' + i });
+for (let i = 0; i < 5; i++) m4.addExpectation({ kind: 'external', source: 'user', text: '预期' + i, messageId: idX });
+const st = m4.systemText();
+check('21 注入契约：双段在册 + 克制语气 + 预算截断（词≤5/预期≤3）',
+  st.includes('【你曾用过的词】') && st.includes('绝不强求')
+  && st.includes('【当前指向未来的约定与预期】') && st.includes('绝不做定时提醒')
+  && (st.match(/- 词/g) || []).length === 5 && (st.match(/- 预期/g) || []).length === 3);
+
+// 22 空表守卫（提醒 1 同源）：零词汇且无 open 预期时两段都不注入（防幻觉）
+const m5 = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'lex-empty-')));
+check('22 空表守卫：两段皆不注入（不给模型幻觉素材）',
+  !m5.systemText().includes('【你曾用过的词】') && !m5.systemText().includes('【当前指向未来的约定与预期】'));
+
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
 console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 20)
+  ? ('lexicon-expectations tests passed: ' + 22)
   : ('lexicon-expectations tests FAILED: ' + failures));
 process.exit(failures === 0 ? 0 : 1);

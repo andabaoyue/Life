@@ -1027,11 +1027,17 @@ class Brain {
     const summaryMaxTokens = (opts && opts.maxTokens) || this.cfg.summaryMaxTokens || 10000;
     // v0.9.9: 分段随窗口规模自适应（见 summarySegmentPlan 注释）
     const segPlan = summarySegmentPlan(snap.actualTurnCount);
+    // v1.0 §4.7 #4：待核验预期对照物（空清单给「暂无」，防小结模型幻觉妄加 expectationOutcomes）
+    const openExps = ((this.memory && this.memory.data && this.memory.data.expectations) || [])
+      .filter((x) => x && x.status === 'open');
     try {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: SUMMARY_SYS },
          { role: 'user', content: '【对话】\n' + dialogue
-           + '\n\n【窗口规模】本窗口共 ' + (snap.actualTurnCount || 0) + ' 轮，请' + segPlan.note + '；紧凑输出，不写空段、不铺陈冗余字句。' }],
+           + '\n\n【窗口规模】本窗口共 ' + (snap.actualTurnCount || 0) + ' 轮，请' + segPlan.note + '；紧凑输出，不写空段、不铺陈冗余字句。'
+           + '\n\n【待核验预期清单】\n' + (openExps.length
+             ? openExps.map((x) => '- [' + x.id + '] ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')).join('\n')
+             : '暂无') }],
         { maxTokens: summaryMaxTokens, temperature: 0.2 }
       );
       const { text, usage, observedModel } = apiCompleteRes;

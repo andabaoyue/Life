@@ -368,7 +368,7 @@ node test/ui-outfit-complete.test.js  # 9 项：配件智能成套（家族策�
 node test/ui-provider-presets.test.js # 8 项：服务商预设与 Key 前缀本地识别（预设字典、tp-/ttp-/mimo-/sk- 命中、非法防御、零网络零落盘、与 provider-policy 口径防漂移）
 node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投影契约、synthetic 双态保留、零伪造时间戳、SYNTHETIC_RENDER 契约、双环境守卫与边界铁律）
 node test/ui-i18n.test.js           # 11 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
-node test/lexicon-expectations.test.js  # 20 项：v1.0 生命机制门槛（词汇表+预期账本：零先验/引证强校验/快照引证/状态流转/防工具化与防漂移红线）
+node test/lexicon-expectations.test.js  # 22 项：v1.0 生命机制门槛（词汇表+预期账本：零先验/引证强校验/快照引证/状态流转/注入预算/防工具化与防漂移红线）
 node test/nonhuman-framework-prompt.test.js # 36 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话）
 node test/wardrobe.test.js       # 61 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离、主体特质偏好与自决换装提案
 node test/secure.test.js         # 38 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚

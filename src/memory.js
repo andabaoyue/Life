@@ -508,6 +508,23 @@ class Memory {
       s += '\n\n【尚未解开的疑问】（这是你自己的未解问题，不是任务；只在自然的时机提起，一次最多一个，绝不连环审问）\n'
         + cur.map(x => '- ' + x.q).join('\n');
     }
+    // v1.0 §4.7 #3 语言连续性：自创词按需回响（预算克制 Top 5，只供用不代写）
+    const lex = (Array.isArray(this.data.lexicon) ? this.data.lexicon : [])
+      .filter((x) => x && x.status === 'ACTIVE')
+      .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+      .slice(0, 5);
+    if (lex.length) {
+      s += '\n\n【你曾用过的词】初澜自创的词汇与隐喻，仅供你在合适语境中自然复用，绝不强求：\n'
+        + lex.map((x) => '- ' + x.word + (x.gloss ? '：' + x.gloss : '')).join('\n');
+    }
+    // v1.0 §4.7 #4 时间矢量：open 预期进心智视野（预算克制最新 3 条，绝不做定时提醒）
+    const exps = (Array.isArray(this.data.expectations) ? this.data.expectations : [])
+      .filter((x) => x && x.status === 'open')
+      .slice(-3);
+    if (exps.length) {
+      s += '\n\n【当前指向未来的约定与预期】心智知晓即可，说不说由你自主决定，绝不做定时提醒：\n'
+        + exps.map((x) => '- ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')).join('\n');
+    }
     // v0.9.9 五大方向·①：离线重组碎片块 —— 仅在真实存在归档碎片时注入，
     // 必须带防伪标签（非亲历，不得当亲历引用）；碎片只在窗口轮转时刻更新，窗口内逐字节稳定。
     // 位置必须在穿着块之前 —— 「穿着块是 system 结尾」是被测试钉死的顺序不变式。
