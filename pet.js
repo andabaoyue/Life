@@ -2075,6 +2075,10 @@ async function loadRejectedEvidence() {
 
       row.append(head, traitRow, msgRow);
       box.appendChild(row);
+    }
+  } catch (e) {
+    box.textContent = '读取被拒证据失败: ' + e.message;
+  }
 }
 
 function switchResearchTab(tabName) {
