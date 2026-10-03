@@ -372,6 +372,30 @@ body.talking #inputBar { display: flex; }
 .r-ev-row { display: flex; gap: 10px; margin-top: 6px; font-size: 12.5px; line-height: 1.7; }
 .r-ev-k { flex: none; color: #8b98b4; min-width: 34px; }
 .r-ev-v { color: #dfe6f2; word-break: break-all; }
+
+/* ===== 终局覆盖块（v1.0 排版总令 · 必须居文件末尾）=====
+   教训：前批覆盖写在原规则之前被反超成了死条文 —— 此块放最后，后者胜。 */
+#researchTabs { flex-wrap: nowrap; overflow-x: hidden; gap: 3px; }
+.r-tab { padding: 4px 7px; font-size: 10.5px; white-space: nowrap; }
+.r-seg-tabs { display: flex; gap: 4px; margin: 6px 0; flex-wrap: nowrap; overflow-x: hidden; }
+.r-seg-btn { padding: 4px 6px; font-size: 10.5px; white-space: nowrap; }
+.r-table-container { max-height: none; padding: 8px 10px; }
+.r-table-row { padding: 8px 10px; font-size: 12.5px; line-height: 1.7;
+  border-bottom: 1px solid rgba(255,255,255,.07); }
+.r-table-row:last-child { border-bottom: none; }
+.r-trait-card { padding: 10px 12px; }
+.r-trait-name { font-size: 12px; }
+.r-trait-meta { font-size: 11px; line-height: 1.5; }
+.r-badge { font-size: 10.5px; padding: 2px 7px; }
+.r-card { padding: 10px 12px; line-height: 1.75; font-size: 12.5px; }
+.r-section-title { font-size: 12px; margin-bottom: 6px; }
+.r-subtab { font-size: 11.5px; padding: 4px 9px; }
+.r-toolbar select, .r-toolbar input { font-size: 12px; padding: 5px 8px; }
+.r-traits-grid { gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.r-round-item { padding: 9px 10px; line-height: 1.75; font-size: 12.5px;
+  border-bottom: 1px solid rgba(255,255,255,.07); }
+.r-round-item:last-child { border-bottom: none; }
+#researchPanel select option, #panel select option { background: #f4f6fb; color: #141a26; }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }
