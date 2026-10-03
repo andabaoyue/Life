@@ -328,6 +328,14 @@ body.talking #inputBar { display: flex; }
 .dream-body { font-size: 13px; line-height: 1.8; color: #e6ebf3; word-break: break-word;
   white-space: pre-wrap; padding-left: 12px; border-left: 2px solid rgba(160,130,255,.35); }
 .dream-meta { margin-top: 8px; font-size: 11px; color: #7d8aa8; }
+/* v1.0 分段预览扩容（用户反馈）：旧版 max-height 140px 封顶，面板下半截空黑 ——
+   改为撑满分区 + 字号舒展 + 轮次间实线分隔；六个 tab 收紧一行放下 */
+.r-pane { min-height: 100%; }
+.r-rounds-list { max-height: none; flex: 1; min-height: 320px; padding: 6px 8px; }
+.r-round-item { padding: 9px 10px; line-height: 1.75; font-size: 12.5px;
+  border-bottom: 1px solid rgba(255,255,255,.07); }
+.r-round-item:last-child { border-bottom: none; }
+.r-tab { padding: 4px 8px; font-size: 10.5px; }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }
