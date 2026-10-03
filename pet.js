@@ -223,7 +223,9 @@ function flushZoomDebt() {
 function syncPanelViewport() {
   if (!api || !api.panelViewport) return;
   const open = anyOverlayOpen();
-  api.panelViewport(open).then(() => {
+  // 记录要宽些（用户拍板）：记录在场 → 520 宽；其余 440×680
+  const w = (log && !log.classList.contains('hidden')) ? 520 : 440;
+  api.panelViewport(open, w, 680).then(() => {
     if (!open) {
       zoomResizeDebt = 1;
       if (api.resize) api.resize(petZoom);

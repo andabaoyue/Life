@@ -328,11 +328,14 @@ ipcGuard.handle('chat-window-close', () => {
 
 /* v1.0 设置面板扩容（用户拍板：面板太小、做大）：打开 440×680 / 关闭回 340×480。
    复用 layout.anchorBottom 钉住下边缘（她脚不离地）；缩放已解耦，扩窗不放大她（DWM 战红利）。 */
-const PANEL_W = 440, PANEL_H = 680;
-ipcGuard.handle('panel-viewport', (e, open) => {
+const PANEL_W = 440, PANEL_H = 680;   // 默认面板尺寸；可按面板类型传宽（记录 520）
+ipcGuard.handle('panel-viewport', (e, open, opt = {}) => {
   if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
   if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };
-  const target = open ? { w: PANEL_W, h: PANEL_H } : { w: layout.BASE_W, h: layout.BASE_H };
+  // 不信渲染端：尺寸钳进合法区间（宽 340..640 / 高 400..760）
+  const w = Math.min(640, Math.max(layout.BASE_W, Math.round(opt.w) || PANEL_W));
+  const h = Math.min(760, Math.max(400, Math.round(opt.h) || PANEL_H));
+  const target = open ? { w, h } : { w: layout.BASE_W, h: layout.BASE_H };
   const [w, h] = win.getSize();
   if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };
   const [x, y] = win.getPosition();

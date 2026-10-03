@@ -36,7 +36,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   chatWindowClose: () => ipcRenderer.invoke('chat-window-close'),
   chatWindowHome: () => ipcRenderer.invoke('chat-window-home'),
   chatBusy: (busy, state) => ipcRenderer.invoke('chat-busy', { busy: !!busy, state: state || null }),
-  panelViewport: (open) => ipcRenderer.invoke('panel-viewport', open === true),
+  panelViewport: (open, w, h) => ipcRenderer.invoke('panel-viewport', open === true, { w: w || 0, h: h || 0 }),
   onChatBusy: (cb) => ipcRenderer.on('chat-busy', (e, p) => cb(p)),
   onChatHidden: (cb) => ipcRenderer.on('chat-window-hidden', () => cb()),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
