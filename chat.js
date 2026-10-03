@@ -74,7 +74,7 @@ function buildBubble(v, extraCls) {
     const ts = document.createElement('div');
     ts.className = 'b-ts';
     ts.textContent = formatDisplayTime(v.ts);
-    row.appendChild(ts);   // v1.0：时间挂行级，由 CSS 定位到行底两角（初澜左下 / 用户右下）
+    row.appendChild(ts);   // v1.0：时间挂行级，由 CSS 统一定位到各自消息右下角
   }
   return row;
 }

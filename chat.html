@@ -39,11 +39,10 @@
     /* 提示行独立成带：贴窗底居中，与输入条留出呼吸（v1.0 用户反馈：太紧凑） */
     .chat-foot { flex: none; padding: 4px 14px 12px; text-align: center;
       font-size: 10.5px; color: #626b7c; margin: 0; word-break: keep-all; }
-    /* v1.0 用户整容：头像升至消息框上方；时间沉到行底两角（初澜左下 / 用户右下） */
+    /* v1.0 用户整容：头像升至消息框上方；时间统一沉到各自消息的右下角 */
     .b-row { position: relative; align-items: flex-start; padding-bottom: 16px; }
     .b-ts { position: absolute; bottom: 0; margin-top: 0; }
-    .b-row .b-ts { right: 2px; text-align: right; }
-    .b-user .b-ts { left: 2px; right: auto; text-align: left; }
+    .b-row .b-ts, .b-user .b-ts { right: 2px; left: auto; text-align: right; }   // 统一守右下角（用户的同理）
   </style>
 </head>
 <body>
