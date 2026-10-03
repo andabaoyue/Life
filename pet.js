@@ -218,6 +218,18 @@ function flushZoomDebt() {
   if (zoomResizeDebt !== 1 && api && api.resize) api.resize(zoomResizeDebt);
   zoomResizeDebt = 1;
 }
+/* 面板视窗家族化（v1.0）：设置/记录/实验任一在场 → 窗体扩到 440×680（满幅盖住她）；
+   全部收口 → 回基准并按缩放档校正（零漂移契约的统一收口）。 */
+function syncPanelViewport() {
+  if (!api || !api.panelViewport) return;
+  const open = anyOverlayOpen();
+  api.panelViewport(open).then(() => {
+    if (!open) {
+      zoomResizeDebt = 1;
+      if (api.resize) api.resize(petZoom);
+    }
+  });
+}
 function zoomPet(factor) {
   // 与主进程 nextSize 的宽度边界（200..760）大致对齐
   petZoom = Math.min(2.24, Math.max(0.59, petZoom * factor));
@@ -542,7 +554,7 @@ function toggleLog(on) {
   document.body.classList.toggle('showlog', showIt);
   syncMotionPriority();
   if (showIt) scrollLog();
-  else flushZoomDebt();   // 收口还账：窗体补上欠下的缩放倍数
+  syncPanelViewport();   // v1.0：记录升格 —— 打开即扩容盖住她，收口还账
 }
 
 /* ---------------- 对话 ---------------- */
@@ -952,7 +964,7 @@ function blink() {
 function openPanel() {
   panel.classList.remove('hidden');
   syncMotionPriority();
-  if (api && api.panelViewport) api.panelViewport(true);   // v1.0：设置窗扩容（面板做大），脚底锚定、她不变大
+  syncPanelViewport();   // v1.0：面板家族统一视窗（扩容盖住她）
   refreshStats();
   refreshMem();
   refreshWardrobe();
@@ -1216,12 +1228,7 @@ document.getElementById('resetSelf').addEventListener('click', async () => {
 function closePanel() {
   panel.classList.add('hidden');
   syncMotionPriority();
-  if (api && api.panelViewport) {
-    api.panelViewport(false).then(() => {
-      zoomResizeDebt = 1;   // 复位基准后按缩放档回，挂账作废
-      if (api.resize) api.resize(petZoom);   // 回到「缩放即窗体」的正确尺寸（不是死回 340×480）
-    });
-  }
+  syncPanelViewport();   // v1.0：家族统一收口（回基准 + 按缩放档校正）
 }
 if (panel) panel.addEventListener('contextmenu', (e) => { e.preventDefault(); closePanel(); });
 
@@ -1260,7 +1267,7 @@ async function closeResearchPanel() {
     clearInterval(activeReplayPollingTimer);
     activeReplayPollingTimer = null;
   }
-  flushZoomDebt();   // 收口还账：窗体补上欠下的缩放倍数（关必跑，不藏在 if 里）
+  syncPanelViewport();   // v1.0：家族统一收口（关必跑，不藏在 if 里）
 
   // 2. 退出时核验哈希 (Read-Only 强约束，确保观测前后零修改)
   if (api && api.research && api.research.verifyIntegrity && currentResearchHashes) {

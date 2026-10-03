@@ -307,8 +307,7 @@ body.talking #inputBar { display: flex; }
 /* ---------------- 记录 ---------------- */
 #log {
   position: absolute;
-  left: 8px; top: 8px;
-  width: 324px; height: 420px;   /* v1.0 固定大小契约（用户拍板；300×340 觉小 → 324×420） */
+  inset: 8px;   /* v1.0 升格为设置同级面板：满幅盖住她（440×680 扩容窗），空白处拖动 */
   background: rgba(20,22,34,.92);
   border-radius: 12px;
   z-index: 14;
