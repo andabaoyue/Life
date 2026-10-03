@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   // 主进程发现窗口失焦时通知我们收尾拖拽（渲染进程的 blur 不一定触发）
   onDragCancel: (cb) => ipcRenderer.on('drag-cancel', () => cb()),
   togglePin: () => ipcRenderer.invoke('toggle-pin'),
+  pinState: () => ipcRenderer.invoke('pin-state'),
   resize: (f) => ipcRenderer.send('resize-pet', f),
   motionUiState: (state) => ipcRenderer.send('motion-ui-state', state),
   motionStatus: () => ipcRenderer.invoke('motion-status'),

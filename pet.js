@@ -1839,6 +1839,15 @@ function renderRoundsDemo(segIdx) {
 
 // 绑定 Research 面板内事件监听器
 document.getElementById('rCloseBtn')?.addEventListener('click', closeResearchPanel);
+
+/* 固定在前：菜单文案跟随真实置顶态（v1.0 状态要准确 —— 置顶了就显示「取消置顶」） */
+function updatePinLabel() {
+  const el = document.getElementById('menuPin');
+  if (!el || !api || !api.pinState) return;
+  api.pinState().then((p) => {
+    el.textContent = t(p && p.pinned ? 'menu.unpin' : 'menu.pin');
+  }).catch(() => {});
+}
 // 三面板同语义（v1.0 用户反馈）：右键 = 关闭返回；ESC 同样可退
 if (researchPanel) researchPanel.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -1934,6 +1943,7 @@ pet.addEventListener('contextmenu', (e) => {
   menu.classList.remove('hidden');           // 先显示，才量得到尺寸
 
   const clampMenuToViewport = () => {
+    updatePinLabel();   // 菜单每次现身都同步「固定/取消」真实状态
     const rect = menu.getBoundingClientRect();
     const top = Math.max(0, Math.min(e.clientY, window.innerHeight - rect.height));
     const left = Math.max(0, Math.min(e.clientX, window.innerWidth - rect.width));
@@ -1965,7 +1975,10 @@ menu.addEventListener('click', (e) => {
   if (act === 'research') return openResearchPanel();
   if (act === 'pin') {
     if (!api) return say('预览模式没有窗口可固定');
-    api.togglePin().then((on) => say(on ? '好啦，一直浮在最前面~' : '取消置顶了，会被别的窗口盖住哦'));
+    api.togglePin().then((on) => {
+      updatePinLabel();   // 拨完立刻同步文案
+      say(on ? '好啦，一直浮在最前面~' : '取消置顶了，会被别的窗口盖住哦');
+    });
     return;
   }
   if (act === 'outline') {

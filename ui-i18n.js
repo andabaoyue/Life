@@ -48,6 +48,8 @@ const I18N = {
     'sec.dangerHint': '以下操作不可逆，请确认后再动手',
     'panel.closeHint': '按 ESC 或右键空白处即可关闭',
     'conn.delete': '删除当前连接',
+    'menu.pin': '固定在最前',
+    'menu.unpin': '取消置顶',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
   'en': {
@@ -86,6 +88,8 @@ const I18N = {
     'sec.dangerHint': 'These actions are irreversible. Please confirm before proceeding.',
     'panel.closeHint': 'Press ESC or right-click anywhere to close',
     'conn.delete': 'Delete Connection',
+    'menu.pin': 'Pin on Top',
+    'menu.unpin': 'Unpin',
   }
 };
 

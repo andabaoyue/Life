@@ -178,6 +178,12 @@ ipcGuard.handle('toggle-pin', () => {
   return on;   // 返回新状态，菜单文案才能区分「已置顶/已取消置顶」
 });
 
+// v1.0 状态要准确：菜单文案跟随真实置顶态（不靠本地猜）
+ipcGuard.handle('pin-state', () => ({
+  ok: true,
+  pinned: !!(win && !win.isDestroyed() && win.isAlwaysOnTop())
+}));
+
 function setSafeWindowSize(targetWin, w, h) {
   if (!targetWin || targetWin.isDestroyed()) return;
   if (typeof targetWin.setResizable === 'function') targetWin.setResizable(true);
