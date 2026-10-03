@@ -99,7 +99,7 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('注册了对话/配置/衣柜三组通道，且无 memory-delete / memory-clear 旁路（D-005）',
     ['chat-send', 'chat-report', 'config-get', 'config-set-key', 'config-open',
      'wardrobe-state', 'wardrobe-set', 'wardrobe-preset', 'memory-list',
-     'chat-history', 'chat-viewport', 'toggle-pin']
+     'chat-history', 'chat-viewport', 'chat-window-open', 'chat-window-close', 'toggle-pin']
       .every(c => handlers.has(c))
     && !handlers.has('memory-delete') && !handlers.has('memory-clear'));
   check('没有残留 wardrobe-apply（AI 换装只能走 chat-send 提案）',

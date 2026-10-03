@@ -54,7 +54,9 @@ let creativeSession = null;
 
 // SEC-01: 所有 IPC 统一经 sender/frame/URL 三重校验（src/ipc-guard.js）；
 // child frame / 外部 URL / 其他 webContents 一律拒绝，错误信息只有 UNTRUSTED_RENDERER。
-const ipcGuard = createIpcGuard({ ipcMain, getMainWindow: () => win, appDir: __dirname });
+const ipcGuard = createIpcGuard({ ipcMain, getMainWindow: () => win, appDir: __dirname,
+  // v1.0 方案二：独立对话窗与主窗同为应用自建受信窗（其余一律 UNTRUSTED_RENDERER）
+  getTrustedWebContents: () => [win, chatWin].filter(w => w && !w.isDestroyed()).map(w => w.webContents) });
 
 app.name = 'Life';
 
@@ -242,6 +244,80 @@ ipcGuard.handle('chat-viewport', (e, open) => {
   syncMotionBlock('resize');
   return { ok: true, w: target.w, h: target.h, changed: true };
 });
+
+/* ---------- 独立对话窗（v1.0 方案二：真自由） ----------
+她的窗回归 340×480 纯粹态；对话窗是独立系统窗口：全屏自由拖拽、跨显示器、
+位置与大小记忆、hide() 只隐藏不销毁（重开秒回）。
+出生位智能邻居：默认她右侧 20px，放不下自动翻转到左侧，再钳进工作区。 */
+let chatWin = null;
+let chatWinBounds = null;
+let appQuitting = false;
+const CHAT_WIN_W = 380, CHAT_WIN_H = 520;
+
+function loadChatBounds() {
+  try {
+    const raw = require('fs').readFileSync(require('path').join(app.getPath('userData'), 'chat-window.json'), 'utf8');
+    const b = JSON.parse(raw);
+    if (b && Number.isFinite(b.width) && Number.isFinite(b.height)) return b;
+  } catch (e) { /* 无记忆 → 默认 */ }
+  return null;
+}
+function saveChatBounds() {
+  try {
+    if (chatWin && !chatWin.isDestroyed()) {
+      chatWinBounds = chatWin.getBounds();
+      require('fs').writeFileSync(require('path').join(app.getPath('userData'), 'chat-window.json'), JSON.stringify(chatWinBounds));
+    }
+  } catch (e) { /* 记忆失败不致命 */ }
+}
+function chatBirthPosition() {
+  const cw = (chatWinBounds && chatWinBounds.width) || CHAT_WIN_W;
+  const ch = (chatWinBounds && chatWinBounds.height) || CHAT_WIN_H;
+  const [px, py] = win.getPosition();
+  const [pw, ph] = win.getSize();
+  const area = getWorkArea(px, py);
+  let x = px + pw + 20;
+  if (x + cw > area.x + area.width - 8) x = px - cw - 20;   // 右边放不下 → 翻转到她左侧
+  let y = py + Math.max(0, Math.round((ph - ch) / 2));
+  x = Math.max(area.x + 8, Math.min(x, area.x + area.width - cw - 8));
+  y = Math.max(area.y + 8, Math.min(y, area.y + area.height - ch - 8));
+  return { x: Math.round(x), y: Math.round(y), width: cw, height: ch };
+}
+function createChatWindow() {
+  if (chatWin && !chatWin.isDestroyed()) return chatWin;
+  chatWinBounds = loadChatBounds();
+  const b = chatBirthPosition();
+  chatWin = new BrowserWindow({
+    title: '对话',
+    x: b.x, y: b.y, width: b.width, height: b.height,
+    frame: false, transparent: false, backgroundColor: '#10121b',
+    alwaysOnTop: true, show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false
+    }
+  });
+  chatWin.loadFile('chat.html');
+  ipcGuard.attachNavigationGuard(chatWin.webContents);
+  chatWin.on('move', saveChatBounds);
+  chatWin.on('resize', saveChatBounds);
+  chatWin.on('close', (e) => {
+    saveChatBounds();
+    if (!appQuitting) { e.preventDefault(); chatWin.hide(); }   // 只隐藏不销毁（重开秒回）
+  });
+  return chatWin;
+}
+ipcGuard.handle('chat-window-open', () => {
+  const w = createChatWindow();
+  if (!w.isVisible()) w.show();
+  w.focus();
+  return { ok: true };
+});
+ipcGuard.handle('chat-window-close', () => {
+  if (chatWin && !chatWin.isDestroyed() && chatWin.isVisible()) chatWin.hide();
+  return { ok: true };
+});
+
 
 ipcGuard.on('quit-app', () => {
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
@@ -702,6 +778,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  appQuitting = true;   // 对话窗 close 拦截放行，允许真销毁
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
 });
 

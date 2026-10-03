@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('deskpet', {
   listMemory: () => ipcRenderer.invoke('memory-list'),
   chatHistory: () => ipcRenderer.invoke('chat-history'),
   chatViewport: (open) => ipcRenderer.invoke('chat-viewport', open === true),
+  chatWindowOpen: () => ipcRenderer.invoke('chat-window-open'),
+  chatWindowClose: () => ipcRenderer.invoke('chat-window-close'),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
   resetSelfLedger: (confirm) => ipcRenderer.invoke('self-ledger-reset', { confirm: confirm === true }),
   // Phase 0.5: 内部调节状态查询与事件监听

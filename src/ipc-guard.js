@@ -39,7 +39,7 @@ function isAppLocalUrl(url, appDir) {
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 
-function createIpcGuard({ ipcMain, getMainWindow, appDir }) {
+function createIpcGuard({ ipcMain, getMainWindow, appDir, getTrustedWebContents }) {
   if (!ipcMain || typeof ipcMain.handle !== 'function' || typeof ipcMain.on !== 'function') {
     throw new Error('IPC_GUARD_REQUIRES_IPC_MAIN');
   }
@@ -49,9 +49,13 @@ function createIpcGuard({ ipcMain, getMainWindow, appDir }) {
     const win = typeof getMainWindow === 'function' ? getMainWindow() : null;
     if (!win || (typeof win.isDestroyed === 'function' && win.isDestroyed())) return false;
     const contents = win.webContents;
-    if (!event || !event.sender || event.sender !== contents) return false;
+    if (!event || !event.sender) return false;
+    // v1.0 方案二（拍板）：多窗信任白名单 —— 应用自建的伴随窗口（独立对话窗）同样受信；
+    // 仍拒绝一切非本应用自建 webContents / child frame / 外部 URL（SEC-01 性质不变）。
+    const extra = (typeof getTrustedWebContents === 'function' ? getTrustedWebContents() : null) || [];
+    if (event.sender !== contents && extra.indexOf(event.sender) < 0) return false;
     const frame = event.senderFrame;
-    if (!frame || frame !== contents.mainFrame) return false; // child frame 一律拒绝
+    if (!frame || frame !== event.sender.mainFrame) return false; // child frame 一律拒绝（按发送者自身主框架判定）
     return isAppLocalUrl(frame.url, root);
   }
 
