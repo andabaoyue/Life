@@ -106,7 +106,7 @@ const FALLBACK = [
 ];
 
 /* ---------------- 气泡 ---------------- */
-let bubbleTimer = null, streaming = false;
+let bubbleTimer = null, streaming = false, remoteStreaming = false;
 let lastText = '';        // 最近一次上屏的文本，用于收尾去掉光标
 
 // 模型被要求在末尾附 [state:xx]（换装提案 [wear:id] 排在它前面）。
@@ -935,17 +935,27 @@ function show(t) {
 if (api) {
   api.onDelta((d) => {
     acc += d;
-    if (streaming) show(acc);
-    // v1.0 笔 3b-b：展开态同步流式临时气泡（权威对账时统一替换）
-    if (chatOpen && chatStreamNode) {
-      const el = chatStreamNode.querySelector('.b-text');
-      if (el) el.textContent = stripState(acc, true);
-      if (chatList && (typeof shouldStickToBottom !== 'function' || shouldStickToBottom(chatList.scrollTop, chatList.scrollHeight, chatList.clientHeight, 80))) {
-        chatList.scrollTop = chatList.scrollHeight;
-      }
+    if (streaming || remoteStreaming) show(acc);   // 双轨：对话窗说话时她身边同步吐字
+  });
+}
+
+/* ---------- 双窗同步（v1.0 方案二）：对话窗的对话生命周期 → 她身边的反应 ---------- */
+if (api && api.onChatBusy) {
+  api.onChatBusy((p) => {
+    if (p && p.busy) {
+      remoteStreaming = true;
+      setState('thinking');
+    } else {
+      remoteStreaming = false;
+      if (p && p.state) setState(p.state);
+      clearTimeout(bubbleTimer);
+      bubbleTimer = setTimeout(hideBubble, 6000);
     }
   });
 }
+if (api && api.onChatHidden) api.onChatHidden(() => setTalking(false));
+
+
 
 async function submit() {
   const text = input.value.trim();
@@ -2236,7 +2246,7 @@ menu.addEventListener('click', (e) => {
   menu.classList.add('hidden');
   if (!act) return;
   if (act === 'quit') return api && api.quit();
-  if (act === 'talk') return setTalking(!document.body.classList.contains('talking'));
+  if (act === 'talk') { setTalking(true); if (api && api.chatWindowOpen) api.chatWindowOpen(); return; }   // v1.0 方案二：对话入独立窗
   if (act === 'log') return toggleLog();
   if (act === 'panel') return openPanel();
   if (act === 'research') return openResearchPanel();

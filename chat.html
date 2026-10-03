@@ -2,6 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <!-- SEC-02 CSP：与 index.html 同标准（style 行内仅因现存行内 style 属性） -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none';">
   <title>对话</title>
   <link rel="stylesheet" href="style.css">
   <style>

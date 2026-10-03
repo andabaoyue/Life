@@ -8,6 +8,33 @@
  * 4. 文案一律 t()（i18n 双表）；时间一律 formatDisplayTime（缺 t 不伪造）。
  * 复用纯层三件套（ui-i18n / ui-chat-store / ui-chat-render），遮蔽与决策零复制。
  */
+
+/* ---------- 渲染环境装配（排爆补章） ----------
+   preload 注入的是 window.deskpet；遮蔽词表必须显式注入（独立页面没人替我们做）。 */
+const api = window.deskpet || null;
+
+function syncMarkContext(ids) {
+  const known = new Set(ids || []);
+  setMarkContext({
+    STATES: ['idle', 'happy', 'curious', 'thinking', 'sleepy', 'embarrassed', 'annoyed', 'sad'],
+    knownWear: known,
+    wearCandidates: [...known].map(id => 'wear:' + String(id).toLowerCase())
+  });
+}
+syncMarkContext([]);
+if (api && api.wardrobeState) {
+  const loadWear = () => api.wardrobeState().then((st) => {
+    const cat = st && st.catalog;
+    if (!cat) return;
+    const ids = Object.keys(cat.items || {}).flatMap(s => (cat.items[s] || []).map(i => i.id))
+      .concat(Object.keys(cat.presets || {}))
+      .concat((cat.slots || []).filter(s => !s.required).map(s => 'off_' + String(s.id).toLowerCase()));
+    syncMarkContext(ids);
+  }).catch(() => {});
+  loadWear();
+  if (api.onWardrobe) api.onWardrobe(loadWear);
+}
+
 const chatList = document.getElementById('chatList');
 const chatTitle = document.getElementById('chatTitle');
 const chatClose = document.getElementById('chatClose');
@@ -111,8 +138,10 @@ async function submit() {
   streamText = '';
   chatList.scrollTop = chatList.scrollHeight;
   sendBtn.disabled = true;
+  if (api.chatBusy) api.chatBusy(true);   // 双窗同步：她身边进入思考态
+  let res = null;
   try {
-    const res = await api.send(text);
+    res = await api.send(text);
     if (!res || res.declined || !res.ok) {
       chatError = t('chat.sendFailed') + (res && res.error ? '：' + res.error : '');
     }
@@ -123,6 +152,7 @@ async function submit() {
     streamText = '';
     busy = false;
     sendBtn.disabled = false;
+    if (api.chatBusy) api.chatBusy(false, res && res.ok ? res.state : null);   // 收尾：她切表情、气泡 6 秒收
     await ChatStore.load();   // 权威对账（真实 messageId / t 钉死 DOM）
   }
 }

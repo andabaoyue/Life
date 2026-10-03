@@ -102,7 +102,8 @@ function createWindow() {
 function syncMotionBlock(reason = 'user-priority') {
   if (!motion) return;
   const blocked = dragging || motionUi.bubble || motionUi.talking
-    || motionUi.chatBusy || motionUi.hidden || !!(tracker && tracker.sleepMode);
+    || motionUi.chatBusy || motionUi.hidden || !!(tracker && tracker.sleepMode)
+    || (chatWin && !chatWin.isDestroyed() && chatWin.isVisible());   // 对话窗在场 = 正在相处，闲逛退下
   motion.setBlocked(blocked, reason);
 }
 
@@ -303,7 +304,11 @@ function createChatWindow() {
   chatWin.on('resize', saveChatBounds);
   chatWin.on('close', (e) => {
     saveChatBounds();
-    if (!appQuitting) { e.preventDefault(); chatWin.hide(); }   // 只隐藏不销毁（重开秒回）
+    if (!appQuitting) {
+      e.preventDefault();
+      chatWin.hide();   // 只隐藏不销毁（重开秒回）
+      broadcastToWindows('chat-window-hidden', {});
+    }
   });
   return chatWin;
 }
@@ -318,12 +323,18 @@ function broadcastToWindows(channel, payload) {
     if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
   }
 }
+ipcGuard.handle('chat-busy', (e, p = {}) => {
+  // 双窗同步（方案二）：对话窗的对话生命周期广播给主窗 —— 她身边同步思考/表情/收气泡
+  broadcastToWindows('chat-busy', { busy: !!p.busy, state: p.state || null });
+  return { ok: true };
+});
 ipcGuard.handle('chat-window-home', () => {
   if (chatWin && !chatWin.isDestroyed()) chatWin.setBounds(chatBirthPosition());
   return { ok: true };
 });
 ipcGuard.handle('chat-window-close', () => {
   if (chatWin && !chatWin.isDestroyed() && chatWin.isVisible()) chatWin.hide();
+  broadcastToWindows('chat-window-hidden', {});   // 主窗收口 talking 态
   return { ok: true };
 });
 
