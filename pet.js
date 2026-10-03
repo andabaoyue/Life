@@ -835,7 +835,9 @@ function endDrag() {
   if (api && api.activity && moved > 6) api.activity('drag');
 }
 
-pet.addEventListener('mousedown', (e) => {
+/* 窗口拖拽起手（v1.0）：她身上与设置/记录面板空白处共用一条拖拽通道 ——
+   拖哪都是移动「整体」（整个窗），不是局部挪面板。 */
+function startWindowDrag(e) {
   if (e.button !== 0) return;
   noteUserAct();   // 拖拽起手即算互动；click 里 moved>6 会提前 return，靠不到它
   dragging = true; moved = 0;
@@ -855,7 +857,21 @@ pet.addEventListener('mousedown', (e) => {
     if (Date.now() - lastMoveAt > DRAG_IDLE_MS) endDrag();
   }, 250);
   e.preventDefault();
-});
+}
+pet.addEventListener('mousedown', startWindowDrag);
+
+/* v1.0 用户反馈：设置 / 记录面板打开时也要能移动「整体」——
+   面板空白处按住即拖整个窗；交互控件与滚动区不抢手势（点按钮 ≠ 拖窗）。 */
+const PANEL_DRAG_SKIP = 'button, input, select, textarea, option, .pnav-item, .memlist, .wd-slots, .wd-presets, .stats, #wdSuggest, #logClose';
+function bindPanelDrag(el) {
+  if (!el) return;
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.closest && e.target.closest(PANEL_DRAG_SKIP)) return;
+    startWindowDrag(e);
+  });
+}
+bindPanelDrag(document.getElementById('panel'));
+bindPanelDrag(document.getElementById('log'));
 
 window.addEventListener('mousemove', (e) => {
   if (!dragging) return;
