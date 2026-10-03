@@ -53,7 +53,8 @@ if (typeof DomAnimationRenderer !== 'undefined' && typeof AnimationController !=
         if (typeof streaming !== 'undefined' && streaming) return false;
         if (typeof busy !== 'undefined' && busy) return false;
         if (bubble && !bubble.classList.contains('hidden')) return false;
-        if (input && (document.activeElement === input || input.value.trim())) return false;
+        // v1.0 演进：输入条退役后，「用户正在打字」由「对话窗正在对话」接棒（chatBusy 闸）
+        if (typeof remoteStreaming !== 'undefined' && remoteStreaming) return false;
         if (typeof dragging !== 'undefined' && dragging) return false;
         return true;
       }

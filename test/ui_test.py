@@ -202,7 +202,7 @@ with sync_playwright() as p:
       return null;
     }
     window.deskpet = {
-      onDelta(){}, onWardrobe(cb){ window.__wdCb = cb; },
+      onDelta(){}, onWardrobe(cb){ window.__wdCb = cb; }, onChatBusy(cb){ window.__chatBusyCb = cb; },
       async getConfig(){ return {hasKey:true, keyEncrypted:true}; },
       // model 来自配置文件，是唯一可能带用户可控内容的统计字段：
       // 故意塞一段注入串，验证它只作为文本出现
@@ -429,7 +429,7 @@ with sync_playwright() as p:
         document.getElementById('panel').classList.add('hidden');
         document.getElementById('log').classList.add('hidden');
         document.body.classList.remove('showlog');
-        const inp=document.getElementById('input'); inp.value=''; inp.blur();
+        const inp=document.getElementById('input'); if(inp){inp.value=''; inp.blur();}
         streaming=false; hideBubble();})()""")
     pg2.evaluate("tryProactive()")
     pg2.wait_for_timeout(400)
@@ -466,17 +466,16 @@ with sync_playwright() as p:
     # 与输入栏可见无关，用菜单打开输入栏只会把这条测成一串前置动作。
     pg2.evaluate("window.__decline = false; window.__calls.length = 0")
     pg2.evaluate("""(()=>{streaming=false; hideBubble();
-        const inp=document.getElementById('input'); inp.value='正在打的东西'; inp.focus();})()""")
+        window.__chatBusyCb({busy:true});})()""")   # v1.0：「用户正在打字」演进为「对话窗正在对话」
     pg2.evaluate("tryProactive()")
     pg2.wait_for_timeout(300)
-    check("用户正在打字时不开口",
+    check("对话窗正在对话时不开口（chatBusy 闸）",
           "谁一直戳我" not in (pg2.text_content("#bubble") or ""),
           repr(pg2.text_content("#bubble")))
     check("而且一次请求都不发（拒绝发生在花钱之前）",
           [c for c in pg2.evaluate("window.__calls") if c[0] == "send"] == [],
           repr(pg2.evaluate("window.__calls")))
-    pg2.evaluate("""document.getElementById('input').value = '';
-        document.getElementById('input').blur();""")   # 留着焦点时闸门照样拦
+    pg2.evaluate("window.__chatBusyCb({busy:false})")   # 对话结束，闸门放开（旧「留焦点也拦」随输入条退役）
     # 上一条成功开口后气泡还开着，会撞另一条闸门（"上一条还没说完"）；
     # 这里要测的是"不打扰"这一条，先把无关的变量归零。
     pg2.evaluate("streaming=false; hideBubble()")
@@ -485,7 +484,7 @@ with sync_playwright() as p:
     pg2.evaluate("window.__calls.length = 0")
     pg2.evaluate("tryProactive()")
     pg2.wait_for_timeout(300)
-    check("测试前提：输入框空了、也没焦点之后同一个提案就能发出去（上一条不是空转）",
+    check("测试前提：chatBusy 放开后同一个提案就能发出去（上一条不是空转）",
           len([c for c in pg2.evaluate("window.__calls") if c[0] == "send"]) == 1,
           repr(pg2.evaluate("window.__calls")))
     pg2.evaluate("window.__offer = null")
