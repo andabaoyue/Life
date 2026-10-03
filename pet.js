@@ -861,6 +861,20 @@ function startWindowDrag(e) {
 }
 pet.addEventListener('mousedown', startWindowDrag);
 
+/* 缩放手势（v1.0 用户反馈）：在她身上滚动滚轮 = 放大 / 缩小；
+   只挂在她身上，面板滚动区各归各。鼠标中键 = 回默认体型（顺手归位）。 */
+pet.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomPet(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+}, { passive: false });
+pet.addEventListener('mousedown', (e) => {
+  if (e.button === 1) {
+    e.preventDefault();
+    petZoom = 1;
+    applyPetSize();
+  }
+});
+
 /* v1.0 用户反馈：设置 / 记录面板打开时也要能移动「整体」——
    面板空白处按住即拖整个窗；交互控件与滚动区不抢手势（点按钮 ≠ 拖窗）。 */
 const PANEL_DRAG_SKIP = 'button, input, select, textarea, option, .pnav-item, .memlist, .wd-slots, .wd-presets, .stats, #wdSuggest, #logClose'
