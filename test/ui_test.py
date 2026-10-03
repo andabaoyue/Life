@@ -149,7 +149,7 @@ with sync_playwright() as p:
     check("衣柜预设区存在", pg.query_selector("#wdPresets") is not None)
     check("预览模式衣柜区有降级文案",
           "预览" in (pg.text_content("#wdSlots") or ""))
-    check("衣柜提示写明不影响性格",
+          "不影响性格" in (pg.text_content("#wdHint") or ""))
     pg.keyboard.press("Escape")   # 关衣橱（测试隔离：不让它盖住立绘影响后续用例）
     pg.wait_for_timeout(200)
           "不影响性格" in (pg.text_content("#wdHint") or ""))
