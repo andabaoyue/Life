@@ -131,7 +131,9 @@ function setupMotion() {
       if (win && !win.isDestroyed()) win.webContents.send('motion-state', s);
     },
     onMove: (p) => {
-      if (win && !win.isDestroyed() && !dragging) win.setPosition(Math.round(p.x), Math.round(p.y));
+      const applied = !!(win && !win.isDestroyed() && !dragging);
+      traceMark('motion-onMove', { p, applied });
+      if (applied) win.setPosition(Math.round(p.x), Math.round(p.y));
     }
   });
   motion.configure({ x: area.x, y: area.y, width: area.width, height: area.height },
@@ -149,15 +151,42 @@ function reconfigureMotion() {
     { width, height }, { x, y });
 }
 
+
+/* ---------- 拖拽取证（v1.0 临时诊断设施） ----------
+   现象「开对话拖她会漂、松手不复位」在静态排查中全链路 1:1 无可指摘，
+   此处装行车记录仪：每次拖拽把 所有 setPosition 的 前后坐标 + 来源标签 落盘，
+   一次拖拽即可让数据招供。诊断收尾后可整体移除。 */
+const dragTrace = { marks: [], moves: [], capped: false };
+function traceMark(ev, extra) {
+  if (dragTrace.marks.length > 400) { dragTrace.capped = true; return; }
+  dragTrace.marks.push({ t: Date.now(), ev, ...(extra || {}),
+    pos: (win && !win.isDestroyed()) ? win.getPosition() : null,
+    size: (win && !win.isDestroyed()) ? win.getSize() : null });
+}
+function traceDump() {
+  try {
+    require('fs').writeFileSync(require('path').join(app.getPath('userData'), 'drag-trace.json'),
+      JSON.stringify(dragTrace, null, 2));
+    dragTrace.marks = []; dragTrace.moves = []; dragTrace.capped = false;
+  } catch (e) { /* 取证失败不致命 */ }
+}
+ipcGuard.on('drag-trace-mark', (e, info = {}) => traceMark('renderer', info));
+
 /* ---------- 拖动 ---------- */
 let dragging = false;
-ipcGuard.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); });
-ipcGuard.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); });
+ipcGuard.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); traceMark('drag-start'); });
+ipcGuard.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); traceMark('drag-end'); traceDump(); });
 ipcGuard.on('drag-move', (e, { dx, dy }) => {
   if (!dragging || !win) return;
   const [x, y] = win.getPosition();
-  win.setPosition(Math.round(x + dx), Math.round(y + dy));
+  const tx = Math.round(x + dx), ty = Math.round(y + dy);
+  win.setPosition(tx, ty);
+  const after = win.getPosition();
+  if (dragTrace.moves.length < 2000) {
+    dragTrace.moves.push({ dx, dy, before: [x, y], target: [tx, ty], after });
+  }
   reconfigureMotion();
+  traceMark('reconfigure-after-move');
 });
 
 ipcGuard.on('motion-ui-state', (e, state = {}) => {

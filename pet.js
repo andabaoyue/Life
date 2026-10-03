@@ -1104,6 +1104,7 @@ function endDrag() {
   // 清掉一切内联 left/bottom/transform 污染，回到 CSS 的 50% + translateX(-50%) 唯一出处。
   pet.style.left = pet.style.right = pet.style.top = pet.style.bottom = '';
   pet.style.transform = '';
+  api && api.dragTraceMark && api.dragTraceMark({ ev: 'renderer-drag-end', petWidth: pet.style.width, innerW: window.innerWidth, innerH: window.innerHeight });
   syncMotionPriority();
   api && api.dragEnd();
   // 只报真的挪过的拖拽：失焦/看门狗兜底也会走到这里，没位移就不算一次互动，
@@ -1121,6 +1122,7 @@ pet.addEventListener('mousedown', (e) => {
   document.body.classList.add('pet-dragging');
   syncMotionPriority();
   api && api.dragStart();
+  api && api.dragTraceMark && api.dragTraceMark({ ev: 'renderer-drag-start', petLeft: pet.style.left, petBottom: pet.style.bottom, petTransform: pet.style.transform, petWidth: pet.style.width, innerW: window.innerWidth, innerH: window.innerHeight });
   clearInterval(dragWatch);
   // 看门狗：拖拽中一旦 DRAG_IDLE_MS 没有任何 mousemove，就当作手已经在窗外松开了。
   // 这个值是个折中，两头都别踩：
