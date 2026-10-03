@@ -775,6 +775,7 @@ async function runChat(text, opts) {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (log && !log.classList.contains('hidden')) { toggleLog(false); return; }
+    if (researchPanel && !researchPanel.classList.contains('hidden')) { closeResearchPanel(); return; }
     if (panel && !panel.classList.contains('hidden')) { closePanel(); return; }
     if (menu && !menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
     if (document.body.classList.contains('talking')) { setTalking(false); return; }
@@ -1838,6 +1839,11 @@ function renderRoundsDemo(segIdx) {
 
 // 绑定 Research 面板内事件监听器
 document.getElementById('rCloseBtn')?.addEventListener('click', closeResearchPanel);
+// 三面板同语义（v1.0 用户反馈）：右键 = 关闭返回；ESC 同样可退
+if (researchPanel) researchPanel.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  closeResearchPanel();
+});
 document.getElementById('rRefreshBtn')?.addEventListener('click', loadResearchData);
 
 document.querySelectorAll('.r-tab').forEach(btn => {
