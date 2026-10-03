@@ -24,6 +24,56 @@ const PRESETS = {
     id: 'gpt', nameKey: 'preset.gpt', providerId: 'custom', protocol: 'openai-compatible',
     baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini'
   },
+  // 预设补全（v1.0 用户拍板：全一点）——端点按各家官方 OpenAI 兼容文档；
+  // 模型 ID 演进快、不确定者留空（用户在「高级」手填），绝不瞎编。
+  'claude': {
+    id: 'claude', nameKey: 'preset.claude', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://api.anthropic.com/v1', model: ''
+  },
+  'gemini': {
+    id: 'gemini', nameKey: 'preset.gemini', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-2.0-flash'
+  },
+  'glm': {
+    id: 'glm', nameKey: 'preset.glm', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash'
+  },
+  'kimi': {
+    id: 'kimi', nameKey: 'preset.kimi', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k'
+  },
+  'qwen': {
+    id: 'qwen', nameKey: 'preset.qwen', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo'
+  },
+  'doubao': {
+    id: 'doubao', nameKey: 'preset.doubao', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://ark.cn-beijing.volces.com/api/v3', model: ''
+  },
+  'siliconflow': {
+    id: 'siliconflow', nameKey: 'preset.siliconflow', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://api.siliconflow.cn/v1', model: ''
+  },
+  'groq': {
+    id: 'groq', nameKey: 'preset.groq', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile'
+  },
+  'mistral': {
+    id: 'mistral', nameKey: 'preset.mistral', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://api.mistral.ai/v1', model: 'mistral-small-latest'
+  },
+  'openrouter': {
+    id: 'openrouter', nameKey: 'preset.openrouter', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://openrouter.ai/api/v1', model: ''
+  },
+  'ernie': {
+    id: 'ernie', nameKey: 'preset.ernie', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://qianfan.baidubce.com/v2', model: ''
+  },
+  'spark': {
+    id: 'spark', nameKey: 'preset.spark', providerId: 'custom', protocol: 'openai-compatible',
+    baseURL: 'https://spark-api-open.xf-yun.com/v1', model: ''
+  },
   'local': {
     id: 'local', nameKey: 'preset.local', providerId: 'local', protocol: 'openai-compatible',
     baseURL: 'http://localhost:11434/v1', model: 'qwen2.5'

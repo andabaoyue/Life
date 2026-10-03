@@ -828,6 +828,8 @@ body.showlog #bubble { display: none !important; }
 }
 .fg-row { display: flex; gap: 10px; }
 .fg-cell { flex: 1; min-width: 0; }
+/* 交叠修复（用户反馈）：select 默认不收缩，栅格内强制 100% 宽 + 盒模型 */
+.fg-cell select, .fg-cell input { width: 100%; min-width: 0; box-sizing: border-box; }
 .fg-cell label { display: block; margin-bottom: 4px; }
 .fg-btn-cell { flex: 0 0 92px; }
 .danger-zone .p-sub { color: #e08a84; }
