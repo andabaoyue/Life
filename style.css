@@ -346,7 +346,8 @@ body.talking #inputBar { display: flex; }
 .r-msg-role.u { color: #8fd0a8; }
 .r-msg-role.a { color: #9fc0ff; }
 .r-msg-empty { color: #7f8c8d; border-left-color: rgba(255,255,255,.06); }
-.r-tab { padding: 4px 8px; font-size: 10.5px; }
+.r-tab { padding: 4px 7px; font-size: 10.5px; white-space: nowrap; }   /* 六分区单行横排 */
+#researchTabs { flex-wrap: nowrap; overflow-x: hidden; gap: 3px; }
 /* v1.0 研究面板排版总修（用户反馈）：下拉白底白字隐身、各小区 140px 封顶、10-11px 密排 —— 一次治好 */
 #researchPanel select option, #panel select option { background: #f4f6fb; color: #141a26; }   /* 原生弹层实为白底——顺它配深字保可读 */
 :root { color-scheme: dark; }   /* 原生弹层（下拉/滚动条）整体走深色主题——option 背景色在部分 Electron 版本被无视，这是根治 */
@@ -731,7 +732,8 @@ body.showlog #bubble { display: none !important; }
   padding: 6px 8px;
   line-height: 1.5;
 }
-.r-seg-tabs { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; overflow-x: hidden; }   /* 粗滚动条退役：换行收纳 */
+.r-seg-tabs { display: flex; gap: 4px; margin: 6px 0; flex-wrap: nowrap; overflow-x: hidden; }
+.r-seg-btn { padding: 4px 6px; font-size: 10.5px; white-space: nowrap; }   /* 五分段单行横排 */
 .r-seg-btn {
   background: rgba(255,255,255,.06);
   border: 1px solid rgba(255,255,255,.1);
