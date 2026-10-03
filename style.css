@@ -25,6 +25,9 @@ body.preview { background: linear-gradient(160deg,#2b2f4a,#4a3b5c); }
   transition: opacity .2s;
 }
 #pet.dragging { cursor: grabbing; }
+/* 拖动期冻结躯体微动变换（防自然动力学在拖拽中甩动立绘）+ 卸毛玻璃合成（软件渲染减负，防拖动漂移感） */
+#pet.dragging #figure { transform: none !important; }
+body.pet-dragging #chatStream { backdrop-filter: none; }
 #pet.thinking #figure { animation-duration: 1.1s; }
 
 #figure {

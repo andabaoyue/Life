@@ -1099,6 +1099,11 @@ function endDrag() {
   clearInterval(dragWatch);
   dragWatch = null;
   pet.classList.remove('dragging');
+  document.body.classList.remove('pet-dragging');
+  // 双保险（实机反馈：拖后不复位）：收尾强制立绘几何归真 ——
+  // 清掉一切内联 left/bottom/transform 污染，回到 CSS 的 50% + translateX(-50%) 唯一出处。
+  pet.style.left = pet.style.right = pet.style.top = pet.style.bottom = '';
+  pet.style.transform = '';
   syncMotionPriority();
   api && api.dragEnd();
   // 只报真的挪过的拖拽：失焦/看门狗兜底也会走到这里，没位移就不算一次互动，
@@ -1113,6 +1118,7 @@ pet.addEventListener('mousedown', (e) => {
   lastX = e.screenX; lastY = e.screenY;
   lastMoveAt = Date.now();
   pet.classList.add('dragging');
+  document.body.classList.add('pet-dragging');
   syncMotionPriority();
   api && api.dragStart();
   clearInterval(dragWatch);
