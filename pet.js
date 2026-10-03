@@ -862,7 +862,8 @@ pet.addEventListener('mousedown', startWindowDrag);
 
 /* v1.0 用户反馈：设置 / 记录面板打开时也要能移动「整体」——
    面板空白处按住即拖整个窗；交互控件与滚动区不抢手势（点按钮 ≠ 拖窗）。 */
-const PANEL_DRAG_SKIP = 'button, input, select, textarea, option, .pnav-item, .memlist, .wd-slots, .wd-presets, .stats, #wdSuggest, #logClose';
+const PANEL_DRAG_SKIP = 'button, input, select, textarea, option, .pnav-item, .memlist, .wd-slots, .wd-presets, .stats, #wdSuggest, #logClose'
+  + ', #researchBody, .r-trait-card, .r-table-container, .r-rounds-list, .r-seg-tabs, .r-subtabs, .r-toolbar';   // 实验面板的可点/滚动区同样不抢手势
 function bindPanelDrag(el) {
   if (!el) return;
   el.addEventListener('mousedown', (e) => {
@@ -872,6 +873,7 @@ function bindPanelDrag(el) {
 }
 bindPanelDrag(document.getElementById('panel'));
 bindPanelDrag(document.getElementById('log'));
+bindPanelDrag(document.getElementById('researchPanel'));   // 实验观测面板：空白处拖动同样移动整体
 
 window.addEventListener('mousemove', (e) => {
   if (!dragging) return;
