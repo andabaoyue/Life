@@ -452,6 +452,26 @@ const slotBox = document.getElementById('wdSlots');
 
   setKnownWear(wearIdsFrom(cat));
 
+  // v1.0 当前穿着一览：一眼看清她现在穿了什么
+  const nowBox = document.getElementById('wdCurrent');
+  if (nowBox) {
+    nowBox.textContent = '';
+    const head = document.createElement('span');
+    head.className = 'wd-now-label';
+    head.textContent = t('wd.now');
+    nowBox.appendChild(head);
+    const nameOf = {};
+    for (const arr of Object.values(cat.items)) for (const i of arr) nameOf[i.id] = i.name;
+    for (const s of cat.slots) {
+      const id = cat.equip[s.id];
+      if (!id) continue;
+      const chip = document.createElement('span');
+      chip.className = 'wd-now-chip';
+      chip.textContent = (nameOf[id] || id);
+      nowBox.appendChild(chip);
+    }
+  }
+
   for (const [pid, pname] of Object.entries(cat.presets)) {
     const b = document.createElement('button');
     b.textContent = pname;
@@ -478,9 +498,18 @@ const slotBox = document.getElementById('wdSlots');
     const cur = cat.equip[slot.id];
     for (const it of items) {
       const b = document.createElement('button');
-      b.textContent = it.name;
       b.className = 'wd-item' + (cur === it.id ? ' on' : '');
-      b.title = it.id;
+      b.title = it.name + '（' + it.id + '）';
+      // v1.0 缩略图：切片即预览（图就是那件衣服）；无 file 的旧数据/mocked 自动降级纯文字
+      if (it.file) {
+        const im = document.createElement('img');
+        im.src = 'assets/character/' + it.file;
+        im.alt = '';
+        b.appendChild(im);
+      }
+      const nm = document.createElement('span');
+      nm.textContent = it.name;
+      b.appendChild(nm);
       b.addEventListener('click', async () => {
         // 实机反馈：点已穿的单品 = 脱下（身份槽除外）；互斥槽自动解绑后落子，不再报错卡死
         if (!slot.required && cur === it.id) {

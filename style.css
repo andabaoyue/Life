@@ -452,6 +452,18 @@ body.showlog #bubble { display: none !important; }
   border-color: rgba(160,210,255,.55);
   color: #dcecff;
 }
+/* v1.0 当前穿着一览 */
+.wd-current { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px;
+  padding: 8px 10px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09); border-radius: 10px; }
+.wd-now-label { color: #97a0b0; font-size: 11px; margin-right: 2px; }
+.wd-now-chip { font-size: 11px; color: #dfe5ee; background: rgba(122,140,255,.14);
+  border: 1px solid rgba(122,140,255,.28); border-radius: 999px; padding: 2px 9px; }
+/* v1.0 单品缩略图：切片即预览 */
+.wd-item { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.wd-item img { width: 40px; height: 52px; object-fit: contain; border-radius: 5px;
+  background: rgba(255,255,255,.07); }
+.wd-item span { font-size: 10.5px; line-height: 1.2; max-width: 62px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
 .wd-slots { display: flex; flex-direction: column; gap: 6px; }
 .wd-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .wd-slot { flex: none; width: 44px; color: #7d8aa8; font-size: 11px; }

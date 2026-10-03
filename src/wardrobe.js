@@ -22,6 +22,9 @@ const SCHEMA_VERSION = 1;
  * 3. 角色本体不可换装，外饰可以更换。
  *    脸型、身体比例、银白发、发梢淡冰蓝、蓝灰眼、泪痣属于 base/identity 层；
  *    发饰是可拆卸外饰，不应被误当成不可改变的身体。
+ *    （v1.0 演进，用户拍板）发 = 可换外饰，但必须有发（不许光头）；默认永远是
+ *    银白微卷——她的样子不漂移，但可以为特别的日子换个颜色。发色变体先行，
+ *    新剪裁仍走 §6.7 资产管线。
  *
  * 加新衣服 = 往 CATALOG 加一条数据（必要时加个预设），
  * 不需要动任何渲染或交互逻辑。
@@ -66,9 +69,19 @@ const SLOT_IDS = SLOTS.map(s => s.id);
    但里面可以换款式（以后出第二款发型就直接加进来，不用标任何东西）。
    刻意不再给商品加 locked —— 同一个事实有两个出处，早晚对不上。 */
 const CATALOG = {
-  /* 发型：身份层，第一阶段只有一款，槽位留着以后出多发型 */
+  /* 发型：身份层，第一阶段只有一款，槽位留着以后出多发型
+     （v1.0 拍板：发色变体先行 —— 同剪裁不同色，scripts/gen-hair-tints.py 派生；
+       新剪裁仍走 §6.7 资产管线） */
   silver_wavy_01: { slot: 'hair', name: '银白微卷长发', file: 'hair/silver_wavy_01.png',
                     tags: ['默认', '银白', '发梢淡冰蓝'] },
+  ink_long_01: { slot: 'hair', name: '墨黑微卷长发', file: 'hair/ink_long_01.png',
+                 tags: ['发色', '墨黑', '变体'] },
+  gold_long_01: { slot: 'hair', name: '鎏金微卷长发', file: 'hair/gold_long_01.png',
+                  tags: ['发色', '鎏金', '变体'] },
+  pink_long_01: { slot: 'hair', name: '樱粉微卷长发', file: 'hair/pink_long_01.png',
+                  tags: ['发色', '樱粉', '变体'] },
+  blue_long_01: { slot: 'hair', name: '黛蓝微卷长发', file: 'hair/blue_long_01.png',
+                  tags: ['发色', '黛蓝', '变体'] },
 
   black_bow_01: { slot: 'hairAccessory', name: '右侧黑色蝴蝶结', file: 'hair-accessories/black_bow_01.png',
                   tags: ['默认', '黑蝴蝶结', '右侧', '可拆卸发饰'] },
@@ -352,7 +365,7 @@ class Wardrobe {
     const items = {};
     for (const s of SLOT_IDS) items[s] = [];
     for (const [id, it] of Object.entries(CATALOG))
-      items[it.slot].push({ id, name: it.name, tags: it.tags || [] });
+      items[it.slot].push({ id, name: it.name, tags: it.tags || [], file: it.file });   // v1.0：带 file 供缩略图
     const presets = {};
     for (const [id, p] of Object.entries(PRESETS)) presets[id] = p.name;
     return { slots: SLOTS, items, presets, equip: this.data.equip, preset: this.data.preset };
