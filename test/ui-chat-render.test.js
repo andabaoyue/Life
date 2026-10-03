@@ -71,8 +71,9 @@ check('12 dividerNeeded 窗口分界时机（bridge→非 bridge 处且仅此）
   && dividerNeeded(null, { bridge: false }) === false);
 
 /* ---------- 笔 4: 伴随卡片几何与记忆契约 ---------- */
-check('13 clampCardBox 垂直下限钳制（dyFromBottom 100 → 336，交互不变式）',
-  clampCardBox({ dx: 6, dyFromBottom: 100 }, 380).dyFromBottom === 336);
+check('13 clampCardBox 垂直自由（100 原样通过）且仅钉住窗内（负值钳到 0）',
+  clampCardBox({ dx: 6, dyFromBottom: 100 }, 380).dyFromBottom === 100
+  && clampCardBox({ dx: 6, dyFromBottom: -50 }, 380).dyFromBottom === 0);
 check('14 clampCardBox 水平两端钳制（越左 / 越右 / 卡宽外）',
   clampCardBox({ dx: -50, dyFromBottom: 400 }, 380, 340).dx === 6
   && clampCardBox({ dx: 999, dyFromBottom: 400 }, 380, 340).dx === 34);

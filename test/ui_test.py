@@ -1131,8 +1131,8 @@ with sync_playwright() as p:
     pg.wait_for_timeout(200)
     bb = card_box()
     winH = pg.evaluate("window.innerHeight")
-    check("B2 垂直越界钳位：拖向立绘仍被天空域下限（336）拦住",
-          bb["bottom"] <= winH - 336 + 0.5, repr((bb, winH)))
+    check("B2 垂直自由但不脱窗：拖到底部能越过旧天空线且仍被窗底钳住",
+          bb["bottom"] > winH - 336 and bb["bottom"] <= winH + 0.5, repr((bb, winH)))
     pg.mouse.move(head["x"] + 60, 2000)
     pg.mouse.down()
     pg.mouse.move(2000, 2000, steps=8)

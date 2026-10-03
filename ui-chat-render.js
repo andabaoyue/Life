@@ -142,12 +142,13 @@ function dividerNeeded(prev, cur) {
 }
 
 
-/* ---------- 伴随卡片几何（v1.0 笔 4） ----------
+/* ---------- 伴随卡片几何（v1.0 笔 4；自由度演进见下） ----------
    锚底坐标系：dx（左边距）+ dyFromBottom（底边离窗底高度）。
-   垂直下限 336 = 交互不变式的机械化：她头顶 328 + 8px 呼吸缝，
-   天空才是卡片的活动域，拖拽再自由也飞不进她的身体。 */
+   2026-10 演进（用户拍板）：交互不变式从「永远不许遮她」降级为
+   「默认不遮她、用户可自由移动」——默认出生位仍是头顶天空域（336），
+   但拖拽可去窗内任何角落（含她身边）；窗内全自由，出窗才钳。 */
 const CARD_DEFAULT = { dx: 6, dyFromBottom: 336 };
-const CARD_MIN_BOTTOM = 336;
+const CARD_MIN_BOTTOM = 0;   // 历史值 336（天空域）；现仅钉住窗内不脱底
 
 function clampCardBox(pos, viewW, cardW = 300) {
   if (!pos || !Number.isFinite(pos.dx) || !Number.isFinite(pos.dyFromBottom)) {
@@ -156,7 +157,7 @@ function clampCardBox(pos, viewW, cardW = 300) {
   const w = Number.isFinite(viewW) && viewW > 0 ? viewW : 380;
   const cw = Number.isFinite(cardW) && cardW > 0 ? cardW : 300;
   const dx = Math.max(6, Math.min(w - 6 - cw, Math.round(pos.dx)));
-  const dyFromBottom = Math.max(CARD_MIN_BOTTOM, Math.round(pos.dyFromBottom));
+  const dyFromBottom = Math.max(CARD_MIN_BOTTOM, Math.round(pos.dyFromBottom));   // 垂直：窗内自由（≥0 不脱底）
   return { dx, dyFromBottom };
 }
 

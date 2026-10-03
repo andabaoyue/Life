@@ -741,9 +741,9 @@ if (chatStream) {
     w = Math.max(280, w);
     left = Math.max(6, Math.min(left, window.innerWidth - 6 - w));
     w = Math.min(w, window.innerWidth - 12);
-    // 高度钳位：天空域不变式（top ≥ 8，bottom ≤ innerHeight - 336）
+    // 高度钳位：窗内自由（top ≥ 8，bottom ≤ 窗底 - 8）；2026-10 演进：不再锁天空域
     top = Math.max(8, top);
-    const maxBottom = window.innerHeight - 336;
+    const maxBottom = window.innerHeight - 8;
     h = Math.max(120, h);
     if (top + h > maxBottom) h = Math.max(120, maxBottom - top);
     chatStream.style.left = Math.round(left) + 'px';
