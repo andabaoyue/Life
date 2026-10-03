@@ -210,6 +210,8 @@ function zoomPet(factor) {
   // 与主进程 nextSize 的宽度边界（200..760）大致对齐
   petZoom = Math.min(2.24, Math.max(0.59, petZoom * factor));
   applyPetSize();
+  // v1.0 巨窗 bug 根治：设置窗扩容态下不许拿缩放去乘窗体（440×680 是面板的家）
+  if (panel && !panel.classList.contains('hidden')) return;
   if (api && api.resize) api.resize(factor);
 }
 window.addEventListener('resize', () => {
@@ -1053,7 +1055,8 @@ async function refreshStats() {
       : '未配置 Key — 填一下才能对话';
 }
 
-document.getElementById('logClose').addEventListener('click', () => toggleLog(false));
+/* v1.0：× 按钮退役（与设置/实验同语义）——ESC / 右键关闭 */
+if (log) log.addEventListener('contextmenu', (e) => { e.preventDefault(); toggleLog(false); });
 
 document.getElementById('keySave').addEventListener('click', async () => {
   const v = document.getElementById('keyInput').value.trim();
@@ -1201,7 +1204,11 @@ document.getElementById('resetSelf').addEventListener('click', async () => {
 function closePanel() {
   panel.classList.add('hidden');
   syncMotionPriority();
-  if (api && api.panelViewport) api.panelViewport(false);   // 关闭即回 340×480 基准态
+  if (api && api.panelViewport) {
+    api.panelViewport(false).then(() => {
+      if (api.resize) api.resize(petZoom);   // 回到「缩放即窗体」的正确尺寸（不是死回 340×480）
+    });
+  }
 }
 if (panel) panel.addEventListener('contextmenu', (e) => { e.preventDefault(); closePanel(); });
 

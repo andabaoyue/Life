@@ -307,7 +307,8 @@ body.talking #inputBar { display: flex; }
 /* ---------------- 记录 ---------------- */
 #log {
   position: absolute;
-  left: 8px; right: 8px; top: 8px; bottom: 52px;
+  left: 8px; top: 8px;
+  width: 300px; height: 340px;   /* v1.0 固定大小契约（用户拍板） */
   background: rgba(20,22,34,.92);
   border-radius: 12px;
   z-index: 14;

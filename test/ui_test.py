@@ -113,10 +113,11 @@ with sync_playwright() as p:
     pg.click('#menu div[data-act="log"]')
     pg.wait_for_timeout(300)
     check("打开记录时气泡让位", not pg.is_visible("#bubble"))
-    check("记录面板有可见的关闭按钮", pg.is_visible("#logClose"))
-    pg.click("#logClose")
+    lw = pg.evaluate("document.getElementById('log').getBoundingClientRect().width")
+    check("记录面板固定大小契约（300px 档）", 290 <= lw <= 315, "w=%s" % round(lw))
+    pg.click("#log", button="right")
     pg.wait_for_timeout(300)
-    check("点 × 能关闭记录", not pg.is_visible("#log"))
+    check("记录面板右键可关闭（× 已退役）", not pg.is_visible("#log"))
     check("关闭后气泡恢复显示", pg.is_visible("#bubble"))
 
     # 设置面板
