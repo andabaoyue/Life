@@ -832,6 +832,15 @@ function renderI18nPanel() {
   if (i18nTitle) i18nTitle.textContent = t('panel.i18nTitle');
   if (langLabel) langLabel.textContent = t('panel.language');
   if (tzLabel) tzLabel.textContent = t('panel.timezone');
+  // v1.0 设置面板四分区文案（新文案一律入表，双语对称）
+  const setText = (id, key) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };
+  setText('secConn', 'sec.conn');
+  setText('secWardrobe', 'sec.wardrobe');
+  setText('secMemoryTime', 'sec.memoryTime');
+  setText('secDanger', 'sec.danger');
+  setText('dangerHint', 'sec.dangerHint');
+  setText('panelCloseHint', 'panel.closeHint');
+  setText('connDelete', 'conn.delete');
 }
 if (langSelect) langSelect.addEventListener('change', () => {
   setLocale(langSelect.value);
