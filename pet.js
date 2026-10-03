@@ -983,6 +983,19 @@ function openPanel() {
 
 /* 长期记忆可视化。文本一律用 textContent 写入 ——
    记忆内容来自模型输出，拼 innerHTML 等于自找 XSS。 */
+/* 记忆拆段（v1.0 显示层切分）：只读文本做展示归类，数据原文一字不动。
+   小结的分段口径是「初澜经历」「用户事实」两段连排 —— 拆开才能看清她的记忆里住着谁。 */
+function splitMemorySegments(text) {
+  const parts = String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
+  const her = [], you = [], other = [];
+  for (const p of parts) {
+    if (/^用户事实[：:]/.test(p)) you.push(p.replace(/^用户事实[：:]\s*/, ''));
+    else if (/^初澜经历[：:]/.test(p)) her.push(p.replace(/^初澜经历[：:]\s*/, ''));
+    else other.push(p);
+  }
+  return { her, you, other };
+}
+
 async function refreshMem() {
   const box = document.getElementById('memList');
   box.textContent = '';
@@ -1025,13 +1038,29 @@ async function refreshMem() {
     tag.className = 'tag';
     tag.textContent = m.label;
 
-    const txt = document.createElement('span');
-    txt.className = 'txt';
-    txt.textContent = m.text;
+    const body = document.createElement('div');
+    body.className = 'mem-body';
+    const segs = splitMemorySegments(m.text);
+    const pushSeg = (cls, headText, items) => {
+      if (!items.length) return;
+      const seg = document.createElement('div');
+      seg.className = 'mem-seg ' + cls;
+      const h = document.createElement('div');
+      h.className = 'seg-head';
+      h.textContent = headText;
+      const b = document.createElement('div');
+      b.className = 'seg-body';
+      b.textContent = items.join('\n');
+      seg.append(h, b);
+      body.appendChild(seg);
+    };
+    pushSeg('her', '她的经历', segs.her);
+    pushSeg('you', '关于你', segs.you);
+    pushSeg('other', '记忆', segs.other);
 
     // v0.9.9 F-099-01 / D-005: 记忆面板只读观察 —— 「忘掉」按钮与代拟台词已拔除。
     // 记忆的淡出只归 MemoryDynamics 的可及性衰减管，任何人不得替她挖记忆、更不得替她说话。
-    row.append(tag, txt);
+    row.append(tag, body);
     groupBody.appendChild(row);   // 条目归卡
   });
 }

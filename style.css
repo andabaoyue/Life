@@ -415,13 +415,27 @@ body.showlog #bubble { display: none !important; }
   font-size: 11px;
   line-height: 1.5;
 }
-/* v1.0 记忆排版：条目虚线分隔 + 标签章 + 正文呼吸 */
-.memlist .mem { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0;
-  border-bottom: 1px dashed rgba(255,255,255,.08); }
+/* v1.0 记忆排版：字号放大、密度放开、分段醒目（用户反馈：字小、密、分段不明） */
+.memlist { font-size: 12px; }
+.memlist .mem { display: block; padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,.1); }
 .memlist .mem:last-child { border-bottom: none; }
-.memlist .mem .txt { flex: 1; min-width: 0; word-break: break-word; color: #dfe5ee; line-height: 1.55; font-size: 11.5px; }
-.memlist .mem .tag { color: #aab6ff; flex: none; background: rgba(122,140,255,.14);
-  border: 1px solid rgba(122,140,255,.3); border-radius: 999px; padding: 1px 8px; font-size: 10.5px; margin-top: 1px; }
+.memlist .mem .tag { display: inline-block; color: #aab6ff; background: rgba(122,140,255,.14);
+  border: 1px solid rgba(122,140,255,.3); border-radius: 999px; padding: 2px 10px;
+  font-size: 11.5px; margin-bottom: 10px; }
+.mem-body { min-width: 0; }
+/* 分段：她的经历（绿）在上、关于你（蓝）在下 —— 各配徽章 + 左侧色条，分段必须一眼可辨 */
+.mem-seg { margin: 10px 0 0; }
+.mem-seg:first-child { margin-top: 0; }
+.mem-seg .seg-head { display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .05em;
+  padding: 2px 10px; border-radius: 999px; margin-bottom: 6px; }
+.mem-seg.her .seg-head { color: #aee2c0; background: rgba(110,200,150,.16); border: 1px solid rgba(110,200,150,.35); }
+.mem-seg.you .seg-head { color: #aab6ff; background: rgba(122,140,255,.14); border: 1px solid rgba(122,140,255,.3); }
+.mem-seg.other .seg-head { color: #c8d0de; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); }
+.mem-seg .seg-body { font-size: 13px; line-height: 1.8; color: #e6ebf3; word-break: break-word;
+  white-space: pre-wrap; padding: 2px 0 2px 12px; border-left: 2px solid rgba(255,255,255,.14); }
+.mem-seg.her .seg-body { border-left-color: rgba(110,200,150,.45); }
+.mem-seg.you .seg-body { border-left-color: rgba(122,140,255,.4); }
 .memlist .mem button {
   flex: none; padding: 1px 6px; font-size: 11px;
   background: rgba(255,120,120,.16);
