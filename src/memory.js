@@ -416,7 +416,7 @@ class Memory {
     if (!['external', 'pledge'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
     const source = String(entry.source || '');
     if (!['user', 'chulan'].includes(source)) return { ok: false, error: 'INVALID_SOURCE' };
-    const text = String(entry.text || '').trim();
+    const text = String(entry.text || entry.content || '').trim();   // v1.0 别名容错：模型偶发用 content（同数据换键名）
     if (!text) return { ok: false, error: 'EMPTY_TEXT' };
     const messageId = String(entry.messageId || '');
     if (!this._resolveMessage(messageId, opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };

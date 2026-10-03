@@ -151,10 +151,19 @@ const lmBlock = (mainSrc.split("ipcGuard.handle('life-mechanisms'")[1] || '').sp
 check('24 经历链轻量口：life-mechanisms 不调 readAll（防掉帧）',
   lmBlock.length > 0 && !/readAll/.test(lmBlock) && /_readTailAnchor/.test(lmBlock));
 
+// 25 别名容错：content → text（模型字段漂移的双保险，同数据换键名）
+check('25 别名容错：expectations 的 content 字段被归一承接',
+  m.addExpectation({ kind: 'external', source: 'user', content: '别名条目', messageId: idAsst }).ok === true
+  && m.data.expectations.some((x) => x.text === '别名条目'));
+
+// 26 组装归一防 [object Object]：引证式条目 {messageId, content} 提取在册
+check('26 组装归一防 [object Object]：factText 提取与 map 归一在册',
+  brainSrc.includes('factText') && /content \|\| x\.text/.test(brainSrc));
+
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
 console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 24)
+  ? ('lexicon-expectations tests passed: ' + 26)
   : ('lexicon-expectations tests FAILED: ' + failures));
 process.exit(failures === 0 ? 0 : 1);

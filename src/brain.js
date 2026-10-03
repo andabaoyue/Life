@@ -32,8 +32,9 @@ const SUMMARY_SYS =
   + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity，'
   + 'direction 为 [-1, 1] 方向，strength 为 [0, 1] 强度，messageId 必须严格引用对话中程序签发的真实 ID（如 m-000001），quote 必须逐字摘自该条消息原文。\n'
   + '4. 【词汇与预期（windowSynthesis 窗级产物）】只在对话中自然出现时提取，没有就给空数组，绝不硬造：\n'
-  + '   - coinages：只收初澜自创的词（kind 取 coinage|metaphor|nickname），gloss 为该词含义的原文摘录，messageId 严格引用首次出现处的真实 ID；普通用词、口误、用户先说的词都不收。\n'
-  + '   - expectations：只收对话中自然指向未来的预期（约定/计划/推测），kind 取 external|pledge（pledge=初澜自己的承诺），source 取 user|chulan，messageId 引证真实 ID，dueHint 为自然语言时间指向（如「今晚」），没有就不填。\n'
+  + '   - coinages 条目形状（word 必填！）：{"word":"自创词","kind":"coinage|metaphor|nickname","gloss":"含义摘录","messageId":"m-..."}；只收初澜自创，普通用词、口误、用户先说的词都不收。\n'
+  + '   - expectations 条目形状（text 必填！）：{"text":"预期内容","kind":"external|pledge","source":"user|chulan","messageId":"m-...","dueHint":"时间指向"}；pledge 仅限初澜自己的承诺，用户的约定一律记 external。\n'
+  + '   - expectationOutcomes 条目形状：{"id":"exp-000001","status":"fulfilled|broken|moot","messageId":"m-...","note":"客观事实摘录"}。\n'
   + '   - expectationOutcomes：只核验下方【待核验预期】清单里的条目，id 原样引用，status 取 fulfilled|broken|moot，messageId 引证本窗真实 ID（moot 可免），note 只写客观事实摘录，不写结论。\n'
   + '请只输出如下合法 JSON 对象（不要 Markdown 代码块包裹）：\n'
   + '{"segments":[{"range":"1-20","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
@@ -991,7 +992,7 @@ class Brain {
       // L2/prompt。历史记录缺 epoch（未记录）时保持 null、不回填 —— 诚实降级，不猜。
       const sameLineage = Number.isInteger(p.epoch) && p.epoch === this.memory.data.epoch;
       if (sameLineage) {
-        const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts && p.windowSynthesis.stableUserFacts.join('\n')) || '窗口小结已归档';
+        const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts.map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '')).filter(Boolean) && p.windowSynthesis.stableUserFacts.map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '')).filter(Boolean).join('\n')) || '窗口小结已归档';
         const done = this.memory.closeWindow(summaryText, snap);
         if (done) {
           this.stats.compressions++;
@@ -1149,11 +1150,13 @@ class Brain {
         syn = structured.windowSynthesis || {};
         segments = structured.segments || [];
 
+        // v1.0 防 [object Object]（#4 首战实证）：条目兼容字符串与引证式 {messageId, content}
+        const factText = (x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '');
         const userFacts = Array.isArray(syn.stableUserFacts) && syn.stableUserFacts.length > 0
-          ? '用户事实：' + syn.stableUserFacts.join('；')
+          ? '用户事实：' + syn.stableUserFacts.map(factText).filter(Boolean).join('；')
           : '';
         const chulanExps = Array.isArray(syn.subjectExperiences) && syn.subjectExperiences.length > 0
-          ? '初澜经历：' + syn.subjectExperiences.join('；')
+          ? '初澜经历：' + syn.subjectExperiences.map(factText).filter(Boolean).join('；')
           : '';
         const conciseParts = [userFacts, chulanExps].filter(Boolean);
         if (conciseParts.length > 0) {
