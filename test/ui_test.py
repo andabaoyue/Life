@@ -812,8 +812,9 @@ with sync_playwright() as p:
     # - Windows (Segoe UI / 微软雅黑): line-height ≈ 16.5px -> 单项高 ≈ 30.5px -> 总高 ≈ 282px (实测 272~285px)
     # - Linux Headless CI (DejaVu/FreeSans): line-height ≈ 19.6px -> 单项高 ≈ 33.6px -> 总高 ≈ 310px (实测 295~315px)
     # v0.9.5 新增「实验观测/复盘」使菜单项由 8 项扩充至 9 项，合法渲染区间严格界定为 [260px, 315px]，拒绝无界放宽
-    check("9 项菜单高度符合跨平台字体渲染布局契约 [260px, 315px]",
-          260 <= mrect["h"] <= 315, "h=%s" % round(mrect["h"]))
+    # v1.0 菜单瘦身（放大/缩小退役→滚轮接管）：9 项 → 7 项，区间同步演进（实测 7 项 ≈ 218px）
+    check("7 项菜单高度符合跨平台字体渲染布局契约 [195px, 245px]",
+          195 <= mrect["h"] <= 245, "h=%s" % round(mrect["h"]))
     check("菜单下沿不出窗口", mrect["bottom"] <= mrect["vh"] + 1,
           "bottom=%s vh=%s" % (round(mrect["bottom"]), mrect["vh"]))
     check("菜单右沿不出窗口", mrect["right"] <= mrect["vw"] + 1,

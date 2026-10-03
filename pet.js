@@ -2081,7 +2081,7 @@ function noteUserAct() {
 
 /** 现在能不能开口。poke 放宽 90 秒静默闸 —— 见上面注释里的坑。 */
 function politeToSpeak(kind) {
-  if (streaming || busy) return false;
+  if (streaming || busy || remoteStreaming) return false;   // 对话窗正在对话 = 用户正投入，不开口
   if (!bubble.classList.contains('hidden')) return false;
   // 用户正在输入：不打断
   if (input && (document.activeElement === input || input.value.trim())) return false;   // v1.0 方案二：输入条已退役（input 恒 null，守卫）
@@ -2092,7 +2092,7 @@ function politeToSpeak(kind) {
 
 async function tryProactive() {
   if (!api || !api.proactiveCheck) return;
-  if (busy || streaming) return;          // 先别看：连闸门都进不去，省一次 IPC
+  if (busy || streaming || remoteStreaming) return;          // 先别看：连闸门都进不去，省一次 IPC
   let offer = null;
   try { offer = await api.proactiveCheck(); } catch { return; }
   if (!offer) return;
@@ -2127,7 +2127,7 @@ if (api && api.onAssetWarning) {
 if (api && api.onProactiveOffer) {
   api.onProactiveOffer(async (offer) => {
     if (!offer) return;
-    if (busy || streaming || !politeToSpeak(offer.kind)) {
+    if (busy || streaming || remoteStreaming || !politeToSpeak(offer.kind)) {
       if (api.proactiveDeclined) api.proactiveDeclined(offer);
       return;
     }
