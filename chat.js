@@ -51,7 +51,7 @@ let busy = false;
 function applyTexts() {
   if (chatTitle) chatTitle.textContent = t('chat.title');
   if (input) input.placeholder = t('chat.placeholder');
-  if (chatHint) chatHint.textContent = t('panel.closeHint') + ' · ' + t('card.dragHint');
+  if (chatHint) chatHint.textContent = t('panel.closeHint');   // 只留关闭提示（「拖到舒服的位置」是卡片时代措辞，已随卡片退役）
 }
 applyTexts();
 
