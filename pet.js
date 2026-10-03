@@ -536,288 +536,6 @@ let acc = '';
 let liveNode = null;      // 流式期间正在写入的那条记录
 
 
-/* ---------------- 对话流（v1.0 笔 3b-b） ----------------
-   双轨铁律：#bubble 头顶短气泡是日常轻感知，#chatStream 是展开态深度会话；
-   两者共存互不替代（ui_test.py 的日常气泡断言因此保全）。
-   权威对账：流式与乐观气泡只是显示临时态，回合结束一律 ChatStore.load() 覆盖，
-   她脑子里的历史（memory.history）永远是唯一事实源。 */
-const chatStream = document.getElementById('chatStream');
-const chatList = document.getElementById('chatList');
-const chatTitle = document.getElementById('chatTitle');
-const chatClose = document.getElementById('chatClose');
-let chatOpen = false;
-let chatStreamNode = null;     // 流式临时 assistant 气泡（展开态）
-let chatLastError = null;      // 发送失败提示（随 renderChat 附在末尾，不进历史）
-
-function openChat() {
-  if (!chatOpen) {
-    chatOpen = true;
-    if (chatStream) chatStream.classList.remove('hidden');
-    if (chatTitle) chatTitle.textContent = t('chat.title');
-    if (api && api.chatViewport) api.chatViewport(true);
-    ChatStore.load();
-  }
-}
-
-function closeChat() {
-  if (chatOpen) {
-    chatOpen = false;
-    if (streaming && api && api.abort) api.abort();
-    if (chatStream) chatStream.classList.add('hidden');
-    if (api && api.chatViewport) api.chatViewport(false);
-  }
-}
-
-function buildBubble(v, extraCls) {
-  const row = document.createElement('div');
-  row.className = 'b-row ' + v.cls + (v.bridge ? ' b-bridged' : '') + (extraCls ? ' ' + extraCls : '');
-  if (v.avatar) {
-    const av = document.createElement('div');
-    av.className = 'b-av';
-    av.textContent = v.avatar;
-    row.appendChild(av);
-  }
-  const col = document.createElement('div');
-  col.className = 'b-col';
-  const txt = document.createElement('div');
-  txt.className = 'b-text';
-  txt.textContent = v.text;          // textContent 渲染，防注入
-  col.appendChild(txt);
-  if (v.ts !== null && v.ts !== undefined) {
-    const ts = document.createElement('div');
-    ts.className = 'b-ts';
-    ts.textContent = formatDisplayTime(v.ts);   // 时间单点（UX-05 改一处）
-    col.appendChild(ts);
-  }
-  row.appendChild(col);
-  return row;
-}
-
-function renderChat() {
-  if (!chatList) return;
-  const stick = shouldStickToBottom(chatList.scrollTop, chatList.scrollHeight, chatList.clientHeight);
-  chatList.innerHTML = '';
-  let prev = null;
-  for (const m of ChatStore.messages) {
-    const v = bubbleView(m, SYNTHETIC_RENDER);
-    if (v.kind === 'skip') { prev = m; continue; }
-    if (dividerNeeded(prev, m)) {
-      const dv = document.createElement('div');
-      dv.className = 'win-divider';
-      dv.textContent = t('chat.windowBreak');
-      chatList.appendChild(dv);
-    }
-    chatList.appendChild(buildBubble(v));
-    prev = m;
-  }
-  if (chatLastError) {
-    const ev = document.createElement('div');
-    ev.className = 'b-row b-note b-error';
-    const et = document.createElement('div');
-    et.className = 'b-text';
-    et.textContent = chatLastError;
-    ev.appendChild(et);
-    chatList.appendChild(ev);
-  }
-  if (stick) chatList.scrollTop = chatList.scrollHeight;
-}
-
-
-/* ---------- 伴随卡片拖拽与位置记忆（v1.0 笔 4） ----------
-   锚底坐标记忆（dx / dyFromBottom）：她锚窗底，卡片跟着锚底记，
-   480↔720 扩容切换位置不漂移；UI 状态只进 localStorage，不碰主体数据。 */
-const CARD_POS_KEY = 'chatCardPos';
-const chatHead = document.getElementById('chatHead');
-
-function loadCardPos() {
-  try {
-    const raw = localStorage.getItem(CARD_POS_KEY);
-    if (!raw) return null;
-    const p = JSON.parse(raw);
-    return (p && Number.isFinite(p.dx) && Number.isFinite(p.dyFromBottom)) ? p : null;
-  } catch (e) { return null; }   // 损坏数据不致命：回默认家
-}
-
-function applyCardPos(pos) {
-  const saved = loadCardPos();
-  const p = clampCardBox(pos || saved || CARD_DEFAULT, window.innerWidth, chatStream ? chatStream.getBoundingClientRect().width : undefined);
-  if (!chatStream) return p;
-  // 底边钉在 dyFromBottom、高度封顶在天空域内 —— 内容再长也不许下压（交互不变式）
-  const bottomY = window.innerHeight - p.dyFromBottom;
-  const curH = chatStream.getBoundingClientRect().height || 240;
-  const h = Math.max(120, Math.min(curH, bottomY - 8));
-  const top = Math.max(8, bottomY - h);
-  chatStream.style.left = p.dx + 'px';
-  chatStream.style.right = 'auto';
-  chatStream.style.top = top + 'px';
-  chatStream.style.bottom = 'auto';
-  chatStream.style.height = h + 'px';
-  return p;
-}
-
-if (chatClose) chatClose.addEventListener('click', (e) => {
-  e.stopPropagation();          // 关闭按钮绝不触发拖拽抓手
-  closeChat();
-});
-
-if (chatHead && chatStream) {
-  let drag = null;
-  chatHead.addEventListener('pointerdown', (e) => {
-    if (e.target === chatClose || (e.target && e.target.id === 'chatDragWin')) return;
-    const r = chatStream.getBoundingClientRect();
-    drag = { x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, w: r.width, h: r.height, cur: null };
-    chatStream.style.width = r.width + 'px';
-    chatStream.style.height = r.height + 'px';
-    chatStream.classList.add('dragging');
-    if (chatHead.setPointerCapture) chatHead.setPointerCapture(e.pointerId);
-  });
-  chatHead.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    const left = drag.left + (e.clientX - drag.x0);
-    const top = drag.top + (e.clientY - drag.y0);
-    drag.x0 = e.clientX;
-    drag.y0 = e.clientY;
-    drag.left = left;
-    drag.top = top;
-    const dyFromBottom = window.innerHeight - top - drag.h;
-    const pos = clampCardBox({ dx: Math.round(left), dyFromBottom: Math.round(dyFromBottom) }, window.innerWidth, drag.w);
-    const y = Math.max(8, window.innerHeight - pos.dyFromBottom - drag.h);
-    chatStream.style.left = pos.dx + 'px';
-    chatStream.style.top = y + 'px';
-    drag.cur = pos;
-  });
-  const endDrag = () => {
-    if (!drag) return;
-    const cur = drag.cur;
-    drag = null;
-    chatStream.classList.remove('dragging');
-    if (cur) { try { localStorage.setItem(CARD_POS_KEY, JSON.stringify(cur)); } catch (e) { /* 存不下不致命 */ } }
-  };
-  chatHead.addEventListener('pointerup', endDrag);
-  chatHead.addEventListener('pointercancel', endDrag);
-  chatHead.addEventListener('dblclick', () => {
-    try { localStorage.removeItem(CARD_POS_KEY); localStorage.removeItem('chatCardSize'); } catch (e) {}
-    // 双击标题栏瞬回默认家：清空内联定位，恢复 CSS 的 top:8 / bottom:336 拉伸模式
-    chatStream.style.left = chatStream.style.top = chatStream.style.right = chatStream.style.bottom = '';
-    chatStream.style.width = chatStream.style.height = '';
-  });
-}
-
-
-/* ---------- 对话卡边框拉伸手柄（v1.0 实机反馈） ----------
-   边缘 8px 热区（四边 + 四角）自由拉伸；捕获阶段拦截，不与标题栏拖拽 / 列表滚动抢手势。
-   钳位修正（对任务书的勘误）：高度与位置必须守交互不变式 ——
-   top ≥ 8 且 bottom ≤ 窗底 - 336（天空域），绝不许把卡片拉到她头顶以下。 */
-const CHAT_RS_EDGE = 8;
-const CHAT_SIZE_KEY = 'chatCardSize';
-if (chatStream) {
-  let rs = null;
-  chatStream.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    const r = chatStream.getBoundingClientRect();
-    const x = e.clientX - r.left, y = e.clientY - r.top;
-    const onHead = chatHead && (e.target === chatHead || chatHead.contains(e.target));
-    let dir = '';
-    if (y <= CHAT_RS_EDGE && !onHead) dir += 'n';
-    else if (y >= r.height - CHAT_RS_EDGE) dir += 's';
-    if (x <= CHAT_RS_EDGE) dir += 'w';
-    else if (x >= r.width - CHAT_RS_EDGE) dir += 'e';
-    if (!dir) return;
-    rs = { dir, x0: e.clientX, y0: e.clientY, left: r.left, top: r.top, w: r.width, h: r.height };
-    chatStream.classList.add('dragging');
-    if (chatStream.setPointerCapture) chatStream.setPointerCapture(e.pointerId);
-    e.stopPropagation();
-    e.preventDefault();
-  }, true);
-  chatStream.addEventListener('pointermove', (e) => {
-    if (!rs) return;
-    const dx = e.clientX - rs.x0, dy = e.clientY - rs.y0;
-    let w = rs.w, h = rs.h, left = rs.left, top = rs.top;
-    if (rs.dir.indexOf('e') >= 0) w = rs.w + dx;
-    if (rs.dir.indexOf('s') >= 0) h = rs.h + dy;
-    if (rs.dir.indexOf('w') >= 0) { w = rs.w - dx; left = rs.left + dx; }
-    if (rs.dir.indexOf('n') >= 0) { h = rs.h - dy; top = rs.top + dy; }
-    // 宽度钳位
-    w = Math.max(280, w);
-    left = Math.max(6, Math.min(left, window.innerWidth - 6 - w));
-    w = Math.min(w, window.innerWidth - 12);
-    // 高度钳位：窗内自由（top ≥ 8，bottom ≤ 窗底 - 8）；2026-10 演进：不再锁天空域
-    top = Math.max(8, top);
-    const maxBottom = window.innerHeight - 8;
-    h = Math.max(120, h);
-    if (top + h > maxBottom) h = Math.max(120, maxBottom - top);
-    chatStream.style.left = Math.round(left) + 'px';
-    chatStream.style.top = Math.round(top) + 'px';
-    chatStream.style.right = 'auto';
-    chatStream.style.bottom = 'auto';
-    chatStream.style.width = Math.round(w) + 'px';
-    chatStream.style.height = Math.round(h) + 'px';
-  });
-  const endRs = () => {
-    if (!rs) return;
-    rs = null;
-    chatStream.classList.remove('dragging');
-    try {
-      localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({
-        w: Math.round(parseFloat(chatStream.style.width) || 0),
-        h: Math.round(parseFloat(chatStream.style.height) || 0)
-      }));
-    } catch (err) { /* 存不下不致命 */ }
-  };
-  chatStream.addEventListener('pointerup', endRs);
-  chatStream.addEventListener('pointercancel', endRs);
-}
-
-const chatDragWin = document.getElementById('chatDragWin');
-if (chatDragWin) {
-  let winDragging = false, lastWinX = 0, lastWinY = 0;
-  chatDragWin.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    winDragging = true;
-    lastWinX = e.screenX;
-    lastWinY = e.screenY;
-    if (api && api.dragStart) api.dragStart();
-    e.stopPropagation();
-    e.preventDefault();
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!winDragging) return;
-    if (e.buttons === 0) {
-      winDragging = false;
-      if (api && api.dragEnd) api.dragEnd();
-      return;
-    }
-    const dx = e.screenX - lastWinX;
-    const dy = e.screenY - lastWinY;
-    lastWinX = e.screenX;
-    lastWinY = e.screenY;
-    if (api && api.dragMove) api.dragMove(dx, dy);
-  });
-  window.addEventListener('mouseup', () => {
-    if (winDragging) {
-      winDragging = false;
-      if (api && api.dragEnd) api.dragEnd();
-    }
-  });
-}
-
-if (typeof ChatStore !== 'undefined') {
-  ChatStore.onChange(() => renderChat());
-  ChatStore.load();
-}
-const _savedCardPos = loadCardPos();
-if (_savedCardPos) applyCardPos(_savedCardPos);   // 有记忆才脱离拉伸模式；无记忆保持 CSS 默认家
-const _savedCardSize = (() => {
-  try {
-    const s = JSON.parse(localStorage.getItem('chatCardSize'));
-    return (s && Number.isFinite(s.w) && Number.isFinite(s.h)) ? s : null;
-  } catch (e) { return null; }
-})();
-if (_savedCardSize && chatStream) {
-  chatStream.style.width = Math.round(_savedCardSize.w) + 'px';
-  chatStream.style.height = Math.round(_savedCardSize.h) + 'px';
-}
-
 /* ---------- 国际化与物理时空面板（v1.0 笔 6 / UX-05） ----------
    时区只读展示（创世锁定 🔒）；语言切换只动 t() 文案层，不碰任何主体数据。 */
 const langSelect = document.getElementById('langSelect');
@@ -862,7 +580,6 @@ if (langSelect) langSelect.addEventListener('change', () => {
   renderI18nPanel();
   renderProviderPanel();
   if (chatTitle) chatTitle.textContent = t('chat.title');
-  renderChat();   // t() 文案（分界线等）随语言刷新
 });
 renderI18nPanel();
 
@@ -957,12 +674,6 @@ if (api && api.onChatHidden) api.onChatHidden(() => setTalking(false));
 
 
 
-async function submit() {
-  const text = input.value.trim();
-  if (!text || busy) return;
-  noteUserAct();
-  await runChat(text, {});
-}
 
 /**
  * 发一条并走完整个上屏生命周期。用户主动说话和主动搭话**共用这一条路**，
@@ -978,10 +689,10 @@ async function runChat(text, opts) {
   // 现有 streaming 守卫 + 各分支的 clearTimeout 已覆盖已知路径，
   // 这行保证以后新增分支也不会被旧定时器误关气泡。
   clearTimeout(bubbleTimer);
-  if (!proactive) input.value = '';
+
   busy = true;
   syncMotionPriority();
-  sendBtn.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
   pet.classList.add('thinking');
   setState('thinking');
   streaming = true;
@@ -990,17 +701,6 @@ async function runChat(text, opts) {
   liveNode = addLog('a', '初澜：');
   render('');
 
-  // v1.0 笔 3b-b：Optimistic 上屏（用户气泡即刻可见）+ 流式临时 assistant 气泡；
-  // 两者都是显示临时态，回合结束 ChatStore.load() 权威对账统一替换。
-  chatLastError = null;
-  if (chatOpen) {
-    if (!proactive) {
-      chatList.appendChild(buildBubble({ kind: 'user', text, bridge: false, cls: 'b-user', avatar: '你', ts: null }, 'b-pending'));
-    }
-    chatStreamNode = buildBubble({ kind: 'assistant', text: '', bridge: false, cls: 'b-ai', avatar: '初', ts: null }, 'b-streaming');
-    chatList.appendChild(chatStreamNode);
-    chatList.scrollTop = chatList.scrollHeight;
-  }
 
   try {
     if (!api) {                              // 浏览器预览：假回复，验证逐字渲染
@@ -1045,12 +745,10 @@ async function runChat(text, opts) {
       } else if (res.aborted) {
         finish('(已取消)');
       } else {
-        chatLastError = t('chat.sendFailed');
         finish('(出错了：' + res.error + ')');
       }
     }
   } catch (e) {
-    chatLastError = t('chat.sendFailed');
     finish('(异常：' + e.message + ')');
   } finally {
     streaming = false;
@@ -1058,12 +756,9 @@ async function runChat(text, opts) {
     // 再渲染一次，把闪烁光标去掉（此时 streaming 已为 false）
     if (lastText) render(lastText);
     liveNode = null;
-    sendBtn.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
     pet.classList.remove('thinking');
     syncMotionPriority();
-    // v1.0 笔 3b-b：权威对账 —— 用 memory.history 的真实投影覆盖一切临时态
-    chatStreamNode = null;
-    if (chatOpen && typeof ChatStore !== 'undefined') ChatStore.load();
   }
 
   function finish(t) {
@@ -1075,12 +770,7 @@ async function runChat(text, opts) {
   }
 }
 
-sendBtn.addEventListener('click', submit);
-input.addEventListener('keydown', (e) => {
-  e.stopPropagation();
-  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); }
-  if (e.key === 'Escape') setTalking(false);
-});
+// v1.0 方案二：主窗输入条已退役 —— 对话统一在独立对话窗（chat.html）进行
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
@@ -1093,8 +783,7 @@ window.addEventListener('keydown', (e) => {
 
 function setTalking(on) {
   document.body.classList.toggle('talking', on);
-  // v1.0 笔 3b-b：输入态即对话流展开态（单一挂钩点，ESC / 菜单都收口于此）
-  if (on) openChat(); else closeChat();
+  // v1.0 方案二：对话已迁独立窗（chat.html）；此处只管主窗 talking 态语义
   syncMotionPriority();
   if (on) setTimeout(() => input.focus(), 30);
   else input.blur();
@@ -2343,7 +2032,7 @@ function politeToSpeak(kind) {
   if (streaming || busy) return false;
   if (!bubble.classList.contains('hidden')) return false;
   // 用户正在输入：不打断
-  if (document.activeElement === input || input.value.trim()) return false;
+  if (input && (document.activeElement === input || input.value.trim())) return false;   // v1.0 方案二：输入条已退役（input 恒 null，守卫）
   if (kind === 'poke') return true;   // 被戳本身就是"现在方便"的意思
   // 刚互动过 90 秒内保持安静（idle 问候才需要这条）
   return Date.now() - lastUserAct >= 90000;

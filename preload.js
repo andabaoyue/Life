@@ -31,7 +31,6 @@ contextBridge.exposeInMainWorld('deskpet', {
   report: () => ipcRenderer.invoke('chat-report'),
   listMemory: () => ipcRenderer.invoke('memory-list'),
   chatHistory: () => ipcRenderer.invoke('chat-history'),
-  chatViewport: (open) => ipcRenderer.invoke('chat-viewport', open === true),
   chatWindowOpen: () => ipcRenderer.invoke('chat-window-open'),
   chatWindowClose: () => ipcRenderer.invoke('chat-window-close'),
   chatWindowHome: () => ipcRenderer.invoke('chat-window-home'),

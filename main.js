@@ -225,26 +225,8 @@ ipcGuard.on('resize-pet', (e, factor) => {
   syncMotionBlock('resize');
 });
 
-/* v1.0 笔 3b-a：对话流视窗扩容通道（拍板：展开 380×720 / 收起回基准 340×480）。
-   复用 layout.anchorBottom 钉住下边缘（她脚踩屏幕，绝不因长高而下陷）；
-   尺寸常量放窗口层、不动 src/layout.js —— 边界铁律：src/ 一行不改。 */
-const CHAT_W = 440, CHAT_H = 780;   // v1.0 实机反馈：对话视窗拓宽（原 380×720）
-ipcGuard.handle('chat-viewport', (e, open) => {
-  if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
-  if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };
-  const target = open ? { w: CHAT_W, h: CHAT_H } : { w: layout.BASE_W, h: layout.BASE_H };
-  const [w, h] = win.getSize();
-  if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };
-  const [x, y] = win.getPosition();
-  let targetY = layout.anchorBottom(y, h, target.h);
-  const area = getWorkArea(x, y);
-  if (targetY < area.y) targetY = area.y;
-  win.setPosition(x, targetY);
-  setSafeWindowSize(win, target.w, target.h);
-  reconfigureMotion();
-  syncMotionBlock('resize');
-  return { ok: true, w: target.w, h: target.h, changed: true };
-});
+/* v1.0 方案二：chat-viewport 通道已退役 —— 对话迁独立窗（chat-window-*），
+   主窗回归 340×480 纯粹态，扩容/顶边钳位等配套随之收档。 */
 
 /* ---------- 独立对话窗（v1.0 方案二：真自由） ----------
 她的窗回归 340×480 纯粹态；对话窗是独立系统窗口：全屏自由拖拽、跨显示器、
