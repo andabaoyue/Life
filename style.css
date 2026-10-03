@@ -337,7 +337,7 @@ body.talking #inputBar { display: flex; }
 .r-round-item:last-child { border-bottom: none; }
 .r-tab { padding: 4px 8px; font-size: 10.5px; }
 /* v1.0 研究面板排版总修（用户反馈）：下拉白底白字隐身、各小区 140px 封顶、10-11px 密排 —— 一次治好 */
-#researchPanel select option { background: #1b2233; color: #e6ebf3; }
+#researchPanel select option, #panel select option { background: #f4f6fb; color: #141a26; }   /* 原生弹层实为白底——顺它配深字保可读 */
 :root { color-scheme: dark; }   /* 原生弹层（下拉/滚动条）整体走深色主题——option 背景色在部分 Electron 版本被无视，这是根治 */
 .r-table-container { max-height: none; padding: 8px 10px; }             /* 摘掉 140px 封顶 */
 .r-table-row { padding: 8px 10px; font-size: 12.5px; line-height: 1.7;
@@ -718,7 +718,7 @@ body.showlog #bubble { display: none !important; }
   padding: 6px 8px;
   line-height: 1.5;
 }
-.r-seg-tabs { display: flex; gap: 3px; margin: 4px 0; overflow-x: auto; }
+.r-seg-tabs { display: flex; gap: 4px; margin: 6px 0; flex-wrap: wrap; overflow-x: hidden; }   /* 粗滚动条退役：换行收纳 */
 .r-seg-btn {
   background: rgba(255,255,255,.06);
   border: 1px solid rgba(255,255,255,.1);
