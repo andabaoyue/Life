@@ -243,6 +243,8 @@ function syncPanelViewport() {
   if (log && !log.classList.contains('hidden')) w = 520;
   if ((wdEl && !wdEl.classList.contains('hidden'))
       || (panel && !panel.classList.contains('hidden'))) w = 560;
+  // v1.0 拓宽（用户拍板）：个体观测 620 —— 六分区一行横排 + 内容区宽敞
+  if (researchPanel && !researchPanel.classList.contains('hidden')) w = 620;
   api.panelViewport(open, w, 680).then(() => {
     if (!open) {
       zoomResizeDebt = 1;
