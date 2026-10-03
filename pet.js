@@ -2003,8 +2003,7 @@ menu.addEventListener('click', (e) => {
   // Electron 下只改窗口，立绘宽由 resize 监听按窗口宽重算（单一出处）；
   // 预览模式没有窗口可改，才由 grow() 自己管。
   // 两边都做的老写法会让窗口和立绘各自夹取，放大到顶时比例脱钩。
-  if (act === 'bigger') { zoomPet(1.15); return; }
-  if (act === 'smaller') { zoomPet(1 / 1.15); return; }
+// v1.0 用户反馈：放大/缩小菜单项退役 —— 缩放交给滚轮（她身上滚动即可）
 });
 
 function grow(f) {
