@@ -133,7 +133,7 @@ function setupMotion() {
     onMove: (p) => {
       const applied = !!(win && !win.isDestroyed() && !dragging);
       traceMark('motion-onMove', { p, applied });
-      if (applied) win.setPosition(Math.round(p.x), Math.round(p.y));
+      if (applied) setPinnedBounds(p.x, p.y);
     }
   });
   motion.configure({ x: area.x, y: area.y, width: area.width, height: area.height },
@@ -180,7 +180,7 @@ ipcGuard.on('drag-move', (e, { dx, dy }) => {
   if (!dragging || !win) return;
   const [x, y] = win.getPosition();
   const tx = Math.round(x + dx), ty = Math.round(y + dy);
-  win.setPosition(tx, ty);
+  setPinnedBounds(tx, ty);
   const after = win.getPosition();
   if (dragTrace.moves.length < 2000) {
     dragTrace.moves.push({ dx, dy, before: [x, y], target: [tx, ty], after });
@@ -210,6 +210,18 @@ function setSafeWindowSize(targetWin, w, h) {
   if (typeof targetWin.setResizable === 'function') targetWin.setResizable(true);
   targetWin.setSize(w, h);
   if (typeof targetWin.setResizable === 'function') targetWin.setResizable(false);
+  intendedSize = { w, h };   // 记住「本该的尺寸」，一切平移用它钉框
+}
+
+/* v1.0 漂移真凶处决（行车记录仪取证实锤）：Windows 125% DPI 下每次
+   win.setPosition 都会被 DWM 物理舍入偷涨 1px —— 拖拽几百次 mousemove
+   就把窗口撑大几百像素，她 left:50% 的中心点随之狂奔（「漂移」的真相）。
+   一切平移统一走 setBounds 显式扣死宽高（反重力隔离实验：膨胀率归零），
+   尺寸取「意图尺寸」而非硬编码，右键缩放级别原样保住。 */
+let intendedSize = { w: layout.BASE_W, h: layout.BASE_H };
+function setPinnedBounds(x, y) {
+  if (!win || win.isDestroyed()) return;
+  win.setBounds({ x: Math.round(x), y: Math.round(y), width: intendedSize.w, height: intendedSize.h });
 }
 
 function getWorkArea(x, y) {
