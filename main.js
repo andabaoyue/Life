@@ -494,6 +494,20 @@ ipcGuard.handle('self-timezone', (e, clientTz = '') => {
   return { ok: true, birthTimezone: ledger.birthTimezone || null, birthAt: Number.isFinite(ledger.birthAt) ? ledger.birthAt : null };
 });
 
+// v1.0 梦境独立模块（只读）：梦境史开机从归档重建于内存，这里只做投影（不重读大档）；
+// 会变得很多很多 —— 最新在前，预留分页钩子。
+ipcGuard.handle('dream-list', () => {
+  const all = (brain && brain.dreamHistory) || [];
+  const dreams = all.slice().reverse().map((d) => ({
+    dreamId: d && d.dreamId,
+    windowNo: d && d.windowNo,
+    generatedAt: d && d.generatedAt,
+    epistemicStatus: d && d.epistemicStatus,
+    text: (d && d.text) || (d && d.payload && (d.payload.content || d.payload.text)) || ''
+  }));
+  return { ok: true, total: all.length, dreams };
+});
+
 // v1.0 §4.7 只读视图数据口：词汇表 + 预期账本 + 生命看板（观察层只读，不写任何数据、不碰完整性哈希）
 // 护栏：① 经历链只读尾锚计数（绝不 readAll 大档）② 守信率除零给 null（UI 出破折号）③ 单通道聚合下发
 ipcGuard.handle('life-mechanisms', () => {
@@ -538,16 +552,8 @@ ipcGuard.handle('life-mechanisms', () => {
       }
     }
   } catch (e) { /* 同上 */ }
-  // v2.0 梦境卡（只读）：内存中的梦境史（开机从归档重建），不重读大档
-  const dreams = ((brain && brain.dreamHistory) || []).slice(-8).map((d) => ({
-    dreamId: d && d.dreamId,
-    windowNo: d && d.windowNo,
-    generatedAt: d && d.generatedAt,
-    epistemicStatus: d && d.epistemicStatus,
-    text: (d && d.text) || (d && d.payload && (d.payload.content || d.payload.text)) || ''
-  }));
   return {
-    ok: true, lexicon, expectations, vitals, development, cognition, dreams,
+    ok: true, lexicon, expectations, vitals, development, cognition,
     relations: { promiseFidelity, fulfilled, broken, words: lexicon.length, reusedWords, archiveChain }
   };
 });

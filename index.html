@@ -29,6 +29,14 @@
       <div class="hint panel-hint">按 ESC 或右键空白处即可关闭</div>
     </div>
 
+    <!-- 梦境（v1.0 独立模块）：只读梦册 —— 会变得很多很多，值得自己的家 -->
+    <div id="dreams" class="hidden">
+      <div class="p-title" id="dreamsTitle">梦境</div>
+      <div class="hint">只读 · 离线重组产物（非亲历），绝不冒充真实经历</div>
+      <div id="dreamList" class="memlist">—</div>
+      <div class="hint panel-hint">按 ESC 或右键空白处即可关闭</div>
+    </div>
+
     <!-- 设置 / 统计面板 -->
 <div id="panel" class="hidden">
       <div class="p-title">设置</div>
@@ -200,8 +208,6 @@
         <div id="rPaneState" class="r-pane">
           <div class="r-section-title">初澜主体状态 (Trait Bounds: [-999, 999])</div>
           <div id="rTraitsList" class="r-traits-grid"></div>
-          <div class="r-section-title" style="margin-top: 8px;">梦境记录（只读 · 离线重组，非亲历）</div>
-          <div id="rDreamList" class="r-table-container">—</div>
           <div class="r-section-title" style="margin-top: 8px;">生理潮汐（只读）</div>
           <div id="rVitalsList" class="r-table-container">—</div>
           <div class="r-section-title" style="margin-top: 8px;">发育景观（只读）</div>
@@ -329,6 +335,7 @@
     <div data-act="talk">对话</div>
     <div data-act="log">记录</div>
       <div data-act="wardrobe">衣橱</div>
+    <div data-act="dreams">梦境</div>
     <div data-act="panel">设置</div>
     <div data-act="research">个体观测</div>
     <div data-act="pin" id="menuPin">固定在最前</div>

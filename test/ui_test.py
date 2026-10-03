@@ -829,9 +829,9 @@ with sync_playwright() as p:
     # - Linux Headless CI (DejaVu/FreeSans): line-height ≈ 19.6px -> 单项高 ≈ 33.6px -> 总高 ≈ 310px (实测 295~315px)
     # v0.9.5 新增「实验观测/复盘」使菜单项由 8 项扩充至 9 项，合法渲染区间严格界定为 [260px, 315px]，拒绝无界放宽
     # v1.0 菜单瘦身（放大/缩小退役→滚轮接管）：9 项 → 7 项，区间同步演进（实测 7 项 ≈ 218px）
-    # v1.0 菜单 +「衣橱」= 8 项，区间同步演进
-    check("8 项菜单高度符合跨平台字体渲染布局契约 [225px, 285px]",
-          225 <= mrect["h"] <= 285, "h=%s" % round(mrect["h"]))
+    # v1.0 菜单 +「衣橱」= 8 项；+「梦境」= 9 项，区间同步演进
+    check("9 项菜单高度符合跨平台字体渲染布局契约 [255px, 315px]",
+          255 <= mrect["h"] <= 315, "h=%s" % round(mrect["h"]))
     check("菜单下沿不出窗口", mrect["bottom"] <= mrect["vh"] + 1,
           "bottom=%s vh=%s" % (round(mrect["bottom"]), mrect["vh"]))
     check("菜单右沿不出窗口", mrect["right"] <= mrect["vw"] + 1,
