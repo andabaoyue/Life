@@ -332,10 +332,10 @@ const PANEL_W = 440, PANEL_H = 680;   // 默认面板尺寸；可按面板类型
 ipcGuard.handle('panel-viewport', (e, open, opt = {}) => {
   if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
   if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };
-  // 不信渲染端：尺寸钳进合法区间（宽 340..640 / 高 400..760）
-  const w = Math.min(640, Math.max(layout.BASE_W, Math.round(opt.w) || PANEL_W));
-  const h = Math.min(760, Math.max(400, Math.round(opt.h) || PANEL_H));
-  const target = open ? { w, h } : { w: layout.BASE_W, h: layout.BASE_H };
+  // 不信渲染端：尺寸钳进合法区间（宽 340..640 / 高 400..760）；tw/th 避让下方 [w,h] 解构
+  const tw = Math.min(640, Math.max(layout.BASE_W, Math.round(opt.w) || PANEL_W));
+  const th = Math.min(760, Math.max(400, Math.round(opt.h) || PANEL_H));
+  const target = open ? { w: tw, h: th } : { w: layout.BASE_W, h: layout.BASE_H };
   const [w, h] = win.getSize();
   if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };
   const [x, y] = win.getPosition();
