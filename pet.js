@@ -2039,28 +2039,42 @@ async function loadRejectedEvidence() {
 
     box.textContent = '';
     for (const ev of items) {
-      // v1.0 被拒审计卡片化（用户反馈：一长行密排不可读）——分层：行头 / 消息 / 徽章
+      // v1.0 被拒审计占比重排（用户二审）：标题行（ID + 徽章右对齐）+ 标签值行
       const row = document.createElement('div');
       row.className = 'r-ev-card';
 
       const head = document.createElement('div');
       head.className = 'r-ev-head';
-      head.textContent = `[${ev.evidenceId}]  Trait: ${ev.trait || 'UNKNOWN'}`;
-
-      const meta = document.createElement('div');
-      meta.className = 'r-ev-meta';
-      meta.textContent = '消息: ' + (ev.messageId || 'N/A');
-
+      const idEl = document.createElement('span');
+      idEl.className = 'r-ev-id';
+      idEl.textContent = ev.evidenceId || '—';
       const badge = document.createElement('span');
       badge.className = 'r-badge badge-rejected';
       badge.textContent = ev.reason || 'REJECTED';
+      head.append(idEl, badge);
 
-      row.append(head, meta, badge);
+      const traitRow = document.createElement('div');
+      traitRow.className = 'r-ev-row';
+      const traitK = document.createElement('span');
+      traitK.className = 'r-ev-k';
+      traitK.textContent = '特质';
+      const traitV = document.createElement('span');
+      traitV.className = 'r-ev-v';
+      traitV.textContent = ev.trait || 'UNKNOWN';
+      traitRow.append(traitK, traitV);
+
+      const msgRow = document.createElement('div');
+      msgRow.className = 'r-ev-row';
+      const msgK = document.createElement('span');
+      msgK.className = 'r-ev-k';
+      msgK.textContent = '消息';
+      const msgV = document.createElement('span');
+      msgV.className = 'r-ev-v';
+      msgV.textContent = ev.messageId || 'N/A';
+      msgRow.append(msgK, msgV);
+
+      row.append(head, traitRow, msgRow);
       box.appendChild(row);
-    }
-  } catch (e) {
-    box.textContent = '读取被拒证据失败: ' + e.message;
-  }
 }
 
 function switchResearchTab(tabName) {
