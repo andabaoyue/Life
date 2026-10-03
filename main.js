@@ -342,7 +342,11 @@ ipcGuard.handle('panel-viewport', (e, open, opt = {}) => {
   let targetY = layout.anchorBottom(y, h, target.h);
   const area = getWorkArea(x, y);
   if (targetY < area.y) targetY = area.y;
-  win.setPosition(x, targetY);
+  // v1.0 补 X 钳位：右缘扩宽不许溢出屏幕（用户实测：左半截被切走）
+  let targetX = x;
+  if (targetX + target.w > area.x + area.width - 8) targetX = area.x + area.width - target.w - 8;
+  if (targetX < area.x + 8) targetX = area.x + 8;
+  win.setPosition(targetX, targetY);
   setSafeWindowSize(win, target.w, target.h);
   reconfigureMotion();
   syncMotionBlock('resize');

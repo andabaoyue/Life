@@ -1425,6 +1425,7 @@ let currentSelectedSegIndex = 1;
 async function openResearchPanel() {
   if (!researchPanel) return;
   researchPanel.classList.remove('hidden');
+  syncPanelViewport();   // v1.0 家族补全：个体观测开时也同步视窗（此前只关不合，大体型下布局炸）
   syncMotionPriority();
 
   // 1. 获取并记录初始哈希 (SHA-256 完整性门禁)
