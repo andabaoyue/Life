@@ -140,8 +140,12 @@ with sync_playwright() as p:
           "预览" in (pg.text_content("#memList") or ""))
 
     # 衣柜区（预览模式同样必须降级，而不是空面板或报错）
-    pg.click('.pnav-item[data-sec="wardrobe"]')
-    pg.wait_for_timeout(120)
+    pg.keyboard.press("Escape")   # v1.0：衣橱自设置独立，关设置后走菜单
+    pg.wait_for_timeout(200)
+    pg.click("#pet", button="right")
+    pg.wait_for_timeout(250)
+    pg.click('#menu div[data-act="wardrobe"]')
+    pg.wait_for_timeout(300)
     check("衣柜预设区存在", pg.query_selector("#wdPresets") is not None)
     check("预览模式衣柜区有降级文案",
           "预览" in (pg.text_content("#wdSlots") or ""))
@@ -302,10 +306,8 @@ with sync_playwright() as p:
     # 面板：预设按钮 + 槽位按钮 + 身份件不给「脱下」
     pg2.click("#pet", button="right")
     pg2.wait_for_timeout(250)
-    pg2.click('#menu div[data-act="panel"]')
+    pg2.click('#menu div[data-act="wardrobe"]')   # v1.0：衣橱独立入菜单
     pg2.wait_for_timeout(500)
-    pg2.click('.pnav-item[data-sec="wardrobe"]')
-    pg2.wait_for_timeout(120)
     check("衣柜渲染出 3 个预设按钮",
           pg2.evaluate("document.querySelectorAll('#wdPresets button').length") == 3)
     check("当前预设高亮",
@@ -326,6 +328,12 @@ with sync_playwright() as p:
           is False)
 
     # 统计面板：来自配置文件的 model 只能当文本，不许变成标签
+    pg2.keyboard.press("Escape")   # 关衣橱
+    pg2.wait_for_timeout(200)
+    pg2.click("#pet", button="right")
+    pg2.wait_for_timeout(250)
+    pg2.click('#menu div[data-act="panel"]')   # 开设置（用量/Key 在这）
+    pg2.wait_for_timeout(400)
     pg2.click('.pnav-item[data-sec="conn"]')
     pg2.wait_for_timeout(120)
     pg2.evaluate("document.querySelector('#stats').textContent")  # 触发一次读取
@@ -340,8 +348,12 @@ with sync_playwright() as p:
     # 互斥自动解绑（v1.0 实机反馈）：穿着上装时点连衣裙 → 前端先脱上下装再穿裙，无缝不报错
     # （数据层校验一字未动：src/wardrobe.js 仍是互斥铁律的唯一权威）
     before = pg2.evaluate("JSON.stringify(window.__wd.equip)")
-    pg2.click('.pnav-item[data-sec="wardrobe"]')
-    pg2.wait_for_timeout(120)
+    pg2.keyboard.press("Escape")   # 关设置
+    pg2.wait_for_timeout(200)
+    pg2.click("#pet", button="right")
+    pg2.wait_for_timeout(250)
+    pg2.click('#menu div[data-act="wardrobe"]')   # 回衣橱做互斥解绑实测
+    pg2.wait_for_timeout(300)
     pg2.evaluate("""(() => {const r=[...document.querySelectorAll('#wdSlots .wd-row')]
         .find(r => r.querySelector('.wd-slot').textContent === '连衣裙');
       r.querySelector('.wd-item').click();})()""")
@@ -815,8 +827,9 @@ with sync_playwright() as p:
     # - Linux Headless CI (DejaVu/FreeSans): line-height ≈ 19.6px -> 单项高 ≈ 33.6px -> 总高 ≈ 310px (实测 295~315px)
     # v0.9.5 新增「实验观测/复盘」使菜单项由 8 项扩充至 9 项，合法渲染区间严格界定为 [260px, 315px]，拒绝无界放宽
     # v1.0 菜单瘦身（放大/缩小退役→滚轮接管）：9 项 → 7 项，区间同步演进（实测 7 项 ≈ 218px）
-    check("7 项菜单高度符合跨平台字体渲染布局契约 [195px, 245px]",
-          195 <= mrect["h"] <= 245, "h=%s" % round(mrect["h"]))
+    # v1.0 菜单 +「衣橱」= 8 项，区间同步演进
+    check("8 项菜单高度符合跨平台字体渲染布局契约 [225px, 285px]",
+          225 <= mrect["h"] <= 285, "h=%s" % round(mrect["h"]))
     check("菜单下沿不出窗口", mrect["bottom"] <= mrect["vh"] + 1,
           "bottom=%s vh=%s" % (round(mrect["bottom"]), mrect["vh"]))
     check("菜单右沿不出窗口", mrect["right"] <= mrect["vw"] + 1,

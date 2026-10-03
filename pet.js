@@ -207,8 +207,10 @@ function applyPetSize() {
   pet.style.width = Math.round(PET_BASE_W * petZoom) + 'px';
 }
 function anyOverlayOpen() {
+  const wd = document.getElementById('wardrobe');   // 衣橱（v1.0 独立面板）
   return (panel && !panel.classList.contains('hidden'))
       || (log && !log.classList.contains('hidden'))
+      || (wd && !wd.classList.contains('hidden'))
       || (researchPanel && !researchPanel.classList.contains('hidden'));
 }
 /* 零漂移契约（v1.0 用户反馈）：面板/记录/实验在场时缩放只动她、不动窗体；
@@ -223,8 +225,11 @@ function flushZoomDebt() {
 function syncPanelViewport() {
   if (!api || !api.panelViewport) return;
   const open = anyOverlayOpen();
-  // 记录要宽些（用户拍板）：记录在场 → 520 宽；其余 440×680
-  const w = (log && !log.classList.contains('hidden')) ? 520 : 440;
+  // 按面板定宽（用户拍板）：记录 520、衣橱 560、其余 440×680
+  const wdEl = document.getElementById('wardrobe');
+  let w = 440;
+  if (log && !log.classList.contains('hidden')) w = 520;
+  if (wdEl && !wdEl.classList.contains('hidden')) w = 560;
   api.panelViewport(open, w, 680).then(() => {
     if (!open) {
       zoomResizeDebt = 1;
@@ -582,9 +587,10 @@ function renderI18nPanel() {
   // v1.0 设置面板四分区文案（新文案一律入表，双语对称）
   const setText = (id, key) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };
   setText('secConn', 'sec.conn');
-  setText('secWardrobe', 'sec.wardrobe');
-  setText('secMemoryTime', 'sec.memoryTime');
+  setText('secMemory', 'sec.memory');
+  setText('secTimezone', 'sec.timezone');
   setText('secDanger', 'sec.danger');
+  setText('wardrobeTitle', 'sec.wardrobe');   // 衣橱面板标题
   setText('dangerHint', 'sec.dangerHint');
   setText('panelCloseHint', 'panel.closeHint');
   setText('connDelete', 'conn.delete');
@@ -805,6 +811,8 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (log && !log.classList.contains('hidden')) { toggleLog(false); return; }
     if (researchPanel && !researchPanel.classList.contains('hidden')) { closeResearchPanel(); return; }
+    const wdEl = document.getElementById('wardrobe');
+    if (wdEl && !wdEl.classList.contains('hidden')) { toggleWardrobe(false); return; }
     if (panel && !panel.classList.contains('hidden')) { closePanel(); return; }
     if (menu && !menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
     if (document.body.classList.contains('talking')) { setTalking(false); return; }
@@ -993,7 +1001,17 @@ async function refreshMem() {
     box.appendChild(p);
     return;
   }
+  let lastGroup = null;
   list.forEach((m) => {
+    // 记忆分层（v1.0 用户拍板）：窗口归窗口、条目归条目 —— 按窗口号出小标题，条目列其下
+    const g = m.windowNo || (String(m.label).match(/窗口\s*#(\d+)/) || [])[1] || '';
+    if (g !== lastGroup) {
+      const head = document.createElement('div');
+      head.className = 'mem-group';
+      head.textContent = g ? ('窗口 #' + g) : '记忆';
+      box.appendChild(head);
+      lastGroup = g;
+    }
     const row = document.createElement('div');
     row.className = 'mem';
 
@@ -1083,6 +1101,20 @@ async function refreshStats() {
 
 /* v1.0：× 按钮退役（与设置/实验同语义）——ESC / 右键关闭 */
 if (log) log.addEventListener('contextmenu', (e) => { e.preventDefault(); toggleLog(false); });
+
+/* 衣橱（v1.0 自设置独立、改名「衣橱」）：设置同级满幅面板 */
+function toggleWardrobe(on) {
+  const wd = document.getElementById('wardrobe');
+  if (!wd) return;
+  const showIt = on ?? wd.classList.contains('hidden');
+  wd.classList.toggle('hidden', !showIt);
+  if (showIt) refreshWardrobe();
+  syncPanelViewport();
+}
+bindPanelDrag(document.getElementById('wardrobe'));   // 衣橱空白处拖动同样移动整体
+if (document.getElementById('wardrobe')) {
+  document.getElementById('wardrobe').addEventListener('contextmenu', (e) => { e.preventDefault(); toggleWardrobe(false); });
+}
 
 document.getElementById('keySave').addEventListener('click', async () => {
   const v = document.getElementById('keyInput').value.trim();
@@ -2019,6 +2051,7 @@ menu.addEventListener('click', (e) => {
   if (act === 'quit') return api && api.quit();
   if (act === 'talk') { setTalking(true); if (api && api.chatWindowOpen) api.chatWindowOpen(); return; }   // v1.0 方案二：对话入独立窗
   if (act === 'log') return toggleLog();
+if (act === 'wardrobe') return toggleWardrobe();   // v1.0：衣橱自设置独立，入菜单
   if (act === 'panel') return openPanel();
   if (act === 'research') return openResearchPanel();
   if (act === 'pin') {
