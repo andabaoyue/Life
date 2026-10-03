@@ -313,6 +313,15 @@ ipcGuard.handle('chat-window-open', () => {
   w.focus();
   return { ok: true };
 });
+function broadcastToWindows(channel, payload) {
+  for (const w of [win, chatWin]) {
+    if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
+  }
+}
+ipcGuard.handle('chat-window-home', () => {
+  if (chatWin && !chatWin.isDestroyed()) chatWin.setBounds(chatBirthPosition());
+  return { ok: true };
+});
 ipcGuard.handle('chat-window-close', () => {
   if (chatWin && !chatWin.isDestroyed() && chatWin.isVisible()) chatWin.hide();
   return { ok: true };
@@ -356,7 +365,7 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
   brain.abort();
   try {
     const res = await brain.ask(offer ? offer.reason : text, (delta) => {
-      if (win && !win.isDestroyed()) win.webContents.send('chat-delta', delta);
+      broadcastToWindows('chat-delta', delta);   // 流式增量：她身边与对话窗都要听得见
     }, { proactive, proactiveHint: offer && offer.hint });
     // 主动搭话真的说出口了才记账；被渲染端礼貌闸门拦下时压根不会走到这
     if (proactive && trigger) trigger.commit(offer);

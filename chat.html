@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>对话</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* 对话窗（v1.0 方案二）：无边框深色窗 —— 实底避透明窗 DWM 坑，标题栏系统级拖拽 */
+    html, body { margin: 0; height: 100%; background: #10121b; overflow: hidden; }
+    #chatPage { display: flex; flex-direction: column; height: 100vh;
+      background: rgba(16, 18, 27, .96); color: #e6ebf3; }
+    #chatHead {
+      flex: none; display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; font-size: 12.5px; color: #cfd6e4; user-select: none;
+      border-bottom: 1px solid rgba(255, 255, 255, .08);
+      -webkit-app-region: drag; cursor: grab;
+    }
+    .chat-head-tools { display: flex; align-items: center; gap: 6px; -webkit-app-region: no-drag; }
+    .chat-tool-btn { background: none; border: none; color: #9aa4b5; font-size: 13px; cursor: grab; padding: 2px 4px; line-height: 1; border-radius: 4px; }
+    .chat-tool-btn:hover { color: #fff; background: rgba(255, 255, 255, .1); }
+    #chatClose { background: none; border: none; color: #9aa4b5; font-size: 15px; cursor: pointer; padding: 0 2px; line-height: 1; }
+    #chatClose:hover { color: #fff; }
+    #chatList { flex: 1; overflow-y: auto; padding: 12px 12px 6px; }
+    #chatList::-webkit-scrollbar { width: 4px; }
+    #chatList::-webkit-scrollbar-track { background: transparent; }
+    #chatList::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .18); border-radius: 4px; }
+    #inputBar { flex: none; display: flex; gap: 8px; padding: 10px 12px;
+      border-top: 1px solid rgba(255, 255, 255, .08); }
+    #input { flex: 1; min-width: 0; background: rgba(255, 255, 255, .1);
+      border: 1px solid rgba(255, 255, 255, .16); border-radius: 8px;
+      padding: 8px 10px; color: #fff; font-size: 13px; outline: none; font-family: inherit; }
+    #input:focus { border-color: rgba(122, 140, 255, .6); box-shadow: 0 0 0 2px rgba(106, 124, 255, .22); }
+    #send { flex: none; width: 38px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .18);
+      background: #5a6fd8; color: #fff; font-size: 15px; cursor: pointer; }
+    #send:hover { background: #6b7fe6; }
+    #send:disabled { opacity: .5; cursor: default; }
+    .chat-foot { flex: none; padding: 0 12px 8px; }
+  </style>
+</head>
+<body>
+  <div id="chatPage">
+    <div id="chatHead">
+      <span id="chatTitle">对话</span>
+      <span class="chat-head-tools">
+        <button id="chatDragWin" class="chat-tool-btn" title="拖动窗口（双击回她身边）">✥</button>
+        <button id="chatClose" title="关闭">×</button>
+      </span>
+    </div>
+    <div id="chatList"></div>
+    <div id="inputBar">
+      <input id="input" type="text" spellcheck="false" autocomplete="off" maxlength="2000">
+      <button id="send" title="发送">↑</button>
+    </div>
+    <div class="hint chat-foot" id="chatHint"></div>
+  </div>
+  <script src="ui-i18n.js"></script>
+  <script src="ui-chat-store.js"></script>
+  <script src="ui-chat-render.js"></script>
+  <script src="chat.js"></script>
+</body>
+</html>
