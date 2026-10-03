@@ -1051,6 +1051,7 @@ input.addEventListener('keydown', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (log && !log.classList.contains('hidden')) { toggleLog(false); return; }
+    if (panel && !panel.classList.contains('hidden')) { closePanel(); return; }
     if (menu && !menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
     if (document.body.classList.contains('talking')) { setTalking(false); return; }
   }
@@ -1423,6 +1424,26 @@ document.getElementById('connDelete').addEventListener('click', async () => {
 });
 
 refreshConnections();
+
+document.getElementById('openCfg').addEventListener('click', () => api && api.openConfig());
+
+document.getElementById('resetSelf').addEventListener('click', async () => {
+  if (!api || !api.resetSelfLedger) return;
+  const ok = window.confirm('这会删除初澜出生以来的成长档案，并把她视为一次新的出生。确定继续吗？');
+  if (!ok) return;
+  // confirm: true 携带上方 window.confirm 的用户明确确认（N-08：未确认的 reset 请求会被主进程拒绝）
+  const res = await api.resetSelfLedger(true);
+  if (!res || !res.ok) return say('成长档案重置失败：' + ((res && res.error) || '未知错误'));
+  refreshStats();
+  say('好，我们从现在重新认识。');
+});
+
+/* 面板关闭（v1.0 设计变更）：「关闭」按钮移除（不好看），ESC / 面板右键双通道关闭 */
+function closePanel() {
+  panel.classList.add('hidden');
+  syncMotionPriority();
+}
+if (panel) panel.addEventListener('contextmenu', (e) => { e.preventDefault(); closePanel(); });
 
 /* ---------------- 实验观测与可复盘工具面板 (v0.9.5) ---------------- */
 let currentResearchHashes = null;

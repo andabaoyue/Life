@@ -317,7 +317,8 @@ with sync_playwright() as p:
           repr((pg2.text_content("#bubble") or "")[:30]))
 
     # 对话触发换装：程序状态、图层、历史记录三者一致
-    pg2.evaluate("document.querySelector('#closePanel').click()")
+    pg2.keyboard.press("Escape")   # 设计变更：关闭按钮移除，ESC / 右键关闭面板
+    pg2.wait_for_timeout(200)
     pg2.click("#pet", button="right")
     pg2.wait_for_timeout(250)
     pg2.click('#menu div[data-act="talk"]')
@@ -761,7 +762,7 @@ with sync_playwright() as p:
         return {x:Math.round(r.right)-4, y:Math.round(r.bottom)-4};})()""")
     # 上面几步把设置面板打开了，它盖住立绘 —— 不先关掉，右键点到的就不是 #pet
     if pg.is_visible("#panel"):
-        pg.click("#closePanel")
+        pg.keyboard.press("Escape")
         pg.wait_for_timeout(250)
     pg.evaluate("document.getElementById('menu').classList.add('hidden')")
     pg.mouse.click(pet_box["x"], pet_box["y"], button="right")
