@@ -708,6 +708,22 @@ class Brain {
     const tr = this.tracker;
     let sleepIntent = false, snap = null;
     if (tr && !proactive) sleepIntent = tr.recordUserInput(userText);
+  // v2.0 枕边信箱（客观物理拦截）：她睡着时消息不进大脑、不调 LLM ——
+  // 只记账留置，醒来后自然出现在她的上下文里；说什么、说不说，归她。
+  if (tr && tr.sleepMode && !proactive) {
+    let bedsideId = null;
+    try {
+      const rec = this.memory.append('user', userText, {});
+      bedsideId = rec && rec.messageId ? rec.messageId : null;
+      this.memory.save(true);
+    } catch (e) { /* 记账失败不崩溃，如实返回留置失败 */ }
+    return {
+      ok: true,
+      slept: true,
+      note: '[初澜沉睡中，消息已留置在侧]',
+      messageId: bedsideId
+    };
+  }
     if (tr) snap = tr.snapshot();
 
     // Phase 0.5: 内部调节中枢更新 (用户交互与物理刺激事件驱动)
@@ -872,11 +888,14 @@ class Brain {
       });
     }
 
-    /* ---- 入睡联动（幂等）----
-       两个入口都算数：用户明说道晚安，或她自己打出 [state:sleepy]。
+    /* ---- 入睡联动（幂等；v2.0 双通路）----
+       通路 A：用户明说道晚安，或她自己说出想睡 —— 同一套话语判据、零预置台词：
+       她想撑着（依恋再高）就继续陪，只有她自己说停才停。
        enterSleepMode 内部带守卫，重复触发不会把 sleepStartTime 刷成"刚睡"。 */
-    // sleepy 只是模型表达的当下情绪，不等于用户说了晚安。
-    if (sleepIntent) {
+    // sleepy 标签本身不作数（只当情绪），作数的是她嘴里说出的入睡话语。
+    const herSleepIntent = !!(tr && tr.constructor && typeof tr.constructor.isSleepIntent === 'function'
+      && tr.constructor.isSleepIntent(String(clean || text || '')));
+    if (sleepIntent || herSleepIntent) {
       const sleepAt = Date.now();
       if (tr) {
         tr.enterSleepMode(sleepAt);
@@ -1704,6 +1723,24 @@ class Brain {
   }
 
   /** 低频主体成长检查点：只在窗口小结成功后调用一次。 */
+  /* v2.0 通路 B：生理昏睡极限（纯物理断电，零台词）——
+     像人累到极致自己趴下：疲惫 >= 95 且周围安静（>= 5 分钟无对话）时静默沉睡。
+     不喊口号、不打招呼，只是睡着了。返回是否真的断电。 */
+  checkPhysiologicalCollapse() {
+    const tr = this.tracker;
+    if (!tr || tr.sleepMode) return false;
+    const reg = this.internalRegulation && this.internalRegulation.getState ? this.internalRegulation.getState() : null;
+    if (!reg) return false;
+    const hit = tr.constructor && typeof tr.constructor.isPhysiologicalCollapse === 'function'
+      && tr.constructor.isPhysiologicalCollapse(reg.restPressure, tr.lastUserInputAt);
+    if (!hit) return false;
+    tr.enterSleepMode(Date.now());
+    if (this.internalRegulation && typeof this.internalRegulation.updateOnSleep === 'function') {
+      this.internalRegulation.updateOnSleep(true, { timestamp: Date.now() });
+    }
+    return true;
+  }
+
   async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;

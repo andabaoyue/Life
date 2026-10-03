@@ -674,9 +674,14 @@ async function main() {
     await brain.ask('其实我还是要说晚安', () => {});
     check('重复道晚安不重置睡眠起点（brain 这条路上幂等）',
       trk3.sleepStartTime === start);
-    await brain.ask('在吗', () => {});
+    const beforeReq = chatReqs().length;
+    await brain.ask('在吗', () => {});   // v2.0 枕边信箱：睡着时说话只留置（不吵醒、不调 LLM）
+    trk3.record('drag');                 // v2.0 物理唤醒：拖拽 = 明显摇晃
+    tc += 1000;
+    await brain.ask('我回来了', () => {});
     check('醒来之后环境块带"刚被叫醒"（她知道自己才醒）',
-      chatReqs().pop().slice(-1)[0].content.includes('刚被叫醒'));
+      chatReqs().length === beforeReq + 1   // 睡着那次零请求，醒来才有请求
+      && chatReqs().pop().slice(-1)[0].content.includes('刚被叫醒'));
     stateReply = '我有点困了[state:sleepy]';
     const trk4 = new ActivityTracker({ now: () => tc });
     brain = new Brain(tmpDir(), { ...cfg, windowTurns: 999 });

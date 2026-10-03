@@ -82,7 +82,7 @@ class ActivityTracker {
     this.spokenDuringIdle = false;
     this.lastReportedIdleMin = 0;
     const intent = ActivityTracker.isSleepIntent(String(text || ''));
-    if (!intent && this.sleepMode) this.wakeUp(at);
+    // v2.0 枕边信箱：睡着时消息不再吵醒 —— 只留置（信箱在 brain 层），醒来由她自己决定怎么接
     return intent;
   }
 
@@ -95,6 +95,15 @@ class ActivityTracker {
   static isSleepIntent(text) {
     if (/(吗|么|呢|[?？])/.test(text)) return false;
     return /(晚安|睡了|去睡|睡觉|躺了|下线了|先不聊)/.test(text);
+  }
+
+  /** v2.0 通路 B：生理昏睡极限（纯物理断电，零台词）——
+      像人累到极致自己趴下：疲惫 >= 95 且周围安静（>= 5 分钟无对话）时自然沉睡。
+      不喊口号、不打招呼，只是睡着了。 */
+  static isPhysiologicalCollapse(restPressure, lastUserInputAt, at = Date.now()) {
+    if (!(Number(restPressure) >= 95)) return false;
+    const last = Number(lastUserInputAt) || 0;
+    return (at - last) >= 5 * 60 * 1000;
   }
 
   /** 记录一次物理事件。type: 'click' | 'drag' */
@@ -113,7 +122,16 @@ class ActivityTracker {
     this.lastPhysicalAt = at;
     this.spokenDuringIdle = false;
     this.lastReportedIdleMin = 0;
-    if (this.sleepMode) this.wakeUp(at);
+    // v2.0 摇晃式唤醒（纯物理扰动，零台词）：轻碰 1~4 不醒，短时连击 5 下才摇醒；
+    // 拖拽 = 明显的晃动，直接醒。醒来不冒任何话，等她自己开口。
+    if (this.sleepMode) {
+      if (type === 'drag') {
+        this.wakeUp(at);
+      } else {
+        const shakes = this.clickTimes.filter((t) => (at - t) <= 3000).length;
+        if (shakes >= 5) this.wakeUp(at);
+      }
+    }
 
     // Phase 0.5 (P0-3): 真实物理事件直接驱动 InternalRegulationManager，无需等待下一次聊天请求
     if (this.internalRegulation && typeof this.internalRegulation.updateOnActivity === 'function') {

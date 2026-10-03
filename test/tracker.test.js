@@ -175,13 +175,23 @@ check('道晚安时 recordUserInput 返回意图并且不叫醒',
 check('晚安之后她自己打出 sleepy 也不会被"叫醒"', tr.enterSleepMode() === false);
 tr = makeTracker();
 tr.enterSleepMode();
-check('睡着后用户随便说两句就会把她叫醒',
-  tr.recordUserInput('在吗') === false && tr.sleepMode === false && tr.justWokenUp === true);
+check('v2.0 枕边信箱：睡着后说话不再吵醒（消息留置在侧，醒不醒归她）',
+  tr.recordUserInput('在吗') === false && tr.sleepMode === true && tr.justWokenUp === false);
 tr = makeTracker();
 tr.enterSleepMode();
 tr.record('click');
-check('被戳也能叫醒（物理互动就是"我要用她了"）',
-  tr.sleepMode === false && tr.justWokenUp === true);
+check('v2.0 摇晃唤醒：轻碰 1 下不醒，短时连击 5 下才摇醒（零台词）',
+  (() => {
+    const lightStill = tr.sleepMode === true;
+    for (let i = 0; i < 4; i++) tr.record('click');
+    return lightStill && tr.sleepMode === false && tr.justWokenUp === true;
+  })());
+
+/* v2.0 通路 B：生理昏睡极限（纯物理断电）——疲惫 95 + 安静 5 分钟才成立 */
+check('通路 B 生理昏睡：疲惫 >= 95 且安静 >= 5 分钟才断电（防误断电）',
+  ActivityTracker.isPhysiologicalCollapse(95, Date.now() - 6 * 60 * 1000) === true
+  && ActivityTracker.isPhysiologicalCollapse(94, Date.now() - 60 * 60 * 1000) === false
+  && ActivityTracker.isPhysiologicalCollapse(99, Date.now() - 60 * 1000) === false);
 
 /* 睡眠状态要能真的从对话链路里成立：brain 用返回值决定进不进睡眠 */
 tr = makeTracker();

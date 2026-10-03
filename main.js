@@ -468,7 +468,9 @@ ipcGuard.on('proactive-declined', () => {
 });
 
 ipcGuard.handle('proactive-check', () => {
-  if (!trigger || !brain || !brain.ready) return null;
+  // v2.0 排雷：睡着绝不梦游提案；生理断电先于一切提案逻辑（静默沉睡，零台词）
+  if (brain && brain.checkPhysiologicalCollapse && brain.checkPhysiologicalCollapse()) return null;
+  if (brain && brain.tracker && brain.tracker.sleepMode) return null;
   return trigger.evaluate();
 });
 
