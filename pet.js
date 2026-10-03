@@ -1002,15 +1002,20 @@ async function refreshMem() {
     box.appendChild(p);
     return;
   }
-  let lastGroup = null;
+  let lastGroup = null, groupBody = null;   // v1.0 记忆排版：窗口卡容器
   list.forEach((m) => {
     // 记忆分层（v1.0 用户拍板）：窗口归窗口、条目归条目 —— 按窗口号出小标题，条目列其下
     const g = m.windowNo || (String(m.label).match(/窗口\s*#(\d+)/) || [])[1] || '';
     if (g !== lastGroup) {
+      // v1.0 记忆排版：每扇窗一张卡（组标题即卡头，与连接区同款 fgroup 狠视觉）
+      const card = document.createElement('div');
+      card.className = 'fgroup';
       const head = document.createElement('div');
-      head.className = 'mem-group';
+      head.className = 'fg-title';
       head.textContent = g ? ('窗口 #' + g) : '记忆';
-      box.appendChild(head);
+      groupBody = document.createElement('div');
+      card.append(head, groupBody);
+      box.appendChild(card);
       lastGroup = g;
     }
     const row = document.createElement('div');
@@ -1027,7 +1032,7 @@ async function refreshMem() {
     // v0.9.9 F-099-01 / D-005: 记忆面板只读观察 —— 「忘掉」按钮与代拟台词已拔除。
     // 记忆的淡出只归 MemoryDynamics 的可及性衰减管，任何人不得替她挖记忆、更不得替她说话。
     row.append(tag, txt);
-    box.appendChild(row);
+    groupBody.appendChild(row);   // 条目归卡
   });
 }
 
