@@ -206,12 +206,23 @@ let petZoom = 1;
 function applyPetSize() {
   pet.style.width = Math.round(PET_BASE_W * petZoom) + 'px';
 }
+function anyOverlayOpen() {
+  return (panel && !panel.classList.contains('hidden'))
+      || (log && !log.classList.contains('hidden'))
+      || (researchPanel && !researchPanel.classList.contains('hidden'));
+}
+/* 零漂移契约（v1.0 用户反馈）：面板/记录/实验在场时缩放只动她、不动窗体；
+   欠下的窗体倍数挂账，收口（面板关闭）时一次还清 —— 记录和她都不许漂。 */
+let zoomResizeDebt = 1;
+function flushZoomDebt() {
+  if (zoomResizeDebt !== 1 && api && api.resize) api.resize(zoomResizeDebt);
+  zoomResizeDebt = 1;
+}
 function zoomPet(factor) {
   // 与主进程 nextSize 的宽度边界（200..760）大致对齐
   petZoom = Math.min(2.24, Math.max(0.59, petZoom * factor));
   applyPetSize();
-  // v1.0 巨窗 bug 根治：设置窗扩容态下不许拿缩放去乘窗体（440×680 是面板的家）
-  if (panel && !panel.classList.contains('hidden')) return;
+  if (anyOverlayOpen()) { zoomResizeDebt *= factor; return; }
   if (api && api.resize) api.resize(factor);
 }
 window.addEventListener('resize', () => {
@@ -531,6 +542,7 @@ function toggleLog(on) {
   document.body.classList.toggle('showlog', showIt);
   syncMotionPriority();
   if (showIt) scrollLog();
+  else flushZoomDebt();   // 收口还账：窗体补上欠下的缩放倍数
 }
 
 /* ---------------- 对话 ---------------- */
@@ -1206,6 +1218,7 @@ function closePanel() {
   syncMotionPriority();
   if (api && api.panelViewport) {
     api.panelViewport(false).then(() => {
+      zoomResizeDebt = 1;   // 复位基准后按缩放档回，挂账作废
       if (api.resize) api.resize(petZoom);   // 回到「缩放即窗体」的正确尺寸（不是死回 340×480）
     });
   }
@@ -1246,7 +1259,8 @@ async function closeResearchPanel() {
   if (activeReplayPollingTimer) {
     clearInterval(activeReplayPollingTimer);
     activeReplayPollingTimer = null;
-  }
+    flushZoomDebt();   // 收口还账：窗体补上欠下的缩放倍数
+}
 
   // 2. 退出时核验哈希 (Read-Only 强约束，确保观测前后零修改)
   if (api && api.research && api.research.verifyIntegrity && currentResearchHashes) {

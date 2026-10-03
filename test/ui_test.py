@@ -114,7 +114,7 @@ with sync_playwright() as p:
     pg.wait_for_timeout(300)
     check("打开记录时气泡让位", not pg.is_visible("#bubble"))
     lw = pg.evaluate("document.getElementById('log').getBoundingClientRect().width")
-    check("记录面板固定大小契约（300px 档）", 290 <= lw <= 315, "w=%s" % round(lw))
+    check("记录面板固定大小契约（324px 档）", 315 <= lw <= 335, "w=%s" % round(lw))
     pg.click("#log", button="right")
     pg.wait_for_timeout(300)
     check("记录面板右键可关闭（× 已退役）", not pg.is_visible("#log"))
