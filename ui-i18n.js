@@ -41,6 +41,13 @@ const I18N = {
     'wardrobe.applyComplete': '一键成套',
     'wardrobe.completeFailed': '补齐未完成：',
     'wardrobe.completeSuccess': '已自动补齐成套搭配，穿戴完毕~',
+    'sec.conn': '连接与模型',
+    'sec.wardrobe': '我的衣柜',
+    'sec.memoryTime': '记忆与时空',
+    'sec.danger': '危险区',
+    'sec.dangerHint': '以下操作不可逆，请确认后再动手',
+    'panel.closeHint': '按 ESC 或右键空白处即可关闭',
+    'conn.delete': '删除当前连接',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
   'en': {
@@ -72,6 +79,13 @@ const I18N = {
     'wardrobe.applyComplete': 'Complete Outfit',
     'wardrobe.completeFailed': 'Completion failed: ',
     'wardrobe.completeSuccess': 'Outfit completed and dressed~',
+    'sec.conn': 'Connections & Model',
+    'sec.wardrobe': 'My Wardrobe',
+    'sec.memoryTime': 'Memory & Space-Time',
+    'sec.danger': 'Danger Zone',
+    'sec.dangerHint': 'These actions are irreversible. Please confirm before proceeding.',
+    'panel.closeHint': 'Press ESC or right-click anywhere to close',
+    'conn.delete': 'Delete Connection',
   }
 };
 
