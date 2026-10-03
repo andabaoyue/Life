@@ -938,6 +938,7 @@ function blink() {
 function openPanel() {
   panel.classList.remove('hidden');
   syncMotionPriority();
+  if (api && api.panelViewport) api.panelViewport(true);   // v1.0：设置窗扩容（面板做大），脚底锚定、她不变大
   refreshStats();
   refreshMem();
   refreshWardrobe();
@@ -1200,6 +1201,7 @@ document.getElementById('resetSelf').addEventListener('click', async () => {
 function closePanel() {
   panel.classList.add('hidden');
   syncMotionPriority();
+  if (api && api.panelViewport) api.panelViewport(false);   // 关闭即回 340×480 基准态
 }
 if (panel) panel.addEventListener('contextmenu', (e) => { e.preventDefault(); closePanel(); });
 

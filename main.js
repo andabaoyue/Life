@@ -326,6 +326,26 @@ ipcGuard.handle('chat-window-close', () => {
   return { ok: true };
 });
 
+/* v1.0 设置面板扩容（用户拍板：面板太小、做大）：打开 440×680 / 关闭回 340×480。
+   复用 layout.anchorBottom 钉住下边缘（她脚不离地）；缩放已解耦，扩窗不放大她（DWM 战红利）。 */
+const PANEL_W = 440, PANEL_H = 680;
+ipcGuard.handle('panel-viewport', (e, open) => {
+  if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
+  if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };
+  const target = open ? { w: PANEL_W, h: PANEL_H } : { w: layout.BASE_W, h: layout.BASE_H };
+  const [w, h] = win.getSize();
+  if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };
+  const [x, y] = win.getPosition();
+  let targetY = layout.anchorBottom(y, h, target.h);
+  const area = getWorkArea(x, y);
+  if (targetY < area.y) targetY = area.y;
+  win.setPosition(x, targetY);
+  setSafeWindowSize(win, target.w, target.h);
+  reconfigureMotion();
+  syncMotionBlock('resize');
+  return { ok: true, w: target.w, h: target.h, changed: true };
+});
+
 
 ipcGuard.on('quit-app', () => {
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();

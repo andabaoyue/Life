@@ -800,6 +800,7 @@ body.showlog #bubble { display: none !important; }
 @keyframes panelIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .p-section { border-top: 1px solid rgba(255, 255, 255, .08); padding-top: 10px; margin-top: 12px; }
 .p-sub { font-size: 12.5px; font-weight: 600; color: #cfd6e4; margin: 2px 0 8px; }
+.p-sub2 { color: #97a0b0; font-size: 11px; margin: 4px 0 8px; letter-spacing: .04em; }   /* 区内分组小标题 */
 .danger-zone .p-sub { color: #e08a84; }
 .danger-hint { color: #9a6b66; }
 .panel-hint { text-align: center; color: #626b7c; font-size: 10.5px; margin-top: 12px; }
