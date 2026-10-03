@@ -1259,8 +1259,8 @@ async function closeResearchPanel() {
   if (activeReplayPollingTimer) {
     clearInterval(activeReplayPollingTimer);
     activeReplayPollingTimer = null;
-    flushZoomDebt();   // 收口还账：窗体补上欠下的缩放倍数
-}
+  }
+  flushZoomDebt();   // 收口还账：窗体补上欠下的缩放倍数（关必跑，不藏在 if 里）
 
   // 2. 退出时核验哈希 (Read-Only 强约束，确保观测前后零修改)
   if (api && api.research && api.research.verifyIntegrity && currentResearchHashes) {
