@@ -336,6 +336,21 @@ body.talking #inputBar { display: flex; }
   border-bottom: 1px solid rgba(255,255,255,.07); }
 .r-round-item:last-child { border-bottom: none; }
 .r-tab { padding: 4px 8px; font-size: 10.5px; }
+/* v1.0 研究面板排版总修（用户反馈）：下拉白底白字隐身、各小区 140px 封顶、10-11px 密排 —— 一次治好 */
+#researchPanel select option { background: #1b2233; color: #e6ebf3; }   /* 原生下拉列表隐形修复 */
+.r-table-container { max-height: none; padding: 8px 10px; }             /* 摘掉 140px 封顶 */
+.r-table-row { padding: 8px 10px; font-size: 12.5px; line-height: 1.7;
+  border-bottom: 1px solid rgba(255,255,255,.07); }
+.r-table-row:last-child { border-bottom: none; }
+.r-trait-card { padding: 10px 12px; }
+.r-trait-name { font-size: 12px; }
+.r-trait-meta { font-size: 11px; line-height: 1.5; }
+.r-badge { font-size: 10.5px; padding: 2px 7px; }
+.r-card { padding: 10px 12px; line-height: 1.75; font-size: 12.5px; }
+.r-section-title { font-size: 12px; margin-bottom: 6px; }
+.r-subtab { font-size: 11.5px; padding: 4px 9px; }
+.r-toolbar select, .r-toolbar input { font-size: 12px; padding: 5px 8px; }
+.r-traits-grid { gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }
