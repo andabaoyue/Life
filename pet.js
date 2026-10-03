@@ -648,6 +648,34 @@ async function refreshLifeMechanisms() {
       });
       if (!ex.children.length) ex.textContent = '（暂无）';
     }
+    // 生命看板（v1.0 §4.7 方向一+三）：真数据直读 + 真算术派生；null 出破折号，绝不造数
+    const setLines = (id, lines) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = '';
+      lines.forEach((t) => { const row = document.createElement('div'); row.textContent = t; el.appendChild(row); });
+    };
+    const v = r.vitals;
+    setLines('rVitalsList', v ? [
+      '精力 ' + Math.round(v.energy) + ' / 疲惫压力 ' + Math.round(v.restPressure) + ' / 觉醒度 ' + Math.round(v.arousal),
+      '相位：' + (v.isSleeping ? '深度休眠' : (v.restPressure >= 70 ? '倦怠' : '清醒'))
+    ] : ['—']);
+    const dv = r.development;
+    setLines('rDevList', dv ? [
+      '可塑性 ' + (Number(dv.plasticity)).toFixed(2),
+      '阶段：' + dv.stage
+    ] : ['—']);
+    const cg = r.cognition;
+    setLines('rCogList', cg ? [
+      '自我确信度 ' + (Number(cg.confidence)).toFixed(2),
+      '反思压力 ' + (Number(cg.revisionPressure)).toFixed(4)
+    ] : ['—']);
+    const rel = r.relations || {};
+    setLines('rRelList', [
+      '守信契约 ' + (rel.promiseFidelity == null ? '—（暂无约定结算）' : Math.round(rel.promiseFidelity * 100) + '%'),
+      '语言指纹 ' + (rel.words || 0) + ' 词（复用 ' + (rel.reusedWords || 0) + '）',
+      '经历链 ' + (rel.archiveChain || 0) + ' 拍'
+    ]);
   } catch (e) { /* 只读渲染失败不影响面板其余部分 */ }
 }
 

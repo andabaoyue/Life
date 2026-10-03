@@ -139,10 +139,22 @@ const m5 = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'lex-empty-')));
 check('22 空表守卫：两段皆不注入（不给模型幻觉素材）',
   !m5.systemText().includes('【你曾用过的词】') && !m5.systemText().includes('【当前指向未来的约定与预期】'));
 
+// 23 看板护栏：守信率除零守卫文案在册（不许蹦 NaN%）
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const petSrc23 = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+check('23 守信率除零守卫：main 出 null + pet 出「—（暂无约定结算）」（跨两文件钉死）',
+  mainSrc.includes('promiseFidelity') && /fulfilled \+ broken\) > 0/.test(mainSrc)
+  && petSrc23.includes('—（暂无约定结算）'));
+
+// 24 看板护栏：经历链只读尾锚计数，life-mechanisms 口绝不 readAll 大档（防 I/O 阻塞）
+const lmBlock = (mainSrc.split("ipcGuard.handle('life-mechanisms'")[1] || '').split('\n});')[0] || '';
+check('24 经历链轻量口：life-mechanisms 不调 readAll（防掉帧）',
+  lmBlock.length > 0 && !/readAll/.test(lmBlock) && /_readTailAnchor/.test(lmBlock));
+
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
 console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 22)
+  ? ('lexicon-expectations tests passed: ' + 24)
   : ('lexicon-expectations tests FAILED: ' + failures));
 process.exit(failures === 0 ? 0 : 1);

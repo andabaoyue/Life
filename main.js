@@ -490,12 +490,55 @@ ipcGuard.handle('self-timezone', (e, clientTz = '') => {
   return { ok: true, birthTimezone: ledger.birthTimezone || null, birthAt: Number.isFinite(ledger.birthAt) ? ledger.birthAt : null };
 });
 
-// v1.0 §4.7 只读视图数据口：词汇表 + 预期账本（观察层只读，不写任何数据、不碰完整性哈希）
-ipcGuard.handle('life-mechanisms', () => ({
-  ok: true,
-  lexicon: (brain && brain.memory && brain.memory.data && brain.memory.data.lexicon) || [],
-  expectations: (brain && brain.memory && brain.memory.data && brain.memory.data.expectations) || []
-}));
+// v1.0 §4.7 只读视图数据口：词汇表 + 预期账本 + 生命看板（观察层只读，不写任何数据、不碰完整性哈希）
+// 护栏：① 经历链只读尾锚计数（绝不 readAll 大档）② 守信率除零给 null（UI 出破折号）③ 单通道聚合下发
+ipcGuard.handle('life-mechanisms', () => {
+  const memData = (brain && brain.memory && brain.memory.data) || {};
+  const lexicon = Array.isArray(memData.lexicon) ? memData.lexicon : [];
+  const expectations = Array.isArray(memData.expectations) ? memData.expectations : [];
+  const fulfilled = expectations.filter((x) => x && x.status === 'fulfilled').length;
+  const broken = expectations.filter((x) => x && x.status === 'broken').length;
+  const promiseFidelity = (fulfilled + broken) > 0 ? fulfilled / (fulfilled + broken) : null;   // 除零守卫
+  const reusedWords = lexicon.filter((x) => x && Array.isArray(x.uses) && x.uses.length > 0).length;
+  let archiveChain = 0;
+  try {
+    // 护栏 1：只读尾部锚点的小 JSON（append 时同步写 archiveSeq），不重读 experiences.jsonl
+    const tail = brain && brain.experiencesArchive && brain.experiencesArchive._readTailAnchor
+      ? brain.experiencesArchive._readTailAnchor() : null;
+    const seq = tail && tail.anchor && tail.anchor.archiveSeq;
+    archiveChain = Number.isFinite(seq) ? seq : 0;
+  } catch (e) { archiveChain = 0; }
+  let vitals = null, development = null, cognition = null;
+  try {
+    const reg = brain && brain.internalRegulation && brain.internalRegulation.getState();
+    if (reg) vitals = {
+      energy: reg.energy, restPressure: reg.restPressure,
+      arousal: reg.arousal, isSleeping: !!reg.isSleeping
+    };
+  } catch (e) { /* 只读失败给 null，UI 显示破折号 */ }
+  try {
+    const canal = require('./src/canalization');
+    const m = canal.getCanalizationMetrics(memData.windowNo || 1);
+    development = { stage: m.stage, plasticity: m.plasticityMultiplier };
+  } catch (e) { /* 同上 */ }
+  try {
+    const ledger = brain && brain.selfLedger;
+    if (ledger && ledger.getEntryMetrics) {
+      const TRAITS = ['quiet_preference', 'social_initiative', 'attachment_need', 'vitality', 'philosophical_curiosity'];
+      const ms = TRAITS.map((t) => ledger.getEntryMetrics(t)).filter(Boolean);
+      if (ms.length) {
+        cognition = {
+          confidence: ms.reduce((a, x) => a + (Number(x.confidence) || 0), 0) / ms.length,
+          revisionPressure: ms.reduce((a, x) => a + (Number(x.revisionPressure) || 0), 0) / ms.length
+        };
+      }
+    }
+  } catch (e) { /* 同上 */ }
+  return {
+    ok: true, lexicon, expectations, vitals, development, cognition,
+    relations: { promiseFidelity, fulfilled, broken, words: lexicon.length, reusedWords, archiveChain }
+  };
+});
 
 // v1.0 笔 2：气泡流数据层只读通道 —— 单一事实源是 memory.history（她眼里的真实对话史）。
 // synthetic 显式保留：主动搭话的程序触发不得伪装成用户发言；t 缺失即 null，绝不伪造时间。
