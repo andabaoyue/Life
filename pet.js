@@ -1245,8 +1245,9 @@ async function refreshConnections() {
   const act = document.getElementById('connActive');
   if (act) act.textContent = '';
   if (connItems.length > 0) {
-    const pick = connItems.some((c) => c.connectionId === r.activeConnectionId)
-      ? r.activeConnectionId : connItems[0].connectionId;
+    // v1.0 选中保持（用户之问实锤）：刷新后优先留在当前编辑的连接上，不跳回 ★当前
+    const pick = connItems.some((c) => c.connectionId === connSelectedId) ? connSelectedId
+      : (connItems.some((c) => c.connectionId === r.activeConnectionId) ? r.activeConnectionId : connItems[0].connectionId);
     sel.value = pick;
     fillConnEditor(pick);
   } else {
