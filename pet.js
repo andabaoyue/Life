@@ -1824,15 +1824,10 @@ async function loadRounds(windowNo, segmentIndex) {
 
     for (const rd of rounds) {
       const item = document.createElement('div');
-      item.className = 'r-round-item';
+      const hasU = !!(rd.userMessage && rd.userMessage.content != null);
+      const hasA = !!(rd.assistantMessage && rd.assistantMessage.content != null);
 
-      const head = document.createElement('div');
-      head.style.display = 'flex';
-      head.style.justifyContent = 'space-between';
-      head.style.alignItems = 'center';
-      head.style.marginBottom = '2px';
-
-      const tag = document.createElement('span');
+      // 徽章口径（唯一出处，空/实共用）
       let badgeClass = 'badge-active';
       const status = String(rd.status || rd.tag || '').toUpperCase();
       if (rd.bridge === true || status === 'BRIDGE') badgeClass = 'badge-bridge';
@@ -1842,42 +1837,57 @@ async function loadRounds(windowNo, segmentIndex) {
       else if (status === 'CORRUPTED') badgeClass = 'badge-corrupted';
       else if (status === 'MISSING') badgeClass = 'badge-missing';
       else if (status === 'ACTIVE') badgeClass = 'badge-active';
-
-      tag.className = 'r-badge ' + badgeClass;
-      tag.textContent = rd.tag || rd.status || (rd.bridge ? 'BRIDGE' : (rd.bridge === false ? 'ACTIVE' : 'UNRESOLVED'));
-
-      const rTitle = document.createElement('span');
-      rTitle.style.color = '#8ea1cb';
-      rTitle.textContent = typeof rd.roundNo === 'number' ? `第 ${rd.roundNo} 轮` : `[未确定轮次]`;
-
-      head.append(rTitle, tag);
+      const badge = document.createElement('span');
+      badge.className = 'r-badge ' + badgeClass;
+      badge.textContent = rd.tag || rd.status || (rd.bridge ? 'BRIDGE' : (rd.bridge === false ? 'ACTIVE' : 'UNRESOLVED'));
 
       const statusDesc = rd.status === 'NOT_RECORDED' ? '未记录交互'
         : (rd.status === 'UNRESOLVED' ? '无法确定：证据不完整'
         : (rd.status === 'CORRUPTED' ? '记录损坏'
         : (rd.status === 'MISSING' ? '记录缺失' : (rd.status || '未记录交互'))));
 
-      const uMsg = document.createElement('div');
-      uMsg.style.color = '#8fd0a8';
-      if (rd.userMessage && rd.userMessage.content != null) {
-        const uId = rd.userMessage.messageId ? `[${rd.userMessage.messageId}] ` : '';
-        uMsg.textContent = `${uId}用户: ${rd.userMessage.content}`;
-      } else {
-        uMsg.style.color = '#7f8c8d';
-        uMsg.textContent = `用户: [${statusDesc}]`;
+      // v1.0 占比修正（用户反馈）：空轮次压成一行 —— 未记录的壳不再占满三行
+      if (!hasU && !hasA) {
+        item.className = 'r-round-item compact';
+        const left = document.createElement('span');
+        left.textContent = (typeof rd.roundNo === 'number' ? `第 ${rd.roundNo} 轮` : '[未确定轮次]')
+          + ' · ' + statusDesc;
+        item.append(left, badge);
+        box.appendChild(item);
+        continue;
       }
 
-      const aMsg = document.createElement('div');
-      aMsg.style.color = '#cfe0ff';
-      if (rd.assistantMessage && rd.assistantMessage.content != null) {
-        const aId = rd.assistantMessage.messageId ? `[${rd.assistantMessage.messageId}] ` : '';
-        aMsg.textContent = `${aId}初澜: ${rd.assistantMessage.content}`;
-      } else {
-        aMsg.style.color = '#7f8c8d';
-        aMsg.textContent = `初澜: [${statusDesc}]`;
-      }
+      item.className = 'r-round-item';
+      const head = document.createElement('div');
+      head.className = 'r-round-head';
+      const rTitle = document.createElement('span');
+      rTitle.className = 'r-round-no';
+      rTitle.textContent = typeof rd.roundNo === 'number' ? `第 ${rd.roundNo} 轮` : '[未确定轮次]';
+      head.append(rTitle, badge);
 
-      item.append(head, uMsg, aMsg);
+      // 消息分层：ID 淡化章 + 角色章 + 正文（占比归位，长文自己成段）
+      const mkMsg = (msg, label, cls) => {
+        const wrap = document.createElement('div');
+        if (msg && msg.content != null) {
+          wrap.className = 'r-msg';
+          const idc = document.createElement('span');
+          idc.className = 'r-msg-id';
+          idc.textContent = msg.messageId ? `[${msg.messageId}]` : '';
+          const rl = document.createElement('span');
+          rl.className = 'r-msg-role ' + cls;
+          rl.textContent = label;
+          const tx = document.createElement('span');
+          tx.className = 'r-msg-text';
+          tx.textContent = msg.content;
+          wrap.append(idc, rl, tx);
+        } else {
+          wrap.className = 'r-msg r-msg-empty';
+          wrap.textContent = label + ': [' + statusDesc + ']';
+        }
+        return wrap;
+      };
+
+      item.append(head, mkMsg(rd.userMessage, '用户', 'u'), mkMsg(rd.assistantMessage, '初澜', 'a'));
       box.appendChild(item);
     }
   } catch (e) {
