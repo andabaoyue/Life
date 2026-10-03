@@ -815,6 +815,9 @@ with sync_playwright() as p:
     pg.mouse.click(pet_box["x"], pet_box["y"], button="right")
     pg.wait_for_timeout(200)
     mrect = pg.evaluate("""(()=>{const m=document.getElementById('menu');
+    if pg.is_visible("#panel") or pg.is_visible("#wardrobe") or pg.is_visible("#log") or pg.is_visible("#researchPanel"):
+        pg.keyboard.press("Escape")
+        pg.wait_for_timeout(250)
         const r=m.getBoundingClientRect();
         return {hidden:m.classList.contains('hidden'),
                 top:r.top,bottom:r.bottom,left:r.left,right:r.right,
