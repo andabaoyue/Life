@@ -787,8 +787,9 @@ function setTalking(on) {
   document.body.classList.toggle('talking', on);
   // v1.0 方案二：对话已迁独立窗（chat.html）；此处只管主窗 talking 态语义
   syncMotionPriority();
-  if (on) setTimeout(() => input.focus(), 30);
-  else input.blur();
+  // v1.0 方案二：输入条已退役（input 恒 null）——守卫，别让开关对话抛异常
+  if (on) setTimeout(() => { if (input) input.focus(); }, 30);
+  else if (input) input.blur();
 }
 
 /* ---------------- 拖动 ----------------
