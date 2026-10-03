@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   dragStart: () => ipcRenderer.send('drag-start'),
   dragEnd: () => ipcRenderer.send('drag-end'),
   dragMove: (dx, dy) => ipcRenderer.send('drag-move', { dx, dy }),
+  dragTraceMark: (info) => ipcRenderer.send('drag-trace-mark', info),
   // 主进程发现窗口失焦时通知我们收尾拖拽（渲染进程的 blur 不一定触发）
   onDragCancel: (cb) => ipcRenderer.on('drag-cancel', () => cb()),
   togglePin: () => ipcRenderer.invoke('toggle-pin'),
