@@ -150,6 +150,8 @@ with sync_playwright() as p:
     check("预览模式衣柜区有降级文案",
           "预览" in (pg.text_content("#wdSlots") or ""))
     check("衣柜提示写明不影响性格",
+    pg.keyboard.press("Escape")   # 关衣橱（测试隔离：不让它盖住立绘影响后续用例）
+    pg.wait_for_timeout(200)
           "不影响性格" in (pg.text_content("#wdHint") or ""))
 
     # 换装图层：预览模式没有 api，必须回退单张 pet.png，不能是空白
