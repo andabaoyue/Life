@@ -36,7 +36,6 @@ npm start
 - 设置面板里有「衣柜」：点预设整套切换，或按槽位单件换、脱下；也可以直接在对话里说「换成哥特那套」
 - 戳她几下、拖她一下，她**真的知道**（见「本地活动与主动搭话」）；说「晚安」之后她不会再自己开口，直到你把她叫醒
 - 从一个表情换到另一个表情有衔接（一下微动 + 明暗渐变），不再是硬切；见「状态机 → 表情之间切换的衔接」
-- 「创作空间」面板（v0.9.9）：独立创作项目 / 历史 / Context / 小结，经创作助手流式生成——与初澜主体的记忆、状态、档案完全隔离，互不读写
 - 无气泡、无输入、无聊天、未拖拽且未睡眠时，主进程会让桌宠在屏幕工作区底部缓慢闲逛；到左右边缘会短暂停留并表现为贴边悬挂。
 - 用户拖拽、打开输入框、聊天请求、气泡、记录/设置面板或睡眠状态都会立即停止自主运动。运动状态会进入真实环境感知块。
 - 记忆面板遵循 D-005 仅供只读观察，由记忆动力学自主演化；设置面板中的「重置成长档案」会显式二次确认，并让初澜以新的出生点重新开始。
@@ -421,8 +420,6 @@ node test/usage-cache-cost-p3.test.js     # 29 项：v0.9.8 P3 Usage/Cache/Cost�
 node test/provider-routing-p4.test.js     # 35 项：v0.9.8 P4 Routing/Fallback/Circuit Breaker（Routing Contract 四字段、Generation Attempt/Result 语义：一次调用一 Attempt / Retry≠新语义生成 / Fallback=新 Attempt、Result fail-closed 采用、Fallback 保留原 provider 失败事实且受 capability/cost/privacy/budget 约束、已 yield 输出禁止静默重生成、Circuit Breaker closed→open→half-open 状态机与 cooldown、熔断与 provenance 真值隔离）
 node test/provider-runtime-expansion-p5.test.js # 68 项：v0.9.8 P5 Provider Runtime Expansion（Registry dispatch 与 unknown fail-closed、Generic OpenAI-compatible Adapter 六项契约、baseURL 标准化与 /v1 保留、原生 SSE parser 跨 chunk framing（截断 JSON/换行/comment/[DONE]/malformed fail-safe）、Brain 动态 provider dispatch、Strategy 以 providerId 键控不继承 DeepSeek 语义、credential namespace 隔离、timeout/abort/retry/post-yield 边界、runtime evidence adapter binding、Brain hot-swap 失败清理与配置回滚）
 node test/security-hardening-sec.test.js # 43 项：SEC-01~07 安全收口（IPC sender/frame/URL 三重校验与 navigation/new-window 限制、Renderer CSP、generic provider 响应大小硬上限 complete/error-body/stream/SSE-buffer、replay task retention 自动 cleanup 与大型 result 释放、敏感文件 0600 权限、mint authority 绑定真实 runtime identity、CI action SHA pin 与 npm audit）
-node test/creative-runtime-p2.test.js # 43 项：v0.9.9 Phase 2 Creative Core（Creative System Prompt 与人格认识论隔离与偷塞证明、history pending 事务与 crash/半行恢复、canonical history hash 换行统一与免时钟/机器信息、Context/Summary 正交不可互改、multi-project 存储隔离、projectId 路径安全拒绝、Subject 数据五操作零写入、Provider Registry/Adapter 复用、Skill Loader 最小接口）
-node test/creative-ipc-p3.test.js # 32 项：v0.9.9 Phase 3 Creative IPC+UI（真实 ipc-guard sender/frame/URL 防线、projectId/skillName/content/context 输入验证与恶意 payload 拒绝、正文不 trim 不关键词过滤、IPC→Core→Adapter 集成链路 system prompt 逐字验证与 PERSONA 隔离证明、流式 delta/completed/error/aborted 事件、abort 全链传递与 partial 保留、单项目单 in-flight 门禁、切换项目不串轨、读路径先 recovery、出站无 credential/路径/adapter 对象、Subject 全流程零写入、创作空间 UI 文案中性、update-context 幻影项目防复活、UI 事件按 projectId 绑定不跨项目串显）
 node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
 node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
 node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
