@@ -351,6 +351,12 @@ body.talking #inputBar { display: flex; }
 .r-subtab { font-size: 11.5px; padding: 4px 9px; }
 .r-toolbar select, .r-toolbar input { font-size: 12px; padding: 5px 8px; }
 .r-traits-grid { gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+/* v1.0 被拒证据审计卡片化：ID 行头 / 消息行 / 徽章落底（一长行密排的时代结束了） */
+.r-ev-card { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.r-ev-head { font-size: 12.5px; font-weight: 600; color: #e6ebf3; word-break: break-all; }
+.r-ev-meta { font-size: 12px; color: #9fb0cf; margin-top: 5px; word-break: break-all; }
+.r-ev-card .r-badge { margin-top: 8px; }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }

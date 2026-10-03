@@ -2029,17 +2029,23 @@ async function loadRejectedEvidence() {
 
     box.textContent = '';
     for (const ev of items) {
+      // v1.0 被拒审计卡片化（用户反馈：一长行密排不可读）——分层：行头 / 消息 / 徽章
       const row = document.createElement('div');
-      row.className = 'r-table-row';
+      row.className = 'r-ev-card';
 
-      const left = document.createElement('span');
-      left.textContent = `[${ev.evidenceId}] Trait: ${ev.trait || 'UNKNOWN'} | 消息: ${ev.messageId || 'N/A'}`;
+      const head = document.createElement('div');
+      head.className = 'r-ev-head';
+      head.textContent = `[${ev.evidenceId}]  Trait: ${ev.trait || 'UNKNOWN'}`;
 
-      const right = document.createElement('span');
-      right.className = 'r-badge badge-rejected';
-      right.textContent = ev.reason || 'REJECTED';
+      const meta = document.createElement('div');
+      meta.className = 'r-ev-meta';
+      meta.textContent = '消息: ' + (ev.messageId || 'N/A');
 
-      row.append(left, right);
+      const badge = document.createElement('span');
+      badge.className = 'r-badge badge-rejected';
+      badge.textContent = ev.reason || 'REJECTED';
+
+      row.append(head, meta, badge);
       box.appendChild(row);
     }
   } catch (e) {
