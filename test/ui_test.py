@@ -149,10 +149,10 @@ with sync_playwright() as p:
     check("衣柜预设区存在", pg.query_selector("#wdPresets") is not None)
     check("预览模式衣柜区有降级文案",
           "预览" in (pg.text_content("#wdSlots") or ""))
+    check("衣柜提示写明不影响性格",
           "不影响性格" in (pg.text_content("#wdHint") or ""))
     pg.keyboard.press("Escape")   # 关衣橱（测试隔离：不让它盖住立绘影响后续用例）
     pg.wait_for_timeout(200)
-          "不影响性格" in (pg.text_content("#wdHint") or ""))
 
     # 换装图层：预览模式没有 api，必须回退单张 pet.png，不能是空白
     layered = pg.evaluate("document.querySelector('#figure').classList.contains('layered')")
@@ -809,17 +809,14 @@ with sync_playwright() as p:
     pet_box = pg.evaluate("""(()=>{const r=document.getElementById('pet')
         .getBoundingClientRect();
         return {x:Math.round(r.right)-4, y:Math.round(r.bottom)-4};})()""")
-    # 上面几步把设置面板打开了，它盖住立绘 —— 不先关掉，右键点到的就不是 #pet
-    if pg.is_visible("#panel"):
+    # 上面几步若把面板打开了盖住立绘 —— 不先关掉，右键点到的就不是 #pet
+    if pg.is_visible("#panel") or pg.is_visible("#wardrobe") or pg.is_visible("#log") or pg.is_visible("#researchPanel"):
         pg.keyboard.press("Escape")
         pg.wait_for_timeout(250)
     pg.evaluate("document.getElementById('menu').classList.add('hidden')")
     pg.mouse.click(pet_box["x"], pet_box["y"], button="right")
     pg.wait_for_timeout(200)
     mrect = pg.evaluate("""(()=>{const m=document.getElementById('menu');
-    if pg.is_visible("#panel") or pg.is_visible("#wardrobe") or pg.is_visible("#log") or pg.is_visible("#researchPanel"):
-        pg.keyboard.press("Escape")
-        pg.wait_for_timeout(250)
         const r=m.getBoundingClientRect();
         return {hidden:m.classList.contains('hidden'),
                 top:r.top,bottom:r.bottom,left:r.left,right:r.right,
