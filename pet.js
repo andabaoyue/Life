@@ -1466,7 +1466,9 @@ async function closeResearchPanel() {
     clearInterval(activeReplayPollingTimer);
     activeReplayPollingTimer = null;
   }
-  syncPanelViewport();   // v1.0：家族统一收口（关必跑，不藏在 if 里）
+  researchPanel.classList.add('hidden');
+  syncMotionPriority();
+  syncPanelViewport();   // v1.0：家族统一收口（先隐藏面板，确保 anyOverlayOpen 为 false 后正常回退基准并按缩放档校正）
 
   // 2. 退出时核验哈希 (Read-Only 强约束，确保观测前后零修改)
   if (api && api.research && api.research.verifyIntegrity && currentResearchHashes) {
@@ -1480,9 +1482,6 @@ async function closeResearchPanel() {
       console.error('[Research] 完整性校验异常:', e.message);
     }
   }
-
-  researchPanel.classList.add('hidden');
-  syncMotionPriority();
 }
 
 async function loadResearchData() {
