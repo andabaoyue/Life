@@ -1520,7 +1520,7 @@ class Brain {
         const dreamEnabled = this.isExperimentModuleActive('sleepConsolidation');
         if (dreamEnabled && this.experiencesArchive) {
           // v2.0：梦境机器抽为 _dreamCycle（关窗与入睡共用同一台）；此处行为与原先一字不差
-          await this._dreamCycle({ snap, syn, verifiedEvidence, events });
+          await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments });
         }
 
         if (this.cfg.selfGrowthEnabled === true)
@@ -1627,6 +1627,7 @@ class Brain {
     const syn = ctx.syn || { stableUserFacts: [], subjectExperiences: [] };
     const verifiedEvidence = ctx.verifiedEvidence || [];
     const events = ctx.events || [];
+    const segments = ctx.segments || [];
           try {
             const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
             
