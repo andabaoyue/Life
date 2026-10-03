@@ -320,6 +320,14 @@ body.talking #inputBar { display: flex; }
 /* v2.0 枕边信箱客观事实行（第三人称，不代拟） */
 .b-notice .b-text { color: #8fa0b8; font-style: italic; background: rgba(255,255,255,.05);
   border: 1px dashed rgba(255,255,255,.14); }
+/* 梦境排版（v1.0 大分区）：向记忆看齐 —— 第 N 次分卡、字号不缩水、行距舒展、紫调身份 */
+.dream-card { background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.dream-no { font-size: 12.5px; font-weight: 700; letter-spacing: .05em; color: #b7a8ff;
+  margin: 0 0 8px; padding-bottom: 7px; border-bottom: 1px solid rgba(160,130,255,.28); }
+.dream-body { font-size: 13px; line-height: 1.8; color: #e6ebf3; word-break: break-word;
+  white-space: pre-wrap; padding-left: 12px; border-left: 2px solid rgba(160,130,255,.35); }
+.dream-meta { margin-top: 8px; font-size: 11px; color: #7d8aa8; }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }

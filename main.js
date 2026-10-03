@@ -498,7 +498,7 @@ ipcGuard.handle('self-timezone', (e, clientTz = '') => {
 // 会变得很多很多 —— 最新在前，预留分页钩子。
 ipcGuard.handle('dream-list', () => {
   const all = (brain && brain.dreamHistory) || [];
-  const dreams = all.slice().reverse().map((d) => ({
+  const dreams = all.map((d) => ({   // 升序：第一次、第二次、……
     dreamId: d && d.dreamId,
     windowNo: d && d.windowNo,
     generatedAt: d && d.generatedAt,

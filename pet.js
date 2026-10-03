@@ -213,19 +213,14 @@ function closeOtherOverlays(keepId) {
     const wd = document.getElementById('wardrobe');
     if (wd && !wd.classList.contains('hidden')) toggleWardrobe(false);
   }
-  if (keepId !== 'dreams') {
-    const dr = document.getElementById('dreams');
-    if (dr && !dr.classList.contains('hidden')) toggleDreams(false);
-  }
+
   if (keepId !== 'research' && researchPanel && !researchPanel.classList.contains('hidden')) closeResearchPanel();
   if (keepId !== 'panel' && panel && !panel.classList.contains('hidden')) closePanel();
 }
 
 function anyOverlayOpen() {
   const wd = document.getElementById('wardrobe');   // 衣橱（v1.0 独立面板）
-  const dr = document.getElementById('dreams');     // 梦境（v1.0 独立模块）
-  return (dr && !dr.classList.contains('hidden'))
-      || (panel && !panel.classList.contains('hidden'))
+  return (panel && !panel.classList.contains('hidden'))
       || (log && !log.classList.contains('hidden'))
       || (wd && !wd.classList.contains('hidden'))
       || (researchPanel && !researchPanel.classList.contains('hidden'));
@@ -246,10 +241,8 @@ function syncPanelViewport() {
   const wdEl = document.getElementById('wardrobe');
   let w = 440;
   if (log && !log.classList.contains('hidden')) w = 520;
-  const drW = document.getElementById('dreams');
   if ((wdEl && !wdEl.classList.contains('hidden'))
-      || (panel && !panel.classList.contains('hidden'))
-      || (drW && !drW.classList.contains('hidden'))) w = 560;
+      || (panel && !panel.classList.contains('hidden'))) w = 560;
   api.panelViewport(open, w, 680).then(() => {
     if (!open) {
       zoomResizeDebt = 1;
@@ -734,7 +727,7 @@ function renderI18nPanel() {
   setText('secTimezone', 'sec.timezone');
   setText('secDanger', 'sec.danger');
   setText('wardrobeTitle', 'sec.wardrobe');   // 衣橱面板标题
-  setText('dreamsTitle', 'sec.dreams');       // 梦境面板标题
+
   setText('dangerHint', 'sec.dangerHint');
   setText('tzCompassTitle', 'tz.compass');
   setText('tzKBirth', 'tz.birth');
@@ -966,8 +959,7 @@ window.addEventListener('keydown', (e) => {
     if (researchPanel && !researchPanel.classList.contains('hidden')) { closeResearchPanel(); return; }
     const wdEl = document.getElementById('wardrobe');
     if (wdEl && !wdEl.classList.contains('hidden')) { toggleWardrobe(false); return; }
-    const drEl = document.getElementById('dreams');
-    if (drEl && !drEl.classList.contains('hidden')) { toggleDreams(false); return; }
+
     if (panel && !panel.classList.contains('hidden')) { closePanel(); return; }
     if (menu && !menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
     if (document.body.classList.contains('talking')) { setTalking(false); return; }
@@ -1307,21 +1299,9 @@ if (document.getElementById('wardrobe')) {
   document.getElementById('wardrobe').addEventListener('contextmenu', (e) => { e.preventDefault(); toggleWardrobe(false); });
 }
 
-/* 梦境（v1.0 独立模块）：只读梦册 —— textContent 渲染、只读、不碰完整性哈希；
-   会变得很多很多：最新在前，卡片化展示，预留分页钩子。 */
-function toggleDreams(on) {
-  const dr = document.getElementById('dreams');
-  if (!dr) return;
-  const showIt = on ?? dr.classList.contains('hidden');
-  if (showIt) closeOtherOverlays('dreams');
-  dr.classList.toggle('hidden', !showIt);
-  if (showIt) refreshDreams();
-  syncPanelViewport();
-}
-bindPanelDrag(document.getElementById('dreams'));
-if (document.getElementById('dreams')) {
-  document.getElementById('dreams').addEventListener('contextmenu', (e) => { e.preventDefault(); toggleDreams(false); });
-}
+/* 梦境分区（v1.0 大分区：个体观测内与主体状态同级）——只读梦册：
+   排版向记忆看齐（第一次/第二次/… 分层清晰、字号不缩水），
+   textContent 渲染、只读、不碰完整性哈希；很多很多时靠卡片流+滚动承载，预留分页钩子。 */
 async function refreshDreams() {
   const box = document.getElementById('dreamList');
   if (!box) return;
@@ -1330,21 +1310,21 @@ async function refreshDreams() {
   try {
     const r = await api.dreamList();
     if (!r || !r.ok) { box.textContent = '（读取失败）'; return; }
-    const list = r.dreams || [];
+    const list = r.dreams || [];   // 升序：第一次、第二次、第三次……
     if (!list.length) { box.textContent = '（暂无 —— 还没有做过梦）'; return; }
-    list.forEach((d) => {
+    list.forEach((d, i) => {
       const card = document.createElement('div');
-      card.className = 'fgroup';
+      card.className = 'dream-card';
       const h = document.createElement('div');
-      h.className = 'fg-title';
+      h.className = 'dream-no';
       const when = d.generatedAt ? new Date(d.generatedAt).toLocaleString() : '';
-      h.textContent = '梦 · 窗口 #' + (d.windowNo || '?') + (when ? ' · ' + when : '');
+      h.textContent = '第 ' + (i + 1) + ' 次' + (when ? ' · ' + when : '');
       const body = document.createElement('div');
-      body.className = 'seg-body';
+      body.className = 'dream-body';
       body.textContent = d.text || '（无文本）';
       const meta = document.createElement('div');
-      meta.className = 'hint';
-      meta.textContent = '标记：' + (d.epistemicStatus || '') + '（离线重组，非亲历）';
+      meta.className = 'dream-meta';
+      meta.textContent = '窗口 #' + (d.windowNo || '?') + ' · ' + (d.epistemicStatus || '') + '（离线重组，非亲历）';
       card.append(h, body, meta);
       box.appendChild(card);
     });
@@ -1560,6 +1540,7 @@ async function openResearchPanel() {
   closeOtherOverlays('research');
   researchPanel.classList.remove('hidden');
   refreshLifeMechanisms();   // v1.0 §4.7：只读视图（词汇 + 预期）
+  refreshDreams();           // v1.0：梦境大分区（打开观测即装载）
   syncPanelViewport();   // v1.0 家族补全：个体观测开时也同步视窗（此前只关不合，大体型下布局炸）
   syncMotionPriority();
 
@@ -2077,7 +2058,8 @@ function switchResearchTab(tabName) {
     windows: document.getElementById('rPaneWindows'),
     provenance: document.getElementById('rPaneProvenance'),
     replay: document.getElementById('rPaneReplay'),
-    export: document.getElementById('rPaneExport')
+    export: document.getElementById('rPaneExport'),
+    dreams: document.getElementById('rPaneDreams')
   };
 
   if (paneMap[tabName]) paneMap[tabName].classList.remove('hidden');
@@ -2336,7 +2318,6 @@ menu.addEventListener('click', (e) => {
   if (act === 'talk') { setTalking(true); if (api && api.chatWindowOpen) api.chatWindowOpen(); return; }   // v1.0 方案二：对话入独立窗
   if (act === 'log') return toggleLog();
 if (act === 'wardrobe') return toggleWardrobe();   // v1.0：衣橱自设置独立，入菜单
-if (act === 'dreams') return toggleDreams();   // v1.0：梦境独立模块（会变得很多很多）
   if (act === 'panel') return (panel && !panel.classList.contains('hidden')) ? closePanel() : openPanel();   // v1.0 toggle：再点即收
   if (act === 'research') return (researchPanel && !researchPanel.classList.contains('hidden')) ? closeResearchPanel() : openResearchPanel();   // v1.0 toggle：再点即收
   if (act === 'pin') {

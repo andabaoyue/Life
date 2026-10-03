@@ -29,14 +29,6 @@
       <div class="hint panel-hint">按 ESC 或右键空白处即可关闭</div>
     </div>
 
-    <!-- 梦境（v1.0 独立模块）：只读梦册 —— 会变得很多很多，值得自己的家 -->
-    <div id="dreams" class="hidden">
-      <div class="p-title" id="dreamsTitle">梦境</div>
-      <div class="hint">只读 · 离线重组产物（非亲历），绝不冒充真实经历</div>
-      <div id="dreamList" class="memlist">—</div>
-      <div class="hint panel-hint">按 ESC 或右键空白处即可关闭</div>
-    </div>
-
     <!-- 设置 / 统计面板 -->
 <div id="panel" class="hidden">
       <div class="p-title">设置</div>
@@ -202,9 +194,16 @@
         <button class="r-tab" data-rtab="provenance">归因与 EOI</button>
         <button class="r-tab" data-rtab="replay">Replay 实验室</button>
         <button class="r-tab" data-rtab="export">数据导出</button>
+        <button class="r-tab" data-rtab="dreams">梦境</button>
       </div>
       <div id="researchBody">
         <!-- 1. 主体状态面板 -->
+        <!-- 梦境（v1.0 大分区：与主体状态同级）——会变得很多很多，排版向记忆看齐 -->
+        <div id="rPaneDreams" class="r-pane hidden">
+          <div class="r-section-title">梦境（只读 · 离线重组，非亲历）</div>
+          <div id="dreamList" class="r-table-container">—</div>
+        </div>
+
         <div id="rPaneState" class="r-pane">
           <div class="r-section-title">初澜主体状态 (Trait Bounds: [-999, 999])</div>
           <div id="rTraitsList" class="r-traits-grid"></div>
@@ -335,7 +334,6 @@
     <div data-act="talk">对话</div>
     <div data-act="log">记录</div>
       <div data-act="wardrobe">衣橱</div>
-    <div data-act="dreams">梦境</div>
     <div data-act="panel">设置</div>
     <div data-act="research">个体观测</div>
     <div data-act="pin" id="menuPin">固定在最前</div>
