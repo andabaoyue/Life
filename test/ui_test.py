@@ -507,7 +507,7 @@ with sync_playwright() as p:
     poke_offer = dict(idle_offer, kind="poke", reason="用户在 8 秒内戳了你 5 下")
     pg2.evaluate("""(([io, po]) => {
         streaming = false; hideBubble();
-        const inp = document.getElementById('input'); inp.value = ''; inp.blur();
+        const inp = document.getElementById('input'); if (inp) { inp.value = ''; inp.blur(); }
         noteUserAct();                     // 假装"3 秒前刚互动过"
         window.__offer = io; window.__decline = false; window.__calls.length = 0;
         window.__poke = po;
