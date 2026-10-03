@@ -160,10 +160,21 @@ check('25 别名容错：expectations 的 content 字段被归一承接',
 check('26 组装归一防 [object Object]：factText 提取与 map 归一在册',
   brainSrc.includes('factText') && /content \|\| x\.text/.test(brainSrc));
 
+// 27 梦境防伪链不动摇：产物标签在库（[DREAM_GENERATED_ARTIFACT] / 非亲历）
+const dreamSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'dream-system.js'), 'utf8');
+const memFragSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.js'), 'utf8');
+check('27 梦境防伪标签在册（绝不冒充亲历）',
+  dreamSrc.includes('DREAM_GENERATED_ARTIFACT')
+  && memFragSrc.includes('离线重组碎片') && memFragSrc.includes('非亲历'));
+
+// 28 睡眠双触发接线：关窗 + 入睡共用 _dreamCycle（防漂移）
+check('28 梦境双触发接线：_dreamCycle 供关窗与入睡共用',
+  (brainSrc.match(/_dreamCycle/g) || []).length >= 3 && /noveltyProxy/.test(brainSrc));
+
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
 console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 26)
+  ? ('lexicon-expectations tests passed: ' + 28)
   : ('lexicon-expectations tests FAILED: ' + failures));
 process.exit(failures === 0 ? 0 : 1);

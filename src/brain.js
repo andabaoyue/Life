@@ -386,7 +386,8 @@ class Brain {
             windowNo: (typeof r.windowNo === 'number') ? r.windowNo : (typeof p.windowNo === 'number' ? p.windowNo : 0),
             timestamp: typeof r.timestamp === 'number' ? r.timestamp : (typeof p.generatedAt === 'number' ? p.generatedAt : (r.createdAt || 0)),
             generatedAt: typeof p.generatedAt === 'number' ? p.generatedAt : (typeof r.timestamp === 'number' ? r.timestamp : 0),
-            epistemicStatus: p.epistemicStatus || r.epistemicStatus
+            epistemicStatus: p.epistemicStatus || r.epistemicStatus,
+            text: String((p.content || p.text || '')).slice(0, 160)   // v2.0 只读梦境卡摘要
           });
         }
       }
@@ -896,6 +897,10 @@ class Brain {
     const herSleepIntent = !!(tr && tr.constructor && typeof tr.constructor.isSleepIntent === 'function'
       && tr.constructor.isSleepIntent(String(clean || text || '')));
     if (sleepIntent || herSleepIntent) {
+    // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
+    if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
+      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true }).catch(() => {});
+    }
       const sleepAt = Date.now();
       if (tr) {
         tr.enterSleepMode(sleepAt);
@@ -1514,6 +1519,114 @@ class Brain {
         // v0.9.7: 成本门禁式梦境系统 (Cost-Gated Dream Consolidation)
         const dreamEnabled = this.isExperimentModuleActive('sleepConsolidation');
         if (dreamEnabled && this.experiencesArchive) {
+          // v2.0：梦境机器抽为 _dreamCycle（关窗与入睡共用同一台）；此处行为与原先一字不差
+          await this._dreamCycle({ snap, syn, verifiedEvidence, events });
+        }
+
+        if (this.cfg.selfGrowthEnabled === true)
+          await this.growSelf(dialogue, summaryTextForMemory, snap.windowNo, {
+            msgMap,
+            sourceMessageRange
+          });
+
+        if (done) {
+          // 关窗后主体特质可能演进，根据最新特质喜好值刷新衣柜偏好提示块
+          if (this.wardrobe) {
+            this.memory.wardrobe = this.getWardrobePrompt();
+          }
+          // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
+          const diskCfg = tryLoad(this.dir);
+          const nextExp = diskCfg ? sanitize({
+            experimentMode: diskCfg.experimentMode,
+            experimentModules: diskCfg.experimentModules
+          }) : {
+            experimentMode: this.currentWindowSnapshot.experimentMode,
+            experimentModules: this.currentWindowSnapshot.modules
+          };
+
+          this.runManifest = createExperimentRunManifest({
+            experimentMode: nextExp.experimentMode,
+            modules: nextExp.experimentModules,
+            windowNo: this.memory.data.windowNo
+          });
+          this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
+          this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
+          this.cfg.experimentModules = this.currentWindowSnapshot.modules;
+
+          if (this.internalRegulation) {
+            this.internalRegulation.enabled = Boolean(this.currentWindowSnapshot.modules?.internalRegulation);
+          }
+          if (this.memory) {
+            this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
+          }
+        }
+      }
+      return done;
+    } catch (e) {
+      // 小结失败就不动历史，下个周期再试；宁可窗口超长也不能丢对话
+      console.error('window summary failed:', redactSecrets(e.message));
+      this._noteWindowCloseFailure('SUMMARY_EXCEPTION: ' + redactSecrets(e.message));
+      return false;
+    }
+  }
+
+  /** 记忆超预算：把较旧的片段合并成一条早期记忆 */
+  async mergeMemory() {
+    const plan = this.memory.planMerge();
+    if (!plan) return false;
+
+    const body = plan.old.map(w =>
+      (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text).join('\n');
+
+    try {
+      const apiCompleteRes = await this.api.complete(
+        [{ role: 'system', content: MERGE_SYS },
+         { role: 'user', content: body }],
+        { maxTokens: 400, temperature: 0.2 }
+      );
+      const { text, usage, observedModel } = apiCompleteRes;
+      this.track(usage, true, 'merge');
+      this._notePossibleTruncation(usage, 400, '记忆合并');
+      // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记
+      this.saveStats(true);
+      if (this.shutdownRequested) return false;
+      if (!text) return false;
+
+      const mergeGenCtx = buildGenerationContext({
+        kind: 'merge',
+        cfg: this.cfg,
+        promptHashes: collectPromptHashes({
+          merge: MERGE_SYS,
+          summary: SUMMARY_SYS,
+          persona: PERSONA,
+          growth: GROWTH_SYS
+        }),
+        sampling: { maxTokens: 400, temperature: 0.2 },
+        observedModel,
+        providerResponse: apiCompleteRes,
+        generator: 'llm'
+      });
+
+      this.memory.applyMerge(text, plan.keep, { generationContext: mergeGenCtx });
+      this.pendingCacheBreakReason = 'memory_merge';
+      this.stats.merges++;
+      this.saveStats(true);
+      return true;
+    } catch (e) {
+      console.error('memory merge failed:', redactSecrets(e.message));
+      return false;
+    }
+  }
+
+  /** 低频主体成长检查点：只在窗口小结成功后调用一次。 */
+  /** v2.0 梦境周期（离线重组）：关窗与入睡共用同一台机器（抽取自原关窗块，行为不变）。
+   *  防伪链条不变：产物一律带 [DREAM_GENERATED_ARTIFACT] / 【离线重组碎片】（非亲历）标签，绝不冒充亲历。
+   *  ctx: { snap, syn, verifiedEvidence, events, noveltyProxy } */
+  async _dreamCycle(ctx = {}) {
+    const snap = ctx.snap || {};
+    const syn = ctx.syn || { stableUserFacts: [], subjectExperiences: [] };
+    const verifiedEvidence = ctx.verifiedEvidence || [];
+    const events = ctx.events || [];
           try {
             const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
             
@@ -1521,8 +1634,12 @@ class Brain {
             const arousalTrajectory = computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || []);
 
             // 新异度计算 (基于窗口综合提取的新事实/新经历数量)
-            const newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +
+            let newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +
                                  (Array.isArray(syn.subjectExperiences) ? syn.subjectExperiences.length : 0);
+            // v2.0 入睡路径 syn 缺席时：新异度改用「今日消息量」物理代理（只数真实交互条数，不编内容）
+            if (!ctx.syn && ctx.noveltyProxy) {
+              newFactCount = Math.min(4, Math.round(((snap && snap.activeItems) || []).length / 25));
+            }
             const noveltyScore = Number(Math.min(1.0, newFactCount * 0.25).toFixed(2));
             const now = (snap && typeof snap.at === 'number') ? snap.at : Date.now();
 
@@ -1625,104 +1742,8 @@ class Brain {
           } catch (err) {
             console.error('[Brain] Dream consolidation failed (Fail-Safe):', redactSecrets(err.message));
           }
-        }
-
-        if (this.cfg.selfGrowthEnabled === true)
-          await this.growSelf(dialogue, summaryTextForMemory, snap.windowNo, {
-            msgMap,
-            sourceMessageRange
-          });
-
-        if (done) {
-          // 关窗后主体特质可能演进，根据最新特质喜好值刷新衣柜偏好提示块
-          if (this.wardrobe) {
-            this.memory.wardrobe = this.getWardrobePrompt();
-          }
-          // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
-          const diskCfg = tryLoad(this.dir);
-          const nextExp = diskCfg ? sanitize({
-            experimentMode: diskCfg.experimentMode,
-            experimentModules: diskCfg.experimentModules
-          }) : {
-            experimentMode: this.currentWindowSnapshot.experimentMode,
-            experimentModules: this.currentWindowSnapshot.modules
-          };
-
-          this.runManifest = createExperimentRunManifest({
-            experimentMode: nextExp.experimentMode,
-            modules: nextExp.experimentModules,
-            windowNo: this.memory.data.windowNo
-          });
-          this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
-          this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
-          this.cfg.experimentModules = this.currentWindowSnapshot.modules;
-
-          if (this.internalRegulation) {
-            this.internalRegulation.enabled = Boolean(this.currentWindowSnapshot.modules?.internalRegulation);
-          }
-          if (this.memory) {
-            this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
-          }
-        }
-      }
-      return done;
-    } catch (e) {
-      // 小结失败就不动历史，下个周期再试；宁可窗口超长也不能丢对话
-      console.error('window summary failed:', redactSecrets(e.message));
-      this._noteWindowCloseFailure('SUMMARY_EXCEPTION: ' + redactSecrets(e.message));
-      return false;
-    }
   }
 
-  /** 记忆超预算：把较旧的片段合并成一条早期记忆 */
-  async mergeMemory() {
-    const plan = this.memory.planMerge();
-    if (!plan) return false;
-
-    const body = plan.old.map(w =>
-      (w.early ? '【早期】' : '【第' + w.no + '段】') + w.text).join('\n');
-
-    try {
-      const apiCompleteRes = await this.api.complete(
-        [{ role: 'system', content: MERGE_SYS },
-         { role: 'user', content: body }],
-        { maxTokens: 400, temperature: 0.2 }
-      );
-      const { text, usage, observedModel } = apiCompleteRes;
-      this.track(usage, true, 'merge');
-      this._notePossibleTruncation(usage, 400, '记忆合并');
-      // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记
-      this.saveStats(true);
-      if (this.shutdownRequested) return false;
-      if (!text) return false;
-
-      const mergeGenCtx = buildGenerationContext({
-        kind: 'merge',
-        cfg: this.cfg,
-        promptHashes: collectPromptHashes({
-          merge: MERGE_SYS,
-          summary: SUMMARY_SYS,
-          persona: PERSONA,
-          growth: GROWTH_SYS
-        }),
-        sampling: { maxTokens: 400, temperature: 0.2 },
-        observedModel,
-        providerResponse: apiCompleteRes,
-        generator: 'llm'
-      });
-
-      this.memory.applyMerge(text, plan.keep, { generationContext: mergeGenCtx });
-      this.pendingCacheBreakReason = 'memory_merge';
-      this.stats.merges++;
-      this.saveStats(true);
-      return true;
-    } catch (e) {
-      console.error('memory merge failed:', redactSecrets(e.message));
-      return false;
-    }
-  }
-
-  /** 低频主体成长检查点：只在窗口小结成功后调用一次。 */
   /* v2.0 通路 B：生理昏睡极限（纯物理断电，零台词）——
      像人累到极致自己趴下：疲惫 >= 95 且周围安静（>= 5 分钟无对话）时静默沉睡。
      不喊口号、不打招呼，只是睡着了。返回是否真的断电。 */
@@ -1737,6 +1758,10 @@ class Brain {
     tr.enterSleepMode(Date.now());
     if (this.internalRegulation && typeof this.internalRegulation.updateOnSleep === 'function') {
       this.internalRegulation.updateOnSleep(true, { timestamp: Date.now() });
+    }
+    // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
+    if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
+      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true }).catch(() => {});
     }
     return true;
   }

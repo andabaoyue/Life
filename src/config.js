@@ -82,7 +82,7 @@ const DEFAULTS = {
     attentionGate: false,
     biographicalCanalization: false,
     memoryDynamics: false,
-    sleepConsolidation: false
+    sleepConsolidation: true   // v2.0 拍板：真睡眠开梦（baseline 仍关；显式 false 可关）
   }
 };
 
@@ -188,7 +188,7 @@ function sanitize(raw = {}) {
         attentionGate: isBaseline ? false : Boolean(rawModules.attentionGate),
         biographicalCanalization: isBaseline ? false : Boolean(rawModules.biographicalCanalization),
         memoryDynamics: isBaseline ? false : Boolean(rawModules.memoryDynamics),
-        sleepConsolidation: isBaseline ? false : Boolean(rawModules.sleepConsolidation)
+        sleepConsolidation: isBaseline ? false : rawModules.sleepConsolidation !== false
       };
 
       return { experimentMode, experimentModules };

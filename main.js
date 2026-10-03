@@ -538,8 +538,16 @@ ipcGuard.handle('life-mechanisms', () => {
       }
     }
   } catch (e) { /* 同上 */ }
+  // v2.0 梦境卡（只读）：内存中的梦境史（开机从归档重建），不重读大档
+  const dreams = ((brain && brain.dreamHistory) || []).slice(-8).map((d) => ({
+    dreamId: d && d.dreamId,
+    windowNo: d && d.windowNo,
+    generatedAt: d && d.generatedAt,
+    epistemicStatus: d && d.epistemicStatus,
+    text: (d && d.text) || (d && d.payload && (d.payload.content || d.payload.text)) || ''
+  }));
   return {
-    ok: true, lexicon, expectations, vitals, development, cognition,
+    ok: true, lexicon, expectations, vitals, development, cognition, dreams,
     relations: { promiseFidelity, fulfilled, broken, words: lexicon.length, reusedWords, archiveChain }
   };
 });

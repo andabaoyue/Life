@@ -655,6 +655,10 @@ async function refreshLifeMechanisms() {
       el.textContent = '';
       lines.forEach((t) => { const row = document.createElement('div'); row.textContent = t; el.appendChild(row); });
     };
+    const dm = r.dreams || [];
+    setLines('rDreamList', dm.length
+      ? dm.map((d) => '#' + (d.windowNo || '?') + ' ' + (d.text || '（无文本）') + ' [' + (d.epistemicStatus || '') + ']')
+      : ['（暂无 —— 还没有做过梦）']);
     const v = r.vitals;
     setLines('rVitalsList', v ? [
       '精力 ' + Math.round(v.energy) + ' / 疲惫压力 ' + Math.round(v.restPressure) + ' / 觉醒度 ' + Math.round(v.arousal),
