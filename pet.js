@@ -206,6 +206,17 @@ let petZoom = 1;
 function applyPetSize() {
   pet.style.width = Math.round(PET_BASE_W * petZoom) + 'px';
 }
+/* 面板互斥（v1.0 用户实测）：任一满幅面板在场时先收掉其余 —— 不叠层、深底不叠染她 */
+function closeOtherOverlays(keepId) {
+  if (keepId !== 'log' && log && !log.classList.contains('hidden')) toggleLog(false);
+  if (keepId !== 'wardrobe') {
+    const wd = document.getElementById('wardrobe');
+    if (wd && !wd.classList.contains('hidden')) toggleWardrobe(false);
+  }
+  if (keepId !== 'research' && researchPanel && !researchPanel.classList.contains('hidden')) closeResearchPanel();
+  if (keepId !== 'panel' && panel && !panel.classList.contains('hidden')) closePanel();
+}
+
 function anyOverlayOpen() {
   const wd = document.getElementById('wardrobe');   // 衣橱（v1.0 独立面板）
   return (panel && !panel.classList.contains('hidden'))
@@ -586,6 +597,7 @@ function addLog(kind, text) {
 
 function toggleLog(on) {
   const showIt = on ?? log.classList.contains('hidden');
+  if (showIt) closeOtherOverlays('log');
   log.classList.toggle('hidden', !showIt);
   // 记录面板会盖住气泡，两者内容重复，打开时就让位
   document.body.classList.toggle('showlog', showIt);
@@ -1040,6 +1052,7 @@ function blink() {
 
 /* ---------------- 面板 ---------------- */
 function openPanel() {
+  closeOtherOverlays('panel');
   panel.classList.remove('hidden');
   syncMotionPriority();
   syncPanelViewport();   // v1.0：面板家族统一视窗（扩容盖住她）
@@ -1209,6 +1222,7 @@ function toggleWardrobe(on) {
   const wd = document.getElementById('wardrobe');
   if (!wd) return;
   const showIt = on ?? wd.classList.contains('hidden');
+  if (showIt) closeOtherOverlays('wardrobe');
   wd.classList.toggle('hidden', !showIt);
   if (showIt) refreshWardrobe();
   syncPanelViewport();
@@ -1424,6 +1438,7 @@ let currentSelectedSegIndex = 1;
 
 async function openResearchPanel() {
   if (!researchPanel) return;
+  closeOtherOverlays('research');
   researchPanel.classList.remove('hidden');
   syncPanelViewport();   // v1.0 家族补全：个体观测开时也同步视窗（此前只关不合，大体型下布局炸）
   syncMotionPriority();
