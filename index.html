@@ -20,103 +20,109 @@
     <!-- 设置 / 统计面板 -->
 <div id="panel" class="hidden">
       <div class="p-title">设置</div>
+      <!-- 两栏布局（v1.0 用户设计）：左栏四区点击切换 + 右侧详情；用量沉于「连接与模型」底部 -->
+      <div class="panel-body">
+        <div class="panel-nav">
+          <div class="pnav-item on" data-sec="conn" id="secConn">连接与模型</div>
+          <div class="pnav-item" data-sec="wardrobe" id="secWardrobe">我的衣柜</div>
+          <div class="pnav-item" data-sec="memory" id="secMemoryTime">记忆与时空</div>
+          <div class="pnav-item danger" data-sec="danger" id="secDanger">危险区</div>
+        </div>
+        <div class="panel-content">
+          <!-- ① 连接与模型 -->
+          <div class="psec on" data-sec="conn">
+            <label>API Key</label>
+            <div class="row">
+              <input id="keyInput" type="password" placeholder="sk-..." spellcheck="false">
+              <button id="keySave" class="btn-primary">保存</button>
+            </div>
+            <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
+            <!-- 0.9.8 Z3：Connection 管理（Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
+            <div class="p-title">连接管理</div>
+            <div class="row">
+              <select id="connList"></select>
+              <span class="hint" id="connActive"></span>
+            </div>
+            <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
+            <label id="presetLabel">服务商预设</label>
+            <div class="row">
+              <select id="connPresetSelect">
+                <option value="custom">自定义高级端点</option>
+                <option value="deepseek">DeepSeek 官方</option>
+                <option value="mimo">小米 MiMo（按量）</option>
+                <option value="mimo-token-plan">小米 MiMo（Token Plan 套餐）</option>
+                <option value="local">本地服务（Ollama / Local）</option>
+              </select>
+            </div>
+            <div class="hint" id="presetHint"></div>
+            <label>显示名</label>
+            <div class="row"><input id="connName" type="text" spellcheck="false"></div>
+            <label>Provider Identity</label>
+            <div class="row">
+              <select id="connProvider">
+                <option value="deepseek">DeepSeek</option>
+                <option value="local">Local</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <label>Protocol</label>
+            <div class="row">
+              <select id="connProtocol">
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="anthropic-native">Anthropic-native（未实现）</option>
+              </select>
+            </div>
+            <label>API Key</label>
+            <div class="row"><input id="connKey" type="password" placeholder="仅写入，不回显" spellcheck="false"></div>
+            <label>Endpoint</label>
+            <div class="row"><input id="connUrl" type="text" placeholder="https://..." spellcheck="false"></div>
+            <label>Model</label>
+            <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
+            <div class="row btns">
+              <button id="connNew" class="btn-ghost">新建</button>
+              <button id="connSave" class="btn-primary">保存</button>
+              <button id="connTest" class="btn-ghost">测试连接</button>
+              <button id="connActivate" class="btn-ghost">设为当前</button>
+            </div>
+            <div class="hint" id="connState">—</div>
+            <div class="row btns"><button id="openCfg" class="btn-ghost">打开配置文件</button></div>
+            <!-- 用量沉底（拍板：排在连接与模型最下面） -->
+            <div class="p-title">用量</div>
+            <div id="stats" class="stats">—</div>
+          </div>
 
-      <!-- ① 连接与模型（v1.0 设计升级：四分区） -->
-      <div class="p-section">
-        <div class="p-sub" id="secConn">连接与模型</div>
-        <div class="p-title">用量</div>
-        <div id="stats" class="stats">—</div>
-        <label>API Key</label>
-        <div class="row">
-          <input id="keyInput" type="password" placeholder="sk-..." spellcheck="false">
-          <button id="keySave" class="btn-primary">保存</button>
+          <!-- ② 我的衣柜 -->
+          <div class="psec" data-sec="wardrobe">
+            <div id="wdPresets" class="wd-presets"></div>
+            <!-- 智能成套建议条（v1.0 UX-02b）：只建议不强制 -->
+            <div id="wdSuggest" class="hint hidden"><span id="wdSuggestText"></span><button id="wdSuggestBtn">一键成套</button></div>
+            <div id="wdSlots" class="wd-slots"></div>
+            <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
+          </div>
+
+          <!-- ③ 记忆与时空 -->
+          <div class="psec" data-sec="memory">
+            <div class="p-title">我的记忆</div>
+            <div id="memList" class="memlist">—</div>
+            <!-- 国际化与物理时空（v1.0 笔 6 / UX-05）：时区创世锁定，只读展示 -->
+            <div class="p-title" id="i18nTitle">国际化与物理时空</div>
+            <div class="row"><span id="langLabel">界面语言</span>
+              <select id="langSelect"><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
+            <div class="row"><span id="tzLabel">创世时区</span>
+              <input id="tzDisplay" type="text" disabled spellcheck="false"></div>
+            <div class="hint" id="tzNote">创世已锚定，不可修改</div>
+          </div>
+
+          <!-- ④ 危险区（操作不可逆，与常规操作彻底隔离） -->
+          <div class="psec danger-zone" data-sec="danger">
+            <div class="hint danger-hint" id="dangerHint">以下操作不可逆，请确认后再动手</div>
+            <div class="row btns">
+              <button id="connDelete" class="btn-danger">删除当前连接</button>
+              <button id="resetSelf" class="btn-danger">重置成长档案</button>
+            </div>
+          </div>
         </div>
-        <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
-        <!-- 0.9.8 Z3：Connection 管理（Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
-        <div class="p-title">连接管理</div>
-        <div class="row">
-          <select id="connList"></select>
-          <span class="hint" id="connActive"></span>
-        </div>
-        <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
-        <label id="presetLabel">服务商预设</label>
-        <div class="row">
-          <select id="connPresetSelect">
-            <option value="custom">自定义高级端点</option>
-            <option value="deepseek">DeepSeek 官方</option>
-            <option value="mimo">小米 MiMo（按量）</option>
-            <option value="mimo-token-plan">小米 MiMo（Token Plan 套餐）</option>
-            <option value="local">本地服务（Ollama / Local）</option>
-          </select>
-        </div>
-        <div class="hint" id="presetHint"></div>
-        <label>显示名</label>
-        <div class="row"><input id="connName" type="text" spellcheck="false"></div>
-        <label>Provider Identity</label>
-        <div class="row">
-          <select id="connProvider">
-            <option value="deepseek">DeepSeek</option>
-            <option value="local">Local</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-        <label>Protocol</label>
-        <div class="row">
-          <select id="connProtocol">
-            <option value="openai-compatible">OpenAI-compatible</option>
-            <option value="anthropic-native">Anthropic-native（未实现）</option>
-          </select>
-        </div>
-        <label>API Key</label>
-        <div class="row"><input id="connKey" type="password" placeholder="仅写入，不回显" spellcheck="false"></div>
-        <label>Endpoint</label>
-        <div class="row"><input id="connUrl" type="text" placeholder="https://..." spellcheck="false"></div>
-        <label>Model</label>
-        <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
-        <div class="row btns">
-          <button id="connNew" class="btn-ghost">新建</button>
-          <button id="connSave" class="btn-primary">保存</button>
-          <button id="connTest" class="btn-ghost">测试连接</button>
-          <button id="connActivate" class="btn-ghost">设为当前</button>
-        </div>
-        <div class="hint" id="connState">—</div>
-        <div class="row btns"><button id="openCfg" class="btn-ghost">打开配置文件</button></div>
       </div>
-
-      <!-- ② 我的衣柜 -->
-      <div class="p-section">
-        <div class="p-sub" id="secWardrobe">我的衣柜</div>
-        <div id="wdPresets" class="wd-presets"></div>
-        <!-- 智能成套建议条（v1.0 UX-02b）：只建议不强制，置于槽位上方显眼位置 -->
-        <div id="wdSuggest" class="hint hidden"><span id="wdSuggestText"></span><button id="wdSuggestBtn">一键成套</button></div>
-        <div id="wdSlots" class="wd-slots"></div>
-        <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
-      </div>
-
-      <!-- ③ 记忆与时空 -->
-      <div class="p-section">
-        <div class="p-sub" id="secMemoryTime">记忆与时空</div>
-        <div class="p-title">我的记忆</div>
-        <div id="memList" class="memlist">—</div>
-        <!-- 国际化与物理时空（v1.0 笔 6 / UX-05）：时区创世锁定，只读展示 -->
-        <div class="p-title" id="i18nTitle">国际化与物理时空</div>
-        <div class="row"><span id="langLabel">界面语言</span>
-          <select id="langSelect"><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
-        <div class="row"><span id="tzLabel">创世时区</span>
-          <input id="tzDisplay" type="text" disabled spellcheck="false"></div>
-        <div class="hint" id="tzNote">创世已锚定，不可修改</div>
-      </div>
-
-      <!-- ④ 危险区（操作不可逆，与常规操作彻底隔离） -->
-      <div class="p-section danger-zone">
-        <div class="p-sub" id="secDanger">危险区</div>
-        <div class="hint danger-hint" id="dangerHint">以下操作不可逆，请确认后再动手</div>
-        <div class="row btns">
-          <button id="connDelete" class="btn-danger">删除当前连接</button>
-          <button id="resetSelf" class="btn-danger">重置成长档案</button>
-        </div>
-      </div>
-
       <div class="hint panel-hint" id="panelCloseHint">按 ESC 或右键空白处即可关闭</div>
     </div>
 

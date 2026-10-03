@@ -842,6 +842,21 @@ function renderI18nPanel() {
   setText('panelCloseHint', 'panel.closeHint');
   setText('connDelete', 'conn.delete');
 }
+
+/* ---------- 设置面板两栏导航（v1.0 用户设计） ----------
+   左栏四区点击切换 + 右侧详情；记住上次分区（localStorage，UI 状态）。 */
+const PANEL_SECTIONS = ['conn', 'wardrobe', 'memory', 'danger'];
+function selectPanelSection(key) {
+  const k = PANEL_SECTIONS.includes(key) ? key : 'conn';
+  for (const it of document.querySelectorAll('.pnav-item')) it.classList.toggle('on', it.dataset.sec === k);
+  for (const sec of document.querySelectorAll('#panel .psec')) sec.classList.toggle('on', sec.dataset.sec === k);
+  try { localStorage.setItem('panelSection', k); } catch (e) { /* 存不下不致命 */ }
+}
+for (const it of document.querySelectorAll('.pnav-item')) {
+  it.addEventListener('click', () => selectPanelSection(it.dataset.sec));
+}
+selectPanelSection((() => { try { return localStorage.getItem('panelSection'); } catch (e) { return 'conn'; } })());
+
 if (langSelect) langSelect.addEventListener('change', () => {
   setLocale(langSelect.value);
   renderI18nPanel();

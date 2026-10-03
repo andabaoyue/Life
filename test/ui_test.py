@@ -105,11 +105,15 @@ with sync_playwright() as p:
     check("Key 输入框存在", pg.is_visible("#keyInput"))
 
     # 记忆管理区（预览模式应显示占位文案，而不是报错）
+    pg.click('.pnav-item[data-sec="memory"]')
+    pg.wait_for_timeout(120)
     check("记忆列表区块存在", pg.is_visible("#memList"))
     check("预览模式记忆区有降级文案",
           "预览" in (pg.text_content("#memList") or ""))
 
     # 衣柜区（预览模式同样必须降级，而不是空面板或报错）
+    pg.click('.pnav-item[data-sec="wardrobe"]')
+    pg.wait_for_timeout(120)
     check("衣柜预设区存在", pg.query_selector("#wdPresets") is not None)
     check("预览模式衣柜区有降级文案",
           "预览" in (pg.text_content("#wdSlots") or ""))
@@ -272,6 +276,8 @@ with sync_playwright() as p:
     pg2.wait_for_timeout(250)
     pg2.click('#menu div[data-act="panel"]')
     pg2.wait_for_timeout(500)
+    pg2.click('.pnav-item[data-sec="wardrobe"]')
+    pg2.wait_for_timeout(120)
     check("衣柜渲染出 3 个预设按钮",
           pg2.evaluate("document.querySelectorAll('#wdPresets button').length") == 3)
     check("当前预设高亮",
@@ -292,6 +298,8 @@ with sync_playwright() as p:
           is False)
 
     # 统计面板：来自配置文件的 model 只能当文本，不许变成标签
+    pg2.click('.pnav-item[data-sec="conn"]')
+    pg2.wait_for_timeout(120)
     pg2.evaluate("document.querySelector('#stats').textContent")  # 触发一次读取
     check("用量面板把注入型 model 当纯文本显示",
           "<img src=x" in (pg2.text_content("#stats") or ""))
@@ -304,6 +312,8 @@ with sync_playwright() as p:
     # 互斥自动解绑（v1.0 实机反馈）：穿着上装时点连衣裙 → 前端先脱上下装再穿裙，无缝不报错
     # （数据层校验一字未动：src/wardrobe.js 仍是互斥铁律的唯一权威）
     before = pg2.evaluate("JSON.stringify(window.__wd.equip)")
+    pg2.click('.pnav-item[data-sec="wardrobe"]')
+    pg2.wait_for_timeout(120)
     pg2.evaluate("""(() => {const r=[...document.querySelectorAll('#wdSlots .wd-row')]
         .find(r => r.querySelector('.wd-slot').textContent === '连衣裙');
       r.querySelector('.wd-item').click();})()""")

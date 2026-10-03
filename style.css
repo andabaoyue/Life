@@ -813,6 +813,19 @@ body.showlog #bubble { display: none !important; }
 .btn-ghost:hover { background: rgba(255, 255, 255, .08) !important; }
 .btn-danger { background: transparent !important; border: 1px solid rgba(196, 82, 72, .55) !important; color: #e08a84 !important; }
 .btn-danger:hover { background: rgba(196, 82, 72, .16) !important; }
+/* 两栏布局（v1.0 用户设计）：左导航 + 右详情 */
+#panel { display: flex; flex-direction: column; overflow: hidden; }
+.panel-body { flex: 1; min-height: 0; display: flex; gap: 10px; }
+.panel-nav { width: 88px; flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.pnav-item { padding: 8px 9px; border-radius: 8px; cursor: pointer; color: #9aa6c4;
+  border: 1px solid transparent; font-size: 12px; line-height: 1.35; user-select: none; }
+.pnav-item:hover { background: rgba(255, 255, 255, .06); color: #dfe5f0; }
+.pnav-item.on { background: rgba(106, 124, 255, .18); color: #fff; border-color: rgba(122, 140, 255, .4); }
+.pnav-item.danger { color: #c98b86; }
+.pnav-item.danger.on { background: rgba(196, 82, 72, .16); border-color: rgba(196, 82, 72, .45); color: #e8a49e; }
+.panel-content { flex: 1; min-width: 0; overflow-y: auto; padding-right: 2px; }
+#panel .psec { display: none; }
+#panel .psec.on { display: block; }
 #panel::-webkit-scrollbar { width: 4px; }
 #panel::-webkit-scrollbar-track { background: transparent; }
 #panel::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .18); border-radius: 4px; }
