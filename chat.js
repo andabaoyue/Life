@@ -46,6 +46,7 @@ const sendBtn = document.getElementById('send');
 let streamNode = null;
 let streamText = '';
 let chatError = null;
+let chatNotice = null;   // v2.0 客观物理事实行（信箱留置等），第三人称、不代拟
 let busy = false;
 
 function applyTexts() {
@@ -105,6 +106,15 @@ function renderChat() {
     ev.appendChild(et);
     chatList.appendChild(ev);
   }
+  if (chatNotice) {
+    const nv = document.createElement('div');
+    nv.className = 'b-row b-note b-notice';
+    const nt = document.createElement('div');
+    nt.className = 'b-text';
+    nt.textContent = chatNotice;
+    nv.appendChild(nt);
+    chatList.appendChild(nv);
+  }
   if (stick) chatList.scrollTop = chatList.scrollHeight;
 }
 
@@ -130,6 +140,7 @@ async function submit() {
   busy = true;
   input.value = '';
   chatError = null;
+  chatNotice = null;
   const pend = buildBubble({ kind: 'user', text, bridge: false, cls: 'b-user', avatar: '你', ts: null }, 'b-pending');
   chatList.appendChild(pend);
   streamNode = buildBubble({ kind: 'assistant', text: '', bridge: false, cls: 'b-ai', avatar: '初', ts: null }, 'b-streaming');
@@ -141,7 +152,9 @@ async function submit() {
   let res = null;
   try {
     res = await api.send(text);
-    if (!res || res.declined || !res.ok) {
+    if (res && res.slept) {
+      chatNotice = res.note || '[初澜沉睡中，消息已留置在侧]';   // 客观物理事实，不是她的话
+    } else if (!res || res.declined || !res.ok) {
       chatError = t('chat.sendFailed') + (res && res.error ? '：' + res.error : '');
     }
   } catch (e) {

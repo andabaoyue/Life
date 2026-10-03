@@ -317,6 +317,12 @@ body.talking #inputBar { display: flex; }
   overflow-y: auto;
 }
 .mem-group { font-size: 11px; color: #8b93a3; margin: 8px 0 3px; letter-spacing: .04em; }   /* 记忆分层小标题 */
+/* v2.0 枕边信箱客观事实行（第三人称，不代拟） */
+.b-notice .b-text { color: #8fa0b8; font-style: italic; background: rgba(255,255,255,.05);
+  border: 1px dashed rgba(255,255,255,.14); }
+/* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
+body.sleeping #figure { animation-duration: 4.8s !important; }
+body.sleeping #pet { opacity: .96; }
 #log {
   position: absolute;
   inset: 8px;   /* v1.0 升格为设置同级面板：满幅盖住她（440×680 扩容窗），空白处拖动 */

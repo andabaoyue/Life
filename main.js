@@ -100,6 +100,8 @@ function createWindow() {
 }
 
 function syncMotionBlock(reason = 'user-priority') {
+  // v2.0 睡相广播：睡眠态随既有闸门同步给各窗（零新定时器）
+  broadcastToWindows('sleep-state', { sleeping: !!(tracker && tracker.sleepMode) });
   if (!motion) return;
   const blocked = dragging || motionUi.bubble || motionUi.talking
     || motionUi.chatBusy || motionUi.hidden || !!(tracker && tracker.sleepMode)

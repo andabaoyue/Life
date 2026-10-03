@@ -846,6 +846,10 @@ if (api && api.onChatBusy) {
   });
 }
 if (api && api.onChatHidden) api.onChatHidden(() => setTalking(false));
+// v2.0 睡相：她睡着时呼吸放缓（纯物理表现，零台词）
+if (api && api.onSleepState) api.onSleepState((p) => {
+  document.body.classList.toggle('sleeping', !!(p && p.sleeping));
+});
 
 
 
