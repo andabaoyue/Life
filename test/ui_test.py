@@ -1135,12 +1135,10 @@ with sync_playwright() as p:
           pg3.evaluate("document.querySelectorAll('#chatList .b-error').length") == 0)
     pg3.keyboard.press("Escape")
     pg3.wait_for_timeout(150)
-    pg3.click("#chatClose")
-    pg3.wait_for_timeout(150)
     pg3.mouse.click(200, 300, button="right")
     pg3.wait_for_timeout(150)
-    check("B6 三通道关闭语义（ESC / × / 右键）都走 chatWindowClose",
-          pg3.evaluate("window.__calls.filter(c => c[0]==='chatWindowClose').length") >= 3)
+    check("B6 双通道关闭语义（ESC / 右键）都走 chatWindowClose",
+          pg3.evaluate("window.__calls.filter(c => c[0]==='chatWindowClose').length") >= 2)
     pg3.dblclick("#chatHead")
     pg3.wait_for_timeout(150)
     check("B7 双击标题栏回她身边（chatWindowHome）",

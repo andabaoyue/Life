@@ -39,16 +39,17 @@
     /* 提示行独立成带：贴窗底居中，与输入条留出呼吸（v1.0 用户反馈：太紧凑） */
     .chat-foot { flex: none; padding: 4px 14px 12px; text-align: center;
       font-size: 10.5px; color: #626b7c; margin: 0; word-break: keep-all; }
+    /* v1.0 用户整容：头像升至消息框上方；时间沉到行底两角（初澜左下 / 用户右下） */
+    .b-row { position: relative; align-items: flex-start; padding-bottom: 16px; }
+    .b-ts { position: absolute; bottom: 0; margin-top: 0; }
+    .b-row .b-ts { left: 2px; }
+    .b-user .b-ts { left: auto; right: 2px; text-align: right; }
   </style>
 </head>
 <body>
   <div id="chatPage">
     <div id="chatHead">
       <span id="chatTitle">对话</span>
-      <span class="chat-head-tools">
-        <button id="chatDragWin" class="chat-tool-btn" title="拖动窗口（双击回她身边）">✥</button>
-        <button id="chatClose" title="关闭">×</button>
-      </span>
     </div>
     <div id="chatList"></div>
     <div id="inputBar">

@@ -50,7 +50,6 @@ let busy = false;
 
 function applyTexts() {
   if (chatTitle) chatTitle.textContent = t('chat.title');
-  if (input) input.placeholder = t('chat.placeholder');
   if (chatHint) chatHint.textContent = t('panel.closeHint');   // 只留关闭提示（「拖到舒服的位置」是卡片时代措辞，已随卡片退役）
 }
 applyTexts();
@@ -70,13 +69,13 @@ function buildBubble(v, extraCls) {
   txt.className = 'b-text';
   txt.textContent = v.text;          // textContent 渲染，防注入
   col.appendChild(txt);
+  row.appendChild(col);
   if (v.ts !== null && v.ts !== undefined) {
     const ts = document.createElement('div');
     ts.className = 'b-ts';
     ts.textContent = formatDisplayTime(v.ts);
-    col.appendChild(ts);
+    row.appendChild(ts);   // v1.0：时间挂行级，由 CSS 定位到行底两角（初澜左下 / 用户右下）
   }
-  row.appendChild(col);
   return row;
 }
 
