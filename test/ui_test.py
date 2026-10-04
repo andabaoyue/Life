@@ -434,7 +434,6 @@ with sync_playwright() as p:
     # 气泡必须先收 —— 不然这三条测的是"闸门拦住了"，不是各自那件事。
     pg2.evaluate("""(()=>{window.__calls.length=0;
         document.getElementById('panel').classList.add('hidden');
-        document.getElementById('log').classList.add('hidden');
         document.body.classList.remove('showlog');
         const inp=document.getElementById('input'); if(inp){inp.value=''; inp.blur();}
         streaming=false; hideBubble();})()""")
@@ -448,7 +447,7 @@ with sync_playwright() as p:
           "谁一直戳我" in (pg2.text_content("#bubble") or ""),
           repr(pg2.text_content("#bubble")))
     check("被拒零伪造迁续：chat.js declined 分支不写她的话",
-          pg2.evaluate("fetch('chat.js').then(r => r.text()).then(t => t.includes('declined') && !t.includes('你：')))"))
+          pg2.evaluate("fetch('chat.js').then(r => r.text()).then(t => t.includes('declined') && !t.includes('你：'))"))
     check("单一事实源唯一：preload 仍声明 chat-history 通道",
           pg2.evaluate("fetch('preload.js').then(r => r.text()).then(t => t.includes('chat-history'))"))
 
@@ -698,7 +697,7 @@ with sync_playwright() as p:
     # 前面几段把设置面板和 talking 态留着了 —— 面板会盖住立绘，
     # 鼠标落在面板上而不是 #pet 上（实测命中 #stats）。先复位再测拖拽。
     pg.evaluate("panel.classList.add('hidden'); setTalking(false);"
-                "toggleLog(false); streaming = false; hideBubble();")
+                "streaming = false; hideBubble();")
     pg.wait_for_timeout(150)
 
     def pet_center(reset=True):
@@ -799,7 +798,7 @@ with sync_playwright() as p:
         .getBoundingClientRect();
         return {x:Math.round(r.right)-4, y:Math.round(r.bottom)-4};})()""")
     # 上面几步若把面板打开了盖住立绘 —— 不先关掉，右键点到的就不是 #pet
-    if pg.is_visible("#panel") or pg.is_visible("#wardrobe") or pg.is_visible("#log") or pg.is_visible("#researchPanel"):
+    if pg.is_visible("#panel") or pg.is_visible("#wardrobe") or pg.is_visible("#researchPanel"):
         pg.keyboard.press("Escape")
         pg.wait_for_timeout(250)
     pg.evaluate("document.getElementById('menu').classList.add('hidden')")

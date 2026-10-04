@@ -1,8 +1,7 @@
 const pet = document.getElementById('pet');
 const bubble = document.getElementById('bubble');
 const menu = document.getElementById('menu');
-// v1.0 记录退役：#log 元素已随面板拔除
-const logBody = document.getElementById('logBody');
+// v1.0 记录退役：#log / #logBody 元素已随面板拔除
 const panel = document.getElementById('panel');
 const researchPanel = document.getElementById('researchPanel');
 const input = document.getElementById('input');
@@ -220,7 +219,6 @@ function closeOtherOverlays(keepId) {
 function anyOverlayOpen() {
   const wd = document.getElementById('wardrobe');   // 衣橱（v1.0 独立面板）
   return (panel && !panel.classList.contains('hidden'))
-      || (log && !log.classList.contains('hidden'))
       || (wd && !wd.classList.contains('hidden'))
       || (researchPanel && !researchPanel.classList.contains('hidden'));
 }
