@@ -410,7 +410,7 @@ body.talking #inputBar { display: flex; }
 }
 /* v1.0 导出区二修（用户反馈）：内容字号加大；「完整实验包」取消常亮蓝，归队按钮族；点击反馈补齐 */
 .r-export-btns .r-btn-sm, .r-export-btns .r-btn-action {
-  font-size: 13px; padding: 7px 14px;
+  font-size: 12px; padding: 6px 12px;   /* 按钮字回调原大小（用户勘误：要大的是预览内容物） */
   background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16);
   border-radius: 4px; color: #dce3f5;
 }
@@ -418,9 +418,9 @@ body.talking #inputBar { display: flex; }
 .r-export-btns .r-btn-sm:active, .r-export-btns .r-btn-action:active {
   background: rgba(255,255,255,.26); transform: translateY(1px);
 }
-.r-preview-meta { font-size: 12.5px; }
-.r-export-textarea { font-size: 13.5px; line-height: 1.65; }
-.fg-title { font-size: 13px; }
+.r-preview-meta { font-size: 12px; }
+.r-export-textarea { font-size: 15px; line-height: 1.7; }   /* 预览内容物放大（用户点名） */
+.fg-title { font-size: 12px; }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }
