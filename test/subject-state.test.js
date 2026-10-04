@@ -248,5 +248,38 @@ check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成�
     stAfter.data.windowNo === 3, 'windowNo=' + stAfter.data.windowNo);
 }
 
+/* ===== v1.0 formatPerception 定性矩阵（Manus 复核 P2-1 / P2-2 处置）=====
+   五特质×三档全覆盖 + 边界硬切换契约（±60 即跳档、无迟滞 —— 有意设计，钉死防误读）
+   + 坏值安全回落 + 全段零数字（数字不可知红线）。 */
+{
+  const p = new SubjectState(tmpDir(), { stepWeight: 20, maxDeltaPerWindow: 50 });
+  const CASES = [
+    ['quiet_preference', '偏爱安静独处，耐得住冷清', '安静与热闹都待得住', '更想要热闹与相处，耐不住冷清'],
+    ['social_initiative', '想主动开口的劲头足', '开口与否看情境', '不太想先开口'],
+    ['attachment_need', '心里牵着你，想被你回应的劲很浓', '惦记，但不缠', '对回应比较淡然'],
+    ['vitality', '精神头足，动起来有劲', '精神平稳', '提不起劲，蔫蔫的'],
+    ['philosophical_curiosity', '探究心绪盛，想往深里问', '有好奇但不强求', '不太想往深里想']
+  ];
+  const boardOf = (vals) => {
+    // 注意：SubjectState.values 是副本 getter（防外部直改）——测试直书真身 data.values
+    for (const k of Object.keys(p.data.values)) p.data.values[k] = 0;
+    Object.assign(p.data.values, vals);
+    return p.formatPerception();
+  };
+  check('v1.0 定性矩阵：五特质×三档文案全覆盖（15 种组合）',
+    CASES.every(([k, hi, mid, lo]) => [[120, hi], [0, mid], [-120, lo]]
+      .every(([v, want]) => boardOf({ [k]: v }).includes(want))));
+  check('v1.0 边界硬切换契约（有意设计·无迟滞）：59.99→中 / 60→高 / -59.99→中 / -60→低',
+    boardOf({ quiet_preference: 59.99 }).includes('安静与热闹都待得住')
+    && boardOf({ quiet_preference: 60 }).includes('偏爱安静独处')
+    && boardOf({ quiet_preference: -59.99 }).includes('安静与热闹都待得住')
+    && boardOf({ quiet_preference: -60 }).includes('更想要热闹与相处'));
+  const bad = boardOf({ vitality: 'abc', quiet_preference: NaN });
+  check('v1.0 坏值安全回落：非数值/NaN 一律中档，零抛异常',
+    bad.includes('精神平稳') && bad.includes('安静与热闹都待得住'));
+  check('v1.0 formatPerception 全段零数字（数字不可知红线）',
+    !/\d/.test(boardOf({ vitality: 999, attachment_need: -999 })));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
