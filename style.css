@@ -408,6 +408,19 @@ body.talking #inputBar { display: flex; }
   color: #dfe6f2; font-family: Consolas, 'Courier New', monospace;
   font-size: 12.5px; line-height: 1.6; padding: 10px 12px; white-space: pre; overflow: auto;
 }
+/* v1.0 导出区二修（用户反馈）：内容字号加大；「完整实验包」取消常亮蓝，归队按钮族；点击反馈补齐 */
+.r-export-btns .r-btn-sm, .r-export-btns .r-btn-action {
+  font-size: 13px; padding: 7px 14px;
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16);
+  border-radius: 4px; color: #dce3f5;
+}
+.r-export-btns .r-btn-sm:hover, .r-export-btns .r-btn-action:hover { background: rgba(255,255,255,.2); color: #fff; }
+.r-export-btns .r-btn-sm:active, .r-export-btns .r-btn-action:active {
+  background: rgba(255,255,255,.26); transform: translateY(1px);
+}
+.r-preview-meta { font-size: 12.5px; }
+.r-export-textarea { font-size: 13.5px; line-height: 1.65; }
+.fg-title { font-size: 13px; }
 /* v2.0 睡相：呼吸放缓、身体沉静（纯物理，零台词） */
 body.sleeping #figure { animation-duration: 4.8s !important; }
 body.sleeping #pet { opacity: .96; }
