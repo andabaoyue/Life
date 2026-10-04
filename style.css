@@ -1086,6 +1086,7 @@ body.showlog #bubble { display: none !important; }
   width: 100%; min-height: 320px; resize: none; box-sizing: border-box;
   background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
   color: #dfe6f2; font-family: Consolas, 'Courier New', monospace;
-  font-size: 15px; line-height: 1.7; padding: 10px 12px; white-space: pre; overflow: auto;
+  font-size: 15px; line-height: 1.7; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; overflow: auto;
 }
+.r-preview-ops { display: flex; gap: 6px; }
 

@@ -2292,7 +2292,16 @@ async function handleExport(opts) {
   const out = document.getElementById('rExportOutput');
   if (!out) return;
   // v1.0 预览头（类型 · 行数 · 生成时间）随值一起落（口径 formatDisplayTime，不伪造）
-  const setOut = (v) => { out.value = v; updateExportMeta(); };
+  const setOut = (v) => {
+    // v1.0 预览可读化：JSON 只在显示层美化成缩进多行（导出数据本体不动）
+    let text = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    const head = text.trimStart();
+    if (head.startsWith('{') || head.startsWith('[')) {
+      try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* 非法 JSON 原样展示 */ }
+    }
+    out.value = text;
+    updateExportMeta();
+  };
   setOut('正在生成导出数据...');
   if (!api || !api.research) {
     setOut(JSON.stringify({ note: '预览模式模拟导出', opts }, null, 2));
@@ -2322,6 +2331,29 @@ function updateExportMeta() {
   const kind = (head.startsWith('{') || head.startsWith('[')) ? 'JSON' : 'CSV / 文本';
   meta.textContent = kind + ' · ' + v.split('\n').length + ' 行 · ' + formatDisplayTime(Date.now());
 }
+/* v1.0 保存为文件（复制之外的第二出口）——文件名带时间戳，类型随内容 */
+document.getElementById('rExportSave')?.addEventListener('click', () => {
+  const out = document.getElementById('rExportOutput');
+  const btn = document.getElementById('rExportSave');
+  if (!out || !btn) return;
+  const v = String(out.value || '');
+  if (!v) return;
+  const head = v.trimStart();
+  const ext = (head.startsWith('{') || head.startsWith('[')) ? 'json' : 'csv';
+  const fname = 'life-export-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + ext;
+  try {
+    const blob = new Blob([v], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    btn.textContent = '已保存 ✓';
+  } catch (e) {
+    btn.textContent = '保存失败';
+  }
+});
+
 document.getElementById('rExportCopy')?.addEventListener('click', async () => {
   const out = document.getElementById('rExportOutput');
   const btn = document.getElementById('rExportCopy');
