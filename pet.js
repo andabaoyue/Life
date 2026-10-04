@@ -2291,22 +2291,50 @@ document.getElementById('rReplayUntilBtn')?.addEventListener('click', () => {
 async function handleExport(opts) {
   const out = document.getElementById('rExportOutput');
   if (!out) return;
-  out.value = '正在生成导出数据...';
+  // v1.0 预览头（类型 · 行数 · 生成时间）随值一起落（口径 formatDisplayTime，不伪造）
+  const setOut = (v) => { out.value = v; updateExportMeta(); };
+  setOut('正在生成导出数据...');
   if (!api || !api.research) {
-    out.value = JSON.stringify({ note: '预览模式模拟导出', opts }, null, 2);
+    setOut(JSON.stringify({ note: '预览模式模拟导出', opts }, null, 2));
     return;
   }
   try {
     const res = await api.research.exportData(opts);
     if (typeof res === 'string') {
-      out.value = res;
+      setOut(res);
     } else {
-      out.value = JSON.stringify(res, null, 2);
+      setOut(JSON.stringify(res, null, 2));
     }
   } catch (err) {
-    out.value = '导出失败: ' + err.message;
+    setOut('导出失败: ' + err.message);
   }
 }
+
+/* v1.0 导出预览头部与复制（只读展示增强，不动导出数据本身） */
+function updateExportMeta() {
+  const meta = document.getElementById('rExportMeta');
+  const out = document.getElementById('rExportOutput');
+  if (!meta || !out) return;
+  const v = String(out.value || '');
+  const head = v.trimStart();
+  if (!head) { meta.textContent = '尚未生成'; return; }
+  if (head === '正在生成导出数据...') { meta.textContent = '生成中…'; return; }
+  const kind = (head.startsWith('{') || head.startsWith('[')) ? 'JSON' : 'CSV / 文本';
+  meta.textContent = kind + ' · ' + v.split('\n').length + ' 行 · ' + formatDisplayTime(Date.now());
+}
+document.getElementById('rExportCopy')?.addEventListener('click', async () => {
+  const out = document.getElementById('rExportOutput');
+  const btn = document.getElementById('rExportCopy');
+  if (!out || !btn) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(out.value || '');
+    }
+    btn.textContent = '已复制 ✓';
+  } catch (e) {
+    btn.textContent = '复制失败';
+  }
+});
 
 document.getElementById('rExpTrajJson')?.addEventListener('click', () => handleExport({ type: 'trajectory', format: 'json' }));
 document.getElementById('rExpTrajCsv')?.addEventListener('click', () => handleExport({ type: 'trajectory', format: 'csv' }));

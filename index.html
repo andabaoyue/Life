@@ -295,15 +295,28 @@
 
         <!-- 5. 数据导出面板 -->
         <div id="rPaneExport" class="r-pane hidden">
-          <div class="r-section-title">实验观测与复盘数据导出 (严格只读)</div>
-          <div class="r-export-btns">
-            <button id="rExpTrajJson" class="r-btn-sm">状态轨迹 (JSON)</button>
-            <button id="rExpTrajCsv" class="r-btn-sm">状态轨迹 (CSV)</button>
-            <button id="rExpScCsv" class="r-btn-sm">状态跃迁 (CSV)</button>
-            <button id="rExpEvCsv" class="r-btn-sm">证据清单 (CSV)</button>
-            <button id="rExpFullBundle" class="r-btn-action">完整实验包 (Bundle)</button>
+          <div class="r-section-title">实验观测与复盘数据导出（严格只读）</div>
+          <div class="fgroup">
+            <div class="fg-title">状态类导出</div>
+            <div class="r-export-btns">
+              <button id="rExpTrajJson" class="r-btn-sm">状态轨迹 (JSON)</button>
+              <button id="rExpTrajCsv" class="r-btn-sm">状态轨迹 (CSV)</button>
+              <button id="rExpScCsv" class="r-btn-sm">状态跃迁 (CSV)</button>
+            </div>
           </div>
-          <textarea id="rExportOutput" class="r-export-textarea" readonly spellcheck="false" placeholder="导出数据预览将在此处生成..."></textarea>
+          <div class="fgroup">
+            <div class="fg-title">证据与打包</div>
+            <div class="r-export-btns">
+              <button id="rExpEvCsv" class="r-btn-sm">证据清单 (CSV)</button>
+              <button id="rExpFullBundle" class="r-btn-action">完整实验包 (Bundle)</button>
+            </div>
+          </div>
+          <div class="fgroup">
+            <div class="r-preview-head">
+              <span id="rExportMeta" class="r-preview-meta">尚未生成</span>
+              <button id="rExportCopy" class="r-btn-sm">复制内容</button>
+            </div>
+            <textarea id="rExportOutput" class="r-export-textarea" readonly spellcheck="false" placeholder="导出数据预览将在此处生成..."></textarea>
         </div>
       </div>
       <div id="researchFooter">
