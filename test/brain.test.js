@@ -997,9 +997,10 @@ async function main() {
 
     // 验证 State Snapshot 注入位置：仅在瞬时 user 尾部，绝不进入 systemText
     const selfCtx = p0Brain.currentSelfContext();
-    check('P0-07: currentSelfContext 瞬时尾部包含当前主体状态快照',
-      selfCtx.includes('【当前主体状态快照】') &&
-      selfCtx.includes('安静偏好=18'));
+    check('P0-07: currentSelfContext 瞬时尾部注入定性内态感知（拍板 B：数字不可知红线）',
+      selfCtx.includes('【内态感知】') &&
+      selfCtx.includes('安静与热闹都待得住') &&   // 安静偏好=18 → 中档定性感受质
+      !selfCtx.includes('安静偏好='));           // 数字锚定已拔除
     check('P0-07: systemText 保持纯净人设与小结，绝不包含主体状态快照（保卫前缀缓存）',
       !p0Brain.memory.systemText().includes('【当前主体状态快照】'));
 

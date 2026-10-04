@@ -655,7 +655,9 @@ class Brain {
     if (!this.cfg.currentSelfTokenBudget) return '';
     const ageHours = Math.max(0, Date.now() - this.birthAt) / 3600000;
     const projection = this.selfLedger.currentSelfText();
-    const stateSnapshot = this.subjectState ? this.subjectState.formatSnapshot() : '';
+    // v1.0 拍板 B（拔除数字锚定）：给她的不再是「化验单」而是「心境」——
+    // formatSnapshot 全精度留给存储与看板；此处只走定性感知（零数字红线）
+    const perception = this.subjectState ? this.subjectState.formatPerception() : '';
     // v0.9.9 五大方向·④：可塑性只作定性感知注入 —— 零数值、零研究标签；
     // 取「实际生效」的吸收系数（缺省 1.0，与 reduce 的 fail-closed 门控同源），绝不虚构敏感度
     const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
@@ -669,8 +671,8 @@ class Brain {
     return '【出生与程序年龄】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false, timeZone: (this.selfLedger && this.selfLedger.birthTimezone) || undefined })
       + '\n- 程序累计运转时长：约 ' + ageHours.toFixed(1) + ' 小时（物理运行时间累计，非日历天数）'
       + (projection ? '\n' + projection : '')
-      + (stateSnapshot ? '\n' + stateSnapshot : '')
-      + '\n' + plasticitySense;
+      + '\n' + plasticitySense.replace('【内态感知】\n', '【内态感知】（这是你此刻的内心倾向，用你自己的话说，不要念标签）\n'
+        + (perception ? perception + '\n' : ''));
   }
 
   /**

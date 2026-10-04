@@ -299,6 +299,27 @@ class SubjectState {
   }
 
   /**
+   * v1.0 定性感知（拍板 B：拔除数字锚定）——只给初澜眼睛看的「内态心境」：
+   * 五大特质转成感受质，零数字、零研究标签（与五大方向④「数字不可知红线」同宗）。
+   * 存储/看板仍用 formatSnapshot 全精度，本法绝不落盘、绝不供观测。
+   * 三档定性：浓（>=60）/ 平稳 / 反向偏（<=-60）——不虚构精细度。
+   */
+  formatPerception() {
+    const v = (this.values || {});
+    const sense = (name, hi, mid, lo) => {
+      const x = Number(v[name]);
+      const lvl = Number.isFinite(x) ? (x >= 60 ? hi : (x <= -60 ? lo : mid)) : mid;
+      return '- ' + lvl;
+    };
+    return [
+      sense('quiet_preference', '偏爱安静独处，耐得住冷清', '安静与热闹都待得住', '更想要热闹与相处，耐不住冷清'),
+      sense('social_initiative', '想主动开口的劲头足', '开口与否看情境', '不太想先开口'),
+      sense('attachment_need', '心里牵着你，想被你回应的劲很浓', '惦记，但不缠', '对回应比较淡然'),
+      sense('vitality', '精神头足，动起来有劲', '精神平稳', '提不起劲，蔫蔫的'),
+      sense('philosophical_curiosity', '探究心绪盛，想往深里问', '有好奇但不强求', '不太想往深里想')
+    ].join('\n');
+  }
+  /**
    * 创建暂存快照（用于两阶段提交与回滚）
    */
   createStagingSnapshot() {
