@@ -899,7 +899,7 @@ class Brain {
     if (sleepIntent || herSleepIntent) {
     // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
     if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
-      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true }).catch(() => {});
+      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false }).catch(() => {});
     }
       const sleepAt = Date.now();
       if (tr) {
@@ -1520,7 +1520,7 @@ class Brain {
         const dreamEnabled = this.isExperimentModuleActive('sleepConsolidation');
         if (dreamEnabled && this.experiencesArchive) {
           // v2.0：梦境机器抽为 _dreamCycle（关窗与入睡共用同一台）；此处行为与原先一字不差
-          await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments });
+          await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments, isWindowClose: true });
         }
 
         if (this.cfg.selfGrowthEnabled === true)
@@ -1723,15 +1723,19 @@ class Brain {
                 this.dreamHistory.push(dreamRecord);
                 this.experiencesArchive.append(dreamRecord);
                 // v0.9.9 五大方向·①：归档成功的离线重组碎片同步进心智视野（防伪标签由 systemText 负责）。
-                // 只在窗口轮转时刻更新、只留最近 3 条：窗口内逐字节稳定，且与关窗的缓存重置同刻发生
-                const fragText = String((dreamRecord.payload && (dreamRecord.payload.content || dreamRecord.payload.narrative)) || '').trim();
-                if (fragText && this.memory && this.memory.data) {
-                  if (!Array.isArray(this.memory.data.dreamFragments)) this.memory.data.dreamFragments = [];
-                  this.memory.data.dreamFragments.push(fragText.slice(0, 400));
-                  if (this.memory.data.dreamFragments.length > 3) {
-                    this.memory.data.dreamFragments = this.memory.data.dreamFragments.slice(-3);
+                // P1-#2: 必须阻断非关窗时段对 systemText 的污染——严格仅在窗口轮转关窗时刻同步进心智视野，
+                // 窗口内（入睡/昏睡触发）产物仅入归档，严禁中途向 memory.data.dreamFragments 追加碎片，
+                // 从而确保窗口内 systemText 逐字节绝对稳定，严格维护 DeepSeek 前缀缓存不变式。
+                if (ctx.isWindowClose === true) {
+                  const fragText = String((dreamRecord.payload && (dreamRecord.payload.content || dreamRecord.payload.narrative)) || '').trim();
+                  if (fragText && this.memory && this.memory.data) {
+                    if (!Array.isArray(this.memory.data.dreamFragments)) this.memory.data.dreamFragments = [];
+                    this.memory.data.dreamFragments.push(fragText.slice(0, 400));
+                    if (this.memory.data.dreamFragments.length > 3) {
+                      this.memory.data.dreamFragments = this.memory.data.dreamFragments.slice(-3);
+                    }
+                    this.memory.save();
                   }
-                  this.memory.save();
                 }
                 if (dreamRecord.usage) {
                   this.track(dreamRecord.usage, true, 'dream');
@@ -1762,7 +1766,7 @@ class Brain {
     }
     // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
     if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
-      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true }).catch(() => {});
+      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false }).catch(() => {});
     }
     return true;
   }

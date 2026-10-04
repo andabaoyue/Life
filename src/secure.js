@@ -26,6 +26,7 @@ const { writeFileAtomic, writeJsonAtomic, renameWithRetry, tmpNameFor } = requir
 const KEY_FILE = 'life-key';
 // SEC-05: 敏感文件（credential/config）落盘权限 —— Unix 0600；Windows 保持既有 ACL 语义（chmod 为有限语义，仅尽力）
 const SENSITIVE_FILE_MODE = 0o600;
+const PLAINTEXT_PREFIX = 'plain:v1:';
 const LEGACY_KEY_FILE = 'gpt-girl-key';
 const CFG_FILE = 'life-config.json';
 const LEGACY_CFG_FILE = 'gpt-girl-config.json';
@@ -127,18 +128,41 @@ function encryptKey(getSS, dir, apiKey, providerId) {
   }
 }
 
-/** 没有密文文件、或解不出（换机器/换 Windows 用户）都返回 null */
+/** 没有密文文件、或解不出（换机器/换 Windows 用户）都返回 null；兼容识别 plain:v1: 降级明文 */
 function decryptKey(getSS, dir, providerId) {
   try {
     const kp = keyPath(dir, providerId);
+    if (!fs.existsSync(kp)) return null;
     const buf = fs.readFileSync(kp);
     const ss = typeof getSS === 'function' ? getSS() : null;
-    if (!ss || !ss.isEncryptionAvailable()) return null;
-    const key = ss.decryptString(buf) || null;
-    if (key && kp !== primaryKeyPath(dir, providerId) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
-      try { writeFileAtomic(primaryKeyPath(dir, providerId), buf, { mode: SENSITIVE_FILE_MODE }); } catch {}
+    if (ss && typeof ss.isEncryptionAvailable === 'function' && ss.isEncryptionAvailable()) {
+      try {
+        const key = ss.decryptString(buf) || null;
+        if (key) {
+          if (kp !== primaryKeyPath(dir, providerId) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
+            try { writeFileAtomic(primaryKeyPath(dir, providerId), buf, { mode: SENSITIVE_FILE_MODE }); } catch {}
+          }
+          return key;
+        }
+      } catch {
+        // 解密失败：继续检查是否为带格式前缀的明文降级文件
+      }
     }
-    return key;
+    const raw = buf.toString('utf8');
+    if (raw.startsWith(PLAINTEXT_PREFIX)) {
+      const plainKey = raw.slice(PLAINTEXT_PREFIX.length);
+      // 若当前加密可用，自动迁移为密文
+      if (ss && typeof ss.isEncryptionAvailable === 'function' && ss.isEncryptionAvailable()) {
+        try {
+          const cipher = ss.encryptString(plainKey);
+          if (cipher) {
+            writeFileAtomic(primaryKeyPath(dir, providerId), cipher, { mode: SENSITIVE_FILE_MODE });
+          }
+        } catch {}
+      }
+      return plainKey;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -177,7 +201,7 @@ function stripPlainKey(dir) {
  * 5. 任一步骤失败，均清理临时文件并全量回滚到原快照状态，抛出异常。
  * 6. 严禁留下半写入文件或版本不一致的组合。
  */
-function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
+function saveConfig(getSS, dir, cfg, writeDisk, _hooks, opts = {}) {
   const providerId = String((cfg && cfg.provider) || '').trim() || 'deepseek';
   const kp = primaryKeyPath(dir, providerId);
   const cp = primaryCfgPath(dir);
@@ -243,9 +267,15 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks) {
       try { fs.chmodSync(kp, SENSITIVE_FILE_MODE); } catch {} // SEC-05: 落盘后再次确保 mode
       const idx = tmpFiles.indexOf(tmpKeyPath);
       if (idx !== -1) tmpFiles.splice(idx, 1);
-    } else {
-      // 未加密或清空 key 时，删除可能残留的旧密文文件
+    } else if (hasKey && !encrypted) {
+      // 加密不可用但有 Key：降级写入 config.json，清理可能残留的旧密文文件
       dropKeyFile(dir, providerId);
+    } else if (cfg && 'apiKey' in cfg && key === '') {
+      // 显式清空 key 时，删除密文文件；若未传 apiKey 字段则严禁误删旧凭据
+      const shouldClear = (opts && opts.clearKey === true) || (cfg && cfg.clearKey === true) || (_hooks && _hooks.clearKey === true) || ('apiKey' in cfg);
+      if (shouldClear) {
+        dropKeyFile(dir, providerId);
+      }
     }
 
     return { encrypted, hasKey };
@@ -291,7 +321,13 @@ function loadConfig(getSS, dir, readDisk) {
   const fromKey = decryptKey(getSS, dir, providerId);
   if (fromKey) {
     if ('apiKey' in disk) stripPlainKey(dir);
-    return { cfg: { ...disk, apiKey: fromKey }, encrypted: true };
+    let isEncrypted = true;
+    try {
+      const kp = keyPath(dir, providerId);
+      const raw = fs.readFileSync(kp, 'utf8');
+      if (raw.startsWith(PLAINTEXT_PREFIX)) isEncrypted = false;
+    } catch {}
+    return { cfg: { ...disk, apiKey: fromKey }, encrypted: isEncrypted };
   }
   const legacy = String(disk.apiKey || '');
   const noCipher = !fs.existsSync(keyPath(dir, providerId));
@@ -308,6 +344,7 @@ module.exports = {
   LEGACY_KEY_FILE,
   CFG_FILE,
   LEGACY_CFG_FILE,
+  PLAINTEXT_PREFIX,
   credentialNamespace,
   legacyV0Namespace,
   legacyV0Claimants,

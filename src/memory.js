@@ -101,9 +101,28 @@ class Memory {
   }
 
   load() {
+    let raw;
     try {
-      const raw = JSON.parse(fs.readFileSync(this.path, 'utf8'));
-      if (!raw || !Array.isArray(raw.history)) return;
+      raw = JSON.parse(fs.readFileSync(this.path, 'utf8'));
+    } catch (e) {
+      if (e && e.code === 'ENOENT') {
+        // 首次运行：文件不存在，保持默认空结构
+        return;
+      }
+      // P1-#3: 文件存在但解析失败（语法损坏/断电中断）——备份现场为 .bak，绝不静默覆盖
+      try {
+        const bakPath = this.path + '.bak';
+        if (!fs.existsSync(bakPath) && fs.existsSync(this.path)) {
+          fs.copyFileSync(this.path, bakPath);
+          console.warn(`[Memory] 记忆文件受损已备份至 ${bakPath}:`, e && e.message);
+        }
+      } catch {}
+      return;
+    }
+
+    if (!raw || typeof raw !== 'object') return;
+
+    try {
       const { data } = migrate(raw, SCHEMA_VERSION, {
         1: (d) => {
           // 老版本（v0.2）是一条滚动 summary，没有 windows。
@@ -113,8 +132,8 @@ class Memory {
             d.windowNo = 2;
             delete d.summary;
           }
-          if (!d.windows) d.windows = [];
-          if (!d.history) d.history = [];
+          if (!Array.isArray(d.windows)) d.windows = [];
+          if (!Array.isArray(d.history)) d.history = [];
           if (typeof d.turnsInWindow !== 'number') d.turnsInWindow = 0;
           if (typeof d.totalTurns !== 'number') d.totalTurns = 0;
           if (typeof d.windowNo !== 'number') d.windowNo = 1;
@@ -144,7 +163,16 @@ class Memory {
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
-    } catch { /* 首次运行 */ }
+    } catch (migErr) {
+      // P1-#3: 迁移失败（如版本高于程序版本）——备份受损现场为 .bak，绝不静默清空覆写
+      try {
+        const bakPath = this.path + '.bak';
+        if (!fs.existsSync(bakPath) && fs.existsSync(this.path)) {
+          fs.copyFileSync(this.path, bakPath);
+          console.warn(`[Memory] 记忆迁移失败已备份至 ${bakPath}:`, migErr && migErr.message);
+        }
+      } catch {}
+    }
   }
 
   save(immediate = false) {
