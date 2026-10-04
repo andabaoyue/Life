@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Menu, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { load, save, tryLoad } = require('./src/config');
@@ -173,12 +173,13 @@ ipcGuard.on('motion-ui-state', (e, state = {}) => {
 
 ipcGuard.handle('motion-status', () => motion ? motion.snapshot() : null);
 
-ipcGuard.handle('toggle-pin', () => {
+function togglePinState() {
   if (!win) return false;
   const on = !win.isAlwaysOnTop();
   win.setAlwaysOnTop(on, 'screen-saver');
   return on;   // 返回新状态，菜单文案才能区分「已置顶/已取消置顶」
-});
+}
+ipcGuard.handle('toggle-pin', () => togglePinState());
 
 // v1.0 状态要准确：菜单文案跟随真实置顶态（不靠本地猜）
 ipcGuard.handle('pin-state', () => ({
@@ -240,6 +241,7 @@ ipcGuard.on('resize-pet', (e, factor) => {
 她的窗回归 340×480 纯粹态；对话窗是独立系统窗口：全屏自由拖拽、跨显示器、
 位置与大小记忆、hide() 只隐藏不销毁（重开秒回）。
 出生位智能邻居：默认她右侧 20px，放不下自动翻转到左侧，再钳进工作区。 */
+let tray = null;   // v1.0 系统托盘（模块级持有，防 GC 回收）
 let chatWin = null;
 let chatWinBounds = null;
 let appQuitting = false;
@@ -309,7 +311,12 @@ ipcGuard.handle('chat-window-open', () => {
   return { ok: true };
 });
 // v1.0 快捷呼出（中键双击 / Alt+Shift+C）：切换对话窗显示 —— 隐藏只收不销毁（安全退出链不受扰）
-ipcGuard.handle('chat-window-toggle', () => {
+function showChatWindow() {
+  const w = createChatWindow();
+  if (!w.isVisible()) w.show();
+  w.focus();
+}
+function toggleChatWindow() {
   const w = createChatWindow();
   if (w.isVisible()) {
     w.hide();
@@ -319,7 +326,8 @@ ipcGuard.handle('chat-window-toggle', () => {
   w.show();
   w.focus();
   return { ok: true, visible: true };
-});
+}
+ipcGuard.handle('chat-window-toggle', () => toggleChatWindow());
 function broadcastToWindows(channel, payload) {
   for (const w of [win, chatWin]) {
     if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
@@ -900,11 +908,45 @@ app.whenReady().then(() => {
   registerResearchIpc(ipcGuard, researchService, { dialog }); // SEC-01: research IPC 同样经 sender 校验
 
   createWindow();
+
+  // v1.0 系统托盘（合流批）：16x16 图标 + 双击呼出对话 + 右键菜单；退出严守安全退出链
+  try {
+    const trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'pet.png'))
+      .resize({ width: 16, height: 16 });
+    tray = new Tray(trayIcon);
+    const rebuildTrayMenu = () => {
+      tray.setContextMenu(Menu.buildFromTemplate([
+        { label: '打开对话 (Alt+Shift+C)', click: () => showChatWindow() },
+        { label: '窗口置顶 (Alt+Shift+P)', type: 'checkbox',
+          checked: !!(win && !win.isDestroyed() && win.isAlwaysOnTop()),
+          click: () => { togglePinState(); rebuildTrayMenu(); } },
+        { type: 'separator' },
+        // 安全退出守卫：只准 app.quit()（before-quit → flushAll 全量落盘），严禁 win.destroy()
+        { label: '退出', click: () => app.quit() }
+      ]));
+    };
+    tray.on('double-click', () => showChatWindow());
+    rebuildTrayMenu();
+  } catch (e) {
+    console.warn('[Tray] 托盘初始化失败（不影响主功能）:', e.message);
+  }
+
+  // v1.0 全局快捷键（合流批）：Alt+Shift+C 对话窗切换 / Alt+Shift+P 置顶切换
+  try {
+    globalShortcut.register('Alt+Shift+C', () => toggleChatWindow());
+    globalShortcut.register('Alt+Shift+P', () => { togglePinState(); });
+  } catch (e) {
+    console.warn('[Shortcut] 全局快捷键注册失败（不影响主功能）:', e.message);
+  }
 });
 
 app.on('before-quit', () => {
   appQuitting = true;   // 对话窗 close 拦截放行，允许真销毁
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();   // v1.0 全局快捷键彻底注销
 });
 
 app.on('window-all-closed', () => {

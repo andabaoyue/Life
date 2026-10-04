@@ -191,7 +191,9 @@ class Brain {
     this._restoreEngramSnapshotFromArchive();
     this.internalRegulation = new InternalRegulationManager(userDataDir, {
       enabled: Boolean(this.currentWindowSnapshot.modules?.internalRegulation),
-      experimentModules: this.currentWindowSnapshot.modules
+      experimentModules: this.currentWindowSnapshot.modules,
+      // v1.0 生物钟：创世时区惰性取值（本构造先于 selfLedger 创建）
+      birthTimezone: () => (this.selfLedger && this.selfLedger.birthTimezone) || null
     });
     this._restoreInternalRegulationFromArchive();
 
@@ -664,6 +666,9 @@ class Brain {
       ? this.subjectState.data.history : [];
     const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
     const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+    // v1.0 生理内感受（合流批）：身体真实生理感觉注入瞬时尾部 —— 绝不写入 memory.history（前缀缓存逐字节安全）
+    const regSense = (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function')
+      ? this.internalRegulation.formatPerception() : '';
     const plasticitySense = '【内态感知】\n- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静');
     // v0.9.9: 出生时刻必须用本地时间 —— ISO 的 Z 是 UTC，主体会拿它当本地钟面心算，
     // 实测错出 8 小时的「凌晨两点半」；运转时长同样消歧，防被脑补成某种「日长」
@@ -672,7 +677,8 @@ class Brain {
       + '\n- 程序累计运转时长：约 ' + ageHours.toFixed(1) + ' 小时（物理运行时间累计，非日历天数）'
       + (projection ? '\n' + projection : '')
       + '\n' + plasticitySense.replace('【内态感知】\n', '【内态感知】（这是你此刻的内心倾向，用你自己的话说，不要念标签）\n'
-        + (perception ? perception + '\n' : ''));
+        + (perception ? perception + '\n' : ''))
+      + (regSense ? '\n' + regSense : '');
   }
 
   /**

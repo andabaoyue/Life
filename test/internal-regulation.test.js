@@ -227,5 +227,49 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     + ' energy=' + beforeEnergy + '→' + a2.getState().energy);
 }
 
+/* ===== v1.0 生理内感受 + 生物钟（合流批契约钉）=====
+   零数字红线 / 中档沉默 / 纯函数零副作用 / 夜窗加权（创世时区）/ 日间公式逐字不变。 */
+{
+  const s = new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-sense-')),
+    { enabled: true, birthTimezone: 'Asia/Shanghai' });
+  const bands = [];
+  s.restPressure = 80; bands.push(s.formatPerception().includes('困意很沉'));
+  s.restPressure = 50; bands.push(s.formatPerception().includes('泛起淡淡的困倦'));
+  s.restPressure = 10; s.energy = 35; bands.push(s.formatPerception().includes('体能消耗较大'));
+  s.energy = 85; bands.push(s.formatPerception().includes('精力充沛'));
+  s.energy = 60; s.arousal = 80; bands.push(s.formatPerception().includes('亢奋紧绷'));
+  s.arousal = 30; bands.push(s.formatPerception().includes('放空朦胧'));
+  check('v1.0 内感受分带矩阵：疲惫/精力/唤醒 六档定性文案全覆盖', bands.every(Boolean), JSON.stringify(bands));
+  s.restPressure = 10; s.energy = 60; s.arousal = 50;
+  check('v1.0 内感受中档沉默：全指标居中输出空串（沉默=如常）', s.formatPerception() === '');
+  s.restPressure = 80; s.energy = 35; s.arousal = 80;
+  const noisy = s.formatPerception();
+  check('v1.0 内感受零数字（数字不可知红线）', !/\d/.test(noisy) && noisy.includes('【生理体感】'));
+  const snapBefore = JSON.stringify(s.getState());
+  s.formatPerception();
+  check('v1.0 内感受纯函数零副作用 + 引擎关闭无幻肢感',
+    JSON.stringify(s.getState()) === snapBefore
+    && new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-off-')),
+      { enabled: false }).formatPerception() === '');
+  // 生物钟昼夜对比（创世时区口径：上海 10/05 02:00 vs 14:00）
+  const NIGHT = Date.UTC(2026, 9, 4, 18, 0, 0);
+  const DAY = Date.UTC(2026, 9, 4, 6, 0, 0);
+  const n1 = new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-night-')),
+    { enabled: true, birthTimezone: 'Asia/Shanghai' });
+  const d1 = new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-day-')),
+    { enabled: true, birthTimezone: 'Asia/Shanghai' });
+  const nA0 = n1.getState().arousal, dA0 = d1.getState().arousal;
+  n1.updateOnActivity('idle', { idleMin: 30, timestamp: NIGHT });
+  d1.updateOnActivity('idle', { idleMin: 30, timestamp: DAY });
+  check('v1.0 生物钟夜窗加权：深夜疲惫堆积更快、唤醒回落更深（创世时区口径）',
+    n1.getState().restPressure === 6 && n1.getState().arousal === nA0 - 8
+    && d1.getState().restPressure === 3 && d1.getState().arousal === dA0 - 6,
+    'night rp=' + n1.getState().restPressure + ' arΔ=' + (n1.getState().arousal - nA0)
+    + ' | day rp=' + d1.getState().restPressure + ' arΔ=' + (d1.getState().arousal - dA0));
+  check('v1.0 生物钟日间对照：日间公式逐字不变（min(10,idle/10) / -min(20,idle/5)）',
+    d1.getState().restPressure === Math.min(10, Math.floor(30 / 10))
+    && (dA0 - d1.getState().arousal) === Math.min(20, Math.floor(30 / 5)));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

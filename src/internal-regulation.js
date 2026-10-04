@@ -253,6 +253,56 @@ class InternalRegulationManager {
    * @param {string} activityKind 'poke' | 'drag' | 'idle'
    * @param {Object} [details={}]
    */
+  /** v1.0 生理内感受（合流批；方案 B 同族 · 零数字红线）——
+   *  内部生理潮汐转为生命体感质，只供初澜感知自身状态，绝不呈现工程数字；
+   *  中档沉默：全指标居中时输出空串（沉默 = 如常），零 token 浪费；
+   *  引擎关闭时输出空串（无身体信号就没有幻肢感）；纯函数，零副作用、绝不落盘。 */
+  formatPerception() {
+    if (!this.enabled) return '';
+    const parts = [];
+    // 疲惫与困意带 (restPressure)
+    if (this.restPressure >= 80) {
+      parts.push('- 困意很沉，眼皮发沉，精神有些支撑不住，很想趴下睡了');
+    } else if (this.restPressure >= 50) {
+      parts.push('- 身体有些乏了，泛起淡淡的困倦与懒散');
+    }
+    // 体能与精力带 (energy)
+    if (this.energy <= 35) {
+      parts.push('- 体能消耗较大，提不太起精神，有些虚弱');
+    } else if (this.energy >= 85) {
+      parts.push('- 精力充沛，身体轻快');
+    }
+    // 神经唤醒带 (arousal)
+    if (this.arousal >= 80) {
+      parts.push('- 神经有些亢奋紧绷，思维活跃');
+    } else if (this.arousal <= 30) {
+      parts.push('- 思绪有些放空朦胧，反应有些慢');
+    }
+    return parts.length
+      ? '【生理体感】（这是你此刻身体的真实生理感觉，自然流露，不背标签）：\n' + parts.join('\n')
+      : '';
+  }
+
+  /** v1.0 生物钟（合流批）：夜窗判据 —— 时钟绑定创世时区 birthTimezone（§7.2「呈现看创世」），
+   *  未设则回退当前 Intl 时区。函数纯判时，零副作用。 */
+  _isNightHour(at = Date.now()) {
+    let tz = null;
+    try {
+      tz = (typeof this.birthTimezoneOpt === 'function') ? this.birthTimezoneOpt() : this.birthTimezoneOpt;
+    } catch (e) { tz = null; }
+    if (!tz && typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+      tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+    let hour;
+    try {
+      hour = Number(new Intl.DateTimeFormat('en-US',
+        { timeZone: tz || undefined, hour: 'numeric', hourCycle: 'h23' }).format(new Date(at)));
+    } catch (e) {
+      hour = new Date(at).getHours();
+    }
+    return hour >= 23 || hour < 5;
+  }
+
   updateOnActivity(activityKind, details = {}) {
     if (!this.enabled) return this.getState();
 
@@ -282,12 +332,15 @@ class InternalRegulationManager {
     } else if (activityKind === 'idle') {
       // 静默挂机：唤醒度回落，认知负荷降低；若清醒已久则轻微累积休息压力
       if (idleMin >= 10) {
-        const arousalDrop = Math.min(20, Math.floor(idleMin / 5));
+        // v1.0 生物钟昼夜（合流批）：夜窗（23:00~05:00 创世时区）疲惫更快堆积、唤醒更快回落；
+        // 日间窗逐字保持原公式（对照组口径不变）
+        const night = this._isNightHour(at);
+        const arousalDrop = night ? Math.min(30, Math.floor(idleMin / 3.5)) : Math.min(20, Math.floor(idleMin / 5));
         deltas.arousal = -arousalDrop;
         deltas.interactionDensity = -10;
         deltas.cognitiveLoadProxy = -15;
-        // 清醒挂机时间长，逐渐积累睡意/休息需求
-        deltas.restPressure = Math.min(10, Math.floor(idleMin / 10));
+        // 清醒挂机时间长，逐渐积累睡意/休息需求（夜窗加权）
+        deltas.restPressure = night ? Math.min(20, Math.floor(idleMin / 5)) : Math.min(10, Math.floor(idleMin / 10));
       }
     }
 
