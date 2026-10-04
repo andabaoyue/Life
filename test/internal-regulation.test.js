@@ -210,5 +210,22 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     'base=' + baseM.getState().salienceThreshold + ' fresh=' + freshM.getState().salienceThreshold);
 }
 
+/* ===== v1.0 疲惫跨重启持久化契约（用户实测报障：疲惫值退出重进归零）=====
+   逐轮/活动更新必须落盘 —— 否则「会累的身体」每次重启都满血，通路 B 永远走不到。 */
+{
+  const pdir = fs.mkdtempSync(path.join(os.tmpdir(), 'ir-persist-'));
+  const a1 = new InternalRegulationManager(pdir, { enabled: true });
+  a1.updateOnInteractionTurn({ role: 'user', timestamp: Date.now() });
+  a1.updateOnActivity('idle', { idleMinutes: 30 });
+  const beforePressure = a1.getState().restPressure;
+  const beforeEnergy = a1.getState().energy;
+  const a2 = new InternalRegulationManager(pdir, { enabled: true });
+  check('v1.0 疲惫/精力跨重启：逐轮/活动更新落盘，新实例读回原值（退出重进不归零）',
+    beforePressure > 0 && a2.getState().restPressure === beforePressure
+    && a2.getState().energy === beforeEnergy,
+    'pressure=' + beforePressure + '→' + a2.getState().restPressure
+    + ' energy=' + beforeEnergy + '→' + a2.getState().energy);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

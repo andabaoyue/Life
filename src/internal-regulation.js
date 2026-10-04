@@ -243,6 +243,7 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(`interaction_${role}`, deltas, prev, at);
+    this.save();   // v1.0 疲惫跨重启契约（用户实测报障：退出重进归零）——逐轮更新必须落盘
     return this._emitChange(this.getState());
   }
 
@@ -298,6 +299,7 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(`activity_${activityKind}`, deltas, prev, at);
+    this.save();   // v1.0 疲惫跨重启契约 —— 活动更新同落盘
     return this._emitChange(this.getState());
   }
 
