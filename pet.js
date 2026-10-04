@@ -2298,6 +2298,9 @@ async function handleExport(opts) {
     const head = text.trimStart();
     if (head.startsWith('{') || head.startsWith('[')) {
       try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* 非法 JSON 原样展示 */ }
+    } else {
+      // v1.0 CSV 可读化：每条记录之间空一行（用户拍板，以此类推所有 CSV 导出）
+      text = text.split(/\r?\n/).filter((l) => l.trim() !== '').join('\n\n');
     }
     out.value = text;
     updateExportMeta();
