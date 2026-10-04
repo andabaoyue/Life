@@ -48,7 +48,7 @@ let w = new Wardrobe(dir);
 check('初始为默认套装', w.preset === 'default');
 check('equip getter 返回对象而非函数（曾被子类方法同名覆盖）',
   typeof w.equip === 'object' && w.equip !== null);
-check('默认套装 7 层可见（不含已删除项圈）', w.layers().length === 7, 'layers=' + w.layers().length);
+check('默认套装 7 层可见（项圈为非默认可选件）', w.layers().length === 7, 'layers=' + w.layers().length);
 check('layers 按 z 升序（叠放顺序稳定）',
   w.layers().every((l, i, a) => i === 0 || a[i - 1].z <= l.z));
 check('袜子在鞋子之下、外套在衣物之上',
@@ -73,8 +73,13 @@ check('穿着连衣裙时再穿上装被拒', w.setEquip('top', 'gray_tee_01').o
 check('正确解法：先脱连衣裙再穿上装',
   w.setEquip('dress', null).ok === true && w.setEquip('top', 'gray_tee_01').ok === true);
 
-/* ---------- 身份锁定 ---------- */
-check('发型不能脱空（身份件）', w.setEquip('hair', null).ok === false);
+/* ---------- 发型脱下与外饰摘除 ---------- */
+check('发型支持自由脱下（解除锁定）', (() => {
+  const r = w.setEquip('hair', null);
+  const ok = r.ok === true && w.equip.hair === null;
+  w.setEquip('hair', 'silver_wavy_01');
+  return ok;
+})());
 check('蝴蝶结可以作为外饰摘下', w.setEquip('hairAccessory', null).ok === true);
 check('摘下发饰不影响核心发型', w.equip.hair === 'silver_wavy_01' && w.equip.hairAccessory === null);
 check('off_hairAccessory 提案与面板脱下走同一执行路径', (() => {
@@ -82,7 +87,15 @@ check('off_hairAccessory 提案与面板脱下走同一执行路径', (() => {
   const r = w.applyProposal('off_hairAccessory');
   return r.ok === true && w.equip.hairAccessory === null;
 })());
-check('off_hair 提案不能摘下核心发型', w.applyProposal('off_hair').ok === false);
+check('off_hair 提案支持脱下发型', (() => {
+  w.setEquip('hair', 'silver_wavy_01');
+  const r = w.applyProposal('off_hair');
+  const ok = r.ok === true && w.equip.hair === null;
+  w.setEquip('hair', 'silver_wavy_01');
+  return ok;
+})());
+check('提案脱下未知槽位如实返回没有该槽位',
+  w.applyProposal('off_nonsense').ok === false && /没有这个槽位/.test(w.applyProposal('off_nonsense').error));
 check('普通衣服可以脱空', w.setEquip('outerwear', null).ok === true && w.equip.outerwear === null);
 
 /* ---------- 非法输入 ---------- */
@@ -163,14 +176,18 @@ check('未知 id 被丢弃后用默认补齐',
     const x = reloadWith(JSON.stringify({ equip: { hair: 'not_exist', top: 'gray_tee_01' } }));
     return x.equip.hair === 'silver_wavy_01';
   })());
-check('旧项圈存档迁移为 null 且不影响其他衣物', (() => {
-  const x = reloadWith(JSON.stringify({ preset: 'default', equip: {
-    hair: 'silver_wavy_01', hairAccessory: 'black_bow_01', top: 'gray_tee_01',
-    bottom: 'sport_shorts_01', dress: null, socks: 'white_thighhigh_01',
-    shoes: 'white_sneakers_01', outerwear: null, accessory: 'choker_key_01'
-  }}));
-  return x.equip.accessory === null && x.equip.top === 'gray_tee_01'
-    && x.equip.shoes === 'white_sneakers_01';
+check('v1.0 choker 重新立项后，旧存档里的 choker_key_01 能原样读回（退役迁移已撤销）', (() => {
+  const d = tmp(); fs.writeFileSync(path.join(d, 'wardrobe.json'), JSON.stringify({
+    schemaVersion: 1, equip: { hair: 'silver_wavy_01', accessory: 'choker_key_01' }, preset: null }));
+  const w2 = new Wardrobe(d);
+  return w2.equip.accessory === 'choker_key_01' && CATALOG['choker_key_01'].slot === 'accessory';
+})());
+
+check('无发时穿着块如实写「无发／素体形态」而不是「没穿」', (() => {
+  const d = tmp(); const w3 = new Wardrobe(d);
+  w3.setEquip('hair', null);
+  const t = w3.outfitText();
+  return /发型：（无发／素体形态）/.test(t) && !/发型：（没穿）/.test(t);
 })());
 check('合法的自由组合能原样读回',
   (() => {

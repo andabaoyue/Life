@@ -120,7 +120,17 @@ class Memory {
       return;
     }
 
-    if (!raw || typeof raw !== 'object') return;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      // P1-#3: 顶层非对象结构（如顶层为 JSON 数组或基本类型）——备份现场为 .bak，保持默认空结构
+      try {
+        const bakPath = this.path + '.bak';
+        if (!fs.existsSync(bakPath) && fs.existsSync(this.path)) {
+          fs.copyFileSync(this.path, bakPath);
+          console.warn(`[Memory] 记忆文件顶层结构受损（非普通对象）已备份至 ${bakPath}`);
+        }
+      } catch {}
+      return;
+    }
 
     try {
       const { data } = migrate(raw, SCHEMA_VERSION, {

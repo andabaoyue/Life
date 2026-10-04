@@ -629,9 +629,10 @@ ipcGuard.handle('wardrobe-preset', (e, id) => {
    内存里的 cfg.apiKey 仍是明文（要拿去发请求），磁盘上只有密文文件。 */
 const getSS = () => safeStorage || null;
 
-function persistCfg(next) {
+function persistCfg(next, opts = {}) {
   const r = secure.saveConfig(getSS, app.getPath('userData'), next,
-    (disk) => save(app.getPath('userData'), next, disk));
+    (disk) => save(app.getPath('userData'), next, disk),
+    null, opts);
   keyEncrypted = r.encrypted;
   return r;
 }
@@ -683,7 +684,8 @@ ipcGuard.handle('config-set-key', (e, key) => {
   // candidate 任一步失败 -> cleanup + 配置回滚 + 旧 Brain 继续服务，绝不留半初始化 Brain
   const { swapBrain } = require('./src/brain-hot-swap');
   const oldCfg = cfg;
-  const next = { ...cfg, apiKey: String(key || '').trim() };
+  const trimmed = String(key || '').trim();
+  const next = { ...cfg, apiKey: trimmed };
   let persisted = null;
   const res = swapBrain({
     oldBrain: brain,
@@ -691,7 +693,7 @@ ipcGuard.handle('config-set-key', (e, key) => {
     nextCfg: next,
     createCandidate: (c) => new Brain(app.getPath('userData'), c),
     bindCandidate: bindBrainDeps,
-    persistCfg: (c) => { persisted = persistCfg(c); }
+    persistCfg: (c) => { persisted = persistCfg(c, { clearKey: !trimmed }); }
   });
   if (!res.ok) return { ok: false, error: res.error };
 

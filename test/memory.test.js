@@ -142,5 +142,14 @@ check('被拒后记忆完好：systemText 仍包含该段小结', mem.systemText
 mem.reset();
 check('reset 清空所有记忆与历史并更新 epoch', mem.windows.length === 0 && mem.history.length === 0 && mem.data.epoch === 1);
 
+// 10. 顶层非对象结构（如 JSON 数组）损坏守卫
+const corruptDir = tmpDir();
+const badMemPath = path.join(corruptDir, 'memory.json');
+fs.writeFileSync(badMemPath, JSON.stringify([1, 2, 3]));
+const corruptMem = new Memory(corruptDir);
+check('顶层为数组时拒绝接纳且不污染 data 为数组', !Array.isArray(corruptMem.data) && corruptMem.data.schemaVersion === 1);
+check('顶层受损文件成功备份至 .bak', fs.existsSync(badMemPath + '.bak'));
+try { fs.rmSync(corruptDir, { recursive: true, force: true }); } catch {}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

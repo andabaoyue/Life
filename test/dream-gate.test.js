@@ -283,5 +283,53 @@ function check(name, cond, extra) {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 }
 
+// -------------------------------------------------------------
+// 11. Patch 2-B: preClose 梦境同窗口去重与跨窗口关窗间隔语义
+// -------------------------------------------------------------
+{
+  const turbulentHistory = [{ arousal: 10 }, { arousal: 90 }];
+  const now = Date.now();
+
+  // ① 同一窗口已有 preClose 梦境时，关窗梦境仍被拒（同窗口去重）
+  const sameWindowHistory = [
+    { windowNo: 5, preClose: true, generatedAt: now - 1000 }
+  ];
+  const resSame = evaluateDreamGate({
+    windowNo: 5,
+    stateHistory: turbulentHistory,
+    dreamHistory: sameWindowHistory,
+    now
+  });
+  check('同一窗口已有 preClose 梦境时关窗梦境被拒（同窗口去重）',
+    resSame.costGatePassed === false && resSame.reason.includes('already dreamed in window'));
+
+  // ② 跨窗口间隔按关窗梦境生效（若上一窗口是跨度合法的关窗梦境，同窗口虽有 preClose 也不阻断合法跨窗）
+  const crossWindowHistory = [
+    { windowNo: 2, preClose: false, generatedAt: now - 25 * 3600 * 1000 },
+    { windowNo: 5, preClose: true, generatedAt: now - 1000 }
+  ];
+  const resCross = evaluateDreamGate({
+    windowNo: 6, // 距上次关窗梦境 window 2 跨度为 4 >= 3
+    stateHistory: turbulentHistory,
+    dreamHistory: crossWindowHistory,
+    now
+  });
+  check('跨窗口按关窗梦境间隔生效且同窗口不重复', resCross.costGatePassed === true);
+
+  // ③ 24h 调用硬顶对 preClose 梦境全量计入（不可绕过）
+  const rateLimitHistory = [
+    { windowNo: 1, preClose: true, generatedAt: now - 3600 * 1000 },
+    { windowNo: 4, preClose: true, generatedAt: now - 1800 * 1000 }
+  ];
+  const resLimit = evaluateDreamGate({
+    windowNo: 10,
+    stateHistory: turbulentHistory,
+    dreamHistory: rateLimitHistory,
+    now
+  });
+  check('24h 调用硬顶对 preClose 梦境全量计入（不可绕过）',
+    resLimit.costGatePassed === false && resLimit.reason.includes('DAILY_RATE_LIMIT_EXCEEDED'));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

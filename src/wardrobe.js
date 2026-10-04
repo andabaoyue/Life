@@ -47,7 +47,10 @@ const SCHEMA_VERSION = 1;
    商品上不再有任何 locked 字段 —— 反推那条路一旦走通，
    以后就得同时维护两处，迟早对不上。 */
 const SLOTS = [
-  { id: 'hair',          z: 10, name: '发型',   required: true },
+  // v1.0：发型放开为自由可脱槽位（身份由发色承载，不由槽位承载）。
+  // emptyLabel 给「无发素体形态」一个如实说法，避免穿着块写成「（没穿）」——
+  // 那会让模型把"没戴的发型"当成一件没穿的衣服，与 persona 的头发描述打架。
+  { id: 'hair',          z: 10, name: '发型', emptyLabel: '（无发／素体形态）' },
   { id: 'socks',         z: 20, name: '袜子' },
   { id: 'dress',         z: 30, name: '连衣裙' },
   { id: 'top',           z: 31, name: '上装' },
@@ -65,8 +68,8 @@ const SLOT_IDS = SLOTS.map(s => s.id);
    tags 只是给人和 AI 挑衣服用的描述，不参与任何逻辑判断 ——
    刻意不让「哥特」这种词影响人格。
 
-   身份约束在 SLOTS.required 上，不在商品上：发型槽永远不许空，
-   但里面可以换款式（以后出第二款发型就直接加进来，不用标任何东西）。
+   身份约束在 SLOTS.required 上，不在商品上：槽位若标 required 则不许脱空
+   （v1.0 发型放开为自由可脱槽位，支持光头素体换装与无发衣物生成）。
    刻意不再给商品加 locked —— 同一个事实有两个出处，早晚对不上。 */
 const CATALOG = {
   /* 发型：身份层，第一阶段只有一款，槽位留着以后出多发型
@@ -77,6 +80,11 @@ const CATALOG = {
 
   black_bow_01: { slot: 'hairAccessory', name: '右侧黑色蝴蝶结', file: 'hair-accessories/black_bow_01.png',
                   tags: ['默认', '黑蝴蝶结', '右侧', '可拆卸发饰'] },
+
+  /* v1.0 重新立项：颈带钥匙项圈由「退役外饰」转为可选饰品（accessory, z=60）。
+     刻意不进 PRESETS.default —— 默认套装保持 7 层可见（test/wardrobe.test.js 钉住）。 */
+  choker_key_01: { slot: 'accessory', name: '黑色颈带钥匙项圈', file: 'accessories/choker_key_01.png',
+                   tags: ['项圈', '黑色', '钥匙吊坠', '可选外饰'] },
 
   lace_corset_01: { slot: 'top', name: '黑色蕾丝吊带', file: 'tops/lace_corset_01.png',
                     tags: ['默认', '黑色', '蕾丝'] },
@@ -198,12 +206,15 @@ function getSubjectPreferredPreset(traits = {}) {
  * 因为 dress 落下去的那一刻，残留的 top 还在。预设切换是整体替换，
  * 中途状态没有意义，只有结果值得判断。
  *
- * 关键二：只有核心身份件不许为空。换装和摘下外饰不能改变角色本体。
+ * 关键二：只有声明 required 的槽位不许为空（v1.0 起无任何槽位声明 required）。
+ * 角色本体由发色/脸型/眼睛/泪痣承载，换装与摘下外饰不改变本体 —— 这条不变式
+ * 现在由 persona 与「不得自相矛盾」断言守护，不再由 SLOTS.required 守护
+ * （机制保留，供未来引入不可脱槽位时启用）。
  */
 function validate(equip) {
   if (equip.dress && (equip.top || equip.bottom))
     return '连衣裙不能和上装/下装同时穿';
-  // 身份槽位必须有着装（当前只有 hair；发饰是可拆卸外饰）
+  // 身份槽位必须有着装：当前无任何槽位声明 required，本循环为保留机制（见上方关键二）
   for (const s of SLOTS) {
     if (s.required && !equip[s.id])
       return s.name + '属于角色身份，不能脱空';
@@ -230,9 +241,6 @@ class Wardrobe {
       if (!raw || !raw.equip) return;
       const { data } = migrate(raw, SCHEMA_VERSION, {
         1: (d) => {
-          if (d && d.equip && d.equip.accessory === 'choker_key_01') {
-            d.equip.accessory = null;
-          }
           return d;
         }
       });
@@ -241,8 +249,8 @@ class Wardrobe {
         if (!(k in data.equip)) continue;        // 文件没写这个槽位 → 默认补齐
         const v = data.equip[k];
         if (v === null) { e[k] = null; continue; } // 显式脱下要保留，否则哥特档读回会变成默认
-        // v0.8.4 删除的旧身份外饰只迁移为 null，不影响其他槽位。
-        if (v === 'choker_key_01') { e[k] = null; continue; }
+        // v1.0：choker_key_01 已重新立项为可选饰品，退役迁移随之撤销 ——
+        // 否则旧存档每读一次都被清成 null，这件永远穿不上（新立项等于白立）。
         // 未知 id / 穿错槽位一律丢弃后用默认补齐：手改坏文件也不能把渲染层带崩
         const it = CATALOG[v];
         if (it && it.slot === k) e[k] = v;
@@ -331,7 +339,10 @@ class Wardrobe {
     if (PRESETS[key]) return this.applyPreset(key);
     if (key.toLowerCase().startsWith('off_')) {
       const slot = SLOTS.find(s => s.id.toLowerCase() === key.slice(4).toLowerCase());
-      if (!slot || slot.required) return { ok: false, error: '这个部位属于核心身份，不能脱下' };
+      // v1.0：拆开两种失败 —— 未知槽位说「没有这个槽位」，身份槽位才说「不能脱下」。
+      // 已无 required 槽位，所以旧写法对 off_nonsense 会回一句关于身份的胡话。
+      if (!slot) return { ok: false, error: '没有这个槽位：' + key.slice(4) };
+      if (slot.required) return { ok: false, error: slot.name + '属于角色身份，不能脱下' };
       return this.setEquip(slot.id, null);
     }
     const it = CATALOG[key];
@@ -377,7 +388,7 @@ class Wardrobe {
     const lines = [];
     for (const s of SLOTS) {
       const id = this.data.equip[s.id];
-      lines.push('- ' + s.name + '：' + (id ? CATALOG[id].name : '（没穿）'));
+      lines.push('- ' + s.name + '：' + (id ? CATALOG[id].name : (s.emptyLabel || '（没穿）')));
     }
     return lines.join('\n');
   }

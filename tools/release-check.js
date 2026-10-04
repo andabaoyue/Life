@@ -74,8 +74,7 @@ function checkJsSyntax() {
 function checkWardrobeAssets() {
   const { CATALOG, SLOTS } = require('../src/wardrobe');
   const expectedFiles = [
-    'assets/character/base/base.png',
-    'assets/character/accessories/choker_key_01.png'
+    'assets/character/base/base.png'
   ];
 
   for (const item of Object.values(CATALOG)) {

@@ -204,11 +204,20 @@ function evaluateDreamGate(opts = {}) {
   let costGatePassed = true;
   let costGateReason = 'PASSED';
 
-  // 窗口间隔约束
-  const lastDreamWindow = opts.lastDreamWindow ?? (dreamHistory.length > 0 ? dreamHistory[dreamHistory.length - 1].windowNo : null);
-  if (lastDreamWindow !== null && (windowNo - lastDreamWindow) < cfg.minimumDreamIntervalWindows) {
+  // 窗口间隔约束：
+  // ① 同窗口去重：已有任意梦境（含入睡 preClose）则本窗口不再重复做梦（用全量历史）
+  // ② 跨窗口间隔：关窗主梦境按最小窗口间隔约束（用 relevantHistory 过滤非关窗瞬态）
+  const relevantHistory = dreamHistory.filter(d => !(d && (d.preClose === true || (d.payload && d.payload.preClose === true))));
+  // 注：opts.lastDreamWindow 主要用于单测或外部显式指定基准窗口；生产环境均缺省，分别由 dreamHistory / relevantHistory 驱动
+  const lastAny = opts.lastDreamWindow ?? (dreamHistory.length > 0 ? dreamHistory[dreamHistory.length - 1].windowNo : null);
+  const lastClose = opts.lastDreamWindow ?? (relevantHistory.length > 0 ? relevantHistory[relevantHistory.length - 1].windowNo : null);
+
+  if (lastAny !== null && (windowNo - lastAny) < 1) {
     costGatePassed = false;
-    costGateReason = `INTERVAL_TOO_SHORT (current: ${windowNo}, last: ${lastDreamWindow}, minGap: ${cfg.minimumDreamIntervalWindows})`;
+    costGateReason = `INTERVAL_TOO_SHORT (current: ${windowNo}, last: ${lastAny}, already dreamed in window)`;
+  } else if (lastClose !== null && (windowNo - lastClose) < cfg.minimumDreamIntervalWindows) {
+    costGatePassed = false;
+    costGateReason = `INTERVAL_TOO_SHORT (current: ${windowNo}, last: ${lastClose}, minGap: ${cfg.minimumDreamIntervalWindows})`;
   }
 
   // 24小时频次硬顶约束 (显式时间注入，绝不隐式依赖系统时刻漂移)
@@ -485,6 +494,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
     const dreamPayload = {
       dreamId,
       windowNo,
+      preClose: Boolean(context.preClose),
       epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
       promptHash,
       outputHash,
@@ -530,6 +540,7 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       recordType: 'subject_dream',
       dreamId,
       windowNo,
+      preClose: Boolean(context.preClose),
       timestamp: now,
       epistemicStatus: MEMORY_EPISTEMIC_STATUS.DREAM_GENERATED_ARTIFACT,
       payload: dreamPayload,

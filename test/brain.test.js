@@ -443,6 +443,17 @@ async function main() {
   check('换装后穿着块同步更新',
     brain.memory.systemText().includes('哥特黑连衣裙'));
 
+  // 路线 α 不变式：发型自由脱下时，PERSONA 人设与穿着块不发生语义打架
+  // （人设明确允许素体形态，穿着块用 emptyLabel「无发／素体形态」而非「没穿」，不把无发误导成脱落衣服）
+  const { PERSONA } = require('../src/persona');
+  const wdBald = new Wardrobe(tmpDir());
+  wdBald.setEquip('hair', null);
+  const baldPrompt = wdBald.promptBlock();
+  const personaClaimsHairIsIdentity = /发型[^。]*属于身份本体/.test(PERSONA);
+  const baldBlock = baldPrompt;
+  check('脱发时人设不得把发型写成身份本体，且穿着块不得写「没穿」',
+    !personaClaimsHairIsIdentity && !baldBlock.includes('- 发型：（没穿）') && baldBlock.includes('（无发／素体形态）'));
+
   // 幻觉提案：模型说了不存在的东西
   stateReply = '我换上女仆装了哦[wear:maid_dress_01][state:happy]';
   const rh = await brain.ask('你穿女仆装看看', () => {});

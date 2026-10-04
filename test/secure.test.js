@@ -134,15 +134,22 @@ l = secure.loadConfig(() => fakeSS(true), dir, readDisk(dir));
 check('密文损坏时回退到明文 key', l.cfg.apiKey === KEY && l.encrypted === false);
 check('密文损坏时明文保留（否则用户被锁死）', rawText(dir).includes(KEY));
 
-/* ---------- 5. 清 key ---------- */
+/* ---------- 5. 清 key 与防误删守卫 ---------- */
+dir = tmp();
+secure.saveConfig(() => fakeSS(true), dir, { ...DEFAULTS, apiKey: KEY },
+  (diskObj) => saveCfg(dir, mem(diskObj, KEY), diskObj));
+secure.saveConfig(() => fakeSS(true), dir, { ...DEFAULTS, apiKey: '', clearKey: true },
+  (diskObj) => saveCfg(dir, mem(diskObj, ''), diskObj));
+check('清空 key 时密文文件一并删除', !fs.existsSync(secure.keyPath(dir)));
+check('清空后读回无 key',
+  secure.loadConfig(() => fakeSS(true), dir, readDisk(dir)).cfg.apiKey === '');
+
 dir = tmp();
 secure.saveConfig(() => fakeSS(true), dir, { ...DEFAULTS, apiKey: KEY },
   (diskObj) => saveCfg(dir, mem(diskObj, KEY), diskObj));
 secure.saveConfig(() => fakeSS(true), dir, { ...DEFAULTS, apiKey: '' },
   (diskObj) => saveCfg(dir, mem(diskObj, ''), diskObj));
-check('清空 key 时密文文件一并删除', !fs.existsSync(secure.keyPath(dir)));
-check('清空后读回无 key',
-  secure.loadConfig(() => fakeSS(true), dir, readDisk(dir)).cfg.apiKey === '');
+check('未显式声明 clearKey 时 apiKey:空串 不误删既有密文凭据', fs.existsSync(secure.keyPath(dir)));
 
 /* ---------- 6. safeStorage 缺失/抛异常也不能崩 ---------- */
 dir = tmp();
@@ -208,6 +215,36 @@ l = secure.loadConfig(() => fakeSS(true), dir, readDisk(dir));
 check('第二阶段失败后 Key 保持旧版本', l.cfg.apiKey === NEW_KEY);
 check('第二阶段失败后 config 保持旧版本', d.read().model === 'deepseek-v3');
 check('第二阶段失败后无临时文件残留', fs.readdirSync(dir).filter(f => f.includes('.tmp-')).length === 0);
+
+/* ---------- 9. P1-1: 密文往返校验与防坏密文遮蔽 (Round-trip Guard) ---------- */
+dir = tmp();
+const legacyKeyFile = path.join(dir, 'gpt-girl-key');
+fs.writeFileSync(legacyKeyFile, 'plain:v1:' + KEY, 'utf8');
+
+// 注入加密可用但 encryptString 无法 round-trip 解密的坏 safeStorage
+const badSS = {
+  isEncryptionAvailable: () => true,
+  encryptString: (s) => Buffer.from('BROKEN-NOT-ROUNDTRIP'),
+  decryptString: (b) => {
+    if (b.toString().includes('BROKEN-NOT-ROUNDTRIP')) throw new Error('cannot decrypt broken');
+    return 'ok';
+  }
+};
+
+const probeVal = secure.decryptKey(() => badSS, dir, 'deepseek');
+check('往返校验失败时不写入坏密文主文件', !fs.existsSync(secure.primaryKeyPath(dir, 'deepseek')));
+check('往返校验失败时 legacy 明文凭据完整保留', fs.existsSync(legacyKeyFile));
+check('往返校验失败时仍能安全返回明文 Key', probeVal === KEY);
+
+// 主文件被损坏且无法解密、且当前加密不可用时，回退至 legacy 文件取回凭据，且 encrypted 必须如实上报 false（不谎报已加密）
+fs.writeFileSync(secure.primaryKeyPath(dir, 'deepseek'), Buffer.from('CORRUPTED-PRIMARY'));
+const loadFallback = secure.loadConfig(() => fakeSS(false), dir, readDisk(dir));
+check('回退取到明文降级凭据时 encrypted 必须为 false（不谎报已加密）',
+  loadFallback.cfg.apiKey === KEY && loadFallback.encrypted === false);
+
+// 随后当加密恢复可用时，再次读取应成功自动迁移为密文
+const fallbackVal = secure.decryptKey(() => fakeSS(true), dir, 'deepseek');
+check('主密文损坏且加密恢复可用时自动重建主密文并恢复', fallbackVal === KEY);
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

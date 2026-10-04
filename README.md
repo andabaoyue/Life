@@ -157,8 +157,9 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
 ## 角色基准（改动前先读这节）
 
 - 外观基准是**换装设定图**（v0.5 起）：成年比例、银白微卷长发、发尾仅非常淡的冰蓝、
-  蓝灰大眼、单侧泪痣、**头发右侧黑色蝴蝶结**；当前不含字母耳坠、项圈或钥匙吊坠。
-  初澜的核心身份包括名字、脸型、发色、眼睛和泪痣；衣物与发饰是可变外饰，由衣柜真实状态决定。
+  蓝灰大眼、单侧泪痣、**头发右侧黑色蝴蝶结**。
+  v1.0 语义收口：核心身份为名字、脸型、**发色**、眼睛与泪痣；**发型款式与有无（含无发素体形态）**、
+  发饰、颈带吊坠与衣物均为可变外饰，由衣柜真实状态决定。不含字母耳坠。
 - 当前单图兜底皮套仍需由用户按 `ASSET-GENERATION-GUIDE.md` 生成并放入资源目录（源码 Markdown 不包含 PNG 二进制）。
 - 人格：温柔、安静、慵懒、微黏人、偶尔吐槽；短回复；称「你」；无客服腔。
 - 能力诚实：没实现的功能一律说做不到，绝不假装操作过电脑。这条写在 persona 边界里，也是代码审查项。
@@ -173,9 +174,11 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
    `wardrobe.applyProposal()` 这次调用。一条回复里连发多个提案是合法的，按正文顺序
    逐条执行、逐条回报。成功/失败都生成 `[系统] 换装执行结果：…`
    写回历史，下一轮模型看到的是事实；幻觉 id 不剥离也不执行，它没法谎称换好了。
-3. **本体不可换装，外饰可以更换** —— `hair` 仍带 `required:true`，但
-   `hairAccessory` 是可拆卸槽位。发型可以换款式但不能脱空；发饰可以用
-   `[wear:off_hairAccessory]` 摘下，也可以换成其他发饰。以前是从商品条目的 `locked` 反推的，两种失效方向都试过：
+3. **槽位约束在 SLOTS 上，不在商品上** —— 身份约束统一写在 `SLOTS.required`，
+   商品上绝不加 `locked`。v1.0 发型槽放开为自由可脱槽位（支持光头素体换装与无发衣物生成）；
+   身份不变式改由**发色/脸型/眼睛/泪痣**承载，`SLOTS.required` 保留为通用槽位策略（当前无槽位使用）。
+   发饰、外套等普通槽均可脱空。发型与发饰均可通过 `[wear:off_hair]` / `[wear:off_hairAccessory]`
+   脱下。以前是从商品条目的 `locked` 反推的，两种失效方向都试过：
    给发型槽加第二款忘了标 → 反推成「非身份」，能脱光；给普通槽唯一一条商品标上 →
    反推成「身份」，那件脱不掉。所以现在只留一个出处，商品上没有 `locked`。
 
@@ -355,8 +358,8 @@ key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key �
 ## 测试
 
 ```bash
-node test/brain.test.js          # 171 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user、history<=keepTail 时关窗不卡死
-node test/memory.test.js         # 30 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离
+node test/brain.test.js          # 172 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user、history<=keepTail 时关窗不卡死、路线α发型自由脱下与人设无冲突
+node test/memory.test.js         # 32 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary、窗口快照与小结归档、Bridge 与 Active Window 隔离、顶层数组受损守卫
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
 node test/subject-state.test.js  # 25 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式、internal_regulation_snapshot 不参与 maxArchiveWindow
 node test/main.test.js           # 89 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 明文降级配置保存不丢 key 与 writingMode 兼容淘汰、N-08 self-ledger-reset 显式确认门）
@@ -370,8 +373,8 @@ node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投�
 node test/ui-i18n.test.js           # 11 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
 node test/lexicon-expectations.test.js  # 28 项：v1.0 生命机制门槛（词汇表+预期账本+生命看板：零先验/引证强校验/快照引证/状态流转/注入预算/别名归一/除零与轻量口护栏/防工具化与防漂移红线）
 node test/nonhuman-framework-prompt.test.js # 36 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话）
-node test/wardrobe.test.js       # 61 项：槽位/资源存在、互斥、核心发型锁、可拆卸发饰、非法输入、持久化、脏文件降级、删除项圈后的旧存档迁移、人格隔离、主体特质偏好与自决换装提案
-node test/secure.test.js         # 38 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚
+node test/wardrobe.test.js       # 63 项：槽位/资源存在、互斥、发型自由脱下、可拆卸发饰、非法输入、持久化、脏文件降级、人格隔离、主体特质偏好与自决换装提案、项圈立项重回存档、无发素体形态标注
+node test/secure.test.js         # 44 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚、显式 clearKey 与空 key 防误删守卫、往返校验防坏密文遮蔽、回退明文不谎报已加密
 node test/atomic.test.js         # 20 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出
 node test/config.test.js         # 31 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离、budgetMaxOutputTokens 从配置生效且默认不设限
 node test/deepseek.test.js       # 32 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离、预先abort与headers后abort
@@ -430,7 +433,7 @@ node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair
 node test/decision-log.test.js           # 33 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
 node test/canalization.test.js           # 32 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay、0→1000 单调性确证、源码扫描守卫杜绝拟人化伪生命）
 node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
-node test/dream-gate.test.js             # 30 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性）
+node test/dream-gate.test.js             # 33 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性、Patch 2-B preClose 同窗口去重与跨窗口关窗间隔语义）
 node test/dream-synthesis.test.js        # 34 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获）
 node test/lifecycle-wiring.test.js    # 51 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留、生产装配下 scheduler 恒 null）
 node test/internal-regulation.test.js # 35 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合）
@@ -500,7 +503,7 @@ pip install opencv-contrib-python numpy pillow
 - **工程架构决策账本 (`research/ENGINEERING-DECISION-LOG.md`)**：确立 D-001 ~ D-007 七大已决决策（SETTLED DECISION）；彻底封杀后台连续代谢 Tick（严禁 `setInterval` 扣除 energy/arousal）；坚决拒绝人类中心主义 24h 昼夜节律牢笼；确立关系时间（Relational Temporality），只有主体经历互动时生命历程才真正流逝。
 - **沃丁顿发育景观与经历依赖塑性衰减 (`src/canalization.js`)**：提出数字发育可塑性衰减模型 $\eta(W) = \frac{\eta_0}{1 + \gamma \ln(1 + W)}$；随窗口累积平滑衰减状态步长权重；划分幼态期（JUVENILE）、发育期（DEVELOPMENTAL）与稳定个体化期（STABILIZED）；历史参数（`baseStepWeight`、`effectiveStepWeight`、`plasticityMultiplier`）强一致性落盘于 `StateChange`，保证离线 Replay 100% 确定性；Baseline 模式塑性乘子严格恒为 1.0。
 - **零 API 成本记忆动力学与突触修剪 (`src/memory-dynamics.js` & `src/memory.js`)**：基于改进型艾宾浩斯幂律方程 $S(W) = \text{clamp}\left(\frac{S_0 \cdot (1 + \beta \ln(1 + \text{retrievals}))}{(1 + \lambda \Delta W)^\alpha}, 0, 1\right)$（$\beta=0.15, \lambda=0.10, \alpha=1.15$）实现纯本地代数衰减；建立 `ACTIVE`（活跃）、`FADING`（渐褪）、`DORMANT`（休眠）三级流转；经历归档 `experiences.jsonl` 永不物理删除，休眠记忆仅静默移出 Prompt 节省上下文；`Memory.save()/load()` 与 `Brain` 实现双层冷启动持久化，跨进程重启遗忘状态零丢失；实现 `reactivateByContext()` 关联线索重新激活，用户对话命中特征词元时零 API 成本自动唤醒休眠印痕重回 Prompt 上下文。
-- **成本门禁式弗洛伊德梦境系统 (`src/dream-system.js` & `src/brain.js`)**：梦境决非定时无意义轮询，建立双重门禁机制——第一道本地认知张力门禁（通过 `computeWindowArousalTrajectory` 依据真实消息节奏与证据极性计算 5 分段唤醒度，接通情绪方差 $\ge 15.0$、尖峰跃迁 $\ge 25.0$、多重特质冲突分值 $\ge 0.75$ 与新异度 `noveltyScore` $\ge 0.8$）与第二道成本防护门禁（窗口间隔 $\ge 3$ 且 24 小时硬顶 2 次，冷启动自动从归档恢复 `dreamHistory` 防御重启绕过）；生成产物严格遵循 Canonical Schema v1 封装 `payload.dreamId` 与 `payload.epistemicStatus`，通过 `ArchiveIntegrityService` CERTIFIED 认证，绝对禁止直接修改 `SubjectState`；具备 Fail-Safe 容灾机制，梦境失败永不阻塞关窗主流程。
+- **成本门禁式弗洛伊德梦境系统 (`src/dream-system.js` & `src/brain.js`)**：梦境决非定时无意义轮询，建立双重门禁机制——第一道本地认知张力门禁（通过 `computeWindowArousalTrajectory` 依据真实消息节奏与证据极性计算 5 分段唤醒度，接通情绪方差 $\ge 15.0$、尖峰跃迁 $\ge 25.0$、多重特质冲突分值 $\ge 0.75$ 与新异度 `noveltyScore` $\ge 0.8$）与第二道成本防护门禁（窗口间隔 $\ge 3$ 且 24 小时硬顶 2 次，冷启动自动从归档恢复 `dreamHistory` 防御重启绕过；入睡路径标记 `preClose: true` 执行同窗口去重防重复做梦，跨窗口间隔按关窗梦境生效，24h 硬顶全量覆盖）；生成产物严格遵循 Canonical Schema v1 封装 `payload.dreamId` 与 `payload.epistemicStatus`，通过 `ArchiveIntegrityService` CERTIFIED 认证，绝对禁止直接修改 `SubjectState`；具备 Fail-Safe 容灾机制，梦境失败永不阻塞关窗主流程。
 
 ### 实验可信度边界（v0.9.7 修复后）
 

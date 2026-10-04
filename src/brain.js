@@ -387,6 +387,7 @@ class Brain {
             timestamp: typeof r.timestamp === 'number' ? r.timestamp : (typeof p.generatedAt === 'number' ? p.generatedAt : (r.createdAt || 0)),
             generatedAt: typeof p.generatedAt === 'number' ? p.generatedAt : (typeof r.timestamp === 'number' ? r.timestamp : 0),
             epistemicStatus: p.epistemicStatus || r.epistemicStatus,
+            preClose: Boolean(p.preClose || r.preClose),
             text: String((p.content || p.text || '')).slice(0, 160)   // v2.0 只读梦境卡摘要
           });
         }
@@ -899,7 +900,7 @@ class Brain {
     if (sleepIntent || herSleepIntent) {
     // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
     if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
-      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false }).catch(() => {});
+      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false, preClose: true }).catch(() => {});
     }
       const sleepAt = Date.now();
       if (tr) {
@@ -1520,7 +1521,7 @@ class Brain {
         const dreamEnabled = this.isExperimentModuleActive('sleepConsolidation');
         if (dreamEnabled && this.experiencesArchive) {
           // v2.0：梦境机器抽为 _dreamCycle（关窗与入睡共用同一台）；此处行为与原先一字不差
-          await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments, isWindowClose: true });
+          await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments, isWindowClose: true, preClose: false });
         }
 
         if (this.cfg.selfGrowthEnabled === true)
@@ -1699,6 +1700,7 @@ class Brain {
 
               const dreamRecord = await synthesizeDream(this.api, dreamPrompt, {
                 windowNo: snap.windowNo,
+                preClose: Boolean(ctx.preClose),
                 sourceEvidenceIds,
                 sourceEventIds,
                 // 无法证明 Event 来源时严禁扩大归因（不把整个窗口 events 算作梦境来源），
@@ -1766,7 +1768,7 @@ class Brain {
     }
     // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
     if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
-      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false }).catch(() => {});
+      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false, preClose: true }).catch(() => {});
     }
     return true;
   }

@@ -127,8 +127,8 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('穿着连衣裙时穿上装被拒，且如实带回原因',
     rj.ok === false && /连衣裙不能和上装\/下装同时穿/.test(rj.error), rj.error);
   check('被拒不推送（屏幕不白闪，模型也不会以为刚换过）', sent.length === 0);
-  check('身份槽不许脱空',
-    (await invoke('wardrobe-set', { slot: 'hair', itemId: null })).ok === false);
+  check('发型槽支持自由脱下（解除锁定）',
+    (await invoke('wardrobe-set', { slot: 'hair', itemId: null })).ok === true);
   check('未知槽位 / 未知预设被拒且不崩',
     (await invoke('wardrobe-set', { slot: 'nonsense', itemId: 'gray_tee_01' })).ok === false
     && (await invoke('wardrobe-preset', 'ghost')).ok === false);

@@ -162,16 +162,16 @@ with sync_playwright() as p:
     window.__wd = { equip: {hair:'silver_wavy_01',hairAccessory:'black_bow_01',
         top:'lace_corset_01',bottom:'black_shorts_01',dress:null,
         socks:'white_thighhigh_01',shoes:'black_boots_01',
-        outerwear:'white_tech_jacket_01',accessory:'choker_key_01'},
+        outerwear:'white_tech_jacket_01',accessory:null},
       preset:'default' };
     window.__calls = [];
-    // 与 src/wardrobe.js 同款：身份约束写在槽位上（required），
-    // 不从商品条目反推 —— 反推会在"加第二款发型忘了标 locked"时失效。
+    // 与 src/wardrobe.js 同款：v1.0 发型放开为自由可脱槽位（身份由发色承载，不由槽位承载），
+    // 槽位上若标 required 则不许脱空（保留机制，当前 0 个槽位 required）。
     const SLOTS = [
-      {id:'hair',z:10,name:'发型',required:true},{id:'socks',z:20,name:'袜子'},
+      {id:'hair',z:10,name:'发型'},{id:'socks',z:20,name:'袜子'},
       {id:'dress',z:30,name:'连衣裙'},{id:'top',z:31,name:'上装'},
       {id:'bottom',z:32,name:'下装'},{id:'outerwear',z:40,name:'外套'},
-      {id:'shoes',z:45,name:'鞋子'},{id:'hairAccessory',z:50,name:'发饰',required:true},
+      {id:'shoes',z:45,name:'鞋子'},{id:'hairAccessory',z:50,name:'发饰'},
       {id:'accessory',z:60,name:'饰品'}];
     const ITEMS = {
       hair:[{id:'silver_wavy_01',name:'银白微卷长发'}],
@@ -244,7 +244,7 @@ with sync_playwright() as p:
         const P = {
           default:{hair:'silver_wavy_01',hairAccessory:'black_bow_01',top:'lace_corset_01',
                    bottom:'black_shorts_01',dress:null,socks:'white_thighhigh_01',
-                   shoes:'black_boots_01',outerwear:'white_tech_jacket_01',accessory:'choker_key_01'},
+                   shoes:'black_boots_01',outerwear:'white_tech_jacket_01',accessory:null},
           casual:{top:'gray_tee_01',bottom:'sport_shorts_01',dress:null,
                   shoes:'white_sneakers_01',outerwear:null},
           gothic:{dress:'gothic_black_01',top:null,bottom:null,
@@ -282,15 +282,15 @@ with sync_playwright() as p:
     check("mock 桥接下页面无 JS 报错", not errs2, "; ".join(errs2[:2]))
     check("图层上屏后进入 layered 模式",
           pg2.evaluate("document.querySelector('#figure').classList.contains('layered')"))
-    check("默认套装渲染出 base + 8 层",
-          pg2.evaluate("document.querySelector('#layers').children.length") == 9,
+    check("默认套装渲染出 base + 7 层",
+          pg2.evaluate("document.querySelector('#layers').children.length") == 8,
           "n=%s" % pg2.evaluate("document.querySelector('#layers').children.length"))
     check("layered 时单图皮套隐藏（不出现重影）",
           not pg2.is_visible("#sprite"))
     z = pg2.evaluate("""[...document.querySelectorAll('#layers .layer:not(.base)')]
         .map(e => e.style.zIndex)""")
     check("图层 z 顺序按数据层下发（袜子在鞋之前）",
-          [int(x) for x in z] == sorted(int(x) for x in z) and len(z) == 8, ",".join(z))
+          [int(x) for x in z] == sorted(int(x) for x in z) and len(z) == 7, ",".join(z))
     check("每张图层都占满画布（同锚点对齐）",
           pg2.evaluate("""(() => {const a=[...document.querySelectorAll('#layers img')];
             const w=a[0].clientWidth;
@@ -310,10 +310,10 @@ with sync_playwright() as p:
           == "默认白毛套装")
     check("每个有货槽位一行",
           pg2.evaluate("document.querySelectorAll('#wdSlots .wd-row').length") == 9)
-    check("身份槽不给脱下按钮",
+    check("发型槽提供脱下按钮",
           pg2.evaluate("""[...document.querySelectorAll('#wdSlots .wd-row')]
-            .filter(r => ['发型','发饰'].includes(r.querySelector('.wd-slot').textContent))
-            .every(r => r.querySelector('.wd-off') === null)"""))
+            .filter(r => r.querySelector('.wd-slot').textContent === '发型')
+            .every(r => r.querySelector('.wd-off') !== null)"""))
     check("普通槽给脱下按钮",
           pg2.evaluate("""[...document.querySelectorAll('#wdSlots .wd-row')]
             .filter(r => r.querySelector('.wd-slot').textContent === '外套')
@@ -376,7 +376,7 @@ with sync_playwright() as p:
           pg2.evaluate("window.__wd.equip.dress") == "gothic_black_01"
           and pg2.evaluate("window.__wd.equip.top") is None)
     n2 = pg2.evaluate("document.querySelectorAll('#layers .layer:not(.base)').length")
-    check("屏幕图层同步为 6 层（默认8 - 上装/下装/外套 + 连衣裙）", n2 == 6, "n=%s" % n2)
+    check("屏幕图层同步为 5 层（默认7 - 上装/下装/外套 + 连衣裙）", n2 == 5, "n=%s" % n2)
     check("换装客观汇报迁续：chat.js 承载客观事实行（chatNotice）",
           pg2.evaluate("fetch('chat.js').then(r => r.text()).then(t => t.includes('chatNotice'))"))
     pg2.screenshot(path="/tmp/pw_wardrobe_gothic.png")

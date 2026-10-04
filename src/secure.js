@@ -128,39 +128,80 @@ function encryptKey(getSS, dir, apiKey, providerId) {
   }
 }
 
-/** 没有密文文件、或解不出（换机器/换 Windows 用户）都返回 null；兼容识别 plain:v1: 降级明文 */
-function decryptKey(getSS, dir, providerId) {
-  try {
-    const kp = keyPath(dir, providerId);
-    if (!fs.existsSync(kp)) return null;
-    const buf = fs.readFileSync(kp);
-    const ss = typeof getSS === 'function' ? getSS() : null;
-    if (ss && typeof ss.isEncryptionAvailable === 'function' && ss.isEncryptionAvailable()) {
+/** 尝试从指定文件路径解析并解密凭据（支持识别 plain:v1: 降级明文并按需安全迁移） */
+function tryDecryptFile(getSS, filePath, dir, providerId, meta) {
+  if (!fs.existsSync(filePath)) return null;
+  const buf = fs.readFileSync(filePath);
+  const raw = buf.toString('utf8');
+  const ss = typeof getSS === 'function' ? getSS() : null;
+  const hasSS = Boolean(ss && typeof ss.isEncryptionAvailable === 'function' && ss.isEncryptionAvailable());
+
+  if (raw.startsWith(PLAINTEXT_PREFIX)) {
+    const plainKey = raw.slice(PLAINTEXT_PREFIX.length);
+    let migrated = false;
+    // 若当前加密可用，自动迁移为密文
+    if (hasSS) {
       try {
-        const key = ss.decryptString(buf) || null;
-        if (key) {
-          if (kp !== primaryKeyPath(dir, providerId) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
-            try { writeFileAtomic(primaryKeyPath(dir, providerId), buf, { mode: SENSITIVE_FILE_MODE }); } catch {}
+        const cipher = ss.encryptString(plainKey);
+        // 必须在写入之前做 round-trip：写完再读会先把 primary 覆盖成可能不可解的密文，
+        // 而 keyPath() 优先返回 primary —— legacy 明文从此被遮蔽，校验就失去意义。
+        if (cipher && ss.decryptString(cipher) === plainKey) {
+          writeFileAtomic(primaryKeyPath(dir, providerId), cipher, { mode: SENSITIVE_FILE_MODE });
+          if (filePath !== primaryKeyPath(dir, providerId)) {
+            try { fs.unlinkSync(filePath); } catch {}
           }
-          return key;
+          migrated = true;
         }
-      } catch {
-        // 解密失败：继续检查是否为带格式前缀的明文降级文件
+      } catch {}
+    }
+    if (meta && typeof meta === 'object') {
+      meta.encrypted = migrated;
+      meta.sourcePath = filePath;
+      meta.migrated = migrated;
+    }
+    return plainKey;
+  }
+
+  if (hasSS) {
+    try {
+      const key = ss.decryptString(buf) || null;
+      if (key) {
+        if (filePath !== primaryKeyPath(dir, providerId) && !fs.existsSync(primaryKeyPath(dir, providerId))) {
+          try { writeFileAtomic(primaryKeyPath(dir, providerId), buf, { mode: SENSITIVE_FILE_MODE }); } catch {}
+        }
+        if (meta && typeof meta === 'object') {
+          meta.encrypted = true;
+          meta.sourcePath = filePath;
+        }
+        return key;
+      }
+    } catch {
+      // 解密失败：继续检查其他兜底
+    }
+  }
+  return null;
+}
+
+/** 没有密文文件、或解不出（换机器/换 Windows 用户）都返回 null；兼容识别 plain:v1: 降级明文 */
+function decryptKey(getSS, dir, providerId, meta) {
+  try {
+    const primary = primaryKeyPath(dir, providerId);
+    const key = tryDecryptFile(getSS, primary, dir, providerId, meta);
+    if (key !== null) return key;
+
+    // 若 primary 文件不存在或损坏解不出，尝试 legacy 路径（双层防遮蔽兜底）
+    const ns = credentialNamespace(providerId);
+    let legacy = null;
+    if (ns === 'deepseek') {
+      legacy = path.join(dir, LEGACY_KEY_FILE);
+    } else {
+      const claimants = legacyV0Claimants(providerId);
+      if (claimants && claimants.length === 1) {
+        legacy = path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId));
       }
     }
-    const raw = buf.toString('utf8');
-    if (raw.startsWith(PLAINTEXT_PREFIX)) {
-      const plainKey = raw.slice(PLAINTEXT_PREFIX.length);
-      // 若当前加密可用，自动迁移为密文
-      if (ss && typeof ss.isEncryptionAvailable === 'function' && ss.isEncryptionAvailable()) {
-        try {
-          const cipher = ss.encryptString(plainKey);
-          if (cipher) {
-            writeFileAtomic(primaryKeyPath(dir, providerId), cipher, { mode: SENSITIVE_FILE_MODE });
-          }
-        } catch {}
-      }
-      return plainKey;
+    if (legacy && legacy !== primary && fs.existsSync(legacy)) {
+      return tryDecryptFile(getSS, legacy, dir, providerId, meta);
     }
     return null;
   } catch {
@@ -268,11 +309,16 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks, opts = {}) {
       const idx = tmpFiles.indexOf(tmpKeyPath);
       if (idx !== -1) tmpFiles.splice(idx, 1);
     } else if (hasKey && !encrypted) {
-      // 加密不可用但有 Key：降级写入 config.json，清理可能残留的旧密文文件
+      // 架构决策（Legacy 降级保全）：加密不可用但存在有效 Key 时，由 diskToSave 将明文 Key 降级写入 config.json
+      // （供用户手改或无安全存储环境启动保住凭据），同时删除密文文件以防被误判为已加密（严格对齐 test/secure.test.js:103 契约）。
       dropKeyFile(dir, providerId);
-    } else if (cfg && 'apiKey' in cfg && key === '') {
-      // 显式清空 key 时，删除密文文件；若未传 apiKey 字段则严禁误删旧凭据
-      const shouldClear = (opts && opts.clearKey === true) || (cfg && cfg.clearKey === true) || (_hooks && _hooks.clearKey === true) || ('apiKey' in cfg);
+    } else if (key === '') {
+      // 显式清空 key 时（必须显式声明 clearKey），删除密文文件；若未显式要求清空则严禁误删旧凭据
+      const shouldClear = Boolean(
+        (opts && opts.clearKey === true) ||
+        (cfg && cfg.clearKey === true) ||
+        (_hooks && _hooks.clearKey === true)
+      );
       if (shouldClear) {
         dropKeyFile(dir, providerId);
       }
@@ -318,16 +364,11 @@ function loadConfig(getSS, dir, readDisk) {
   const disk = { ...(readDisk() || {}) };
   delete disk.writingMode; // v0.9.9: 旧字段静默忽略 —— 读取兼容、不报错、不打回默认值
   const providerId = String(disk.provider || '').trim() || 'deepseek';
-  const fromKey = decryptKey(getSS, dir, providerId);
+  const meta = {};
+  const fromKey = decryptKey(getSS, dir, providerId, meta);
   if (fromKey) {
     if ('apiKey' in disk) stripPlainKey(dir);
-    let isEncrypted = true;
-    try {
-      const kp = keyPath(dir, providerId);
-      const raw = fs.readFileSync(kp, 'utf8');
-      if (raw.startsWith(PLAINTEXT_PREFIX)) isEncrypted = false;
-    } catch {}
-    return { cfg: { ...disk, apiKey: fromKey }, encrypted: isEncrypted };
+    return { cfg: { ...disk, apiKey: fromKey }, encrypted: meta.encrypted === true };
   }
   const legacy = String(disk.apiKey || '');
   const noCipher = !fs.existsSync(keyPath(dir, providerId));
