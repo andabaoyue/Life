@@ -433,7 +433,7 @@ node test/final-closure-repair.test.js    # 13 项：v0.9.7 Final Closure Repair
 node test/decision-log.test.js           # 33 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-010 十大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律）
 node test/canalization.test.js           # 32 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay、0→1000 单调性确证、源码扫描守卫杜绝拟人化伪生命）
 node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
-node test/dream-gate.test.js             # 33 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性、Patch 2-B preClose 同窗口去重与跨窗口关窗间隔语义）
+node test/dream-gate.test.js             # 35 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性、Patch 2-B preClose 同窗口去重与跨窗口关窗间隔语义）
 node test/dream-synthesis.test.js        # 34 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获）
 node test/lifecycle-wiring.test.js    # 51 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留、生产装配下 scheduler 恒 null）
 node test/internal-regulation.test.js # 36 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合）

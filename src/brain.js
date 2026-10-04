@@ -1634,8 +1634,12 @@ class Brain {
           try {
             const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
             
-            // 真实唤醒度轨迹计算 (基于本窗口真实消息节奏与情绪证据)
-            const arousalTrajectory = computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || []);
+            // v1.0 生理真迹（方案 2）：把她真实落盘的生理状态史送进唤醒度轨迹 —— 梦由身体驱动
+            const regHistory = (this.internalRegulation && Array.isArray(this.internalRegulation.history))
+              ? this.internalRegulation.history
+              : [];
+                        // 真实唤醒度轨迹计算 (基于本窗口真实消息节奏与情绪证据)
+            const arousalTrajectory = computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory });
 
             // 新异度计算 (基于窗口综合提取的新事实/新经历数量)
             let newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +

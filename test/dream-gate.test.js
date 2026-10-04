@@ -331,5 +331,28 @@ function check(name, cond, extra) {
     resLimit.costGatePassed === false && resLimit.reason.includes('DAILY_RATE_LIMIT_EXCEEDED'));
 }
 
+/* ===== v1.0 生理真迹接通梦境张力（方案 2 验收）=====
+   梦由身体驱动：真实生理状态史进唤醒度轨迹；无真迹平稳回退基准 50（既有测试零回归）。 */
+{
+  const { computeWindowArousalTrajectory } = require('../src/dream-system');
+  const mkItems = (n) => Array.from({ length: n }, (_, i) => ({ messageId: 'm' + i, t: 1000 + i * 60000 }));
+  const variance = (a) => {
+    const mu = a.reduce((x, y) => x + y, 0) / a.length;
+    return a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length;
+  };
+  const flat = computeWindowArousalTrajectory(mkItems(25), []);
+  const drop = [
+    { timestamp: 1000, nextValues: { arousal: 62 } },
+    { timestamp: 1000 + 24 * 60000, nextValues: { arousal: 25 } }
+  ];
+  const real = computeWindowArousalTrajectory(mkItems(25), [], [], { regulationHistory: drop });
+  check('v1.0 生理真迹驱动轨迹：真实唤醒度落差产生方差与尖峰（梦由身体驱动）',
+    variance(flat) === 0 && variance(real) > 15 && (Math.max(...real) - Math.min(...real)) >= 25,
+    'flat=' + JSON.stringify(flat) + ' real=' + JSON.stringify(real));
+  check('v1.0 无真迹平稳回退：缺 opts / 空历史时与旧行为逐字节一致（零回归）',
+    JSON.stringify(computeWindowArousalTrajectory(mkItems(25), []))
+      === JSON.stringify(computeWindowArousalTrajectory(mkItems(25), [], [], {})));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

@@ -90,18 +90,40 @@ function sha256(text) {
  * 依据当前窗口内的真实交互事件与证据计算 Arousal 轨迹 (0 API 调用，纯本地确定性算法)
  * 划分为 5 个连续分段观察点，结合消息密度、交互频次与证据情绪极性与强度映射神经唤醒度。
  */
-function computeWindowArousalTrajectory(activeItems = [], verifiedEvidence = [], segments = []) {
+function computeWindowArousalTrajectory(activeItems = [], verifiedEvidence = [], segments = [], opts = {}) {
   const segmentCount = 5;
   const trajectory = [];
   const items = Array.isArray(activeItems) ? activeItems : [];
   const evidences = Array.isArray(verifiedEvidence) ? verifiedEvidence : [];
+  // v1.0 生理真迹（方案 2）：以 InternalRegulationManager 真实落盘的状态史为分段唤醒度来源；
+  // 未开启生理模块或历史为空时平稳退回基准值 50，既有测试零回归
+  const regHistory = Array.isArray(opts.regulationHistory) ? opts.regulationHistory : [];
 
   const chunkSize = Math.max(1, Math.ceil(items.length / segmentCount));
 
   for (let sIdx = 0; sIdx < segmentCount; sIdx++) {
-    let segmentArousal = 50; // 基准唤醒度 50
     const chunk = items.slice(sIdx * chunkSize, (sIdx + 1) * chunkSize);
     const chunkMsgIds = new Set(chunk.map(m => m.messageId).filter(Boolean));
+
+    // 基准唤醒度 50；有生理真迹时取该分段时间范围内的生理唤醒度均值作基准
+    // （只认 nextValues.arousal 等级值，绝不拿 deltas 增量冒充等级）
+    let baseArousal = 50;
+    if (regHistory.length > 0 && chunk.length > 0) {
+      const chunkStart = Number(chunk[0].t || 0);
+      const chunkEnd = Number(chunk[chunk.length - 1].t || chunkStart);
+      const inChunk = regHistory.filter((h) => h && typeof h.timestamp === 'number'
+        && h.timestamp >= chunkStart && h.timestamp <= chunkEnd
+        && h.nextValues && typeof h.nextValues.arousal === 'number');
+      if (inChunk.length > 0) {
+        baseArousal = Math.round(inChunk.reduce((acc, h) => acc + h.nextValues.arousal, 0) / inChunk.length);
+      } else {
+        const prior = regHistory.filter((h) => h && typeof h.timestamp === 'number'
+          && h.timestamp <= chunkStart
+          && h.nextValues && typeof h.nextValues.arousal === 'number').pop();
+        if (prior) baseArousal = prior.nextValues.arousal;
+      }
+    }
+    let segmentArousal = baseArousal;
 
     // 1. 消息间隔与时间密度影响 (短时间内连续密集互动增加唤醒度)
     if (chunk.length >= 2) {
