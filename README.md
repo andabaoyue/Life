@@ -363,7 +363,7 @@ node test/memory.test.js         # 32 项：Memory 模块初始化、append 与 
 node test/experiences-archive.test.js # 12 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索
 node test/subject-state.test.js  # 30 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式、internal_regulation_snapshot 不参与 maxArchiveWindow
 node test/main.test.js           # 89 项：主进程 IPC 面（衣柜推送一致、缩放与下边缘、blur 兜底、wears 契约、配置面板读盘、apiKey 不被盘上值覆盖、activity 上报进同一个 tracker、过期/伪造提案 declined 且不烧冷却、候选 Brain 切换与失败回滚、N-03 明文降级配置保存不丢 key 与 writingMode 兼容淘汰、N-08 self-ledger-reset 显式确认门）
-node test/tracker.test.js        # 43 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
+node test/tracker.test.js        # 46 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力
 node test/trigger.test.js        # 36 项：连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟
 node test/life-will-layer.test.js      # 9 项：意志层补全 Phase 1（未解疑问 FIFO 队列与反骚扰闩、失败关窗不污染队列、initiativeBias 有界权重、冷却铁律不可绕过）
 node test/ui-chat-render.test.js    # 17 项：气泡流纯函数决策层（分流、synthetic 契约、零伪造时间戳、标记遮蔽含流式半截容错、单份正则防漂移）

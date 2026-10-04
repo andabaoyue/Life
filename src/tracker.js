@@ -107,7 +107,7 @@ class ActivityTracker {
   }
 
   /** 记录一次物理事件。type: 'click' | 'drag' */
-  record(type, at = this.now()) {
+  record(type, at = this.now(), details = {}) {   // v1.0 安放容错：details.distance 为拖拽位移（缺省按大位移算）
     if (type !== 'click' && type !== 'drag') return this.seq;
 
     /* 只有真人的触碰才算活跃：以后加自主动作（走动、自检）时也绝不能顺手刷新
@@ -122,11 +122,13 @@ class ActivityTracker {
     this.lastPhysicalAt = at;
     this.spokenDuringIdle = false;
     this.lastReportedIdleMin = 0;
-    // v2.0 摇晃式唤醒（纯物理扰动，零台词）：轻碰 1~4 不醒，短时连击 5 下才摇醒；
-    // 拖拽 = 明显的晃动，直接醒。醒来不冒任何话，等她自己开口。
+    // v2.0 摇晃式唤醒（纯物理扰动，零台词）：轻碰 1~4 不醒，短时连击 5 下才摇醒。醒来不冒任何话。
+    // v1.0 睡相安放容错（物理尺度判据，无时间窗）：小位移挪动 = 整理桌面/挪位安放，不惊醒；
+    // 大位移（>= 80px）或缺省位移 = 大幅拽拉/剧烈摇晃，如常唤醒（fail-safe）。
     if (this.sleepMode) {
       if (type === 'drag') {
-        this.wakeUp(at);
+        const dist = (details && typeof details.distance === 'number') ? details.distance : Infinity;
+        if (dist >= 80) this.wakeUp(at);
       } else {
         const shakes = this.clickTimes.filter((t) => (at - t) <= 3000).length;
         if (shakes >= 5) this.wakeUp(at);

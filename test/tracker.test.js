@@ -187,6 +187,16 @@ check('v2.0 摇晃唤醒：轻碰 1 下不醒，短时连击 5 下才摇醒（�
     return lightStill && tr.sleepMode === false && tr.justWokenUp === true;
   })());
 
+/* v1.0 睡相安放容错三根钉（物理尺度判据，无时间窗） */
+tr = makeTracker(); tr.enterSleepMode();
+tr.record('drag', undefined, { distance: 30 });
+check('睡眠安放容错：单次小位移 (< 80px) 保持沉睡不惊醒', tr.sleepMode === true && tr.justWokenUp === false);
+tr.record('drag', undefined, { distance: 120 });
+check('睡眠大位移摇晃：位移 (>= 80px) 触发摇晃唤醒', tr.sleepMode === false && tr.justWokenUp === true);
+tr = makeTracker(); tr.enterSleepMode();
+tr.record('drag');
+check('睡眠拖拽缺省位移：fail-safe 视作摇晃唤醒（向下兼容旧调用）', tr.sleepMode === false && tr.justWokenUp === true);
+
 /* v2.0 通路 B：生理昏睡极限（纯物理断电）——疲惫 95 + 安静 5 分钟才成立 */
 check('通路 B 生理昏睡：疲惫 >= 95 且安静 >= 5 分钟才断电（防误断电）',
   ActivityTracker.isPhysiologicalCollapse(95, Date.now() - 6 * 60 * 1000) === true

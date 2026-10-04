@@ -989,7 +989,7 @@ function endDrag() {
   api && api.dragEnd();
   // 只报真的挪过的拖拽：失焦/看门狗兜底也会走到这里，没位移就不算一次互动，
   // 否则窗一失焦就给她凭空记一笔"被拖了一下"。
-  if (api && api.activity && moved > 6) api.activity('drag');
+  if (api && api.activity && moved > 6) api.activity('drag', { distance: moved });   // v1.0 安放容错：带上位移
 }
 
 /* 窗口拖拽起手（v1.0）：她身上与设置/记录面板空白处共用一条拖拽通道 ——
@@ -1023,11 +1023,21 @@ pet.addEventListener('wheel', (e) => {
   e.preventDefault();
   zoomPet(e.deltaY < 0 ? 1.1 : 1 / 1.1);
 }, { passive: false });
+let middleTimer = null;   // v1.0 中键双击呼出对话窗：单击动作（体型归位）绝不双发
 pet.addEventListener('mousedown', (e) => {
   if (e.button === 1) {
     e.preventDefault();
-    // v1.0 缺失修复：回默认体型走同一条缩放通道 —— 只改体型不改窗体会让她比窗宽被裁掉
-    zoomPet(1 / petZoom);
+    if (middleTimer) {
+      clearTimeout(middleTimer);   // 第二击：立刻撤销已排队的单击归位
+      middleTimer = null;
+      if (api && api.chatWindowToggle) api.chatWindowToggle();
+    } else {
+      middleTimer = setTimeout(() => {
+        middleTimer = null;
+        // v1.0 缺失修复：回默认体型走同一条缩放通道 —— 只改体型不改窗体会让她比窗宽被裁掉
+        zoomPet(1 / petZoom);
+      }, 250);
+    }
   }
 });
 

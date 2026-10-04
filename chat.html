@@ -30,7 +30,7 @@
       border-top: 1px solid rgba(255, 255, 255, .08); }
     #input { flex: 1; min-width: 0; background: rgba(255, 255, 255, .1);
       border: 1px solid rgba(255, 255, 255, .16); border-radius: 8px;
-      padding: 8px 10px; color: #fff; font-size: 13px; outline: none; font-family: inherit; }
+      padding: 8px 10px; color: #fff; font-size: 13px; outline: none; font-family: inherit; resize: none; line-height: 1.4; max-height: 100px; overflow-y: auto; }
     #input:focus { border-color: rgba(122, 140, 255, .6); box-shadow: 0 0 0 2px rgba(106, 124, 255, .22); }
     #send { flex: none; width: 38px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .18);
       background: #5a6fd8; color: #fff; font-size: 15px; cursor: pointer; }
@@ -51,7 +51,7 @@
     </div>
     <div id="chatList"></div>
     <div id="inputBar">
-      <input id="input" type="text" spellcheck="false" autocomplete="off" maxlength="2000">
+      <textarea id="input" rows="1" spellcheck="false" autocomplete="off" maxlength="2000"></textarea>
       <button id="send" title="发送">↑</button>
     </div>
     <div class="hint chat-foot" id="chatHint"></div>

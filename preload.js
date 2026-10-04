@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   onDelta: (cb) => ipcRenderer.on('chat-delta', (e, d) => cb(d)),
   // 本地活动上报（'click' / 'drag'）：判据都在主进程的 tracker 里算，
   // 渲染端只报"发生了什么"，不带自己那份时间戳账本。
-  activity: (type) => ipcRenderer.send('activity', type),
+  activity: (type, details) => ipcRenderer.send('activity', type, details),
   // 问一声"该不该开口"：返回提案或 null，不花钱也不改状态（保留向后兼容）
   proactiveCheck: () => ipcRenderer.invoke('proactive-check'),
   // 主进程事件驱动主动搭话推送
@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   chatHistory: () => ipcRenderer.invoke('chat-history'),
   chatWindowOpen: () => ipcRenderer.invoke('chat-window-open'),
   chatWindowClose: () => ipcRenderer.invoke('chat-window-close'),
+  chatWindowToggle: () => ipcRenderer.invoke('chat-window-toggle'),
   chatWindowHome: () => ipcRenderer.invoke('chat-window-home'),
   chatBusy: (busy, state) => ipcRenderer.invoke('chat-busy', { busy: !!busy, state: state || null }),
   panelViewport: (open, w, h) => ipcRenderer.invoke('panel-viewport', open === true, { w: w || 0, h: h || 0 }),

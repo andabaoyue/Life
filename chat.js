@@ -139,6 +139,7 @@ async function submit() {
   if (!text || busy || !api) return;
   busy = true;
   input.value = '';
+  input.style.height = '';   // v1.0 发送后复位输入框高度
   chatError = null;
   chatNotice = null;
   const pend = buildBubble({ kind: 'user', text, bridge: false, cls: 'b-user', avatar: '你', ts: null }, 'b-pending');
@@ -177,7 +178,16 @@ async function submit() {
 
 sendBtn.addEventListener('click', submit);
 input.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); }
+  if (e.key === 'Enter' && !e.isComposing) {
+    if (e.shiftKey) return;   // Shift+Enter：换行，放行 textarea 原生处理
+    e.preventDefault();
+    submit();
+  }
+});
+// v1.0 输入手感：自动伸缩（上限 100px，超出内部滚动）
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 100) + 'px';
 });
 
 // 关闭语义（拍板）：× / ESC / 右键 —— 只隐藏不销毁（主进程拦截 close 落 hide）

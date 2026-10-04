@@ -308,6 +308,18 @@ ipcGuard.handle('chat-window-open', () => {
   w.focus();
   return { ok: true };
 });
+// v1.0 快捷呼出（中键双击 / Alt+Shift+C）：切换对话窗显示 —— 隐藏只收不销毁（安全退出链不受扰）
+ipcGuard.handle('chat-window-toggle', () => {
+  const w = createChatWindow();
+  if (w.isVisible()) {
+    w.hide();
+    broadcastToWindows('chat-window-hidden', {});
+    return { ok: true, visible: false };
+  }
+  w.show();
+  w.focus();
+  return { ok: true, visible: true };
+});
 function broadcastToWindows(channel, payload) {
   for (const w of [win, chatWin]) {
     if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
@@ -366,8 +378,8 @@ ipcGuard.on('quit-app', () => {
    取快照。渲染端只知道"我这儿点了一下"，把它自己那套时间戳再算一遍就是
    第二个事实来源 —— 于是又回到"一个改了一个没改"那个老形状。
    用 .on 不用 .handle：这是纯上报，没有返回值，省一次 promise 往返。 */
-ipcGuard.on('activity', (e, type) => {
-  if (tracker) tracker.record(type);
+ipcGuard.on('activity', (e, type, details) => {
+  if (tracker) tracker.record(type, undefined, details);
   // 用户有了新交互，重置空闲检查闹钟
   scheduleProactiveCheck(IDLE_MS);
   // v0.9.9 P2-2a: 收敛到唯一出口（内态变更由 onChange 自动推送，这里保留一次
