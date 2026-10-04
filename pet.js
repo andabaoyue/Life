@@ -1,7 +1,7 @@
 const pet = document.getElementById('pet');
 const bubble = document.getElementById('bubble');
 const menu = document.getElementById('menu');
-const log = document.getElementById('log');
+// v1.0 记录退役：#log 元素已随面板拔除
 const logBody = document.getElementById('logBody');
 const panel = document.getElementById('panel');
 const researchPanel = document.getElementById('researchPanel');
@@ -94,7 +94,7 @@ function syncMotionPriority() {
     bubble: !bubble.classList.contains('hidden'),
     talking: document.body.classList.contains('talking'),
     chatBusy: busy,
-    hidden: document.body.classList.contains('showlog')
+    hidden: false   // v1.0 记录退役：showlog 让位机制随面板拔除
       || !panel.classList.contains('hidden')
       || (researchPanel && !researchPanel.classList.contains('hidden'))
   });
@@ -208,7 +208,6 @@ function applyPetSize() {
 }
 /* 面板互斥（v1.0 用户实测）：任一满幅面板在场时先收掉其余 —— 不叠层、深底不叠染她 */
 function closeOtherOverlays(keepId) {
-  if (keepId !== 'log' && log && !log.classList.contains('hidden')) toggleLog(false);
   if (keepId !== 'wardrobe') {
     const wd = document.getElementById('wardrobe');
     if (wd && !wd.classList.contains('hidden')) toggleWardrobe(false);
@@ -240,7 +239,7 @@ function syncPanelViewport() {
   // 按面板定宽（用户拍板）：设置/衣橱 560、记录 520、基础 440×680（最宽者胜）
   const wdEl = document.getElementById('wardrobe');
   let w = 440;
-  if (log && !log.classList.contains('hidden')) w = 520;
+
   if ((wdEl && !wdEl.classList.contains('hidden'))
       || (panel && !panel.classList.contains('hidden'))) w = 560;
   // v1.0 拓宽（用户拍板）：个体观测 620 —— 六分区一行横排 + 内容区宽敞
@@ -586,28 +585,9 @@ function hideBubble() {
   setState('idle');
 }
 
-/* ---------------- 记录 ---------------- */
-function scrollLog() { logBody.scrollTop = logBody.scrollHeight; }
-
-function addLog(kind, text) {
-  const d = document.createElement('div');
-  d.className = kind;
-  d.textContent = text;
-  logBody.appendChild(d);
-  scrollLog();
-  return d;
-}
-
-function toggleLog(on) {
-  const showIt = on ?? log.classList.contains('hidden');
-  if (showIt) closeOtherOverlays('log');
-  log.classList.toggle('hidden', !showIt);
-  // 记录面板会盖住气泡，两者内容重复，打开时就让位
-  document.body.classList.toggle('showlog', showIt);
-  syncMotionPriority();
-  if (showIt) scrollLog();
-  syncPanelViewport();   // v1.0：记录升格 —— 打开即扩容盖住她，收口还账
-}
+/* ---------------- 记录（v1.0 退役）----------------
+   记录面板退役：对话窗本身就是活的记录（单一事实源 memory.history），
+   记忆有记忆区、梦有梦境分区 —— 职能全有更好的家。addLog/toggleLog/scrollLog 随之拔除。 */
 
 /* ---------------- 对话 ---------------- */
 let busy = false;
@@ -820,10 +800,7 @@ renderProviderPanel();
 
 function show(t) {
   render(t);
-  if (liveNode) {
-    liveNode.textContent = '初澜：' + stripState(t, streaming);
-    scrollLog();
-  }
+  // v1.0 记录退役：liveLog 更新随之拔除（话归对话历史，不归账本）
 }
 
 // 只注册一次。写在 submit 里会导致每发一条就多挂一个监听，
@@ -880,8 +857,6 @@ async function runChat(text, opts) {
   setState('thinking');
   streaming = true;
   acc = '';
-  if (!proactive) addLog('u', '你：' + text);
-  liveNode = addLog('a', '初澜：');
   render('');
 
 
@@ -892,7 +867,7 @@ async function runChat(text, opts) {
         await new Promise(r => setTimeout(r, 40));
         show(demo.slice(0, i));
       }
-      liveNode.textContent = '初澜：' + demo;
+      // v1.0 记录退役：预览演示不再写账本
       // 预览分支也要走完收尾生命周期，否则永远卡在 thinking 急促呼吸、
       // 气泡也不会定时收起 —— 收尾逻辑与真实分支保持同构。
       setState('idle');
@@ -915,11 +890,8 @@ async function runChat(text, opts) {
         streaming = false;
         setState(res.state);
         show(res.text);
-        if (res.windowClosed) addLog('sys', res.merged ? '· 窗口已满，小结并合并了记忆' : '· 满一轮窗口，已生成小结');
-        // 换装结果如实上报：程序真换了才算换了，失败也要让用户看见。
-        // wears 是数组 —— 一条回复里连发多个提案时全部如实列出来。
-        if (res.wears && res.wears.length)
-          addLog('sys', (res.wearNote ? '· [换装] ' + res.wearNote : '· [换装] 未执行'));
+        // v1.0 记录退役：窗口小结/换装的客观汇报迁往对话窗客观事实行（chat.js chatNotice），
+        // 如实口径不变：程序真换了才算换了，失败也要让用户看见。
         clearTimeout(bubbleTimer);
         bubbleTimer = setTimeout(hideBubble, 6000);
       } else if (res.needKey) {
@@ -957,7 +929,6 @@ async function runChat(text, opts) {
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (log && !log.classList.contains('hidden')) { toggleLog(false); return; }
     if (researchPanel && !researchPanel.classList.contains('hidden')) { closeResearchPanel(); return; }
     const wdEl = document.getElementById('wardrobe');
     if (wdEl && !wdEl.classList.contains('hidden')) { toggleWardrobe(false); return; }
@@ -1074,7 +1045,6 @@ function bindPanelDrag(el) {
   });
 }
 bindPanelDrag(document.getElementById('panel'));
-bindPanelDrag(document.getElementById('log'));
 bindPanelDrag(document.getElementById('researchPanel'));   // 实验观测面板：空白处拖动同样移动整体
 
 window.addEventListener('mousemove', (e) => {
@@ -1284,7 +1254,6 @@ async function refreshStats() {
 }
 
 /* v1.0：× 按钮退役（与设置/实验同语义）——ESC / 右键关闭 */
-if (log) log.addEventListener('contextmenu', (e) => { e.preventDefault(); toggleLog(false); });
 
 /* 衣橱（v1.0 自设置独立、改名「衣橱」）：设置同级满幅面板 */
 function toggleWardrobe(on) {
@@ -2415,7 +2384,7 @@ menu.addEventListener('click', (e) => {
   if (!act) return;
   if (act === 'quit') return api && api.quit();
   if (act === 'talk') { setTalking(true); if (api && api.chatWindowOpen) api.chatWindowOpen(); return; }   // v1.0 方案二：对话入独立窗
-  if (act === 'log') return toggleLog();
+  
 if (act === 'wardrobe') return toggleWardrobe();   // v1.0：衣橱自设置独立，入菜单
   if (act === 'panel') return (panel && !panel.classList.contains('hidden')) ? closePanel() : openPanel();   // v1.0 toggle：再点即收
   if (act === 'research') return (researchPanel && !researchPanel.classList.contains('hidden')) ? closeResearchPanel() : openResearchPanel();   // v1.0 toggle：再点即收

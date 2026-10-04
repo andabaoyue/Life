@@ -107,19 +107,12 @@ with sync_playwright() as p:
           pg3.evaluate("document.querySelectorAll('#chatList .b-note').length") >= 1)
 
 
-    # 记录面板开关后气泡隐藏
-    pg.click("#pet", button="right")
-    pg.wait_for_timeout(250)
-    pg.click('#menu div[data-act="log"]')
-    pg.wait_for_timeout(300)
-    check("打开记录时气泡让位", not pg.is_visible("#bubble"))
-    lw = pg.evaluate("document.getElementById('log').getBoundingClientRect().width")
-    iw = pg.evaluate("window.innerWidth")
-    check("记录面板满幅契约（inset 8，与设置同规格）", abs(lw - (iw - 16)) <= 2, "w=%s iw=%s" % (round(lw), iw))
-    pg.click("#log", button="right")
-    pg.wait_for_timeout(300)
-    check("记录面板右键可关闭（× 已退役）", not pg.is_visible("#log"))
-    check("关闭后气泡恢复显示", pg.is_visible("#bubble"))
+    # v1.0 记录面板退役：对话窗即记录（4 项墓碑契约）
+    check("记录面板已退役（DOM 无 #log）", pg.query_selector("#log") is None)
+    check("菜单已无「记录」项", pg.query_selector('#menu div[data-act="log"]') is None)
+    check("日志函数族已退役（addLog/toggleLog 不存在）",
+          pg.evaluate("typeof addLog") == "undefined" and pg.evaluate("typeof toggleLog") == "undefined")
+    check("她的嘴保留（#bubble 仍在）", pg.query_selector("#bubble") is not None)
 
     # 设置面板
     pg.click("#pet", button="right")
@@ -384,9 +377,8 @@ with sync_playwright() as p:
           and pg2.evaluate("window.__wd.equip.top") is None)
     n2 = pg2.evaluate("document.querySelectorAll('#layers .layer:not(.base)').length")
     check("屏幕图层同步为 6 层（默认8 - 上装/下装/外套 + 连衣裙）", n2 == 6, "n=%s" % n2)
-    logs2 = pg2.text_content("#log") or ""
-    check("执行结果如实写进记录",
-          "[换装]" in logs2 and "已实际换上" in logs2, repr(logs2[-60:]))
+    check("换装客观汇报迁续：chat.js 承载客观事实行（chatNotice）",
+          pg2.evaluate("fetch('chat.js').then(r => r.text()).then(t => t.includes('chatNotice'))"))
     pg2.screenshot(path="/tmp/pw_wardrobe_gothic.png")
 
     # 状态回落 + 无标记泄漏
@@ -441,7 +433,6 @@ with sync_playwright() as p:
     # 礼貌闸门的前提先归零：面板/记录开着、输入框有字或有焦点、上一条气泡还没收。
     # 气泡必须先收 —— 不然这三条测的是"闸门拦住了"，不是各自那件事。
     pg2.evaluate("""(()=>{window.__calls.length=0;
-        document.getElementById('logBody').innerHTML='';
         document.getElementById('panel').classList.add('hidden');
         document.getElementById('log').classList.add('hidden');
         document.body.classList.remove('showlog');
@@ -456,20 +447,18 @@ with sync_playwright() as p:
     check("主动搭话的话照常用同一条上屏路径（不另写一套渲染）",
           "谁一直戳我" in (pg2.text_content("#bubble") or ""),
           repr(pg2.text_content("#bubble")))
-    logs3 = pg2.text_content("#logBody") or ""
-    check("主动搭话不写「你：…」（没人说过那句话）", "你：" not in logs3, repr(logs3))
-    check("但她那句话进了记录面板（用户能查她为什么开口）",
-          "谁一直戳我" in logs3, repr(logs3))
+    check("被拒零伪造迁续：chat.js declined 分支不写她的话",
+          pg2.evaluate("fetch('chat.js').then(r => r.text()).then(t => t.includes('declined') && !t.includes('你：')))"))
+    check("单一事实源唯一：preload 仍声明 chat-history 通道",
+          pg2.evaluate("fetch('preload.js').then(r => r.text()).then(t => t.includes('chat-history'))"))
 
     # 被拒（提案过期）：气泡、记录、光标都不许留下痕迹
     pg2.evaluate("""(()=>{window.__decline = true; window.__calls.length = 0;
-        document.getElementById('logBody').innerHTML = '';
         streaming=false; hideBubble();})()""")
     pg2.evaluate("tryProactive()")
     pg2.wait_for_timeout(400)
-    check("被拒的这一轮不往记录面板里留任何一行",
-          (pg2.text_content("#logBody") or "").strip() == "",
-          repr(pg2.text_content("#logBody")))
+    check("被拒后零残留（无账本可留，DOM 干净）",
+          pg2.evaluate("document.querySelectorAll('#logBody, #log').length") == 0)
     check("被拒后气泡收起（不顶着空气泡卡在 thinking）",
           pg2.evaluate("document.getElementById('bubble').classList.contains('hidden')"))
     check("被拒后状态回落 idle",
@@ -829,9 +818,9 @@ with sync_playwright() as p:
     # - Linux Headless CI (DejaVu/FreeSans): line-height ≈ 19.6px -> 单项高 ≈ 33.6px -> 总高 ≈ 310px (实测 295~315px)
     # v0.9.5 新增「实验观测/复盘」使菜单项由 8 项扩充至 9 项，合法渲染区间严格界定为 [260px, 315px]，拒绝无界放宽
     # v1.0 菜单瘦身（放大/缩小退役→滚轮接管）：9 项 → 7 项，区间同步演进（实测 7 项 ≈ 218px）
-    # v1.0 菜单 +「衣橱」= 8 项（梦境归入个体观测大分区，不占菜单）
-    check("8 项菜单高度符合跨平台字体渲染布局契约 [225px, 285px]",
-          225 <= mrect["h"] <= 285, "h=%s" % round(mrect["h"]))
+    # v1.0 菜单退役「记录」= 7 项（梦境归入个体观测大分区，不占菜单）
+    check("7 项菜单高度符合跨平台字体渲染布局契约 [195px, 245px]",
+          195 <= mrect["h"] <= 245, "h=%s" % round(mrect["h"]))
     check("菜单下沿不出窗口", mrect["bottom"] <= mrect["vh"] + 1,
           "bottom=%s vh=%s" % (round(mrect["bottom"]), mrect["vh"]))
     check("菜单右沿不出窗口", mrect["right"] <= mrect["vw"] + 1,

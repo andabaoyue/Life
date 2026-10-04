@@ -154,6 +154,12 @@ async function submit() {
     res = await api.send(text);
     if (res && res.slept) {
       chatNotice = res.note || '[初澜沉睡中，消息已留置在侧]';   // 客观物理事实，不是她的话
+    } else if (res && res.ok) {
+      // v1.0 客观汇报迁移（记录面板退役）：换装/窗口小结如实以客观事实行呈现，绝不写进她的话
+      const notes = [];
+      if (res.wears && res.wears.length) notes.push('[换装] ' + (res.wearNote || '未执行'));
+      if (res.windowClosed) notes.push(res.merged ? '窗口已满，小结并合并了记忆' : '满一轮窗口，已生成小结');
+      if (notes.length) chatNotice = notes.join(' · ');
     } else if (!res || res.declined || !res.ok) {
       chatError = t('chat.sendFailed') + (res && res.error ? '：' + res.error : '');
     }
