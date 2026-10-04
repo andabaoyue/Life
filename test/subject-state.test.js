@@ -279,6 +279,14 @@ check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成�
     bad.includes('精神平稳') && bad.includes('安静与热闹都待得住'));
   check('v1.0 formatPerception 全段零数字（数字不可知红线）',
     !/\d/.test(boardOf({ vitality: 999, attachment_need: -999 })));
+  // Manus 二审 P2 处置：缺字段须真删字段验证（归零 ≠ 缺失）
+  {
+    boardOf({});
+    delete p.data.values.vitality;
+    const missing = p.formatPerception();
+    check('v1.0 缺字段安全回落：真删字段仍出中档、零抛异常',
+      missing.includes('精神平稳'));
+  }
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
