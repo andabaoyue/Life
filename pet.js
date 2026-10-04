@@ -1054,11 +1054,10 @@ pet.addEventListener('wheel', (e) => {
   e.preventDefault();
   zoomPet(e.deltaY < 0 ? 1.1 : 1 / 1.1);
 }, { passive: false });
-pet.addEventListener('mousedown', (e) => {
   if (e.button === 1) {
     e.preventDefault();
-    petZoom = 1;
-    applyPetSize();
+    // v1.0 缺失修复：回默认体型走同一条缩放通道 —— 只改体型不改窗体会让她比窗宽被裁掉
+    zoomPet(1 / petZoom);
   }
 });
 
