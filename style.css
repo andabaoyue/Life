@@ -558,12 +558,29 @@ body.showlog #bubble { display: none !important; }
 .memlist .empty { color: #7d8aa8; }
 
 /* ---------------- 衣柜面板 ---------------- */
-.wd-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.wd-presets button { flex: none; }
+.wd-presets { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.wd-presets button {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .12);
+  color: #dce4f0;
+  text-align: left;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.wd-presets button:hover {
+  background: rgba(255, 255, 255, .1);
+  border-color: rgba(160, 210, 255, .4);
+}
 .wd-presets button.on {
-  background: rgba(150,200,255,.24);
-  border-color: rgba(160,210,255,.55);
-  color: #dcecff;
+  background: rgba(120, 160, 255, .22);
+  border-color: rgba(160, 210, 255, .65);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(100, 140, 255, .15);
 }
 /* v1.0 当前穿着一览 */
 .wd-current { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px;
@@ -577,6 +594,11 @@ body.showlog #bubble { display: none !important; }
   background: rgba(255,255,255,.07); }
 .wd-item span { font-size: 10.5px; line-height: 1.2; max-width: 62px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+/* v1.0 暂时关闭细碎散件槽位，衣橱专注整套衣服更换 (用户拍板减负) */
+#wdSlots, #wdSuggest {
+  display: none !important;
+}
+
 .wd-slots { display: flex; flex-direction: column; gap: 6px; }
 .wd-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .wd-slot { flex: none; width: 44px; color: #7d8aa8; font-size: 11px; }
