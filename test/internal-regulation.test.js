@@ -266,6 +266,11 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     && d1.getState().restPressure === 3 && d1.getState().arousal === dA0 - 6,
     'night rp=' + n1.getState().restPressure + ' arΔ=' + (n1.getState().arousal - nA0)
     + ' | day rp=' + d1.getState().restPressure + ' arΔ=' + (d1.getState().arousal - dA0));
+  // 覆盖 Brain 生产接线：惰性函数回调时区（Manus P1 连带钉）
+  const fnManager = new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-fn-')),
+    { enabled: true, birthTimezone: () => 'Asia/Shanghai' });
+  check('v1.0 创世时区支持惰性函数回调（Brain 生产接线覆盖）',
+    fnManager._isNightHour(NIGHT) === true && fnManager._isNightHour(DAY) === false);
   check('v1.0 生物钟日间对照：日间公式逐字不变（min(10,idle/10) / -min(20,idle/5)）',
     d1.getState().restPressure === Math.min(10, Math.floor(30 / 10))
     && (dA0 - d1.getState().arousal) === Math.min(20, Math.floor(30 / 5)));

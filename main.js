@@ -933,8 +933,10 @@ app.whenReady().then(() => {
 
   // v1.0 全局快捷键（合流批）：Alt+Shift+C 对话窗切换 / Alt+Shift+P 置顶切换
   try {
-    globalShortcut.register('Alt+Shift+C', () => toggleChatWindow());
-    globalShortcut.register('Alt+Shift+P', () => { togglePinState(); });
+    const okC = globalShortcut.register('Alt+Shift+C', () => toggleChatWindow());
+    if (!okC) console.warn('[Shortcut] Alt+Shift+C 注册被系统或其它应用占用');
+    const okP = globalShortcut.register('Alt+Shift+P', () => { togglePinState(); });
+    if (!okP) console.warn('[Shortcut] Alt+Shift+P 注册被系统或其它应用占用');
   } catch (e) {
     console.warn('[Shortcut] 全局快捷键注册失败（不影响主功能）:', e.message);
   }

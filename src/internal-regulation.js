@@ -71,6 +71,7 @@ class InternalRegulationManager {
     this.dir = userDataDir;
     this.path = path.join(userDataDir, 'internal-regulation.json');
     this.opts = opts;
+    this.birthTimezoneOpt = opts.birthTimezone;   // v1.0 修复（Manus P1 处置）：绑定创世时区配置/回调，勿再裸读
     
     // 是否启用模块判断 (支持 experimentModules.internalRegulation)
     this.enabled = opts.enabled !== undefined
