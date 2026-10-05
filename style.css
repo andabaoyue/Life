@@ -20,9 +20,15 @@ body.preview { background: linear-gradient(160deg,#2b2f4a,#4a3b5c); }
   left: 50%;
   bottom: 52px;
   transform: translateX(-50%);
-  width: 210px;
+  width: 64px;
   cursor: grab;
   transition: opacity .2s;
+}
+/* v1.0 紧凑窗（256×320）自适应：底边归零释放 52px 天空域，防立绘顶格截断与气泡出窗 */
+@media (max-height: 360px) {
+  #pet {
+    bottom: 0px;
+  }
 }
 #pet.dragging { cursor: grabbing; }
 /* 拖动期冻结躯体微动变换（防自然动力学在拖拽中甩动立绘）+ 卸毛玻璃合成（软件渲染减负，防拖动漂移感） */
@@ -181,7 +187,7 @@ body.outline #figure.layered #layers {
   transform: translateX(-50%);
   margin-bottom: 8px;
   width: max-content;
-  max-width: 300px;
+  max-width: min(300px, calc(100vw - 24px)); /* 紧凑窗（256宽）防出窗截断：左右各留12px安全边距，大窗口保持300px */
   /* 长回答不能顶出窗口：透明窗口外的像素既看不见也点不到，
      表现就是"话说到一半没了"。
      max-height 不用写死的常数 —— 立绘会随缩放变大变小（#pet 120~420px），

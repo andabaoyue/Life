@@ -501,10 +501,10 @@
           this.motion.walkPhase = (this.motion.walkPhase + deltaSec * stepFreq * Math.PI * 2) % (Math.PI * 2);
 
           const walkSin = Math.sin(this.motion.walkPhase);
-          // 垂直弹性颠簸（每迈一步身体微弹动 2.8px）
-          bodyTranslateY = -2.8 * Math.abs(walkSin);
+          // 步态重心微幅沉浮（由交替迈步点阵帧主导腿部动效，躯干保持平稳贴地，消除僵硬上下颠簸）
+          bodyTranslateY = -0.5 * Math.abs(walkSin);
           // 左右微幅摇摆
-          bodyRotate = 1.2 * walkSin * this.motion.direction;
+          bodyRotate = 1.0 * walkSin * this.motion.direction;
 
           // 步态相位分类
           if (walkSin > 0.3) this.motion.gait = 'left';

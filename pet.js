@@ -199,12 +199,13 @@ const PET_RATIO = 210 / 340;
 /* v1.0 像素换代·缩放退役（用户拍板）：体型固定、无缩放档 ——
    立绘宽度恒为 PET_BASE_W；窗口只随面板家族扩收（panel-viewport 收口复位基准），
    永不因体型而动。像素画铁律：日后显示一律走「原生 × 整数倍」。 */
-const PET_BASE_W = 256;   // v1.0 像素换代：64 原生 ×4 = 256（整数倍，像素铁律）
+const PET_BASE_W = 64;   // v1.0 像素换代：64 原生 1:1（极致精致小巧的掌心桌宠体型，点阵绝对清晰，守住像素整数倍铁律）
 const PIXEL_PREVIEW = true;   // v1.0 像素预览开关：单图上屏；换装像素化（批次②）后恢复 layered
 function applyPetSize() {
   pet.style.width = PET_BASE_W + 'px';
   if (PIXEL_PREVIEW) document.body.classList.add('pixel-sprite');   // 最近邻渲染，禁抗锯齿
 }
+if (PIXEL_PREVIEW) document.body.classList.add('pixel-sprite');
 /* 面板互斥（v1.0 用户实测）：任一满幅面板在场时先收掉其余 —— 不叠层、深底不叠染她 */
 function closeOtherOverlays(keepId) {
   if (keepId !== 'wardrobe') {
@@ -244,16 +245,64 @@ function syncPanelViewport() {
 
 /* v1.0 像素换代·帧动画通道（骨架先立，Q 版帧到位即接入）：
    每个状态 = 帧路径数组 + fps，steps 式切换；返回停止器。
-   像素铁律：帧图必须整数倍显示，绝不做亚像素位移（画面会抖）。 */
-function playFrames(el, frames, fps) {
-  if (!el || !Array.isArray(frames) || frames.length === 0) return () => {};
+   像素铁律：帧图必须整数倍显示，绝不做亚像素位移（画面会抖）。
+   P0-A 架构解耦：整装帧（CHIBI_FRAMES）驱动兜底 #sprite；素体基座帧（CHIBI_BASE_FRAMES）
+   驱动分层 #layers img[data-slot="base"]，脱衣后运动绝不复活衣物！ */
+function playFrames(el, frames, fps, baseFrames) {
+  if (!Array.isArray(frames) || frames.length === 0) return () => {};
   let i = 0;
-  el.src = frames[0];
+  const updateEl = (im, src) => { if (im && src) im.src = src; };
+  const getBaseLayer = () => layerBox ? layerBox.querySelector('img[data-slot="base"]') : null;
+  const bFrames = Array.isArray(baseFrames) && baseFrames.length > 0 ? baseFrames : null;
+  updateEl(el, frames[0]);
+  if (bFrames) updateEl(getBaseLayer(), bFrames[0]);
   const timer = setInterval(() => {
     i = (i + 1) % frames.length;
-    el.src = frames[i];
+    updateEl(el, frames[i]);
+    if (bFrames) updateEl(getBaseLayer(), bFrames[i % bFrames.length]);
   }, Math.round(1000 / (fps || 6)));
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    const currBase = getBaseLayer();
+    if (currBase) currBase.src = 'assets/character/base/base_pixel_chibi.png';
+  };
+}
+let currentFrameStopper = null;
+const CHIBI_FRAMES = {
+  idle: [
+    'assets/character/anim/idle/idle_0.png',
+    'assets/character/anim/idle/idle_1.png',
+    'assets/character/anim/idle/idle_2.png',
+    'assets/character/anim/idle/idle_3.png'
+  ],
+  walking: [
+    'assets/character/anim/walk/walk_0.png',
+    'assets/character/anim/walk/walk_1.png',
+    'assets/character/anim/walk/walk_2.png',
+    'assets/character/anim/walk/walk_3.png'
+  ]
+};
+const CHIBI_BASE_FRAMES = {
+  idle: [
+    'assets/character/anim/idle_base/idle_base_0.png',
+    'assets/character/anim/idle_base/idle_base_1.png',
+    'assets/character/anim/idle_base/idle_base_2.png',
+    'assets/character/anim/idle_base/idle_base_3.png'
+  ],
+  walking: [
+    'assets/character/anim/walk_base/walk_base_0.png',
+    'assets/character/anim/walk_base/walk_base_1.png',
+    'assets/character/anim/walk_base/walk_base_2.png',
+    'assets/character/anim/walk_base/walk_base_3.png'
+  ]
+};
+function updateSpriteAnim(state) {
+  if (!PIXEL_PREVIEW) return;
+  if (currentFrameStopper) { currentFrameStopper(); currentFrameStopper = null; }
+  const frames = CHIBI_FRAMES[state] || CHIBI_FRAMES.idle;
+  const baseFrames = CHIBI_BASE_FRAMES[state] || CHIBI_BASE_FRAMES.idle;
+  const fps = state === 'walking' ? 6 : 2;
+  currentFrameStopper = playFrames(spriteImg, frames, fps, baseFrames);
 }
 window.addEventListener('resize', () => {
   relayout();
@@ -298,7 +347,7 @@ function setState(s) {
 
 /* ---------------- 换装：分层渲染 ----------------
    图层顺序只由数据层的 layers() 决定（z 排序），这里不写任何服装逻辑。
-   所有图层共用 760x1000 画布锚点，绝对定位等比叠加即可对齐。
+   所有图层共用 64×80 画布锚点（历史降级共用 760×1000），绝对定位等比叠加即可对齐。
 
    降级是硬要求：character/ 资源缺失、图片加载失败、衣柜没初始化 ——
    任何一种都退回单张 assets/pet.png，桌宠不能变成空白。 */
@@ -318,7 +367,7 @@ function applyLayers(layers) {
   // 纸娃娃式自由搭配（v1.0 资产补全方案 B）：素体打底，衣物切片逐件叠穿（z 序由 layers() 排好）。
   // 衣物切片由 scripts/gen-garment-slices.py 按素体轮廓分带生成（程序绘制的过渡资产，
   // 像素级美术资产补齐后按同路径整体替换即可，代码零改动）。勾选多少穿多少，如实呈现。
-  // v1.0 像素换代：像素预览走 base_pixel_chibi（64×80 原生 ×4 上屏）；正典 base.png 是管线源，绝不覆写
+  // v1.0 像素换代：像素预览走 base_pixel_chibi（64×80 原生 1:1 上屏）；正典 base.png 是管线源，绝不覆写
   const srcs = [PIXEL_PREVIEW ? 'assets/character/base/base_pixel_chibi.png' : 'assets/character/base/base.png', ...layerSrcs.map(l => l.src)];
   const imgs = srcs.map(src => new Promise((res, rej) => {
     const im = new Image();
@@ -328,6 +377,7 @@ function applyLayers(layers) {
   }));
 
   Promise.all(imgs).then(() => {
+    if (currentFrameStopper) { currentFrameStopper(); currentFrameStopper = null; }
     layerBox.replaceChildren();
     srcs.forEach((src, i) => {
       const im = document.createElement('img');
@@ -1047,9 +1097,45 @@ function bindPanelDrag(el) {
   });
 }
 bindPanelDrag(document.getElementById('panel'));
-bindPanelDrag(document.getElementById('researchPanel'));   // 实验观测面板：空白处拖动同样移动整体
+/* P1-D: 透明区点击穿透 (setIgnoreMouseEvents)
+   桌宠与交互元素（#pet, 可见气泡, 菜单, 打开的面板等）响应交互；
+   空白透明区域将鼠标点击穿透至桌面/下层窗口。 */
+let lastIgnoreMouse = false;
+function updateMouseIgnore(e) {
+  if (!api || !api.setIgnoreMouseEvents) return;
+  if (dragging || anyOverlayOpen()) {
+    if (lastIgnoreMouse !== false) {
+      lastIgnoreMouse = false;
+      api.setIgnoreMouseEvents(false);
+    }
+    return;
+  }
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const isInteractive = !!(el && (
+    el.closest('#pet') ||
+    el.closest('#menu') ||
+    (el.closest('#bubble') && !bubble.classList.contains('hidden')) ||
+    el.closest('.panel') ||
+    el.closest('#chatStream')
+  ));
+  const shouldIgnore = !isInteractive;
+  if (lastIgnoreMouse !== shouldIgnore) {
+    lastIgnoreMouse = shouldIgnore;
+    api.setIgnoreMouseEvents(shouldIgnore);
+  }
+}
+document.addEventListener('mouseleave', () => {
+  if (!api || !api.setIgnoreMouseEvents) return;
+  if (!dragging && !anyOverlayOpen()) {
+    if (lastIgnoreMouse !== true) {
+      lastIgnoreMouse = true;
+      api.setIgnoreMouseEvents(true);
+    }
+  }
+});
 
 window.addEventListener('mousemove', (e) => {
+  updateMouseIgnore(e);
   if (!dragging) return;
   /* 手指已经松开的最快判据：buttons === 0。
      窗外松手时渲染进程收不到 mouseup，但**只要鼠标之后动过一下**，
@@ -2421,6 +2507,7 @@ if (api && api.onMotionState) {
   api.onMotionState((s) => {
     document.body.dataset.motionState = s && s.state ? s.state : 'idle';
     document.body.dataset.motionLabel = s && s.label ? s.label : '静止';
+    updateSpriteAnim(s && s.state ? s.state : 'idle');
     if (animController) {
       const isMoving = s && (s.state === 'walking');
       animController.setMotion({
@@ -2563,6 +2650,7 @@ if (!api) {
 
 // 页面卸载时注销主循环与计时器，杜绝后台泄漏
 window.addEventListener('beforeunload', () => {
+  if (currentFrameStopper) currentFrameStopper();
   if (behaviorScheduler) behaviorScheduler.destroy();
   if (animController) animController.destroy();
 });

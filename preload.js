@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   motionUiState: (state) => ipcRenderer.send('motion-ui-state', state),
   motionStatus: () => ipcRenderer.invoke('motion-status'),
   onMotionState: (cb) => ipcRenderer.on('motion-state', (e, s) => cb(s)),
+  setIgnoreMouseEvents: (ignore) => ipcRenderer.send('set-ignore-mouse-events', !!ignore),
   quit: () => ipcRenderer.send('quit-app'),
 
   // 对话

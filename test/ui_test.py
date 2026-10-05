@@ -204,6 +204,8 @@ with sync_playwright() as p:
     }
     window.deskpet = {
       onDelta(){}, onWardrobe(cb){ window.__wdCb = cb; }, onChatBusy(cb){ window.__chatBusyCb = cb; },
+      onMotionState(cb){ window.__motionCb = cb; },
+      setIgnoreMouseEvents(ignore){ window.__ignoreEvents = ignore; },
       async getConfig(){ return {hasKey:true, keyEncrypted:true}; },
       // model 来自配置文件，是唯一可能带用户可控内容的统计字段：
       // 故意塞一段注入串，验证它只作为文本出现
@@ -388,6 +390,27 @@ with sync_playwright() as p:
     pg2.wait_for_timeout(6200)
     check("气泡收起后状态回落 idle",
           pg2.evaluate("document.body.dataset.state") == "idle")
+
+    # ---- 运动状态与分层基座解耦验证（P0-A / P1-C / 审查断言补齐）----
+    pet_w = pg2.evaluate("document.getElementById('pet').offsetWidth")
+    check("立绘宽度严格为 64px 原生点阵 1:1（守住像素整数倍铁律）", pet_w == 64, "width=%s" % pet_w)
+    pg2.evaluate("window.__motionCb && window.__motionCb({ state: 'walking', speed: 2, direction: 1, label: '行走' })")
+    pg2.wait_for_timeout(150)
+    check("运动状态桥接生效（body.dataset.motionState == 'walking'）",
+          pg2.evaluate("document.body.dataset.motionState") == "walking")
+    base_src = pg2.evaluate("document.querySelector('#layers img[data-slot=\"base\"]').src")
+    check("P0-A 修复：分层步态 base 槽播放素体步态帧（非整装帧）",
+          "walk_base" in base_src and "walk/walk" not in base_src, "base_src=%s" % base_src)
+    # 模拟脱掉衣物后再次走动：base 槽绝不复活衣物
+    pg2.evaluate("window.deskpet.wardrobeSet('dress', null)")
+    pg2.wait_for_timeout(200)
+    pg2.evaluate("window.__motionCb && window.__motionCb({ state: 'walking', speed: 2, direction: 1, label: '行走' })")
+    pg2.wait_for_timeout(150)
+    undressed_base = pg2.evaluate("document.querySelector('#layers img[data-slot=\"base\"]').src")
+    check("脱掉衣物后运动 base 仍为素体无衣步态（衣物绝不复活）",
+          "walk_base" in undressed_base and "walk/walk" not in undressed_base, "src=%s" % undressed_base)
+    pg2.evaluate("window.__motionCb && window.__motionCb({ state: 'idle', label: '静止' })")
+    pg2.wait_for_timeout(100)
 
     # ---- v0.8 本地活动上报：戳一下就要被主进程看见 ----
     # 判据是"渲染端只报事件、不自己算账"：所以这里只看有没有把 click 送出去，
@@ -827,8 +850,8 @@ with sync_playwright() as p:
     check("菜单上沿也不出窗口", mrect["top"] >= -1, "top=%s" % round(mrect["top"]))
     pg.evaluate("document.getElementById('menu').classList.add('hidden')")
 
-    # 长回复气泡：必须整块落在立绘上方、窗口之内
-    long_text = "这是很长的一条回复。" * 12
+    # 长回复气泡：必须整块落在立绘上方、窗口之内（64px 萌版立绘释放更多空间，文本相应加长测裁切）
+    long_text = "这是很长的一条回复。" * 40
     pg.evaluate("t => render(t, false)", long_text)
     pg.wait_for_timeout(150)
     brec = pg.evaluate("""(()=>{const el=document.getElementById('bubble');
@@ -879,7 +902,7 @@ with sync_playwright() as p:
     # 关键是这**不是闪一下**：Electron 窗口启动后根本不发 resize，
     # 所以旧写法是启动即中、一直错到用户下次手动缩放为止。
     h_fallback = pg.evaluate("document.getElementById('figure').offsetHeight")
-    pg.evaluate("t => render(t, false)", "这是很长的一条回复。" * 12)
+    pg.evaluate("t => render(t, false)", "这是很长的一条回复。" * 40)
     pg.wait_for_timeout(120)
     lay = pg.evaluate("""async ()=>{
         const f=document.getElementById('figure');

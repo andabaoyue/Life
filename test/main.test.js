@@ -46,7 +46,8 @@ const fakeWin = {
   getPosition: () => pos,
   getSize: () => size,
   setSize(w, h) { size = [w, h]; },
-  setAlwaysOnTop() {}, isAlwaysOnTop: () => true
+  setAlwaysOnTop() {}, isAlwaysOnTop: () => true,
+  setIgnoreMouseEvents() {}
 };
 const origLoad = Module._load;
 Module._load = function (request) {

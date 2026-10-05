@@ -173,6 +173,13 @@ ipcGuard.on('motion-ui-state', (e, state = {}) => {
 
 ipcGuard.handle('motion-status', () => motion ? motion.snapshot() : null);
 
+// P1-D: 透明区点击穿透 (forward: true 允许在渲染层动态捕获鼠标交互区)
+ipcGuard.on('set-ignore-mouse-events', (e, ignore) => {
+  if (win && !win.isDestroyed() && typeof win.setIgnoreMouseEvents === 'function') {
+    win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+  }
+});
+
 function togglePinState() {
   if (!win) return false;
   const on = !win.isAlwaysOnTop();
