@@ -250,5 +250,99 @@ function mkReg(dir) {
   check('门禁为纯函数：同输入两次结果严格一致', JSON.stringify(a) === JSON.stringify(b));
 }
 
+// ============ 11. 孤立睡眠态自愈（v3.1 修复「显示深睡却在漫步」的根因）============
+{
+  // 用户实测报障：isSleeping=true 但 sleepStartTime=null（跨版本残留：旧版只写
+  // isSleeping 不写时刻）。此态若不自愈：getSleepContext 恒返回 null →
+  // 惰性苏醒分支永远进不去 → 唤醒永不发生 → isSleeping 永为 true，
+  // 而 tracker 已在内存里醒着 ——「显示深度休眠却在桌面上漫步」且永不自愈。
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-sdt11-'));
+  const file = path.join(dir, 'internal-regulation.json');
+
+  // 手工造出卡死态：只写 isSleeping，不写 sleepStartTime（模拟旧版本残留）
+  fs.writeFileSync(file, JSON.stringify({
+    schemaVersion: 1,
+    isSleeping: true,
+    updatedAt: T0,
+    values: { energy: 28, restPressure: 2, arousal: 73, salienceThreshold: 34, interactionDensity: 30, cognitiveLoadProxy: 3 },
+    history: [{ transitionId: 'reg-old', trigger: 'enter_sleep', timestamp: T0, deltas: {}, previousValues: {}, nextValues: {} }]
+  }, null, 2));
+
+  const reg = mkReg(dir);
+  check('孤立睡眠态被自愈纠正为清醒', reg.isSleeping === false, 'isSleeping=' + reg.isSleeping);
+  check('自愈后无残留入睡时刻', reg.sleepStartTime === null);
+  check('自愈原因被如实登记（可审计）',
+    reg.persistenceError === 'ORPHAN_SLEEP_STATE_SELF_HEALED', reg.persistenceError);
+  check('自愈后 getSleepContext 返回 null（不再卡死）', reg.getSleepContext(T0 + 8 * 60 * MIN) === null);
+
+  // 自愈后必须还能正常入睡 —— 修复不能把功能锁死
+  reg.updateOnSleep(true, { timestamp: T0 });
+  reg.stageSleepContext({ at: T0, windowNo: 5, dayResidues: [{ text: 'x' }] });
+  check('自愈后仍可正常入睡并冻结', reg.isSleeping === true && reg.sleepStartTime === T0);
+  check('自愈后 getSleepContext 恢复正常', reg.getSleepContext(T0 + 40 * MIN) !== null);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ============ 12. 正常睡眠态绝不被误伤（自愈不能过度）============
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-sdt12-'));
+  const reg1 = mkReg(dir);
+  reg1.updateOnSleep(true, { timestamp: T0 });
+  reg1.stageSleepContext({ at: T0, windowNo: 5, dayResidues: [{ text: 'x' }] });
+
+  // 冷启动重读：状态完整，必须原样恢复而不是被自愈误判
+  const reg2 = mkReg(dir);
+  check('完整睡眠态跨重启原样恢复（不被自愈误伤）', reg2.isSleeping === true);
+  check('完整睡眠态跨重启时刻不丢', reg2.sleepStartTime === T0);
+  check('完整睡眠态跨重启原料不丢', !!(reg2.sleepStaging && reg2.sleepStaging.dayResidues.length > 0));
+  check('完整睡眠态无自愈告警', reg2.persistenceError !== 'ORPHAN_SLEEP_STATE_SELF_HEALED');
+
+  // 清醒态依旧清干净（原有防线不能被破坏）
+  reg2.updateOnSleep(false, { timestamp: T0 + 40 * MIN });
+  const reg3 = mkReg(dir);
+  check('清醒态跨重启不被误判为睡眠', reg3.isSleeping === false);
+  check('清醒态无残留时刻', reg3.sleepStartTime === null);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ============ 13. 苏醒解耦：拿不到睡眠上下文也必须醒（v3.1 修复核心）============
+{
+  // brain 层铁律：苏醒是不可逆的物理事实，绝不能因为 sleepCtx 为 null 就不醒。
+  // 这条用源码断言锁住 —— 历史上正是"if (sleepCtx && ...)"写法导致唤醒永不发生。
+  const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+  check('brain.js 不再用 sleepCtx 作为唤醒的前置条件',
+    !/if \(sleepCtx\s*&&\s*this\.internalRegulation\.updateOnSleep/.test(brainSrc));
+  check('brain.js 惰性苏醒以 isSleeping 为唯一唤醒判据',
+    /internalRegulation\.isSleeping === true[\s\S]{0,400}updateOnSleep\(false/.test(brainSrc));
+
+  const trackerSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'tracker.js'), 'utf8');
+  // 只比对真实调用行（注释里也会出现这两个名字，比对全文首现位置会误判）
+  const grabCall = trackerSrc.split('\n').findIndex(l => /getSleepContext\(at\)/.test(l));
+  const clearCall = trackerSrc.split('\n').findIndex(l => /internalRegulation\.updateOnSleep\(false/.test(l));
+  check('tracker.js 唤醒顺序：先抓上下文再清空（原料才不会被冲掉）',
+    grabCall > -1 && clearCall > -1 && grabCall < clearCall,
+    'grab=' + grabCall + ' clear=' + clearCall);
+
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  check('main.js 睡眠判定为双源守卫（tracker + internalRegulation）',
+    /tracker && tracker\.sleepMode\)\s*\|\|\s*brainIsSleeping/.test(mainSrc));
+
+  const regSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'internal-regulation.js'), 'utf8');
+  check('internal-regulation.js 含孤立睡眠态自愈分支',
+    /ORPHAN_SLEEP_STATE_SELF_HEALED/.test(regSrc));
+}
+
+// ============ 14. 回话腰斩：思维链不得吞掉台词配额（v3.1 修复）============
+{
+  const ds = fs.readFileSync(path.join(__dirname, '..', 'src', 'deepseek.js'), 'utf8');
+  check('deepseek.js 显式关闭服务端思维链', /thinking:\s*\{\s*type:\s*'disabled'\s*\}/.test(ds));
+  check('日常对话默认 max_tokens 已放宽（600 → 1200）',
+    /max_tokens:\s*opts\.maxTokens\s*\?\?\s*1200/.test(ds));
+  check('不再残留 600 的日常对话上限',
+    !/max_tokens:\s*opts\.maxTokens\s*\?\?\s*600\b/.test(ds));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

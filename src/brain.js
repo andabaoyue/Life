@@ -279,6 +279,16 @@ class Brain {
       // v3.1 梦境时序改造：被唤醒（拖拽/摇晃）→ 惰性结算梦境。
       // 钩子只订阅、不改写任何物理唤醒判据；结算失败也绝不影响唤醒本身。
       this.tracker.onWakeHook = (info) => this._settleDreamOnWake('physical_wake', info);
+
+      // v3.1 修复冷启动断流：调节器的 isSleeping 是持久化跨重启的，
+      // 而 tracker 的 sleepMode 只活在内存里 —— 重启后两边天然不同步，
+      // 于是「她显示在睡、实际照常走动」。这里在接线时对齐一次。
+      // 只同步「她在睡」这一个事实，绝不反向把清醒态写成睡眠。
+      if (this.internalRegulation.isSleeping === true && !this.tracker.sleepMode) {
+        const at = this.internalRegulation.sleepStartTime || Date.now();
+        this.tracker.sleepMode = true;
+        this.tracker.sleepStartTime = at;
+      }
     }
     if (this.tracker && typeof this.processEnvironmentalPerception === 'function') {
       this.tracker.setPerceptionPipeline((raw) => this.processEnvironmentalPerception(raw));
@@ -761,20 +771,29 @@ class Brain {
 
       // v3.1 梦境时序改造 · 惰性苏醒结算（路径 B）：
       // 用户重新发消息时，若她仍在睡（退出软件期间睡着的典型场景），此刻才结算梦境。
-      // 不在睡时 getSleepContext 直接返回 null，零开销；这里不做任何定时器（D-001）。
+      //
+      // ⚠️ 顺序铁律：**先无条件唤醒，再看有没有睡眠上下文**。
+      // 苏醒是不可逆的物理事实，绝不能因为 sleepCtx 为 null（缺 sleepStartTime 的
+      // 孤立态、或原料已消费完）就不醒 —— 那正是「显示深度休眠却在桌面漫步」的成因：
+      // isSleeping 卡在true，而唤醒分支永远进不去，两套状态从此分裂。
+      // 拿不到可信睡眠时长就不做梦（SLEEP_ELAPSED_UNKNOWN 门禁负责这件事），
+      // 但绝不能连带阻止苏醒同步 ——这两件事必须解耦。
       try {
-        const sleepCtx = this.internalRegulation.getSleepContext
-          ? this.internalRegulation.getSleepContext(now)
-          : null;
-        if (sleepCtx && this.internalRegulation.updateOnSleep) {
+        if (this.internalRegulation.isSleeping === true) {
+          const sleepCtx = this.internalRegulation.getSleepContext
+            ? this.internalRegulation.getSleepContext(now)
+            : null;
           this.internalRegulation.updateOnSleep(false, { timestamp: now });
           if (tr) tr.wakeUp(now);
-          // 不阻塞本次回复：梦在后台生成，回复不等它
-          this._settleDreamOnWake('message_wake', {
-            sleepStartTime: sleepCtx.sleepStartTime,
-            elapsedMs: sleepCtx.elapsedMs,
-            staging: sleepCtx.staging
-          }).catch(() => {});
+          // 原料齐全才结算梦；没有原料就只是醒过来，不做梦（如实跳过，绝不编造）
+          if (sleepCtx && sleepCtx.staging) {
+            // 不阻塞本次回复：梦在后台生成，回复不等它
+            this._settleDreamOnWake('message_wake', {
+              sleepStartTime: sleepCtx.sleepStartTime,
+              elapsedMs: sleepCtx.elapsedMs,
+              staging: sleepCtx.staging
+            }).catch(() => {});
+          }
         }
       } catch (e) { /* 惰性结算失败绝不影响本次回复 */ }
     }

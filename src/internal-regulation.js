@@ -664,6 +664,18 @@ class InternalRegulationManager {
           if (!this.isSleeping) {
             this.sleepStartTime = null;
             this.sleepStaging = null;
+          } else if (!this.sleepStartTime) {
+            // v3.1 自愈：睡着却没有任何入睡时刻（典型的跨版本残留 —— 旧版只写
+            // isSleeping、不写 sleepStartTime）。这种态若不纠正，会永久卡死：
+            // getSleepContext 因缺时刻恒返回 null → 惰性苏醒分支永远进不去 →
+            // 唤醒永远不发生 → isSleeping 永远为 true，而 tracker 已在内存里醒着，
+            // 于是「她显示深度休眠，却在桌面上漫步」且此状态永不自愈。
+            // 判定为孤立僵尸态，直接纠正为清醒（此刻她确实醒着，否则早被用户叫醒了）。
+            this.isSleeping = false;
+            this.sleepStaging = null;
+            this.persistenceHealthy = true;
+            this.persistenceError = 'ORPHAN_SLEEP_STATE_SELF_HEALED';
+            console.warn('[InternalRegulation]检测到孤立睡眠态（isSleeping=true 但无入睡时刻），已自动纠正为清醒');
           }
           this.updatedAt = raw.updatedAt || Date.now();
           if (Array.isArray(raw.history)) this.history = raw.history.slice(-50);

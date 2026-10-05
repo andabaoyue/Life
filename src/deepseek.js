@@ -230,8 +230,16 @@ class DeepSeek {
         // OpenAI 协议流式默认不返回 usage，必须显式开启；
         // 漏了这行，真实 API 下 usage 恒为空，命中率/计费全是 0
         stream_options: { include_usage: true },
+        // v3.1 修复「回话腰斩」：deepseek-flash 服务端默认开启思维链，
+        // 推理内容以 reasoning_content 流式返回而我们只读 delta.content 会把它全丢掉。
+        // 结果推理吃掉的 token 照样计入 completion_tokens，一旦顶到 max_tokens，
+        // 留给台词的正文配额就被挤光 —— 实测 out=600（恰好顶满默认上限）却只吐出 17 个字。
+        // 显式关闭思维链，token 全部用于台词（关闭后 temperature 的灵动效果也随之恢复）。
+        thinking: { type: 'disabled' },
         temperature: opts.temperature ?? 1.0,
-        max_tokens: opts.maxTokens ?? 600
+        // 600 对日常对话偏紧：一句完整回复常在 300~600 token 之间，
+        // 偶遇长回复就会被无声切掉半截。放宽到 1200 留足余量。
+        max_tokens: opts.maxTokens ?? 1200
       }, ctrl.signal);
 
       reader = res.body.getReader();

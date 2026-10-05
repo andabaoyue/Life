@@ -100,11 +100,17 @@ function createWindow() {
 }
 
 function syncMotionBlock(reason = 'user-priority') {
+  // v3.1 修复「显示深度休眠却在桌面漫步」：睡眠判定改为双源守卫。
+  // tracker.sleepMode 只活在内存里，internalRegulation.isSleeping 才是跨重启持久的，
+  // 冷启动或状态分裂时两边可能不一致 —— 任一为真都必须阻断行走，
+  // 绝不允许她在自称沉睡时还在桌面上闲逛。
+  const brainIsSleeping = !!(brain && brain.internalRegulation && brain.internalRegulation.isSleeping);
+  const isSleeping = !!(tracker && tracker.sleepMode) || brainIsSleeping;
   // v2.0 睡相广播：睡眠态随既有闸门同步给各窗（零新定时器）
-  broadcastToWindows('sleep-state', { sleeping: !!(tracker && tracker.sleepMode) });
+  broadcastToWindows('sleep-state', { sleeping: isSleeping });
   if (!motion) return;
   const blocked = dragging || motionUi.bubble || motionUi.talking
-    || motionUi.chatBusy || motionUi.hidden || !!(tracker && tracker.sleepMode)
+    || motionUi.chatBusy || motionUi.hidden || isSleeping
     || (chatWin && !chatWin.isDestroyed() && chatWin.isVisible());   // 对话窗在场 = 正在相处，闲逛退下
   motion.setBlocked(blocked, reason);
 }
@@ -500,8 +506,11 @@ ipcGuard.on('proactive-declined', () => {
 
 ipcGuard.handle('proactive-check', () => {
   // v2.0 排雷：睡着绝不梦游提案；生理断电先于一切提案逻辑（静默沉睡，零台词）
+  // v3.1 双源守卫：tracker.sleepMode 在内存、isSleeping 跨重启持久，两边可能分裂，
+  // 任一为真都算睡着 —— 宁可少提一次案，绝不让她自称沉睡时还主动搭话。
   if (brain && brain.checkPhysiologicalCollapse && brain.checkPhysiologicalCollapse()) return null;
   if (brain && brain.tracker && brain.tracker.sleepMode) return null;
+  if (brain && brain.internalRegulation && brain.internalRegulation.isSleeping) return null;
   return trigger.evaluate();
 });
 
