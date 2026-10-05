@@ -217,6 +217,8 @@ function getWorkArea(x, y) {
   }
 }
 
+// v1.0 像素换代：用户侧缩放已退役（渲染端零调用）；通道保留为窗体机械，
+// 日后像素「原生 × 整数倍」缩放复用；行为测试见 main.test 边界族
 ipcGuard.on('resize-pet', (e, factor) => {
   if (!win) return;
   const [w, h] = win.getSize();

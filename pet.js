@@ -196,14 +196,12 @@ const BUBBLE_MIN = 48;    // 一行字 + 上下 padding：再小就不是气泡�
    预览模式的小代价：手动放大后再扭浏览器窗口，手动尺寸会被按比例覆盖 ——
    预览页是测试用的，不是用户界面，这个方向比"两个尺寸各长各的"清楚。 */
 const PET_RATIO = 210 / 340;
-/* v1.0 实机反馈修复：立绘尺寸的唯一权威 = 显式缩放指令（右键放大 / 缩小）。
-   旧写法让 pet.style.width 跟随 window.innerWidth —— 对话视窗一拓宽（340→440）
-   或 DWM 贴边抖动一下，她就被误撑大并逐次固化（实测「越拖越大」）。
-   现在 zoom 只在显式指令时变；窗口 resize 只 relayout，绝不动她的体型。 */
+/* v1.0 像素换代·缩放退役（用户拍板）：体型固定、无缩放档 ——
+   立绘宽度恒为 PET_BASE_W；窗口只随面板家族扩收（panel-viewport 收口复位基准），
+   永不因体型而动。像素画铁律：日后显示一律走「原生 × 整数倍」。 */
 const PET_BASE_W = 210;
-let petZoom = 1;
 function applyPetSize() {
-  pet.style.width = Math.round(PET_BASE_W * petZoom) + 'px';
+  pet.style.width = PET_BASE_W + 'px';
 }
 /* 面板互斥（v1.0 用户实测）：任一满幅面板在场时先收掉其余 —— 不叠层、深底不叠染她 */
 function closeOtherOverlays(keepId) {
@@ -222,13 +220,8 @@ function anyOverlayOpen() {
       || (wd && !wd.classList.contains('hidden'))
       || (researchPanel && !researchPanel.classList.contains('hidden'));
 }
-/* 零漂移契约（v1.0 用户反馈）：面板/记录/实验在场时缩放只动她、不动窗体；
-   欠下的窗体倍数挂账，收口（面板关闭）时一次还清 —— 记录和她都不许漂。 */
-let zoomResizeDebt = 1;
-function flushZoomDebt() {
-  if (zoomResizeDebt !== 1 && api && api.resize) api.resize(zoomResizeDebt);
-  zoomResizeDebt = 1;
-}
+/* v1.0 缩放退役：零漂移账目随缩放一起退役（没有缩放档就没有欠账）。
+   面板扩收仍走 panel-viewport，收口由主进程复位基准（main:360 实锤）。 */
 /* 面板视窗家族化（v1.0）：设置/记录/实验任一在场 → 窗体扩到 440×680（满幅盖住她）；
    全部收口 → 回基准并按缩放档校正（零漂移契约的统一收口）。 */
 function syncPanelViewport() {
@@ -242,19 +235,23 @@ function syncPanelViewport() {
       || (panel && !panel.classList.contains('hidden'))) w = 560;
   // v1.0 拓宽（用户拍板）：个体观测 620 —— 六分区一行横排 + 内容区宽敞
   if (researchPanel && !researchPanel.classList.contains('hidden')) w = 620;
-  api.panelViewport(open, w, 680).then(() => {
-    if (!open) {
-      zoomResizeDebt = 1;
-      if (api.resize) api.resize(petZoom);
-    }
-  });
+  // v1.0 缩放退役：收口不再手动 resize —— panel-viewport(open=false) 自带基准复位
+  api.panelViewport(open, w, 680);
 }
-function zoomPet(factor) {
-  // 与主进程 nextSize 的宽度边界（200..760）大致对齐
-  petZoom = Math.min(2.24, Math.max(0.59, petZoom * factor));
-  applyPetSize();
-  if (anyOverlayOpen()) { zoomResizeDebt *= factor; return; }
-  if (api && api.resize) api.resize(factor);
+/* v1.0 像素换代：zoomPet 退役（缩放档取消，体型永远 PET_BASE_W） */
+
+/* v1.0 像素换代·帧动画通道（骨架先立，Q 版帧到位即接入）：
+   每个状态 = 帧路径数组 + fps，steps 式切换；返回停止器。
+   像素铁律：帧图必须整数倍显示，绝不做亚像素位移（画面会抖）。 */
+function playFrames(el, frames, fps) {
+  if (!el || !Array.isArray(frames) || frames.length === 0) return () => {};
+  let i = 0;
+  el.src = frames[0];
+  const timer = setInterval(() => {
+    i = (i + 1) % frames.length;
+    el.src = frames[i];
+  }, Math.round(1000 / (fps || 6)));
+  return () => clearInterval(timer);
 }
 window.addEventListener('resize', () => {
   relayout();
@@ -1018,25 +1015,18 @@ function startWindowDrag(e) {
 pet.addEventListener('mousedown', startWindowDrag);
 
 /* 缩放手势（v1.0 用户反馈）：在她身上滚动滚轮 = 放大 / 缩小；
-   只挂在她身上，面板滚动区各归各。鼠标中键 = 回默认体型（顺手归位）。 */
-pet.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  zoomPet(e.deltaY < 0 ? 1.1 : 1 / 1.1);
-}, { passive: false });
-let middleTimer = null;   // v1.0 中键双击呼出对话窗：单击动作（体型归位）绝不双发
+   只挂在她身上，面板滚动区各归各。（v1.0 缩放退役：滚轮不再拦截；中键单击无动作、双击 = 呼出对话窗。） */
+// v1.0 像素换代：滚轮缩放退役（缩放档取消）——滚轮滚动交还面板滚动区，不再拦截
+let middleTimer = null;   // v1.0 中键双击呼出对话窗（缩放复位已随缩放系统退役）
 pet.addEventListener('mousedown', (e) => {
   if (e.button === 1) {
     e.preventDefault();
     if (middleTimer) {
-      clearTimeout(middleTimer);   // 第二击：立刻撤销已排队的单击归位
+      clearTimeout(middleTimer);   // 第二击：确认双击
       middleTimer = null;
       if (api && api.chatWindowToggle) api.chatWindowToggle();
     } else {
-      middleTimer = setTimeout(() => {
-        middleTimer = null;
-        // v1.0 缺失修复：回默认体型走同一条缩放通道 —— 只改体型不改窗体会让她比窗宽被裁掉
-        zoomPet(1 / petZoom);
-      }, 250);
+      middleTimer = setTimeout(() => { middleTimer = null; }, 250);   // 单击：无动作
     }
   }
 });

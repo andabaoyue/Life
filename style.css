@@ -1043,7 +1043,10 @@ body.showlog #bubble { display: none !important; }
 .win-divider { text-align: center; color: #6f7787; font-size: 10px; margin: 10px 0 6px; }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* ===== 真·终局块（v1.0 排版总令 · 2026-10 四修）=====
+/* v1.0 像素换代（休眠挂钩）：像素精灵用最近邻渲染，禁抗锯齿（等 body.pixel-sprite 激活） */
+body.pixel-sprite #sprite, body.pixel-sprite #layers img { image-rendering: pixelated; }
+
+/* ===== 真·终局块（v1.0 排版总令 · 2026-10 四修）====="
    血泪教训：上一个「终局块」锚在文件中段（405 行），被 880 行的原规则反超成死条文 ——
    此块锚在文件真正的最后一行之后，保证胜过一切在先规则。 */
 :root { color-scheme: dark; }
