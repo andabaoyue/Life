@@ -312,7 +312,8 @@ function showFallbackSprite() {
 
 function applyLayers(layers) {
   layerSrcs = layers || [];
-  if (!layerSrcs.length) return showFallbackSprite();
+  // v1.0 像素换代：只要处于像素预览期，素体（base_pixel_chibi）永远上屏；衣柜为空表示素体，绝非无图回退
+  if (!layerSrcs.length && !PIXEL_PREVIEW) return showFallbackSprite();
 
   // 纸娃娃式自由搭配（v1.0 资产补全方案 B）：素体打底，衣物切片逐件叠穿（z 序由 layers() 排好）。
   // 衣物切片由 scripts/gen-garment-slices.py 按素体轮廓分带生成（程序绘制的过渡资产，
