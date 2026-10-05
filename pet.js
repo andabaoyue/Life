@@ -199,9 +199,11 @@ const PET_RATIO = 210 / 340;
 /* v1.0 像素换代·缩放退役（用户拍板）：体型固定、无缩放档 ——
    立绘宽度恒为 PET_BASE_W；窗口只随面板家族扩收（panel-viewport 收口复位基准），
    永不因体型而动。像素画铁律：日后显示一律走「原生 × 整数倍」。 */
-const PET_BASE_W = 210;
+const PET_BASE_W = 256;   // v1.0 像素换代：64 原生 ×4 = 256（整数倍，像素铁律）
+const PIXEL_PREVIEW = true;   // v1.0 像素预览开关：单图上屏；换装像素化（批次②）后恢复 layered
 function applyPetSize() {
   pet.style.width = PET_BASE_W + 'px';
+  if (PIXEL_PREVIEW) document.body.classList.add('pixel-sprite');   // 最近邻渲染，禁抗锯齿
 }
 /* 面板互斥（v1.0 用户实测）：任一满幅面板在场时先收掉其余 —— 不叠层、深底不叠染她 */
 function closeOtherOverlays(keepId) {
@@ -315,7 +317,8 @@ function applyLayers(layers) {
   // 纸娃娃式自由搭配（v1.0 资产补全方案 B）：素体打底，衣物切片逐件叠穿（z 序由 layers() 排好）。
   // 衣物切片由 scripts/gen-garment-slices.py 按素体轮廓分带生成（程序绘制的过渡资产，
   // 像素级美术资产补齐后按同路径整体替换即可，代码零改动）。勾选多少穿多少，如实呈现。
-  const srcs = ['assets/character/base/base.png', ...layerSrcs.map(l => l.src)];
+  // v1.0 像素换代：像素预览走 base_pixel_chibi（64×80 原生 ×4 上屏）；正典 base.png 是管线源，绝不覆写
+  const srcs = [PIXEL_PREVIEW ? 'assets/character/base/base_pixel_chibi.png' : 'assets/character/base/base.png', ...layerSrcs.map(l => l.src)];
   const imgs = srcs.map(src => new Promise((res, rej) => {
     const im = new Image();
     im.onload = () => res();

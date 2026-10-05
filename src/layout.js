@@ -12,8 +12,8 @@
  * 所以它必须是常量。
  */
 
-const BASE_W = 340;
-const BASE_H = 480;
+const BASE_W = 256;   // v1.0 像素换代：紧凑窗（64×80 原生 ×4 显示档）
+const BASE_H = 320;
 const ASPECT = BASE_H / BASE_W;   // 高/宽，写死
 const MIN_W = 200;
 const MAX_W = 760;

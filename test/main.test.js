@@ -138,13 +138,13 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
 
   /* ============ 3. 缩放：常量比例 + 下边缘钉住 ============ */
   const layout = require(path.join(ROOT, 'src/layout.js'));
-  size = [340, 480]; pos = [100, 500];
+  size = [layout.BASE_W, layout.BASE_H]; pos = [100, 500];   // v1.0 像素换代：起始锚新基准（256x320）
   const bottom0 = pos[1] + size[1];
   for (let i = 0; i < 6; i++) await emit('resize-pet', 1.1);
   check('放大 6 次后宽高比仍等于设计比例（旧写法逐次累积舍入误差）',
     Math.abs(size[1] / size[0] - layout.ASPECT) < 0.01, size.join('x'));
   for (let i = 0; i < 6; i++) await emit('resize-pet', 1 / 1.1);
-  check('来回缩放能精确收回 340x480', size[0] === 340 && size[1] === 480, size.join('x'));
+  check('来回缩放能精确收回基准尺寸（v1.0 像素换代）', size[0] === layout.BASE_W && size[1] === layout.BASE_H, size.join('x'));
   check('每次缩放钉住下边缘（脚不陷进屏幕底）',
     Math.abs((pos[1] + size[1]) - bottom0) <= 1, bottom0 + ' -> ' + (pos[1] + size[1]));
   for (let i = 0; i < 30; i++) await emit('resize-pet', 2);
