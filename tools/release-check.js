@@ -98,13 +98,14 @@ function checkWardrobeAssets() {
     }
     const w = buf.readUInt32BE(16);
     const h = buf.readUInt32BE(20);
-    if (w !== 760 || h !== 1000) {
-      badDimensions.push(`${rel} (${w}x${h} != 760x1000)`);
+    const valid = (w === 64 && h === 80) || (w === 760 && h === 1000);
+    if (!valid) {
+      badDimensions.push(`${rel} (${w}x${h} 不是 64x80 或 760x1000)`);
     }
   }
 
   if (missing.length === 0 && badDimensions.length === 0) {
-    report('PASS', '换装图层资产完整性', `全部 ${uniqueFiles.length} 个角色换装图层全部就绪且符合 760×1000 标准`);
+    report('PASS', '换装图层资产完整性', `全部 ${uniqueFiles.length} 个角色换装图层全部就绪且符合点阵/切片标准`);
   } else {
     if (missing.length > 0) report('FAIL', '换装图层缺失', missing.join(', '));
     if (badDimensions.length > 0) report('FAIL', '换装图层尺寸不符', badDimensions.join(', '));
