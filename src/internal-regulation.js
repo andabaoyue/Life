@@ -85,6 +85,13 @@ class InternalRegulationManager {
     this.cognitiveLoadProxy = REGULATION_BOUNDS.cognitiveLoadProxy.default;
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this.isSleeping = false;
+    // 睡眠周期上下文（v3.1 梦境时序改造）：与 isSleeping 同盘持久化，
+    // 让「退出前什么状态，回归后还是什么状态」跨重启成立。
+    // sleepStartTime 是入睡那一刻的物理挂钟时间戳 —— 睡眠时长必须用它算，
+    // 绝不能用 windowNo（睡觉期间用户不发消息，窗口号静止，8 小时也是 0）。
+    this.sleepStartTime = null;
+    // 入睡时冻结的梦境原料（Sleep Staging）：只存不调 LLM，留到苏醒时才结算。
+    this.sleepStaging = null;
     this.updatedAt = Date.now();
     this.history = []; // 最近转移事件流水 (上限 50 条)
     // v0.9.8 F-13: 全历史 Attention Watermark 负责语义幂等；
@@ -150,6 +157,67 @@ class InternalRegulationManager {
         persistedCount: this.persistedConsumedAttentionEvents.size
       }
     });
+  }
+
+  /**
+   * 冻结一次睡眠周期的梦境原料（Sleep Staging）
+   *
+   * 入睡那一刻 ONLY 快照、零 LLM 调用。原料来自当日的日间遗留与唤醒度轨迹，
+   * 醒来后才拿它去合成梦 —— 这样梦才有时间跨度，而不是入睡瞬间就产生。
+   *
+   * @param {Object} staging
+   * @param {number} staging.at 入睡时刻（物理挂钟毫秒）
+   * @param {number} staging.windowNo 冻结时的窗口号
+   * @param {Array}  [staging.dayResidues] extractDayResidues 的产物
+   * @param {Object} [staging.arousalTrajectory] computeWindowArousalTrajectory 的产物
+   * @param {number} [staging.noveltyScore]
+   */
+  stageSleepContext(staging = {}) {
+    if (!this.enabled) return null;
+    const at = Number.isFinite(staging.at) ? staging.at : Date.now();
+    this.sleepStartTime = at;
+    this.sleepStaging = {
+      at,
+      // 冻结时的窗口号必须由调用方如实传入 —— 这个类自身不持有 windowNo
+      // （窗口号归Memory 三层记忆管），拿不到就记0，绝不臆造一个窗口号。
+      windowNo: Number.isFinite(staging.windowNo) ? staging.windowNo : 0,
+      dayResidues: Array.isArray(staging.dayResidues) ? staging.dayResidues.slice(0, 6) : [],
+      arousalTrajectory: staging.arousalTrajectory && typeof staging.arousalTrajectory === 'object'
+        ? staging.arousalTrajectory
+        : null,
+      noveltyScore: Number.isFinite(staging.noveltyScore) ? staging.noveltyScore : 0,
+      // 显式标记：本原料是睡着时冻结的，醒来结算时门禁须按睡眠期口径放行
+      fromSleep: true
+    };
+    this.updatedAt = at;
+    this.save();
+    return this.sleepStaging;
+  }
+
+  /**
+   * 读取当前睡眠周期上下文（含已睡物理时长），不在睡则返回 null
+   * @param {number} [now] 注入时刻，便于测试确定性
+   */
+  getSleepContext(now = Date.now()) {
+    if (!this.isSleeping || !this.sleepStartTime) return null;
+    const elapsedMs = Math.max(0, now - this.sleepStartTime);
+    return {
+      sleepStartTime: this.sleepStartTime,
+      elapsedMs,
+      elapsedMinutes: elapsedMs / 60000,
+      elapsedHours: elapsedMs / 3600000,
+      staging: this.sleepStaging
+    };
+  }
+
+  /**
+   * 苏醒结算后清空睡眠周期上下文（原料一次性消费，绝不复用）
+   */
+  clearSleepContext() {
+    const had = this.sleepStartTime !== null || this.sleepStaging !== null;
+    this.sleepStartTime = null;
+    this.sleepStaging = null;
+    return had;
   }
 
   /**
@@ -501,6 +569,16 @@ class InternalRegulationManager {
 
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(isSleeping ? 'enter_sleep' : 'wake_up', deltas, prev, at);
+
+    // v3.1 梦境时序改造：入睡时刻落盘（供物理时长门禁跨重启计算），
+    // 唤醒时刻只清空原料、绝不重置起始时间 —— 与 tracker.enterSleepMode 的幂等守卫同源。
+    if (isSleeping) {
+      this.sleepStartTime = at;
+    } else {
+      this.sleepStartTime = null;
+      this.sleepStaging = null;
+    }
+
     this.save();
     return this._emitChange(this.getState());
   }
@@ -565,6 +643,28 @@ class InternalRegulationManager {
           this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
           if (typeof raw.isSleeping === 'boolean') this.isSleeping = raw.isSleeping;
           else if (raw.values && typeof raw.values.isSleeping === 'boolean') this.isSleeping = raw.values.isSleeping;
+          // 睡眠周期上下文跨重启恢复：起始时刻与冻结原料一起回来，
+          // 于是「退出前什么状态，回归后还是什么状态」在梦境门禁上也成立。
+          if (typeof raw.sleepStartTime === 'number' && Number.isFinite(raw.sleepStartTime)) {
+            this.sleepStartTime = raw.sleepStartTime;
+          }
+          if (raw.sleepStaging && typeof raw.sleepStaging === 'object') {
+            const s = raw.sleepStaging;
+            this.sleepStaging = {
+              at: Number.isFinite(s.at) ? s.at : Date.now(),
+              windowNo: Number.isFinite(s.windowNo) ? s.windowNo : 0,
+              dayResidues: Array.isArray(s.dayResidues) ? s.dayResidues.slice(0, 6) : [],
+              arousalTrajectory: (s.arousalTrajectory && typeof s.arousalTrajectory === 'object') ? s.arousalTrajectory : null,
+              noveltyScore: Number.isFinite(s.noveltyScore) ? s.noveltyScore : 0,
+              fromSleep: true
+            };
+          }
+          // 清醒态却带着入睡时刻 = 状态自相矛盾（磁盘残留/外部改写），
+          // 宁可丢掉这个陈旧时刻，也绝不让她一睁眼就显示"睡了 8 小时"。
+          if (!this.isSleeping) {
+            this.sleepStartTime = null;
+            this.sleepStaging = null;
+          }
           this.updatedAt = raw.updatedAt || Date.now();
           if (Array.isArray(raw.history)) this.history = raw.history.slice(-50);
           if (Array.isArray(raw.persistedConsumedAttentionEvents)) {
@@ -608,6 +708,9 @@ class InternalRegulationManager {
         semanticLayer: SEMANTIC_LAYERS.SUBJECT_STATE_PROXY,
         updatedAt: this.updatedAt,
         isSleeping: this.isSleeping,
+        // 睡眠周期上下文：与 isSleeping 同盘原子落盘，重启后梦境时长门禁不失忆
+        sleepStartTime: this.sleepStartTime,
+        sleepStaging: this.sleepStaging,
         values: {
           energy: this.energy,
           restPressure: this.restPressure,

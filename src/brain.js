@@ -276,6 +276,9 @@ class Brain {
     this.tracker = tracker || null;
     if (this.tracker && this.internalRegulation) {
       this.tracker.setInternalRegulation(this.internalRegulation);
+      // v3.1 梦境时序改造：被唤醒（拖拽/摇晃）→ 惰性结算梦境。
+      // 钩子只订阅、不改写任何物理唤醒判据；结算失败也绝不影响唤醒本身。
+      this.tracker.onWakeHook = (info) => this._settleDreamOnWake('physical_wake', info);
     }
     if (this.tracker && typeof this.processEnvironmentalPerception === 'function') {
       this.tracker.setPerceptionPipeline((raw) => this.processEnvironmentalPerception(raw));
@@ -755,6 +758,25 @@ class Brain {
           if (snap.idleMin > 10) this.internalRegulation.updateOnActivity('idle', { idleMin: snap.idleMin, timestamp: now });
         }
       }
+
+      // v3.1 梦境时序改造 · 惰性苏醒结算（路径 B）：
+      // 用户重新发消息时，若她仍在睡（退出软件期间睡着的典型场景），此刻才结算梦境。
+      // 不在睡时 getSleepContext 直接返回 null，零开销；这里不做任何定时器（D-001）。
+      try {
+        const sleepCtx = this.internalRegulation.getSleepContext
+          ? this.internalRegulation.getSleepContext(now)
+          : null;
+        if (sleepCtx && this.internalRegulation.updateOnSleep) {
+          this.internalRegulation.updateOnSleep(false, { timestamp: now });
+          if (tr) tr.wakeUp(now);
+          // 不阻塞本次回复：梦在后台生成，回复不等它
+          this._settleDreamOnWake('message_wake', {
+            sleepStartTime: sleepCtx.sleepStartTime,
+            elapsedMs: sleepCtx.elapsedMs,
+            staging: sleepCtx.staging
+          }).catch(() => {});
+        }
+      } catch (e) { /* 惰性结算失败绝不影响本次回复 */ }
     }
 
     // v0.9.7: 关联线索触发休眠记忆重新激活 (Contextual Reactivation)
@@ -906,10 +928,11 @@ class Brain {
     const herSleepIntent = !!(tr && tr.constructor && typeof tr.constructor.isSleepIntent === 'function'
       && tr.constructor.isSleepIntent(String(clean || text || '')));
     if (sleepIntent || herSleepIntent) {
-    // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
-    if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
-      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false, preClose: true }).catch(() => {});
-    }
+    // v3.1 梦境时序改造：入睡 ONLY 冻结梦境原料，零 LLM 调用 ——
+    // 过去是「入睡即结算」，说完晚安约 2 秒梦就落盘，于是退出软件后重进看到的梦已经做完。
+    // 现在梦的结算点后移到苏醒那一刻，原料冻结在入睡时，跨重启可恢复。
+    // 物理时长门禁（Δt ≥ sleepMinimumDreamMinutes）与窗口间隔豁免由 dream-system 判定。
+    this._freezeDreamStagingForSleep().catch(() => {});
       const sleepAt = Date.now();
       if (tr) {
         tr.enterSleepMode(sleepAt);
@@ -1631,6 +1654,131 @@ class Brain {
   /** v2.0 梦境周期（离线重组）：关窗与入睡共用同一台机器（抽取自原关窗块，行为不变）。
    *  防伪链条不变：产物一律带 [DREAM_GENERATED_ARTIFACT] / 【离线重组碎片】（非亲历）标签，绝不冒充亲历。
    *  ctx: { snap, syn, verifiedEvidence, events, noveltyProxy } */
+  /**
+   * v3.1 梦境时序改造 · 入睡冻结（Sleep Staging）
+   *
+   * 入睡那一刻 ONLY 把当天的日间遗留与唤醒度轨迹拍个快照、落盘，**绝不调 LLM**。
+   * 梦的结算点后移到苏醒那一刻 —— 这样梦才有时间跨度，而不是说完晚安两秒后就已完成。
+   * 冻结原料与 sleepStartTime 同盘存进 internal-regulation.json，重启后原样恢复。
+   *
+   * @returns {Promise<Object|null>} 冻结体；模块未启用或无调节器时返回 null
+   */
+  async _freezeDreamStagingForSleep() {
+    try {
+      const reg = this.internalRegulation;
+      if (!reg || typeof reg.stageSleepContext !== 'function') return null;
+      if (!this.isExperimentModuleActive || !this.isExperimentModuleActive('sleepConsolidation')) return null;
+
+      const snap = this.memory.windowSnapshot();
+      const { computeWindowArousalTrajectory, extractDayResidues } = require('./dream-system');
+
+      // 冻结的是「睡着之前的这一天」，所以用当前窗口的真实交互算原料，不调任何模型。
+      const regHistory = Array.isArray(reg.history) ? reg.history : [];
+      const arousalTrajectory = computeWindowArousalTrajectory(
+        snap.activeItems || [], [], [], { regulationHistory: regHistory }
+      );
+      const dayResidues = extractDayResidues(snap.activeItems || [], []);
+
+      // 新异度用物理代理：只数真实交互条数，不编内容（与旧入睡路径同口径）
+      const noveltyScore = Number(Math.min(1.0, Math.min(4, Math.round((snap.activeItems || []).length / 25)) * 0.25).toFixed(2));
+
+      return reg.stageSleepContext({
+        at: Date.now(),
+        windowNo: snap.windowNo,
+        dayResidues,
+        arousalTrajectory,
+        noveltyScore
+      });
+    } catch (err) {
+      console.error('[Brain] 入睡冻结梦境原料失败 (Fail-Safe):', redactSecrets(err.message));
+      return null;
+    }
+  }
+
+  /**
+   * v3.1 梦境时序改造 · 苏醒结算（Wake-Up Settlement）
+   *
+   * 醒来那一刻才真正合成梦，时间戳记醒来时刻。两条触发路径共用本方法：
+   *   A 被唤醒 —— tracker.wakeUp()（拖拽 ≥80px / 摇晃 ≥5 次，见 tracker.js）
+   *   B 惰性 —— 用户重新发消息时发现她仍在睡（不在睡则直接返回，零开销）
+   *
+   * 小憩（Δt 不足门槛）与无睡眠原料时如实跳过；24h 频次硬顶与认知门禁照常生效。
+   * 原料一次性消费：无论本次是否真的做梦，结算后都清空，绝不拿同一份原料重复做梦。
+   *
+   * @returns {Promise<Object|null>} 实际生成的梦境记录；未生成返回 null
+   */
+  async _settleDreamOnWake(trigger = 'wake', preset = null) {
+    try {
+      const reg = this.internalRegulation;
+      if (!reg) return null;
+
+      // preset 来自 tracker 唤醒钩子（原料已在 updateOnSleep 清空前抓住）；
+      // 没有 preset 时走惰性路径，直接从调节器读当前睡眠上下文。
+      let sleepStartTime, staging;
+      if (preset && Number.isFinite(preset.sleepStartTime)) {
+        sleepStartTime = preset.sleepStartTime;
+        staging = preset.staging || null;
+      } else {
+        if (typeof reg.getSleepContext !== 'function') return null;
+        const sleepCtx = reg.getSleepContext();
+        if (!sleepCtx) return null;   // 不在睡 → 零开销
+        sleepStartTime = sleepCtx.sleepStartTime;
+        staging = sleepCtx.staging || null;
+      }
+
+      if (!Number.isFinite(sleepStartTime)) return null;
+
+      if (!this.isExperimentModuleActive || !this.isExperimentModuleActive('sleepConsolidation')) {
+        reg.clearSleepContext();
+        return null;
+      }
+
+      if (!staging || !Array.isArray(staging.dayResidues) || staging.dayResidues.length === 0) {
+        // 睡着时没冻结到任何原料（没启用模块/ 原料为空）→ 无从结算，如实跳过。
+        reg.clearSleepContext();
+        return null;
+      }
+
+      // 先算物理时长（用冻结时的入睡时刻，而不是"此刻往前推"，跨重启才不失真）
+      const sleepElapsedMs = Math.max(0, Date.now() - sleepStartTime);
+      const snap = this.memory.windowSnapshot();
+
+      let produced = null;
+      const before = this.dreamHistory.length;
+      await this._dreamCycle({
+        snap: { ...snap, windowNo: staging.windowNo || snap.windowNo },
+        syn: null,
+        verifiedEvidence: [],
+        events: [],
+        noveltyProxy: true,
+        isWindowClose: false,
+        preClose: true,
+        fromSleep: true,
+        sleepElapsedMs,
+        sleepStaging: staging
+      });
+      if (Array.isArray(this.dreamHistory) && this.dreamHistory.length > before) {
+        produced = this.dreamHistory[this.dreamHistory.length - 1];
+      }
+
+      // 原料一次性消费：做梦与否都清空，防止同一份睡眠原料反复做梦。
+      reg.clearSleepContext();
+      reg.save();
+
+      if (produced) {
+        console.log('[Brain] 苏醒结算梦境（' + trigger + '，睡了 ' +
+          (sleepElapsedMs / 3600000).toFixed(1) + ' 小时）');
+      } else {
+        console.log('[Brain] 苏醒结算未产生梦境（' + trigger + '，睡了 ' +
+          (sleepElapsedMs / 3600000).toFixed(1) + ' 小时，门禁未放行）');
+      }
+      return produced;
+    } catch (err) {
+      console.error('[Brain] 苏醒结算梦境失败 (Fail-Safe):', redactSecrets(err.message));
+      return null;
+    }
+  }
+
   async _dreamCycle(ctx = {}) {
     const snap = ctx.snap || {};
     const syn = ctx.syn || { stableUserFacts: [], subjectExperiences: [] };
@@ -1664,11 +1812,20 @@ class Brain {
               stateHistory: this.subjectState ? this.subjectState.data.history : [],
               verifiedEvidence: verifiedEvidence || [],
               dreamHistory: this.dreamHistory || [],
+              // v3.1 梦境时序改造：睡眠来源结算须显式带上「来自睡眠期」与可验证的物理时长，
+              // 门禁据此走第三道时长校验，并对窗口间隔做豁免（跨夜长睡期间窗口号不动）。
+              fromSleep: ctx.fromSleep === true,
+              sleepElapsedMs: ctx.sleepElapsedMs,
               now
             });
 
             if (gateResult && gateResult.allowDream) {
-              const residues = extractDayResidues(snap.activeItems || [], verifiedEvidence || []);
+              // 睡眠来源结算必须用入睡时冻结的原料（那才是「那一天」的遗留），
+              // 缺失则如实退回现算，绝不用醒来后的新对话冒充睡眠期原料。
+              const staging = ctx.sleepStaging || null;
+              const residues = (ctx.fromSleep === true && staging && Array.isArray(staging.dayResidues) && staging.dayResidues.length > 0)
+                ? staging.dayResidues
+                : extractDayResidues(snap.activeItems || [], verifiedEvidence || []);
               const dreamPrompt = buildDreamSynthesisPrompt(residues, snap.windowNo);
 
               // F-11: 严谨三层 Provenance 分离 (evidenceId ≠ eventId ≠ messageId)
@@ -1726,7 +1883,12 @@ class Brain {
                 verifiedEvidence: evList,
                 dayResidues: residues,
                 gateMetrics: gateResult.metrics,
-                gateThresholds: gateResult.thresholds
+                gateThresholds: gateResult.thresholds,
+                // v3.1 梦境时序改造：如实登记这是「睡眠来源」结算及其可验证的物理时长，
+                // 供归档与研究层区分「关窗梦」与「醒来梦」，严禁事后猜测。
+                fromSleep: ctx.fromSleep === true,
+                sleepElapsedMs: (ctx.fromSleep === true && Number.isFinite(ctx.sleepElapsedMs)) ? ctx.sleepElapsedMs : null,
+                sleepStartTime: (ctx.fromSleep === true && staging && Number.isFinite(staging.at)) ? staging.at : null
               }, {
                 ...(this.cfg.dreamConfig || {}),
                 now
@@ -1778,9 +1940,9 @@ class Brain {
     if (this.internalRegulation && typeof this.internalRegulation.updateOnSleep === 'function') {
       this.internalRegulation.updateOnSleep(true, { timestamp: Date.now() });
     }
-    // v2.0：真入睡 → 后台跑梦境门禁与合成（防伪链条不变；不阻塞回复、不加定时器）
+    // v3.1 梦境时序改造：真入睡 → 零 LLM，只冻结梦境原料；结算留到苏醒那一刻。
     if (this.isExperimentModuleActive && this.isExperimentModuleActive('sleepConsolidation')) {
-      this._dreamCycle({ snap: this.memory.windowSnapshot(), syn: null, verifiedEvidence: [], events: [], noveltyProxy: true, isWindowClose: false, preClose: true }).catch(() => {});
+      this._freezeDreamStagingForSleep().catch(() => {});
     }
     return true;
   }

@@ -34,6 +34,52 @@ const DEFAULT_DYNAMICS_CONFIG = Object.freeze({
 });
 
 /**
+ * 面板 B 徽章：愿望结果三态（V3.1 §2.3 新增维度）
+ * 取值域与 memory.js resolveExpectation() 的白名单**逐字对齐**，
+ * 严禁在此自造新词——那会让 UI 显示出一个数据库里根本不存在的状态。
+ */
+const EXPECTATION_OUTCOMES = Object.freeze({
+  FULFILLED: 'fulfilled',   // 已实现
+  BROKEN: 'broken',         // 已破灭
+  MOOT: 'moot'              // 已作废
+});
+
+/**
+ * 面板 B 徽章：瞬时事件一态（V3.1 §2.3）
+ * 与前两个维度正交——它不是"当前处于什么状态"，而是"刚刚发生了什么"。
+ */
+const REACTIVATION_EVENT = Object.freeze('REACTIVATED');
+
+/**
+ * 徽章分类（纯函数，零副作用）
+ *
+ * V3.1 §2.3：6+1 徽章是**三个正交维度**，不是一列六个互斥标签。
+ * 把它们混成一列是 V3.0 的原始错误 —— 强度与结果本就可以同时成立
+ * （一条 ACTIVE 且 fulfilled 的记忆完全正常），一列标签表达不了。
+ *
+ * @param {object} input
+ * @param {string} [input.tier]             记忆强度态（ACTIVE / FADING / DORMANT）
+ * @param {string} [input.outcome]          愿望结果态（fulfilled / broken / moot）
+ * @param {boolean}[input.justReactivated]  是否刚刚被唤醒（本窗口内 reactivate 过）
+ * @returns {{strength: ?string, outcome: ?string, event: ?string, badges: string[]}}
+ */
+function classifyBadges(input = {}) {
+  const strength = ENGRAM_TIERS[String(input.tier || '')] || null;
+  // 注意：EXPECTATION_OUTCOMES 的「键」是 FULFILLED/BROKEN/MOOT，「值」才是
+  // fulfilled/broken/moot —— 而 data.expectations[].status 存的是**值**。
+  // 所以这里必须拿值去比，不能拿键去 hasOwnProperty（那是本次实测踩到的真坑）。
+  const rawOutcome = String(input.outcome || '');
+  const outcome = Object.values(EXPECTATION_OUTCOMES).includes(rawOutcome) ? rawOutcome : null;
+  const event = input.justReactivated === true ? REACTIVATION_EVENT : null;
+
+  const badges = [];
+  if (strength) badges.push(strength);
+  if (outcome) badges.push(outcome);
+  if (event) badges.push(event);
+  return { strength, outcome, event, badges };
+}
+
+/**
  * 确定性代数计算：初始记忆强度 S0 ∈ [0, 1]
  */
 function calculateInitialStrength(opts = {}, config = DEFAULT_DYNAMICS_CONFIG) {
@@ -200,6 +246,53 @@ class EngramTraceManager {
   }
 
   /**
+   * 面板 B 专用：实时重算某条印痕的当前态，**零写盘、零改内存**。
+   *
+   * 双读路径（本轮新增，V3.1 §3）：
+   *   - tierForPrompt  = trace.tier，只在关窗 decayAll() 时写定，进 Prompt 永不变化（护前缀缓存）
+   *   - tierForDisplay = 本方法，纯算不落盘，只给人看
+   *
+   * 之所以敢这么做：computeEngramDecay() 是**纯函数**（只读 trace 不写回），
+   * 破缓存的是"改变进 Prompt 的文本"，不是"重算一个数给人看"。
+   *
+   * @param {string} traceId
+   * @param {number} currentWindow 观察时刻的窗口号（不传则用 trace.createdWindow）
+   * @returns {object|null} { traceId, tierForDisplay, currentStrength, ... }；traceId 不存在返回 null
+   */
+  tierForDisplay(traceId, currentWindow) {
+    const trace = this.traces.get(traceId);
+    if (!trace) return null;
+    const w = Number.isFinite(currentWindow) ? currentWindow : trace.createdWindow;
+    const computed = computeEngramDecay(trace, w, this.config);
+    if (!computed) return null;
+    return {
+      ...computed,
+      // 面板 A 的定值一并带出，便于 UI 同屏对照「她以为的」与「实际的」
+      tierForPrompt: trace.tier,
+      // 两者不一致 = 记忆已跨过一个关窗边界但 decayAll 尚未执行（正常只在关窗前的那段窗口内出现）
+      driftedFromPrompt: computed.tier !== trace.tier
+    };
+  }
+
+  /**
+   * 面板 B 专用：批量实时重算全部印痕的当前态，**零写盘、零改内存**。
+   * 与 tierForDisplay 同源，区别只是省掉逐条 Map 查找。
+   */
+  tiersForDisplay(currentWindow) {
+    const out = [];
+    for (const [id, trace] of this.traces.entries()) {
+      const computed = computeEngramDecay(trace, currentWindow, this.config);
+      if (!computed) continue;
+      out.push({
+        ...computed,
+        tierForPrompt: trace.tier,
+        driftedFromPrompt: computed.tier !== trace.tier
+      });
+    }
+    return out;
+  }
+
+  /**
    * 导出快照（用于落盘至 experiences.jsonl 的 memory_dynamics_snapshot 记录）
    */
   exportSnapshot(currentWindow) {
@@ -232,7 +325,10 @@ class EngramTraceManager {
 
 module.exports = {
   DEFAULT_DYNAMICS_CONFIG,
+  EXPECTATION_OUTCOMES,
+  REACTIVATION_EVENT,
   calculateInitialStrength,
+  classifyBadges,
   computeEngramDecay,
   EngramTraceManager
 };

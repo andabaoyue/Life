@@ -35,17 +35,18 @@ const DEFAULTS = {
   modelVersion: 'unavailable',
 
   /* ---- 记忆窗口 ----
-     V4.1 Flash 上下文上限 1M token，所以窗口大小不是模型限制，
+     V4.1 Flash 上下文上限 1M token（2026-10-05 实测确认：服务端回包 observedModel=deepseek-flash，
+     官方文档 CONTEXT LENGTH 1M），所以窗口大小不是模型限制，
      纯粹是「多久破一次缓存」的权衡：
        windowTurns 越大 -> system 越久不变 -> 命中率越高，但单次请求越贵
        100 轮实测 ≈ 250 token/轮 × 100 ≈ 25K token 上下文，命中率能稳在 95%+（v0.9.9 实测校准） */
   windowTurns: 100,          // 每 100 轮关一次窗口并生成小结
   windowMaxTokens: 30000,    // 兜底：单窗口超此 token 也提前关窗（30K = 满 100 轮 + 裕度，让 windowTurns 成为真约束）
   keepTailMessages: 6,       // 关窗时保留最近 6 条原文，避免突然失忆
-  memoryCapTokens: 6000,     // Prompt Memory 长期记忆预算（基线 6000），超了就把旧片段合并
+  memoryCapTokens: 12000,    // Prompt Memory 长期记忆预算（v3.1 扩容：基线 6000 → 12000），超了就把旧片段合并
   selfGrowthEnabled: true,   // 每个记忆窗口结束时，提炼一次主体成长证据
   selfLedgerMaxEntries: 200, // 只限制条目数量，不把旧经历覆盖成一个“最新人格”
-  currentSelfTokenBudget: 3000, // 只注入最新 user 尾部的有限自我投影
+  currentSelfTokenBudget: 9000, // 只注入最新 user 尾部的有限自我投影（v3.1 扩容：3000 → 9000）
   requestTimeoutMs: 60000,   // 请求总超时，避免网络卡住永久锁死界面
   streamIdleTimeoutMs: 20000,// SSE 长时间无新数据时主动中止
   // v0.9.9 P1-a: 发送前输出 token 预算（跨 retry 的最坏情况，见 budget-guard.assertBudget）。

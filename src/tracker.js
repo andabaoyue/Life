@@ -52,6 +52,9 @@ class ActivityTracker {
     this.wokenUpAt = null;
     this.wokenDurationHours = 0;
     this.wakeupTtlMs = opts.wakeupTtlMs ?? 10 * 60 * 1000;
+    // v3.1 梦境时序改造：被唤醒时由Brain 注入的结算钩子（惰性、不阻塞物理判据）。
+    // 唤醒本身仍是纯物理事实；梦的结算只是搭这条既有通路顺带发生的事。
+    this.onWakeHook = typeof opts.onWake === 'function' ? opts.onWake : null;
     this.motionState = 'idle';
     this.motionLabel = '静止';
 
@@ -264,9 +267,29 @@ class ActivityTracker {
     this.wokenUpAt = at;
     this.spokenDuringIdle = false;
 
+    // v3.1 梦境时序改造：被唤醒 → 搭这条通路顺带结算梦境。
+    // 顺序很关键：先抓睡眠上下文（此刻原料还在），再让 updateOnSleep(false) 清空它，
+    // 最后用抓到的快照去结算。失败绝不影响唤醒本身（唤醒是物理事实，梦只是附带产物）。
+    const sleepCtx = (this.onWakeHook && this.internalRegulation && typeof this.internalRegulation.getSleepContext === 'function')
+      ? this.internalRegulation.getSleepContext(at)
+      : null;
+
     // Phase 0.5 (P0-3): 唤醒实时事件直连
     if (this.internalRegulation && typeof this.internalRegulation.updateOnSleep === 'function') {
       this.internalRegulation.updateOnSleep(false, { timestamp: at });
+    }
+
+    if (this.onWakeHook) {
+      try {
+        const r = this.onWakeHook({
+          at,
+          durationHours: this.wokenDurationHours,
+          sleepStartTime: sleepCtx ? sleepCtx.sleepStartTime : null,
+          elapsedMs: sleepCtx ? sleepCtx.elapsedMs : null,
+          staging: sleepCtx ? sleepCtx.staging : null
+        });
+        if (r && typeof r.catch === 'function') r.catch(() => {});
+      } catch (e) { /* 结算失败不影响唤醒 */ }
     }
     return true;
   }

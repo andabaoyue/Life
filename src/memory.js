@@ -494,6 +494,73 @@ class Memory {
     return { ok: true, entry: hit };
   }
 
+  /* ---------- 面板 B：连接桥观测出口（V3.1 §3 双读路径） ---------- */
+
+  /**
+   * 面板 B（观测看板）专用快照：**给人看，不进 Prompt**。
+   *
+   * 为什么要分两条路（这是本轮最关键的设计约束）：
+   *   面板 A（主体心智）进 Prompt，它的文本在一个窗口内必须**逐字不变**，
+   *   否则前缀缓存整段失效。所以 trace.tier 只能由关窗时的 decayAll() 写定。
+   *   但面板 B 要显示"此刻真实衰减到哪了"——如果照抄 trace.tier，
+   *   看板会比实际慢一个关窗周期，看上去"记忆还很清楚，其实已经淡了"。
+   *
+   * 干净解：computeEngramDecay() 是**纯函数**（只读 trace、不写回、不落盘），
+   * 所以"重算一个数给人看"零成本、零副作用、**不碰任何进 Prompt 的文本**。
+   * 破缓存的是"改变进 Prompt 的文本"，不是"多算一个数"。
+   *
+   * @param {number} [currentWindow] 观察时刻；缺省用当前窗口号
+   * @returns {{windowNo:number, generatedAt:number, traces:Array, expectationOutcomes:Array, summary:object}}
+   */
+  observationSnapshot(currentWindow) {
+    const w = Number.isFinite(currentWindow) ? currentWindow : (this.data.windowNo || 1);
+    const { classifyBadges } = require('./memory-dynamics');
+
+    // 印痕：强度维度走纯函数实时算；promptTier 保留关窗定值供对照
+    const traces = this.engramManager
+      ? this.engramManager.tiersForDisplay(w).map((t) => {
+          const badges = classifyBadges({ tier: t.tier });
+          return {
+            traceId: t.traceId,
+            sourceWindowNo: t.sourceWindowNo,
+            currentStrength: t.currentStrength,
+            // tierForDisplay = 实时纯算（给人看）；tierForPrompt = 关窗定值（进 Prompt）
+            tierForDisplay: t.tier,
+            tierForPrompt: t.tierForPrompt,
+            driftedFromPrompt: t.driftedFromPrompt,
+            badges: badges.badges
+          };
+        })
+      : [];
+
+    // 愿望：结果维度独立于记忆强度，两者正交
+    const expectationOutcomes = (Array.isArray(this.data.expectations) ? this.data.expectations : [])
+      .filter((x) => x && x.status && x.status !== 'open')
+      .map((x) => {
+        const badges = classifyBadges({ outcome: x.status });
+        return {
+          id: x.id,
+          status: x.status,
+          outcomeAt: x.outcome ? x.outcome.at : null,
+          badges: badges.badges
+        };
+      });
+
+    const summary = { ACTIVE: 0, FADING: 0, DORMANT: 0 };
+    for (const t of traces) if (summary[t.tierForDisplay] !== undefined) summary[t.tierForDisplay] += 1;
+
+    return {
+      windowNo: w,
+      generatedAt: Date.now(),
+      traces,
+      expectationOutcomes,
+      summary,
+      // 明示：本快照绝不进 Prompt，也绝不写盘（调用方若要落盘须自行决策）
+      promptSafe: false,
+      persistence: 'none'
+    };
+  }
+
   /* ---------- 发给 API 的消息 ---------- */
 
   systemText() {

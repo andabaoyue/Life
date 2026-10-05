@@ -79,7 +79,12 @@ const DEFAULT_DREAM_CONFIG = Object.freeze({
   minimumDreamIntervalWindows: 3,    // 梦境最少间隔窗口数
   maximumDreamCallsPer24h: 2,        // 24小时内最多允许梦境调用次数
   dreamMaxTokens: 350,               // 梦境生成最大 Token 预算
-  dreamTemperature: 0.7              // 梦境联想生成适度发散温度
+  dreamTemperature: 0.7,             // 梦境联想生成适度发散温度
+  // 第三道：睡眠物理时长门禁（v3.1 梦境时序改造）
+  // 睡着不足这个分钟数就是小憩，不做梦 —— 梦要有时间跨度，不是入睡瞬间就产生。
+  // 判据必须是物理挂钟时长 Δt，绝不能用窗口数：睡觉期间用户不发消息，
+  // windowNo 完全静止，睡 8 小时也是 0 个窗口，用它当尺度会永远醒不过来。
+  sleepMinimumDreamMinutes: 30      // 达到深睡所需的最小物理分钟数
 });
 
 function sha256(text) {
@@ -242,6 +247,22 @@ function evaluateDreamGate(opts = {}) {
     costGateReason = `INTERVAL_TOO_SHORT (current: ${windowNo}, last: ${lastClose}, minGap: ${cfg.minimumDreamIntervalWindows})`;
   }
 
+  // v3.1 梦境时序改造 · 睡眠期结算豁免窗口间隔：
+  // 睡觉期间不会关窗（关窗要调 LLM，用户不发消息就没有窗口轮转），所以跨夜长睡醒来时
+  // windowNo 几乎没动过，上面两道窗口间隔判定会算出 Δ=0，把这次梦直接误杀成
+  // INTERVAL_TOO_SHORT。睡眠本来就是跨窗口的时间过程，不该按窗口算 ——
+  // 于是显式豁免窗口间隔，但 24h 频次硬顶（真正的成本护栏）仍然照常生效。
+  const fromSleep = opts.fromSleep === true;
+  if (fromSleep) {
+    if (lastAny !== null && (windowNo - lastAny) < 1) {
+      costGatePassed = true;
+      costGateReason = 'PASSED (sleep settlement: window interval waived)';
+    } else if (lastClose !== null && (windowNo - lastClose) < cfg.minimumDreamIntervalWindows) {
+      costGatePassed = true;
+      costGateReason = 'PASSED (sleep settlement: window interval waived)';
+    }
+  }
+
   // 24小时频次硬顶约束 (显式时间注入，绝不隐式依赖系统时刻漂移)
   // v0.9.8.1 F-16: 仅实际确定的时间输入产生 deterministic 标记（fixed now/timestamp、可证恒定 clock）
   const timeInfo = classifyDreamTimeInput({ now: opts.now, timestamp: opts.timestamp, clock: opts.clock });
@@ -254,12 +275,36 @@ function evaluateDreamGate(opts = {}) {
     costGateReason = `DAILY_RATE_LIMIT_EXCEEDED (recent24h: ${recentDreamCount}, max: ${cfg.maximumDreamCallsPer24h})`;
   }
 
+  // 第三道：睡眠物理时长门禁（只在睡眠来源结算时生效）
+  // 小憩（Δt 不足）不产生梦 —— 这是「梦要有时间跨度」这条不变式的守门人。
+  // 判据用注入的 sleepElapsedMs，测试可确定性复现；生产由物理挂钟算出。
+  let sleepGateChecked = false;
+  let sleepElapsedMinutes = null;
+  if (opts.fromSleep === true) {
+    sleepGateChecked = true;
+    const elapsedMs = Number(opts.sleepElapsedMs);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
+      // 拿不出可信的睡眠时长就不做梦 —— 宁可不梦，绝不编造一个时长出来。
+      costGatePassed = false;
+      costGateReason = 'SLEEP_ELAPSED_UNKNOWN (no verifiable physical sleep duration)';
+    } else {
+      sleepElapsedMinutes = elapsedMs / 60000;
+      if (sleepElapsedMinutes < cfg.sleepMinimumDreamMinutes) {
+        costGatePassed = false;
+        costGateReason = `NAP_TOO_SHORT (slept: ${sleepElapsedMinutes.toFixed(1)}min, minDeepSleep: ${cfg.sleepMinimumDreamMinutes}min)`;
+      }
+    }
+  }
+
   const allowDream = Boolean(eligible && costGatePassed);
 
   return {
     eligible,
     costGatePassed,
     allowDream,
+    fromSleep: opts.fromSleep === true,
+    sleepGateChecked,
+    sleepElapsedMinutes: sleepElapsedMinutes === null ? null : Number(sleepElapsedMinutes.toFixed(2)),
     reason: !eligible ? 'INSUFFICIENT_TENSION' : (costGatePassed ? 'TENSION_THRESHOLD_MET' : costGateReason),
     clockSource,
     timeInputKind: timeInfo.timeInputKind,
@@ -276,7 +321,8 @@ function evaluateDreamGate(opts = {}) {
       cognitiveConflictThreshold: cfg.cognitiveConflictThreshold,
       noveltyThreshold: cfg.noveltyThreshold,
       minimumDreamIntervalWindows: cfg.minimumDreamIntervalWindows,
-      maximumDreamCallsPer24h: cfg.maximumDreamCallsPer24h
+      maximumDreamCallsPer24h: cfg.maximumDreamCallsPer24h,
+      sleepMinimumDreamMinutes: cfg.sleepMinimumDreamMinutes
     }
   };
 }
