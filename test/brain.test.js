@@ -88,7 +88,19 @@ const server = http.createServer((req, res) => {
   });
 });
 
-function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'deskpet-test-')); }
+function tmpDir() {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'deskpet-test-'));
+  _tmpDirs.push(d);
+  return d;
+}
+
+// 🔴 本文件此前 0 处 rmSync，单次跑净留 28 个沙盒（10-01 至今累积 7000+）。
+// 本仓 10-06 清过一轮 %TEMP% 残留（用户抱怨过 tmp 目录），测试自己不许再留垃圾。
+// 用 exit 钩子而非散弹式清理：本文件以 process.exit() 收尾，只有 exit 钩子能覆盖所有路径。
+const _tmpDirs = [];
+process.on('exit', () => {
+  for (const d of _tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

@@ -14,6 +14,23 @@ function check(name, cond, extra) {
 
 const { Memory } = require('../src/memory');
 
+// [tmp-hygiene] 临时目录清理（2026-10-06）。本文件此前 0 处清理，跑一次净留多个 %TEMP% 沙盒。
+// 手法：包住 fs.mkdtempSync 本身，新增调用点会自动被覆盖。
+// ⚠️ 位置纪律：本块必须晚于 require('fs')、早于首个 mkdtempSync 调用：
+//   插在 fs 定义前 = ReferenceError；插在调用点后 = 包装白装（两者都实测过）。
+//   也不能挪到文件末尾—— 这些测试在文件中部就 process.exit()。
+const _tmpHygieneDirs = [];
+const _tmpHygieneOrig = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _tmpHygieneOrig.apply(fs, a);
+  _tmpHygieneDirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _tmpHygieneDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _tmpHygieneOrig;
+});
+
 /* ---------- 1A: 好奇驱动提问（轻版） ---------- */
 const mkMem = () => {
   const m = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'will-mem-')), { windowTurns: 999 });

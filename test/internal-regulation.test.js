@@ -21,16 +21,51 @@ const os = require('os');
 const { InternalRegulationManager, REGULATION_BOUNDS } = require('../src/internal-regulation');
 const { ALLOWED_TRAITS } = require('../src/subject-state');
 
+// [D-8a] 临时目录清理：见下方 [tmp-hygiene] 插桩块。
+// 原先此处有一份只包 mkdtempSync 的 _d8a 包装器，已删——它抓不到手工 join+mkdir 的 makeTempDir，
+// 2026-10-06 实测仍净留 2000+ 个。**这不是冗余，是覆盖缺失。**
+
 let failures = 0;
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
   if (!cond) failures++;
 }
 
-function makeTempDir() {
-  const d = path.join(os.tmpdir(), 'life-internal-reg-test-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6));
-  fs.mkdirSync(d, { recursive: true });
+// [tmp-hygiene] 本文件的 makeTempDir 走 path.join+mkdirSync 手工建目录，
+// 不经过 fs.mkdtempSync —— 只包mkdtempSync 的包装器**抓不到它**。
+// 2026-10-06 实测：本文件单次跑净留 2000+ 个 %TEMP% 沙盒（前缀 life-internal-reg-test-）。
+// 两手一起做：① 包 mkdirSync 记下新建目录；② makeTempDir 改用 mkdtempSync。
+// 只做①不够：包 mkdirSync 会连带登记大量非临时目录；只做②不够：绕过包装器就漏。
+const _thDirs = [];
+const _thOrigMkdtemp = fs.mkdtempSync;
+const _thOrigMkdir = fs.mkdirSync;
+fs.mkdtempSync = function (...a) {
+  const d = _thOrigMkdtemp.apply(fs, a);
+  _thDirs.push(d);
   return d;
+};
+fs.mkdirSync = function (p, ...a) {
+  const r = _thOrigMkdir.call(fs, p, ...a);
+  try {
+    const abs = require('path').resolve(String(p));
+    const tmp = require('path').resolve(require('os').tmpdir());
+    if (abs.startsWith(tmp + require('path').sep) && _thMkdirHit(abs)) _thDirs.push(abs);
+  } catch (_) {}
+  return r;
+};
+// 只登记落在 %TEMP% 顶层的目录，避免把仓库内建目录也删了
+function _thMkdirHit(abs) {
+  const rel = abs.slice(require('path').resolve(require('os').tmpdir()).length + 1);
+  return rel.length > 0 && !rel.includes(require('path').sep);
+}
+process.on('exit', () => {
+  for (const d of _thDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _thOrigMkdtemp;
+  fs.mkdirSync = _thOrigMkdir;
+});
+function makeTempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'life-internal-reg-test-'));
+  /* replaced-by-tmp-hygiene: 原为手工 join+mkdir，同名唯一 */
 }
 
 const dir = makeTempDir();

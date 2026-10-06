@@ -520,5 +520,67 @@ const mk = (over) => Object.assign({
     eng.traits === null && eng.computeIntentNow(0) === null);
 })();
 
+/* ============================================================================
+ * D-8a：traits 缺失时的行为契约（反例，不是正例）
+ *
+ * D-7 宣称「她开口时带着自己想说的话」，实测那三档特质意图一次都没运行过，
+ * 根因是 main.js 启动时 bindBrainDeps 跑在 trigger 赋值之前 ⇒ traits 长期为 null。
+ *
+ * ⚠️ 修 bug 只修「数据没送到」，**不修「数据没送到时也不许编」**。
+ * 下面两条把后者钉死 —— 这是本轮最容易犯的「好心错误」：
+ * 有人为了「让她多点想法」给 null 兜一套默认特质，产出的意图却没有来源，
+ * 而 D-7 判据②明写「来源必须可追溯」。宁可她没想法，也不要来路不明的念头。
+ * ========================================================================== */
+(function () {
+  const { computeSelfIntent, SELF_INTENT_KINDS } = require('../src/trigger');
+  const TRAIT_KINDS = Object.keys(SELF_INTENT_KINDS)
+    .filter((k) => SELF_INTENT_KINDS[k].requires !== 'idleness_minutes');
+
+  // ① traits 缺失时，静默档**仍要**产出 —— 这是现状的正确行为，修 bug 不该改它。
+  const idleOnly = computeSelfIntent({ traits: null, idleMinutes: 50 });
+  check('🔴 traits 缺失时静默档仍产出（静默是客观事实，不依赖特质）',
+    !!idleOnly
+      && idleOnly.kind === 'idleness_deep'
+      && Array.isArray(idleOnly.sources)
+      && idleOnly.sources.indexOf('tracker.lastInteractionAt') !== -1,
+    JSON.stringify(idleOnly));
+
+  // 🔴 ② traits 缺失时，特质档**一个都不许**产出（本轮最关键的反例）。
+  //   判据必须精确指向「来源不可追溯」，不是笼统的「结果为 null」——
+  //   静默档会合法地返回非 null，所以只能逐档检查 kinds。
+  const noTraitLeak = TRAIT_KINDS.every((k) => {
+    const r = computeSelfIntent({ traits: null, idleMinutes: 50 });
+    return !r || r.kind !== k;
+  });
+  check('🔴 traits 缺失时不得凭空猜一个意图（宁可她没想法，不要来路不明的想法）',
+    noTraitLeak, '检查了 ' + TRAIT_KINDS.length + ' 档：' + TRAIT_KINDS.join('/'));
+
+  // ②的加强形态：给 null 兜一套「默认特质」必须立刻暴露。
+  //   直接把「如果有人兜底」这件事算出来，证明这条断言不是恒真。
+  const withFakeDefault = { attachment_need: 80, philosophical_curiosity: 0, vitality: 0 };
+  const leaked = computeSelfIntent({ traits: withFakeDefault, idleMinutes: 50 });
+  check('（对照）真给足特质时特质档确实会产出 —— 证明上一条不是恒真',
+    !!leaked && leaked.kind === 'attachment_high'
+      && leaked.sources.indexOf('traits.attachment_need') !== -1,
+    JSON.stringify(leaked && leaked.sources));
+
+  // ③ 引擎层同形态：构造后未刷新traits（= D-8a 修复前的真实启动状态）
+  //   不得凭空长出特质意图。这是「不调」那一路，现有门禁从来没测过。
+  const mkTracker = () => ({
+    sleepMode: false, lastInteractionAt: 0, spokenDuringIdle: false, recentClicks: () => 0,
+  });
+  const unRefreshed = new TriggerEngine(mkTracker(), {
+    now: () => 35 * 60000,
+  }); // 🔴 注意：**不传 traits、不调 updateTraits** —— 复刻 main.js 修复前的启动路径
+  check('🔴 构造后未刷新 traits（默认 null）不得等于「已刷过中立特质」',
+    unRefreshed.traits === null,
+    'traits=' + JSON.stringify(unRefreshed.traits));
+  const unRefreshedIntent = unRefreshed.computeIntentNow(50);
+  check('🔴 未刷新 traits 时不得产出任何特质档意图',
+    !!unRefreshedIntent
+      && TRAIT_KINDS.every((k) => unRefreshedIntent.kind !== k),
+    JSON.stringify(unRefreshedIntent));
+})();
+
 console.log('\n' + (failures ? failures + ' 项失败' : 'trigger 层测试全部通过'));
 process.exit(failures ? 1 : 0);

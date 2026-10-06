@@ -16,7 +16,17 @@ function check(name, cond, extra) {
   if (!cond) failures++;
 }
 
-const mk = () => fs.mkdtempSync(path.join(os.tmpdir(), 'deskpet-cfg-'));
+const _tmpDirs = [];
+const mk = () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'deskpet-cfg-'));
+  _tmpDirs.push(d);
+  return d;
+};
+// 🔴 本文件有 12 处 mk() 调用，但清理只写了 [A, B]两个 ⇒ 单次跑净留 10 个
+// （10-01 至今累积 2400+）。改为 mk() 登记 + 退出时统一清，新增调用点自动被覆盖。
+process.on('exit', () => {
+  for (const d of _tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 交给系统 */ } }
+});
 const CFG = 'life-config.json';
 const writeRaw = (dir, obj) => {
   fs.mkdirSync(dir, { recursive: true });
@@ -190,5 +200,4 @@ check('price 只按 peak/valley 两档合并，档内是整体替换', (() => {
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
-for (const d of [A, B]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 交给系统 */ } }
 process.exit(failures ? 1 : 0);

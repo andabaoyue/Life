@@ -16,7 +16,17 @@ function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
   if (!cond) failures++;
 }
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'sec-test-'));
+const _tmpDirs = [];
+const tmp = () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sec-test-'));
+  _tmpDirs.push(d);
+  return d;
+};
+// [实测] D-8a 收尾实测：本文件 0 处清理 ⇒ 单次跑净留 11 个 %TEMP% 沙盒（10-01 起累积 2410 个）。
+// 同上：工厂登记 + exit钩子统一清。
+process.on('exit', () => {
+  for (const d of _tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
 const KEY = 'sk-abcdef-1234567890';
 
 /* 假 safeStorage：可逆「加密」（XOR），只验接口行为，不验密码学 */

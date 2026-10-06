@@ -21,6 +21,21 @@ const assert = require('assert');
 
 const { registerAgentIpc, AGENT_CHANNELS } = require('../src/agent-ipc');
 const { createIpcGuard } = require('../src/ipc-guard');
+
+// [D-8a] 临时目录清理：本文件此前 0 处清理，单次跑净留 24 个 %TEMP% 沙盒。
+// 手法是包住 fs.mkdtempSync 本身（不逐个改调用点：形态太杂，且新增调用点会自动被覆盖）。
+// ⚠️ 本仓 %TEMP% 累积曾达 39221 个 / 55 种前缀，用户投诉过同类问题。
+const _d8aDirs = [];
+const _d8aOrigMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _d8aOrigMkdtemp.apply(fs, a);
+  _d8aDirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _d8aDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _d8aOrigMkdtemp;
+});
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog,
 } = require('../src/agent-interfaces');

@@ -38,6 +38,21 @@ function bindBrainDeps(brain) {
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
   // v0.9.9 意志层：启动 / 热替换时用当前特质校准主动性权重（缺省中立 1.0，既有行为零变化）
+  //
+  // 🔴 D-8a：这三句注释锁的是一个反直觉的事实 —— **这里刷不到 traits。**
+  //   启动路径上 bindBrainDeps 跑在 `trigger = new TriggerEngine()` 之前，
+  //   此刻模块级 trigger 仍是 null ⇒ 整句落空 ⇒ traits 长期为 null，
+  //   于是 attachment_high / curiosity_high / vitality_high 三档意图从未运行过。
+  //   （D-7 交付时宣称「她开口时带着自己想说的话」，实测 5 档只剩 2 档。）
+  //
+  //   为什么**不能**把这句删掉、只在启动处补：bindBrainDeps 同时是热替换的
+  //   回调（main.js 的 config-set-key 与换连接都把它当 bindCandidate 传下去，
+  //   由 brain-hot-swap / connection-switch 调用），而那两条路径上 trigger
+  //   早已存在 —— **这句是热替换后唯一的 traits 刷新点**。删了它，
+  //   换 key / 换连接后 traits 会永久停在旧 brain 的值上。
+  //
+  //   契约：**凡调 bindBrainDeps 且 trigger 已就绪，这句负责刷；
+  //   启动路径的补刷在下面 trigger 赋值之后**（见 whenReady 内的显式调用）。
   if (trigger) trigger.updateTraits(brain.subjectState ? brain.subjectState.values : null);
   if (wardrobe) brain.memory.wardrobe = wardrobe.promptBlock(brain.subjectState ? brain.subjectState.values : null);
   // v0.9.9 P2-2a: 方案 A —— 内态变更经 onChange 接到镜像推送。
@@ -1021,6 +1036,20 @@ app.whenReady().then(() => {
   // 结果写回历史；她被戳了几下 -> tracker 记账 -> 随当轮 user 消息如实告知。
   bindBrainDeps(brain);
   trigger = new TriggerEngine(tracker);
+  // 🔴 D-8a：补刷启动时的 traits。
+  //
+  //   bindBrainDeps 里那句 updateTraits 在这一行**跑不到**（那时 trigger 还是 null），
+  //   于是引擎的 this.traits 会一直停在 null，直到用户关窗才被 main.js 的关窗刷新救回来。
+  //   代价是 D-7 的三档特质意图（attachment_high / curiosity_high / vitality_high）
+  //   在整个不关窗的会话里**一次都不会触发**，她只剩 idleness 两档。
+  //
+  //   放在赋值之后是因为 updateTraits 需要一个已存在的引擎实例；
+  //   这也正是 bindBrainDeps 不能承担此事的原因（它服务热替换，那边 trigger 已存在）。
+  //
+  //   ⚠️ 别把 traits 传进 TriggerEngine 的构造 opts 当替代方案：
+  //   构造期拿到的特质与 brain 的 subjectState 绑定时机不同，
+  //   且那样会让「谁负责刷 traits」变成隐式契约 —— 正是本 bug 的成因。
+  if (brain && brain.subjectState) trigger.updateTraits(brain.subjectState.values);
   assetReport = checkAssets(__dirname, CATALOG);
   if (assetReport && (!assetReport.ok || assetReport.warnings.length)) {
     for (const w of assetReport.warnings) console.warn('[AssetCheck]', w);

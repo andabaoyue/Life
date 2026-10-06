@@ -15,6 +15,21 @@ const os = require('os');
 const path = require('path');
 const { Memory, estimateTokens } = require('../src/memory');
 
+// [tmp-hygiene] 临时目录清理（2026-10-06）。本文件此前 0 处清理，全量跑一次净留 %TEMP% 沙盒。
+// 手法：包住 fs.mkdtempSync 本身，新增调用点会自动被覆盖。
+// ⚠️ 位置纪律：本块必须晚于 require('fs')、早于首个 mkdtempSync 调用（插前=ReferenceError，插后=白装）。
+const _tmpHygieneDirs = [];
+const _tmpHygieneOrig = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _tmpHygieneOrig.apply(fs, a);
+  _tmpHygieneDirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _tmpHygieneDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _tmpHygieneOrig;
+});
+
 let failures = 0;
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));

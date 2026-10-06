@@ -17,7 +17,17 @@ function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
   if (!cond) failures++;
 }
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'wd-test-'));
+const _tmpDirs = [];
+const tmp = () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'wd-test-'));
+  _tmpDirs.push(d);
+  return d;
+};
+// [实测] D-8a 收尾实测：本文件 12 处 tmp() 调用、**0 处清理** ⇒ 单次跑净留 12 个 %TEMP% 沙盒（10-01 起累积 2984 个）。
+// 与 brain/config 同样改为「工厂登记 + 退出时统一清」，本文件以 process.exit() 收尾，故用 exit 钩子。
+process.on('exit', () => {
+  for (const d of _tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
 
 /* ---------- 结构与资源 ---------- */
 check('9 个槽位齐备',

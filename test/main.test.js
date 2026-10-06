@@ -50,6 +50,8 @@ const fakeWin = {
   setIgnoreMouseEvents() {}
 };
 const origLoad = Module._load;
+let liveEngine = null;// 🔴 D-8a：抓住 main.js 自己 new 出来的 TriggerEngine 实例
+const RealTriggerMod = require(path.join(ROOT, 'src/trigger.js'));
 Module._load = function (request) {
   if (request === 'electron') return {
     app: { getPath: () => DIR, whenReady: () => Promise.resolve(),
@@ -63,6 +65,19 @@ Module._load = function (request) {
     // safeStorage 缺失 = 加密不可用，走明文降级那条已测过的路
     safeStorage: null
   };
+  // 🔴 D-8a：main.js 的启动顺序（bindBrainDeps → new TriggerEngine）
+  //   在本进程里无法从外部观测 —— trigger 是模块级变量，不导出。
+  //   办法是包一层构造器，把真实例存下来，让断言能直接读它的 traits。
+  if (request === './src/trigger') {
+    const wrapped = Object.assign({}, RealTriggerMod, {
+      TriggerEngine: function (...a) {
+        const inst = new RealTriggerMod.TriggerEngine(...a);
+        liveEngine = inst;
+        return inst;
+      },
+    });
+    return wrapped;
+  }
   return origLoad.apply(this, arguments);
 };
 
@@ -198,10 +213,91 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('衣柜真按第二条改了 top', wd2.equip.top === 'gray_tee_01');
   check('IPC 出口不带残留标记', !/\[wear:|\[state:/.test(r2.text), JSON.stringify(r2.text));
 
+  /* ⚠️ 这一节必须留在**任何 config-set-key / 换连接之前**。
+     实测踩过：断言写在文件末尾时，main.test.js:217 那次热替换会重建 brain
+     并调 bindBrainDeps（那时 trigger 已就绪）⇒ 它顺手把 traits 刷上了。
+     于是删掉修复代码后 93/0 仍然全绿 —— 断言看着在测启动路径，
+     实际被更晚发生的另一条路径代刷了。这是「假反例」的新形态：
+     **不是别的闸门先熔断，而是别的测试先把状态改了。** */
+  /* ============ D-8a：启动时序（修 D-7「特质意图从未运行」） ============
+   *
+   * 这条是本轮的核心断言。前两条（trigger.test.js）只描述引擎行为，
+   * 只有这条锁住「生产路径上 traits 确实被刷过了」。
+   *
+   * 缺陷形态：bindBrainDeps 跑在 `new TriggerEngine` 之前，那句
+   * `if (trigger) updateTraits(...)` 直接落空 ⇒ 引擎 traits 长期为 null
+   * ⇒ 5 档自意图只剩 idleness 两档，attachment/curiosity/vitality 从未触发。
+   * 而用户不关窗就永远等不到那次关窗刷新 —— 所以它在真实运行里是静默的。
+   *
+   * ⚠️ 写这条时踩过的坑，别再踩：
+   *   ① 断言「traits 非 null」不够 —— null 会被别人补上，得同时验证**内容**；
+   *   ② 断言必须指向**引擎实例自己的 traits**，不是源码里有没有那句调用
+   *      （源码 grep 类断言会被人「照抄一份到别处」骗过去，本仓已吃过亏）。
+   */
+  const eng = liveEngine;
+  const { computeSelfIntent, SELF_INTENT_KINDS } = RealTriggerMod;
+  const traitKinds = Object.keys(SELF_INTENT_KINDS)
+    .filter((k) => SELF_INTENT_KINDS[k].requires !== 'idleness_minutes');
+  check('🔴 D-8a 主进程确实构造出了 TriggerEngine 实例（否则下面几条是空断言）',
+    eng instanceof RealTriggerMod.TriggerEngine,
+    eng ? '' : 'liveEngine=null —— 拦截失效，本节全部断言失去意义');
+
+  // ③-1 启动后 traits 不得为 null（这条就是锁住本 bug 的那条）
+  check('🔴 D-8a 启动后引擎 traits 非 null（修复前此处为 null）',
+    !!eng && eng.traits !== null,
+    'traits=' + JSON.stringify(eng && eng.traits));
+
+  // ③-2 内容必须与brain 的真实特质一致，不能是「随便给了个非 null」
+  const liveTraits = (brain && brain.subjectState) ? brain.subjectState.values : null;
+  check('🔴 D-8a 引擎 traits 与 brain.subjectState.values 逐键一致（非空壳对象）',
+    !!eng && !!liveTraits
+      && Object.keys(liveTraits).length > 0
+      && Object.keys(liveTraits).every((k) => eng.traits[k] === liveTraits[k]),
+    'engine=' + JSON.stringify(eng && eng.traits) + ' brain=' + JSON.stringify(liveTraits));
+
+  // ③-3 关键推论：引擎拿到的 traits 必须是**可用的输入**。
+  //   断言形态说明：若启动时传错了对象（传{}、传 .data 而非 .values、
+  //   或被谁清零），下面这圈会逐档失败。
+  //   ⚠️ 这里刻意**不写** `reachable || 全档偏低` 这种带「或」的判据 ——
+  //   全档偏低那条分支会让断言在什么都没发生时也通过（恒真式，本仓踩过多次）。
+  //   正确做法：把每个特质键**抬到阈值以上**，要求它必然产出对应档。
+  const traitInputUsable = !!eng && !!eng.traits && traitKinds.every((k) => {
+    const spec = SELF_INTENT_KINDS[k];
+    const boosted = Object.assign({}, eng.traits, { [spec.requires]: spec.min + 10 });
+    const r = computeSelfIntent({ traits: boosted, idleMinutes: 0 });
+    return !!r && r.kind === k
+      && Array.isArray(r.sources) && r.sources.indexOf('traits.' + spec.requires) !== -1;
+  });
+  check('🔴 D-8a 引擎 traits 是可用的输入（逐档抬过阈值后必然产出该档意图）',
+    traitInputUsable,
+    'traits=' + JSON.stringify(eng && eng.traits) + '试了' + traitKinds.length + ' 档');
+
   /* ============ 6. 配置热重载盲区（本文件的主戏） ============ */
   const k0 = await invoke('config-set-key', 'sk-keepme-123');
   check('面板填 key 成功，加密不可用时如实标表明文降级',
     k0.ok === true && k0.hasKey === true && k0.keyEncrypted === false, JSON.stringify(k0));
+
+  /* 🔴 D-8a：**热替换路径的 traits 刷新点**。
+   *
+   * 上一节那条断言必须放在热替换之前，否则会被这次调用「代刷」而失去意义
+   * （实测踩过：删掉修复代码后仍 93/0 全绿）。反过来，**这一条必须放在热替换之后**：
+   * 它守的是另一条路径 —— config-set-key 会重建 Brain 并经 brain-hot-swap 调
+   * bindBrainDeps，那是「让新 brain 的特质灌进引擎」的唯一途径。
+   *
+   * ⚠️ 别为了消除 bindBrainDeps 里那句 `if (trigger)` 的空跑而把它删掉：
+   *   启动路径可以在 new TriggerEngine 之后显式补刷，**热替换路径不能** ——
+   *   删了这条会红，而且真实后果是换 key 后 traits 永久停在旧 brain 的值上。
+   */
+  // ⚠️ 这里**不能**自己调 config-set-key 来制造热替换：
+  //   本节后续几条测试（盘上塞 key、盘上无 key 字段）依赖特定的内存 key 状态，
+  //   实测多加一次 config-set-key 会把它们带崩（2 条变红）——
+  //   为验证一条断言去污染别人的状态，等于用假信号换真结论。
+  //   正解：热替换路径的验证放在独立 harness 里做，见 test/d8a-hotswap-probe.js。
+  const afterSwapTraits = (brain && brain.subjectState) ? brain.subjectState.values : null;
+  check('🔴 D-8a 热替换路径的 traits 刷新点仍在（源码级：bindBrainDeps 里那句必须存在）',
+    /if \(trigger\) trigger\.updateTraits\(brain\.subjectState \? brain\.subjectState\.values : null\);/
+      .test(require('fs').readFileSync(require('path').join(ROOT, 'main.js'), 'utf8')),
+    'bindBrainDeps 内的刷新句缺失 ⇒ 热替换后 traits 会停在旧 brain 的值上');
   const c0 = await invoke('config-get');
   check('config-get 初始能读到 model', typeof c0.model === 'string' && !!c0.model,
     JSON.stringify(c0.model));

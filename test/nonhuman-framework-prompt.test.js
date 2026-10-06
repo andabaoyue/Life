@@ -43,6 +43,23 @@ check('③ GROWTH_SYS 证据链约束未变（messageIds/quote/oppose 仍在）'
 
 /* ---------- 方向④：改变的改变（定性感知、数字与研究标签不可知） ---------- */
 const { Brain } = require('../src/brain');
+
+// [tmp-hygiene] 临时目录清理（2026-10-06）。本文件此前 0 处清理，跑一次净留多个 %TEMP% 沙盒。
+// 手法：包住 fs.mkdtempSync 本身，新增调用点会自动被覆盖。
+// ⚠️ 位置纪律：本块必须晚于 require('fs')、早于首个 mkdtempSync 调用：
+//   插在 fs 定义前 = ReferenceError；插在调用点后 = 包装白装（两者都实测过）。
+//   也不能挪到文件末尾—— 这些测试在文件中部就 process.exit()。
+const _tmpHygieneDirs = [];
+const _tmpHygieneOrig = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _tmpHygieneOrig.apply(fs, a);
+  _tmpHygieneDirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _tmpHygieneDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _tmpHygieneOrig;
+});
 const b = new Brain(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-prompt-')), {
   apiKey: 'sk-test', model: 'mock', windowTurns: 999, windowMaxTokens: 1e9,
   keepTailMessages: 6, memoryCapTokens: 1e9, currentSelfTokenBudget: 3000,

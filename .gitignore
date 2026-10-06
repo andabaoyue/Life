@@ -40,3 +40,12 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# WorkBuddy local workspace (audit evidence, cleanup scripts, memory) — never belongs in the repo
+.workbuddy/
+.npmcache/
+
+# Scratch reports / prompts produced during review rounds
+_*.md
+_parse.js
+_dshfind.html
