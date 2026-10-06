@@ -655,20 +655,104 @@ class Memory {
     const suffix = typeof optionsOrSuffix === 'string'
       ? optionsOrSuffix
       : (optionsOrSuffix && optionsOrSuffix.currentTurnSuffix) || '';
-    const msgs = [
-      { role: 'system', content: this.systemText() },
-      ...this.data.history.map(m => ({ role: m.role, content: m.content }))
-    ];
-    if (suffix && msgs.length > 0) {
-      const last = msgs[msgs.length - 1];
-      if (last.role === 'user') {
-        msgs[msgs.length - 1] = {
-          role: last.role,
-          content: last.content ? last.content + '\n\n' + suffix : suffix
+
+    /* ---- 枕边留置折叠（10-07）----
+     *
+     * 问题：她睡着时用户发的消息以 user 身份落盘（brain.js 的 sleepMode 分支），
+     * 但那一轮不调 LLM、**没有任何请求发出去**。于是这条 user 会一直悬空，
+     * 直到她下次开口 —— 而下一次开口时它就变成「连续两条 user」的坏形状
+     * （实测 history 里 idx85 / idx162 两处命中，真数据坐实）。
+     * 坏形状的后果是模型把两句话当成没人接的自言自语，回复对象含混。
+     *
+     * 做法：构建请求时把「尚未被回应的留置」折叠成一块，附在当轮最后一条 user 尾部，
+     * 与 dynamicContext 同一个挂点（那里本来就是为瞬时上下文准备的，
+     * 挂在尾部而不是 system，护前缀缓存）。
+     *
+     * 🔴 为什么重排历史不破坏前缀缓存 —— 这条是本改动的成立前提，必须守住：
+     *   留置条目**从未出现在任何已发出的请求里**（睡着时压根不调 LLM）。
+     *   所以没有「上一次请求的字节」可被打破。折叠只影响第一次真正发出去的请求，
+     *   而那次请求本来就是坏的（连续两条 user）。
+     *   ⚠️ 若将来允许「睡着时也发请求」，此前提立即失效，必须重新评估。
+     *
+     * 语义边界：折叠**不决定她说不说**。它只保证那条消息一定出现在她眼前，
+     * 且明确标注是睡着时留的。接不接是她的选择；沉默也是合法回答。
+     * 所以这里不做任何过滤或合并内容 —— 原文逐字保留，只加一行客观来源标注。
+     */
+    const bedsidePending = [];
+    const msgs = [{ role: 'system', content: this.systemText() }];
+
+    /* 判定「哪一段是悬空的」：从最后一条 assistant 之后到末尾。
+     *🔴 踩过一次：第一版写成「历史里存在任意 assistant 就置answered=true」，
+     *   而 history 里assistant 是绝大多数 ⇒ 判据恒真 ⇒ 折叠永久失效（且不报错）。
+     *   这类恒真/恒假判据与本仓已记录的多次事故同型，务必按「尾段」而非「全局存在」判定。
+     * 为什么用尾段而不是逐条标记 replied：
+     *   留置被回应后，历史自然变成 assistant 在其后 —— 尾段判定自动不再包含它。
+     *   不需要在 assistant 条目上挂额外字段（那会改写已发字节，破坏前缀缓存）。 */
+    let tailStart = 0;
+    for (let i = this.data.history.length - 1; i >= 0; i--) {
+      if (this.data.history[i].role === 'assistant') { tailStart = i + 1; break; }
+    }
+
+    for (let i = 0; i < this.data.history.length; i++) {
+      const m = this.data.history[i];
+      if (i >= tailStart && m.bedside === true) {
+        // 只折叠悬空尾段里的留置：一旦后面有 assistant 落地，历史已经自洽。
+        bedsidePending.push(m);
+        continue;
+      }
+      msgs.push({ role: m.role, content: m.content });
+    }
+
+    const bedsideNote = this._bedsideNote(bedsidePending);
+    const tail = [bedsideNote, suffix].filter(Boolean).join('\n\n');
+
+    /* 挂点判据：挂在**最后一条 user** 之后。
+     *
+     * ⚠️ 变异测试如实记录（别按「三次踩坑」的标题去想象）：
+     *   把判据改成「最后一条消息」（不再检查 role==='user'），门禁**全绿**。
+     *   逐条比对输出后确认：留置已被上一步折叠排除，`msgs` 末条**必然**是当轮 user，
+     *   所以两种判据在本结构下**等价**，不是死代码、也不是冗余分支。
+     *
+     * 我曾把这个挂点写成「最后一条消息」，并把随后那次「当轮消息被吞」的故障
+     * 归因于挂点 —— **那个归因是错的**（10-07 自查更正）。真因在折叠逻辑：
+     *   当时 `tailStart` 判定写成「历史里存在任意 assistant 就置 answered=true」，
+     *   而 assistant 在历史里占绝大多数 ⇒ 判据恒真 ⇒ **留置从未被折叠**，
+     *   于是它和当轮 user 一起留在 msgs 里，挂点自然落在当轮之后。
+     *   修好 tailStart 之后折叠生效，挂点判据便不再有可观测差异。
+     *
+     * 保留 role 判据的理由：它把「挂点必须是 user」这条契约写进代码而不是靠结构巧合，
+     * 将来若折叠范围变化（例如把留置改成别的形态），退化会立刻显形而不是静默挂错。
+     * ⚠️ 但**不要**把它当防线 —— 当前它零贡献，变异测试已坐实。 */
+    if (tail) {
+      let anchor = -1;
+      for (let i = msgs.length - 1; i >= 1; i--) {
+        if (msgs[i].role === 'user') { anchor = i; break; }
+      }
+      if (anchor >= 0) {
+        const prev = msgs[anchor];
+        msgs[anchor] = {
+          role: 'user',
+          content: prev.content ? prev.content + '\n\n' + tail : tail
         };
       }
+      // anchor === -1 时刻意**不挂**：宁可不送达，也不能凭空造一条 user 顶替当轮。
+      // 正常调用下不可达（build 总紧接着一次当轮 append），留着只为不静默出错。
     }
     return msgs;
+  }
+
+  /**
+   * 客观来源标注。**第三人称、只陈述事实**，不代拟她的反应、不催她回话。
+   * 反面写法示例（禁止）：「她在等你回复」「该轮到你说话了」——
+   * 那是替她表态，且会把她塑造成「盯着用户等」的样子（撞 persona.js:29）。
+   */
+  _bedsideNote(pending) {
+    if (!pending || pending.length === 0) return '';
+    const lines = pending.map(m => '- ' + String(m.content || ''));
+    const head = pending.length === 1
+      ? '【你在她睡着时留了这条】（她当时没有回应。接不接、怎么接，由她自己决定。）'
+      : '【你在她睡着时留了这几条】（她当时没有回应。接不接、怎么接，由她自己决定。）';
+    return [head].concat(lines).join('\n');
   }
 
   /**

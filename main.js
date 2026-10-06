@@ -725,6 +725,10 @@ ipcGuard.handle('chat-history', () => {
     windowNo: m.windowNo,
     bridge: Boolean(m.bridge),
     synthetic: Boolean(m.synthetic),
+    // 🔴 bedside 必须透出：她睡着时你留的消息在对话窗要显示成「留置」样式，
+    //   而不是伪装成一条已被回应的普通发言。不给这个字段，渲染层就只能靠猜
+    //   （比如「下一条不是 assistant ⇒ 这条没人接」），那是推断不是事实。
+    bedside: m.bedside === true,
     t: Number.isFinite(m.t) ? m.t : null
   }));
 });

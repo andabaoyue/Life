@@ -70,6 +70,14 @@ function buildBubble(v, extraCls) {
   txt.className = 'b-text';
   txt.textContent = v.text;          // textContent 渲染，防注入
   col.appendChild(txt);
+  // 🔴 枕边留置标注（10-07）：她睡着时你发的消息，如实标出「当时她没接」。
+  //   只陈述事实，不写「她在等你回复」这类替她表态的话（撞 persona.js:29）。
+  if (v.bedside) {
+    const bd = document.createElement('div');
+    bd.className = 'b-ts b-bedside-note';
+    bd.textContent = '（她睡着时留的，当时没有回应）';
+    col.appendChild(bd);
+  }
   if (v.ts !== null && v.ts !== undefined) {
     const ts = document.createElement('div');
     ts.className = 'b-ts';

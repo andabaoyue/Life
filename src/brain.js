@@ -827,10 +827,25 @@ class Brain {
     if (tr && !proactive) sleepIntent = tr.recordUserInput(userText);
   // v2.0 枕边信箱（客观物理拦截）：她睡着时消息不进大脑、不调 LLM ——
   // 只记账留置，醒来后自然出现在她的上下文里；说什么、说不说，归她。
+  //
+  // 🔴 10-07 修：留置必须**标出来**，否则她读到的只是一条无来由的 user 消息。
+  //
+  //   实测故障：10-07 05:16 她睡着时用户发「早」，本分支 append 落盘就返回；
+  //   05:16:56 用户拖拽唤醒 —— 但整个唤醒链（tracker.wakeUp → onWakeHook →
+  //   _settleDreamOnWake）**零次 brain.ask**，那条留置从头到尾没人读、没人回。
+  //   用户看到的现象是「吵醒她之后她不理我那条消息」。
+  //
+  //   为什么不在这里加「唤醒即回话」：那是替她决定说不说，
+  //   且每次拖拽都烧一次调用。当前选择是**只保证送达，不逼她开口** ——
+  //   标成 bedside 后，她下次开口时会在上下文里看到「你睡着时她留了这条」，
+  //   接不接由她。沉默也是合法回答，如实留痕即可（见 memory.append 的 bedside 标记）。
   if (tr && tr.sleepMode && !proactive) {
     let bedsideId = null;
     try {
-      const rec = this.memory.append('user', userText, {});
+      // bedside 标记只标注「这条是睡着时留的」，**不改变它的角色**：
+      // 仍是 user 发言，仍进历史，仍出现在对话窗（用户要看得见自己发了什么）。
+      // 渲染层与上下文侧各自据它做差异化呈现，见 chat.js / buildBedsideNote。
+      const rec = this.memory.append('user', userText, { bedside: true });
       bedsideId = rec && rec.messageId ? rec.messageId : null;
       this.memory.save(true);
     } catch (e) { /* 记账失败不崩溃，如实返回留置失败 */ }

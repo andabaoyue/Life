@@ -561,9 +561,15 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
 
   /* ============ chat-history 投影白名单（v1.0 笔 2） ============ */
   const chList = await invoke('chat-history');
-  check('chat-history 返回非空数组且投影恰为 7 字段白名单（多一字段即红）',
+  // 🔴 10-07 由 7 字段扩为 8 字段：新增 bedside。
+  //   **不是把白名单放宽**，而是补一个必须外露的字段 ——
+  //   她睡着时你留的消息（枕边留置）在对话窗要显示成「当时她没回应」，
+  //   渲染层拿不到这个标记就只能靠猜（「下一条不是 assistant ⇒ 这条没人接」），
+  //   那是推断不是事实。所以 main.js 主动透出 bedside=true。
+  //   白名单本身继续守着：其余字段一律不许混进来（time是t，不是别的时间戳）。
+  check('chat-history 返回非空数组且投影恰为 8 字段白名单（多一字段即红）',
     Array.isArray(chList) && chList.length > 0
-    && chList.every(m => Object.keys(m).sort().join(',') === 'bridge,content,messageId,role,synthetic,t,windowNo'));
+    && chList.every(m => Object.keys(m).sort().join(',') === 'bedside,bridge,content,messageId,role,synthetic,t,windowNo'));
 
   console.log('\n' + (failures ? failures + ' 项失败' : 'main 层测试全部通过'));
   process.exit(failures ? 1 : 0);

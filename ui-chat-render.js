@@ -105,13 +105,21 @@ function decideBubble(m, mode) {
   const at = m && Number.isFinite(m.t) ? m.t : undefined;
   const bridge = Boolean(m && m.bridge);
   if (m && m.synthetic) {
-    // 主动搭话的程序触发：绝不冒充用户发言（笔 2 契约）
+    // 主动搭话的程序触发：绝不冒充用户发言（笔2 契约）
     if (mode === 'hide') return { kind: 'skip', text: '', at, bridge };
     const text = String(m.content || '').replace(/^\s*\[自主感知触发\]\s*[:：]\s*/, '');
     return { kind: 'note', text: stripState(text, false), at, bridge };
   }
+  // 🔴 枕边留置（10-07）：她睡着时你发的消息。**仍是你说的话**，
+  //   所以不能改成 note（那会让用户以为这不是自己发的），也不能去掉标记 ——
+  //   不标的话它看起来像一条被正常回应过的发言，而实际上她当时没接。
+  //   渲染层据bedside 字段加一行客观来源说明，用户一眼能看出「这条她没回」。
   const kind = m && m.role === 'assistant' ? 'assistant' : 'user';
-  return { kind, text: stripState(String(m.content || ''), false), at, bridge };
+  const text = stripState(String(m && m.content || ''), false);
+  if (m && m.bedside === true) {
+    return { kind, text, at, bridge, bedside: true };
+  }
+  return { kind, text, at, bridge };
 }
 
 
@@ -125,6 +133,7 @@ function bubbleView(m, mode) {
     kind: d.kind,
     text: d.text,
     bridge: d.bridge,
+    bedside: d.bedside === true,
     cls: d.kind === 'user' ? 'b-user' : (d.kind === 'assistant' ? 'b-ai' : 'b-note'),
     avatar: d.kind === 'user' ? '你' : (d.kind === 'assistant' ? '初' : null),
     ts: d.at === undefined ? null : d.at
