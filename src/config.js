@@ -64,6 +64,10 @@ const DEFAULTS = {
 
   // ---- 桌面自主运动 ----
   motionEnabled: true,
+  // v1.0 D-6：Agent 提案触发源总开关。**默认关**（用户拍板，不可改）。
+  //   沙盒写权限在 D-5 已打开，本开关是触发源接线的最后一道闸门。
+  //   打开方式：把 life-config.json 里这一项改成 true（需同时在 sanitize 白名单里，见下）。
+  agentTriggerEnabled: false,
   motionSpeed: 2,
   motionTickMs: 50,
   motionMargin: 20,
@@ -162,6 +166,13 @@ function sanitize(raw = {}) {
     summaryMaxTokens: finiteInt(raw.summaryMaxTokens, DEFAULTS.summaryMaxTokens, 256, 100000),
     growthMaxTokens: finiteInt(raw.growthMaxTokens, DEFAULTS.growthMaxTokens, 256, 100000),
     motionEnabled: raw.motionEnabled !== false,
+    // v1.0 D-6：Agent 提案触发源总开关。**默认关**（用户拍板，不可改）。
+    // 🔴 这里刻意**不**用 `!== false` 那套写法：本开关键缺失时必须安全（=关），
+    //   而 `!== false` 会把「键缺失」当成 true，等于升级即默认开启。
+    //   沙盒写权限在 D-5 已经打开，若触发源默认开着，装好即生效——那不是默认该有的姿态。
+    // ⚠️ 必须同时加进 DEFAULTS 与本白名单，只加 DEFAULTS 等于没加：
+    //   不在 sanitize 白名单里的键，手写进 life-config.json 会被整份丢弃（见上方 :54 注释）。
+    agentTriggerEnabled: raw.agentTriggerEnabled === true,
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
     motionMargin: finiteInt(raw.motionMargin, DEFAULTS.motionMargin, 0, 200),

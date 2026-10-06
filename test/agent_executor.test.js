@@ -308,6 +308,67 @@ check('D4-R9b 下游兜底也成立：即便类型校验被删，byteLength 仍�
   return r.ok === false && !fs.existsSync(target);
 })());
 
+check('❌ D6-R1 空字符串必须被 CONTENT_EMPTY 守卫拒（授权语义缺失）', (() => {
+  // 🔴 D-6 审核实测抓到的真漏洞（2026-10-06）：
+  //   D4-R9 覆盖了对象/数组/数字/null/伪装对象，**唯独没测空字符串**。
+  //   而 typeof '' === 'string' 是合法的，于是走完全链路：
+  //   实测 execute({content:''}) → ok:true、落盘 0 字节文件、**提案已被消费**，
+  //   二次执行 ALREADY_EXECUTED，用户无从补救。
+  //   危害不在「多一个空文件」，在于：用户点【授权】时看到的是「写入 note.md」，
+  //   他并不知道自己授权的其实是**一个空文件** —— 授权了一件他没看到的事。
+  const e = env();
+  const target = path.join(e.sandbox, 'empty.md');
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const r = e.executor.execute({ proposalId: id, content: '' });
+  return r.ok === false
+    && r.code === 'EXECUTION_FAILED'
+    && /CONTENT_EMPTY/.test(String(r.detail || ''))
+    && !fs.existsSync(target);
+})());
+
+check('❌ D6-R1b 空串被拒后提案**未被消费**（用户可换个内容重试）', (() => {
+  // 变异测试要旨：若守卫缺失，文件会落盘且提案被消费，这条会红。
+  const e = env();
+  const target = path.join(e.sandbox, 'retry.md');
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const bad = e.executor.execute({ proposalId: id, content: '' });
+  const gateAfterFail = e.confirmation.isExecutionAllowed(id);
+  // 修复前：提案已消费 → gate.allowed === false / reason 'ALREADY_EXECUTED'
+  // 修复后：写入失败不消费 → 授权仍有效，可带着真实内容再执行一次
+  const retry = e.executor.execute({ proposalId: id, content: '真实内容' });
+  return bad.ok === false
+    && gateAfterFail.allowed === true
+    && retry.ok === true
+    && fs.existsSync(target)
+    && fs.readFileSync(target, 'utf8') === '真实内容';
+})());
+
+check('📌 D6-R1c 纯空白内容**允许**落盘（已裁决：空白是合法内容，刻意不拒）', (() => {
+  // ✅ 已裁决（2026-10-06，用户拍板）：**不拒**纯空白。
+  //   理由：守卫要解决的是「空 = 什么都没有」的**语义断裂** ——
+  //   用户以为授权了内容、实际没有。空格/换行/全角空格是**内容本身**，
+  //   是用户明确给出的东西，不属于授权缺失。
+  //
+  //   更要紧的理由是**收窄方向**：一旦守卫开始判断「内容有没有意义」，
+  //   它就从**安全边界**滑成**产品口味**—— 今天拒纯数字、明天拒单字符，
+  //   最后变成「Agent 觉得你想写的东西没意义」。那是审查，不是授权。
+  //   **守卫只该拒「一个字节都没有」，不该拒「内容不够好」。**
+  //
+  // ⚠️ 若将来有人想把本守卫改成 trim 方案，先读这段：
+  //   实测六种空白在当前实现下全部放行（全部 ok:true）:
+  //     空格 '   ' / 换行 '\n' / Tab '\t' / **全角空格 U+3000** / 多行空白 → ok:true
+  //   其中全角空格是中文语境下最常见的空白类型，容易被漏测。
+  //   JS 的 String.prototype.trim() 确实会清掉 U+3000，
+  //   但若改用 /\S/ 之类正则或只清半角，中文语境反而会漏。
+  //
+  //   本条锁住现状：日后若裁决改为「该拒」，改本条为断言拒绝 + 实现改一行即可。
+  const e = env();
+  const target = path.join(e.sandbox, 'blank.md');
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const r = e.executor.execute({ proposalId: id, content: '   ' });
+  return r.ok === true && fs.existsSync(target);
+})());
+
 check('❌ D4-R10 执行通道不接受调用方自带的路径（路径只认提案里的）', (() => {
   const e = env();
   const legit = path.join(e.sandbox, 'legit.txt');

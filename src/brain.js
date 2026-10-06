@@ -131,6 +131,12 @@ class Brain {
   constructor(userDataDir, cfg) {
     this.dir = userDataDir;
     this.cfg = cfg || {};
+    // v1.0 D-6：提案触发源判定结果暂存（接线时写入，③ 建案阶段消费）。
+    //   🔴 必须在构造函数初始化为 null —— 不初始化的话，下一个人接线时读到
+    //   undefined会与「没有提案」混淆，于是功能静默少一块且**不报错**。
+    //   这正是本仓记过的「死代码静默回落」：字段存在但从不赋值，
+    //   使用方读到一个看着合理实则错误的值。
+    this._pendingAgentIntent = null;
     const sanitizedExp = sanitize({
       experimentMode: this.cfg.experimentMode,
       experimentModules: this.cfg.experimentModules
@@ -836,6 +842,48 @@ class Brain {
     };
   }
     if (tr) snap = tr.snapshot();
+
+    /* ---- v1.0 D-6：提案触发源接线（旁路，不影响既有行为）----
+     *
+     * 🔴 本轮的性质：D-5 起沙盒写权限已开，此前挡住误写的只剩「没人按按钮」
+     *   这道**结构性**防线；接上之后它变成一道**配置**防线。
+     *   所以这个调用点的每一个取舍都要经得起复核。
+     *
+     * 四条纪律（改动前请逐条确认）：
+     *   1. **用上面已算好的 `proactive`，不要自己读 opts.proactive。**
+     *      main.js:432 的 `proactive = !!offer` 由 validOffer() 校验决定，
+     *      与 opts.proactive 不是一回事。若误用 opts.proactive，
+     *      未通过 validOffer 的主动搭话会被当成用户请求 ——
+     *      而「她主动开口 → 立刻要动手」正是 persona.js:29
+     *      「不虚构寂寞/ 不数着时间等你/ 装可怜不行」要防的形态。
+     *   2. **判定的文本用userText 原文**：主动搭话时 userText 是 offer.reason，
+     *      但 proactive 判定已在上游把这条路挡掉，这里不必再区分。
+     *   3. **try/catch 包死**：触发源是便利功能，不是对话链路的一部分。
+     *      它崩了用户不该看到一坨报错（evaluateTrigger 内部已降级，
+     *      这里再兜一层是防「接线点自身」抛，比如 this.cfg 为 undefined）。
+     *   4. **不碰 return，不改任何既有分支**：纯旁路，只有开关开着且判定命中
+     *      才会往上抛一个「可能有提案」的信号，其余情况一行都不执行。
+     *
+     * ⚠️ 本阶段**只判定、不建案**：建案与气泡提示留待后续接线，
+     *   因为「内容从哪来」尚未定（见 agent-intent.js 头部注释）。
+     */
+    try {
+      const { evaluateTrigger } = require('./agent-trigger');
+      const verdict = evaluateTrigger(userText, {
+        config: this.cfg,
+        proactive: proactive,
+      });
+      //ran=false 是**默认路径**（开关关着/ 主动搭话），此处什么都不做即正确。
+      if (verdict.ran && verdict.decision && verdict.decision.shouldPropose) {
+        this._pendingAgentIntent = verdict.decision;   // 供后续接线消费
+      } else if (verdict.ran) {
+        this._pendingAgentIntent = null;                // 判定跑过但没中：清掉上一轮残留
+      }
+    } catch (e) {
+      // 如实留痕但不外抛：触发源崩了不该影响她回话。
+      this._pendingAgentIntent = null;
+      console.warn('[AgentTrigger] 触发源判定异常，已跳过：', e && e.message);
+    }
 
     // Phase 0.5: 内部调节中枢更新 (用户交互与物理刺激事件驱动)
     if (this.internalRegulation && !proactive) {

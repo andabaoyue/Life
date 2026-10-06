@@ -291,6 +291,17 @@ class ControlledAgentExecutor {
     if (typeof content !== 'string') {
       throw Object.assign(new Error('CONTENT_REQUIRED'), { code: 'CONTENT_REQUIRED' });
     }
+    // 🔴 D-6 审核实测抓到的真漏洞：类型对了不代表语义对。
+    //   空字符串是合法string，能通过上面那道校验，于是走完全链路——
+    //   实测（2026-10-06）：execute({content:''}) → ok:true、落盘 0 字节文件、
+    //   **且提案已被消费**，二次执行 ALREADY_EXECUTED，用户无从补救。
+    //   危害不在「多一个空文件」，在于：用户点【授权】时看到的是
+    //   「写入 note.md」，他并不知道自己要授权的其实是**一个空文件** ——
+    //   这等于授权了一件他没看到的事。
+    //   所以这里必须区分「类型合法」与「语义可授权」。
+    if (content.length === 0) {
+      throw Object.assign(new Error('CONTENT_EMPTY'), { code: 'CONTENT_EMPTY' });
+    }
     if (Buffer.byteLength(content, 'utf8') > this.maxWriteBytes) {
       throw Object.assign(new Error('PAYLOAD_TOO_LARGE'), { code: 'PAYLOAD_TOO_LARGE' });
     }
