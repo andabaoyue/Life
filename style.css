@@ -322,6 +322,46 @@ body.talking #inputBar { display: flex; }
   flex-direction: column;
   overflow-y: auto;
 }
+/* v1.0 D-3：Agent 用户确认卡片（第四道闸门）
+   刻意做成「桌宠主动开口」的语气而不是系统弹窗 —— 它不该看起来像系统对话框，
+   否则用户会习惯性闭眼点确认。 */
+#agentConfirm {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  background: rgba(24, 26, 40, .95);
+  border: 1px solid rgba(135, 170, 245, .35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  z-index: 20;
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 12px; color: #d8e4ff;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
+}
+#agentConfirm.hidden { display: none; }
+#agentConfirm.agent-busy { opacity: .6; pointer-events: none; }
+#agentConfirm .ac-title { font-size: 13px; font-weight: 600; }
+#agentConfirm .ac-danger {
+  align-self: flex-start; font-size: 11px; padding: 1px 7px; border-radius: 8px;
+  background: rgba(58, 75, 115, .4); border: 1px solid rgba(135, 170, 245, .3);
+}
+#agentConfirm .ac-row { display: flex; gap: 6px; align-items: baseline; }
+#agentConfirm .ac-key { flex: none; color: #8b93a3; font-size: 11px; }
+#agentConfirm .ac-val {
+  flex: 1; min-width: 0; color: #d8e4ff; word-break: break-all; line-height: 1.45;
+}
+#agentConfirm .ac-warn { color: #ffcf8b; font-size: 11px; line-height: 1.45; }
+#agentConfirm .ac-warn:empty { display: none; }
+#agentConfirm .ac-actions { display: flex; gap: 8px; margin-top: 4px; }
+#agentConfirm .ac-actions:empty { display: none; }
+.agent-btn {
+  flex: 1; padding: 6px 10px; font-size: 12px; font-weight: 500;
+  background: rgba(69, 97, 145, .5); color: #d8e4ff;
+  border: 1px solid rgba(255, 255, 255, .18); border-radius: 7px; cursor: pointer;
+  transition: background .15s;
+}
+.agent-btn:hover { background: rgba(90, 122, 180, .6); }
+.agent-btn-primary { background: #456191; color: #fff; }
+.agent-btn-primary:hover { background: #5a7ab4; }
 .mem-group { font-size: 11px; color: #8b93a3; margin: 8px 0 3px; letter-spacing: .04em; }   /* 记忆分层小标题 */
 /* v2.0 枕边信箱客观事实行（第三人称，不代拟） */
 .b-notice .b-text { color: #8fa0b8; font-style: italic; background: rgba(255,255,255,.05);

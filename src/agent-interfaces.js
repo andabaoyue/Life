@@ -15,6 +15,27 @@
  *   而域名白名单挡不住响应内容被污染。若将来必须开，前置条件见 B 阶段文档 §2.4。
  */
 const path = require('path');
+const crypto = require('crypto');
+
+/**
+ * 提案 id 生成器。
+ *
+ * 🔴 为什么不能只用 Date.now()（2026-10-06 加固时实测坐实的漏洞）：
+ *   原实现是 `'proposal-' + Date.now()`，**同一毫秒内建的两个提案 id 完全相同**。
+ *   在 D-3 加固引入 proposalStore 之后，这直接变成一个信任事故：
+ *   Map.set 后者会**顶替**前者，于是「用户卡片上看到的提案 A」与
+ *   「按A 的 id 实际放行的提案 B」可以是两个不同scope ——用户点头的东西
+ *   和真正动的东西不是一回事，这正是这道闸门存在的全部意义被推翻。
+ *   （实测：a.id === b.id 为 true，store 里只剩 b，scope 被悄悄换掉。）
+ *
+ * 为什么用 randomUUID 而不是「时间戳 + 计数器」：进程重启后计数器归零，
+ *   而 proposalStore 是纯内存、**跨会话不持久** —— 但测试与将来的持久化
+ *   场景都可能让两个进程在相近时间戳内建案。随机源不依赖任何进程内状态，
+ *   是唯一不靠运气就能保证。
+ */
+function newProposalId() {
+  return `proposal-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+}
 
 const CAPABILITIES = Object.freeze(['workspace.read', 'workspace.write', 'process.execute', 'network.request']);
 
@@ -348,7 +369,13 @@ function createActionProposal(input = {}) {
     throw new Error(`非法提案状态: ${status}（合法值见 PROPOSAL_STATES）`);
   }
   return Object.freeze({
-    id: String(input.id || 'proposal-' + Date.now()),
+    //🔴 id 必须**由本函数生成，绝不接受调用方指定**（2026-10-06 实测漏洞）。
+    //   原实现是 `String(input.id || 'proposal-' + Date.now())`，两个后果：
+    //     ① 调用方可自选 id —— propose 通道把 raw 原样透传进来，
+    //        渲染端能传 `id:'ATTACKER-PICKED'` 把自己声明成任意提案（实测被采纳）；
+    //② 同一毫秒建案id 天然相同 —— 见 newProposalId() 注释里的顶替攻击。
+    //   id 是「用户所见」与「实际放行」的绑定键，自选等于让调用方自己指定绑谁。
+    id: newProposalId(),
     capability: String(input.capability || ''),
     scope: String(input.scope || ''),
     reason: String(input.reason || '').slice(0, 500),

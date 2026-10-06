@@ -78,6 +78,18 @@ contextBridge.exposeInMainWorld('deskpet', {
     activate: (connectionId) => ipcRenderer.invoke('connections:activate', { connectionId })
   },
 
+  // v1.0 D-1/D-3：Agent 治理通道。
+  // 🔒 这里**没有 execute / write** —— 执行器在设计层就不存在，
+  // 渲染端能做的只是「提案」与「对提案投同意/反对票」。
+  agent: {
+    getStatus: () => ipcRenderer.invoke('agent:get-status'),
+    getCapabilities: () => ipcRenderer.invoke('agent:get-capabilities'),
+    propose: (payload) => ipcRenderer.invoke('agent:propose-action', payload),
+    // 只登记用户决策，不代表执行 —— executed 恒为 false。
+    confirm: (payload) => ipcRenderer.invoke('agent:confirm-action', payload),
+    getAuditLog: (opts) => ipcRenderer.invoke('agent:get-audit-log', opts || {})
+  },
+
   // 实验观测与可复盘工具链 (v0.9.5)
   research: {
     getState: () => ipcRenderer.invoke('research:get-state'),

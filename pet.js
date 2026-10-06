@@ -223,6 +223,59 @@ function anyOverlayOpen() {
       || (wd && !wd.classList.contains('hidden'))
       || (researchPanel && !researchPanel.classList.contains('hidden'));
 }
+
+/* ---------------- Agent 用户确认卡片（v1.0 D-3 第四道闸门） ----------------
+   接线原则（与 ui-agent-confirm.js 的边界一致）：
+     · 卡片默认 hidden，**只有真的拿到提案才show()** —— 凭空出现的确认框
+       会被用户当系统弹窗闭眼点【授权】，那道闸门就白设了。
+     · 渲染层只做「把用户点击如实上报」，不执行任何动作。
+       confirm通道的executed 恒为 false，主进程那边还有确认闸门独立判定。
+     · 提案被拒时**不弹卡片** —— 主进程已经拒了，再问用户是噪声。*/
+const agentConfirmCard = (typeof window.AgentConfirm !== 'undefined' && window.AgentConfirm)
+  ? window.AgentConfirm.bind(
+    document.getElementById('agentConfirm'),
+    async (decision, proposalId) => {
+      if (!api || !api.agent || typeof api.agent.confirm !== 'function') return;
+      try {
+        await api.agent.confirm({ proposalId, decision });
+      } catch (e) {
+        // 上报失败就静默收起卡片：留着半张卡比不弹更糟，
+        // 而审计里主进程已记了「确认未送达」。
+      }
+    },
+    (k, f) => (typeof t === 'function' ? t(k, f) : f)
+  )
+  : null;
+
+/** 有Agent 提案时亮卡片。proposal 为空则收起（不会误亮）。
+ *  ⚠️⚠️ 待D-4 接线（2026-10-06 实测确认：本函数目前**全仓零调用点**）——
+ *  当前 Agent 触发模式仍是「你调用」，主进程不会自发生成提案，
+ *  所以确认卡片**永远不会出现**，这是设计如此，不是 bug。
+ *  D-4 接真实执行器时，由「提案产生的那一刻」调用本函数插上电。
+ *  接线时必须一并处理：
+ *    ① anyOverlayOpen() 未把 agentConfirm 算进去 —— 卡片亮起时
+ *       面板视窗不会被正确扩收，可能与其他浮层打架；
+ *    ② 提案来源必须是主进程的真实提案对象（proposalStore 里那一份），
+ *       绝不能让渲染端自己编一个 —— 那正是 id 顶替攻击的入口。
+ */
+async function showAgentProposal(proposal) {
+  if (!agentConfirmCard) return false;
+  try {
+    const st = (api && api.agent) ? await api.agent.getStatus() : null;
+    const vmCaps = (api && api.agent) ? await api.agent.getCapabilities() : null;
+    // 危险等级取自主进程的能力元数据 —— 渲染层不自己判断危险度。
+    const name = proposal && proposal.capability;
+    const meta = (vmCaps && Array.isArray(vmCaps.capabilities))
+      ? vmCaps.capabilities.find((c) => c && c.name === name) : null;
+    return agentConfirmCard.show(proposal, {
+      t: (k, f) => (typeof t === 'function' ? t(k, f) : f),
+      budget: (st && st.budget) || null,
+      dangerLevel: (meta && meta.dangerLevel) || 'unknown',
+    });
+  } catch (e) {
+    return false;
+  }
+}
 /* v1.0 缩放退役：零漂移账目随缩放一起退役（没有缩放档就没有欠账）。
    面板扩收仍走 panel-viewport，收口由主进程复位基准（main:360 实锤）。 */
 /* 面板视窗家族化（v1.0）：设置/记录/实验任一在场 → 窗体扩到 440×680（满幅盖住她）；
