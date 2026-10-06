@@ -204,5 +204,321 @@ check('idle 的 commit 只拉刹车并记冷却，不动 tracker 的水位线',
   h.tracker.spokenDuringIdle === true && h.eng.lastFiredAt === idl.at
   && h.tracker.lastCommittedSeq === 0);
 
+/* ============================================================================
+ * v1.0 D-7：自我意图（selfIntent）
+ * ============================================================================
+ *
+ * 这个文件最大的理由不是「意图算得对」，而是**它必须能不算**。
+ * 前十一轮建了五道闸门把误触发压到最低，代价是她一次也没自己做过什么；
+ * D-7 若把「她总该有点想法」写成硬要求，就会用新的骚扰换回旧的安心。
+ *
+ * 所以下面四组断言的方向与前十轮相反：多数在断言**不该有**。
+ *   ① 可追溯性：sources 必须指向真实存在的字段
+ *   ② 可空性：没有依据时必须是 null，且不拼空标签
+ *   ③ 不绕过铁律：意图绝不改变「说不说」，只改变「说什么方向」
+ *   ④ 不预设台词：意图是方向，不是可枚举的台词表
+ */
+
+const {
+  computeSelfIntent, SELF_INTENT_KINDS, TRAIT_LABEL,
+} = require('../src/trigger');
+
+/* ---- 1. 正例：四类意图各能算出来，且方向干净 ---- */
+check('特质偏高 → 依恋类意图',
+  (computeSelfIntent({ traits: { attachment_need: 40 }, idleMinutes: 0 }) || {}).kind === 'attachment_high');
+check('特质偏高 → 好奇类意图',
+  (computeSelfIntent({ traits: { philosophical_curiosity: 30 }, idleMinutes: 0 }) || {}).kind === 'curiosity_high');
+check('特质偏高 → 活力类意图',
+  (computeSelfIntent({ traits: { vitality: 30 }, idleMinutes: 0 }) || {}).kind === 'vitality_high');
+check('静默够久 → 深静默意图（>=90 分钟那一档）',
+  (computeSelfIntent({ traits: {}, idleMinutes: 100 }) || {}).kind === 'idleness_verydeep');
+check('静默够久 → 浅静默意图（45~89 分钟）',
+  (computeSelfIntent({ traits: {}, idleMinutes: 50 }) || {}).kind === 'idleness_deep');
+check('两类静默互斥：90 分钟以上只命中更深那一档',
+  computeSelfIntent({ traits: {}, idleMinutes: 100 }).kind !== 'idleness_deep');
+check('特质与环境同时成立时特质优先（她自己的 > 环境的）',
+  (computeSelfIntent({ traits: { attachment_need: 40 }, idleMinutes: 100 }) || {}).kind === 'attachment_high');
+
+/* ---- 2. 🔴 反例：必须能为空（判据1）。没有依据就是没有，不许硬造 ---- */
+const emptyCases = [
+  ['没有任何状态', {}],
+  ['特质全中立、刚互动过', { traits: {}, idleMinutes: 0 }],
+  // 🔴 quiet_preference 高不产意图：它调的是「少开口」，方向反了，
+  //   给它造意图等于把一道抑制闸门改成了驱动闸门。
+  ['安静偏好极高（方向相反，不产意图）', { traits: { quiet_preference: 900 }, idleMinutes: 0 }],
+  ['依恋没到阈值', { traits: { attachment_need: 10 }, idleMinutes: 0 }],
+  ['静默不够久', { traits: {}, idleMinutes: 5 }],
+];
+for (const [name, input] of emptyCases) {
+  check('❌ 反例·必须为空：无依据不硬造意图 → ' + name,
+    computeSelfIntent(input) === null);
+}
+
+/* ---- 3. 🔴 反例：漏传参数与恶意变体（输入一律不可信） ---- */
+const junkCases = [
+  ['完全不传', undefined],
+  ['传 null', null],
+  ['传字符串', '帮我保存'],
+  ['传数字', 123],
+  ['传数组', []],
+  ['traits 为 null', { traits: null }],
+  ['traits 为数组', { traits: [] }],
+  ['特质值为字符串', { traits: { attachment_need: 'abc' } }],
+  ['特质值为 NaN', { traits: { attachment_need: NaN } }],
+  ['特质值为 Infinity', { traits: { attachment_need: Infinity } }],
+  ['特质值为 null', { traits: { attachment_need: null } }],
+  ['静默时长的负值', { idleMinutes: -5 }],
+  ['静默时长的 Infinity', { idleMinutes: Infinity }],
+  ['静默时长的 NaN', { idleMinutes: NaN }],
+  ['静默时长的字符串', { idleMinutes: '很久' }],
+];
+for (const [name, input] of junkCases) {
+  check('❌ 反例·漏传/恶意变体：坏输入必须降级为 null（不崩不造） → ' + name,
+    computeSelfIntent(input) === null);
+}
+
+/* ---- 4. 🔴 反例：来源不可追溯的一律不产意图（判据2） ---- */
+// 这一组是本轮最关键的反例：新增一个 mood 状态机再从它推意图，
+// 形式上「有来源」，实质是从新造状态机推出自动化 —— 那是自动化不是主体性。
+check('❌ 反例·未知特质不产意图（mood 不是既有维度）',
+  computeSelfIntent({ traits: { mood: 900 }, idleMinutes: 0 }) === null);
+check('❌ 反例·多个未知特质也不产意图',
+  computeSelfIntent({ traits: { unknown_trait: 999, other: 999 }, idleMinutes: 0 }) === null);
+check('❌ 反例·social_initiative 不产意图（本表未声明该意图种类）',
+  computeSelfIntent({ traits: { social_initiative: 900 }, idleMinutes: 0 }) === null);
+
+/* ---- 5. 🔴 可追溯性：sources 必须指向真实字段 ---- */
+// 断言精确指向判据本身：不是「有 sources」，而是「sources 里的键真的存在」。
+const ALLOWED_TRAITS = new Set([
+  'quiet_preference', 'social_initiative', 'attachment_need',
+  'vitality', 'philosophical_curiosity',
+]);
+for (const kind of Object.keys(SELF_INTENT_KINDS)) {
+  const spec = SELF_INTENT_KINDS[kind];
+  const input = spec.requires === 'idleness_minutes'
+    ? { traits: {}, idleMinutes: spec.min + 1 }
+    : { traits: { [spec.requires]: spec.min + 1 }, idleMinutes: 0 };
+  const got = computeSelfIntent(input);
+  const ok = got && got.kind === kind && Array.isArray(got.sources) && got.sources.length > 0
+    && got.sources.every((s) => {
+      if (s === 'tracker.lastInteractionAt') return true;
+      if (s.startsWith('traits.')) return ALLOWED_TRAITS.has(s.slice(7));
+      return false;
+    });
+  check('可追溯性：' + kind + ' 的 sources 必须指向真实字段',
+    ok, got ? JSON.stringify(got.sources) : 'null');
+}
+check('sources 一律非空（没有来源的意图等于没有依据）',
+  Object.keys(SELF_INTENT_KINDS).every((kind) => {
+    const spec = SELF_INTENT_KINDS[kind];
+    const input = spec.requires === 'idleness_minutes'
+      ? { traits: {}, idleMinutes: spec.min + 1 }
+      : { traits: { [spec.requires]: spec.min + 1 }, idleMinutes: 0 };
+    const got = computeSelfIntent(input);
+    return got && got.sources && got.sources.length > 0;
+  }));
+check('维度名用中文定名而非程序变量名（她会照念 attachment_need）',
+  TRAIT_LABEL.attachment_need === '依恋渴望' && TRAIT_LABEL.philosophical_curiosity === '好奇'
+  && TRAIT_LABEL.vitality === '生命活力');
+check('方向文案里没有程序时钟数字（不该复述 idleMinutes/60000）',
+  //🔴 两条静默档位都要查。变异测试实测：只查「静得极久」那条路径时，
+  //   把「已经好一阵了」改回带数字的文案**测不到** ——
+  //   因为 idleMinutes=100000 只会命中 idleness_verydeep 分支。
+  //   必须是 {45~89} 与 {>=90} 两条路径各查一次。
+  [{ traits: {}, idleMinutes: 50 }, { traits: {}, idleMinutes: 100000 }].every((input) => {
+    const got = computeSelfIntent(input);
+    return got && !/\d/.test(got.direction);
+  }));
+check('🔴 浅静默档（45~89 分钟）方向同样不含数字',
+  !/\d/.test((computeSelfIntent({ traits: {}, idleMinutes: 50 }) || { direction: '' }).direction));
+check('🔴 深静默档（>=90 分钟）方向同样不含数字',
+  !/\d/.test((computeSelfIntent({ traits: {}, idleMinutes: 100000 }) || { direction: '' }).direction));
+
+/* ---- 6. 🔴 不预设台词：意图是方向，不是台词表 ---- */
+// 变体相同的方向不许出现不同的文案集合 —— 若每个 kind 返回一句成品台词，
+// 那么「不可枚举」这条就破了，主体性做成了可枚举的东西。
+const kindCount = Object.keys(SELF_INTENT_KINDS).length;
+check('意图种类是有限且由本表穷举的（' + kindCount + ' 种，不多不少）',
+  kindCount === 5);
+check('每种意图的 direction 是静态的（同样输入必得同样方向，非随机）',
+  Object.keys(SELF_INTENT_KINDS).every((kind) => {
+    const spec = SELF_INTENT_KINDS[kind];
+    const input = spec.requires === 'idleness_minutes'
+      ? { traits: {}, idleMinutes: spec.min + 5 }
+      : { traits: { [spec.requires]: spec.min + 5 }, idleMinutes: 0 };
+    const a = computeSelfIntent(input);
+    const b = computeSelfIntent(input);
+    return a && a.direction === b.direction;
+  }));
+check('方向文案长度都在合理范围（不是台词、不含换行堆砌）',
+  Object.keys(SELF_INTENT_KINDS).every((kind) => {
+    const spec = SELF_INTENT_KINDS[kind];
+    const input = spec.requires === 'idleness_minutes'
+      ? { traits: {}, idleMinutes: spec.min + 5 }
+      : { traits: { [spec.requires]: spec.min + 5 }, idleMinutes: 0 };
+    const d = computeSelfIntent(input).direction;
+    return d.length > 4 && d.length < 60 && !/[\r\n]/.test(d);
+  }));
+
+/* ---- 7. 🔴 意图绝不绕过三道防骚扰铁律 ---- */
+// 🔴 这是本轮最要紧的一条：意图只能改变「说什么」，
+//   绝不能改变「说不说」。若它能唤醒睡着/冷却/挂机刹车，
+//   主体性就退化成了骚扰开关。
+//
+// 🔴 变异测试实测教训（写这三条时踩的）：
+//   最初这三条只断言 `evaluate() === null`。跑变异体「把意图计算挪到睡眠闸门前」
+//   发现**全绿** —— 因为守卫在引擎字段（this.selfIntent）上，
+//   而 offer 返回 null，断言压根碰不到守卫。
+//   ⇒ 断言必须精确指向**守卫本身的判据**（this.selfIntent），
+//     不能只断言「结果被拒」。这与本仓「断言必须精确指向守卫本身」同源。
+(function () {
+  const mk = (over) => Object.assign({
+    sleepMode: false, lastInteractionAt: 0, spokenDuringIdle: false, recentClicks: () => 0,
+  }, over);
+
+  // 睡着她不开口 —— 即便依恋渴望拉满
+  let e = new TriggerEngine(mk({ sleepMode: true }), {
+    now: () => 50 * 60000, traits: { attachment_need: 999 },
+  });
+  const sleepOut = e.evaluate();
+  check('🔴 意图不得绕过睡眠闸门：睡着+特质拉满仍不开口', sleepOut === null);
+  // 🔴 精确指向守卫：睡着时**连意图都不该被算出来**（它会留在引擎字段上）
+  check('🔴 睡着时不得留下任何自意图（守卫在引擎字段，不只在 offer 上）',
+    e.selfIntent === null && e.selfIntentSource === null);
+
+  // 冷却内她不开口
+  e = new TriggerEngine(mk({ lastInteractionAt: -100 * 60000 }), {
+    now: () => 0, traits: { attachment_need: 999 },
+  });
+  e.lastFiredAt = -1000;
+  const cdOut = e.evaluate();
+  check('🔴 意图不得绕过冷却：冷却内+特质拉满仍不开口', cdOut === null);
+  check('🔴 冷却内不得留下任何自意图',
+    e.selfIntent === null && e.selfIntentSource === null);
+
+  // 挂机刹车不因意图而松
+  e = new TriggerEngine(mk({ spokenDuringIdle: true, lastInteractionAt: -100 * 60000 }), {
+    now: () => 0, traits: { attachment_need: 999 },
+  });
+  const brakeOut = e.evaluate();
+  check('🔴 意图不得绕过挂机刹车：说过一次+特质拉满仍不开口', brakeOut === null);
+  check('🔴 挂机刹车触发时不得留下任何自意图',
+    e.selfIntent === null && e.selfIntentSource === null);
+
+  //🔴 变异测试实测补的形态：冷却守卫必须在「**已经有自意图**」时同样生效。
+  //   最初那三条断言都在「刚构造、还没算过意图」的形态上测，
+  //   此时 selfIntent 还是 null ⇒ 一条「意图可覆盖冷却」的变异体全绿逃过。
+  //   这与本仓假反例的第六种形态同源：**测试只覆盖了状态机的一条路径**。
+  const cdWarm = new TriggerEngine(mk({ lastInteractionAt: -100 * 60000 }), {
+    now: () => 0, traits: { attachment_need: 999 },
+  });
+  cdWarm.lastFiredAt = -1000;
+  cdWarm.computeIntentNow(50);          // 先让意图算出来（引擎字段非null）
+  check('前提：冷却内此刻确实已持有自意图', cdWarm.selfIntent !== null);
+  check('🔴 已有自意图时冷却仍然生效（意图不得覆盖冷却闸门）',
+    cdWarm.evaluate() === null);
+
+  // 同理：挂机刹车在「已有自意图」时也必须生效
+  const brakeWarm = new TriggerEngine(mk({
+    spokenDuringIdle: true, lastInteractionAt: -100 * 60000,
+  }), { now: () => 0, traits: { attachment_need: 999 } });
+  brakeWarm.computeIntentNow(50);
+  check('前提：挂机刹车态此刻确实已持有自意图', brakeWarm.selfIntent !== null);
+  check('🔴 已有自意图时挂机刹车仍然生效（意图不得松刹车）',
+    brakeWarm.evaluate() === null);
+})();
+
+/* ---- 8. 意图挂在 offer 上，且 null 是合法值 ---- */
+(function () {
+const mk = (over) => Object.assign({
+    sleepMode: false, lastInteractionAt: 0, spokenDuringIdle: false, recentClicks: () => 0,
+  }, over);
+
+  // 「offer 带 selfIntent 字段（即使为 null）」：用挂机态但**未达静默意图阈值**来构造。
+  //   at - lastInteractionAt 必须是 30~44 分钟（够出 idle 提案 = 60 分钟冷却前的常态，
+  //   但 < 45 分钟的 idleness_deep 阈值 ⇒ 没有依据 ⇒ selfIntent 应为 null）。
+  //   ⚠️ 我第一版写 50 分钟，那 ≥45 已命中 idleness_deep，方向写反；
+  //   第二版用 0 静默，压根出不来提案（idleNeed=30 分钟）⇒ o 为 null 崩在断言上。
+  //   这两次都是**在错误前提上写断言**，不是实现的问题。
+  const at = 35 * 60000;   // 挂机 35 分钟：出 idle 提案，但够不到 45 分钟那档
+  let e = new TriggerEngine(mk({}), { now: () => at, traits: {} });
+  let o = e.evaluate();
+  check('offer 带 selfIntent 字段（即使为 null）',
+    !!o && ('selfIntent' in o));
+  check('🔴 无依据时 selfIntent 为 null 而不是兜底文案',
+    !!o && o.selfIntent === null);
+
+  e = new TriggerEngine(mk({}), { now: () => at, traits: { attachment_need: 80 } });
+  o = e.evaluate();
+  check('有依据时 offer.selfIntent 非空', !!o && !!o.selfIntent);
+  check('offer.selfIntent 与引擎字段一致（同一来源，不各算一遍）',
+    !!o && o.selfIntent && o.selfIntent.kind === e.selfIntent.kind
+    && JSON.stringify(o.selfIntent.sources) === JSON.stringify(e.selfIntentSource));
+
+  const poke = new TriggerEngine(mk({ recentClicks: () => 9 }), {
+    now: () => 60000, traits: { attachment_need: 80 },
+  });
+  // ⚠️ 必须**只调一次**：evaluate() 不改冷却，但第二次调用时
+  //   recentClicks 的假身恒返回 9，没问题；真正的问题是连续调用会让
+  //   断言读到的对象与第一次不是同一份（同仓踩过：「同一职责两处各做一遍」）。
+  //   存下来复用。
+  const pokeOut = poke.evaluate();
+  check('poke 提案同样带 selfIntent（不只有 idle 有）',
+    !!pokeOut && !!pokeOut.selfIntent);
+})();
+
+/* ---- 9. 🔴 构造函数初始化为 null，不留 undefined ---- */
+// 本仓踩过的坑：字段在但从不赋值，下一个人读到 undefined 会当成
+// 「没有待办」，功能静默少一块且不报错。
+(function () {
+  const eng = new TriggerEngine({
+    sleepMode: false, lastInteractionAt: 0, spokenDuringIdle: false, recentClicks: () => 0,
+  }, {});
+  check('🔴 selfIntent 初始化为 null 而非 undefined', eng.selfIntent === null);
+  check('🔴 selfIntentSource 初始化为 null 而非 undefined', eng.selfIntentSource === null);
+  check('🔴 traits 初始化为 null 而非 undefined', eng.traits === null);
+})();
+
+/* ---- 10. 特质刷新区必须一并更新自意图 ---- */
+// 形态清单第 5 项：只刷 bias 不刷 traits，自意图会永远停在旧特质上。
+(function () {
+  const mk = () => ({
+    sleepMode: false, lastInteractionAt: 0, spokenDuringIdle: false, recentClicks: () => 0,
+  });
+  const at = 35 * 60000;
+  // 用挂机 35 分钟（出idle 提案，但够不到 45 分钟那档⇒ 无依据）。
+  //   ⚠️ 同一个坑踩了第三次：写 50 分钟会命中 idleness_deep（有依据），
+  //   写 0静默压根出不来 idle 提案（idleNeed=30）⇒ o 为 null 直接崩在断言上。
+  //   **凡是「断言无依据」，输入必须落在「出提案但未达意图阈值」这一段。**
+  const eng = new TriggerEngine(mk(), { now: () => at, traits: {} });
+  const beforeOffer = eng.evaluate();
+  const before = beforeOffer.selfIntent;
+  eng.updateTraits({ attachment_need: 80 });
+  const after = eng.evaluate().selfIntent;
+  check('刷新特质前：无依据 → null', !!beforeOffer && before === null);
+  check('🔴 刷新特质后：自意图随之更新（不留在旧特质上）',
+    !!after && after.kind === 'attachment_high');
+  check('🔴 updateTraits 复制 traits 而非持引用（外部事后改它不会凭空改变自意图）',
+    eng.traits !== null && typeof eng.traits === 'object');
+  // 🔴 变异测试实测补的断言：光断言「非 null 且是 object」**两种实现都过**
+  //   （持引用也满足），等于没锁。这里必须断言「不是同一个对象」。
+  //   这是本仓假反例的又一形态：**断言写得太松，两种实现都通过**。
+  (function () {
+    const e2 = new TriggerEngine(mk(), { now: () => 35 * 60000, traits: {} });
+    const src = { attachment_need: 80 };
+    e2.updateTraits(src);
+    const notSame = e2.traits !== src;
+    src.attachment_need = 999;
+    const unchanged = e2.traits.attachment_need === 80;
+    check('🔴 引擎持有的 traits 与传入对象不是同一个引用',
+      notSame, notSame ? '' : 'same ref');
+    check('🔴 外部事后修改传入对象不影响引擎（否则自意图无法复现）',
+      unchanged, 'attachment_need=' + e2.traits.attachment_need);
+  })();
+  eng.updateTraits(null);
+  check('updateTraits(null) 后 traits 回落为 null 而非留旧值',
+    eng.traits === null && eng.computeIntentNow(0) === null);
+})();
+
 console.log('\n' + (failures ? failures + ' 项失败' : 'trigger 层测试全部通过'));
 process.exit(failures ? 1 : 0);

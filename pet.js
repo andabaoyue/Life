@@ -2666,11 +2666,29 @@ function politeToSpeak(kind) {
 
 async function tryProactive() {
   if (!api || !api.proactiveCheck) return;
-  if (busy || streaming || remoteStreaming) return;          // 先别看：连闸门都进不去，省一次 IPC
+  if (busy || streaming || remoteStreaming) {
+    // 🔴 D-7：闸门进不去也要回执。之前这里直接 return，
+    //   主进程以为什么都没发生，下一轮立刻又问同一份提案——
+    //   「她一直想说话但用户没理」于是变成无休止的轮询。
+    //   ⚠️ 这一段不消耗冷却（冷却只由 commit() 记，见 main.js），
+    //   但**必须重排下一次检查**，否则调度就此停摆。
+    if (api.proactiveDeclined) api.proactiveDeclined(null);
+    return;
+  }
   let offer = null;
   try { offer = await api.proactiveCheck(); } catch { return; }
-  if (!offer) return;
-  if (!politeToSpeak(offer.kind)) return;  // 拿着提案拒了：不记冷却，下轮照问
+  if (!offer) return;   // 主进程说「现在别说」：正常态，不是拒绝，不回执
+  if (!politeToSpeak(offer.kind)) {
+    // 🔴 D-7：礼貌闸门拒了必须**回执**。
+    //   这是「拒绝后不追问」的落点：她说了 ta 没说，主进程就该把这一轮
+    //   收干净、按冷却退回去，而不是下一轮再端出同一份提案。
+    //   ⚠️ 回执**不记账**：冷却与挂机刹车只由 commit() 在真的说出口时才动
+    //   （见 main.js 与 trigger.js 的 evaluate/commit 分离注释）。
+    //   记在这里会白烧一次冷却，而挂机那条更糟 ——
+    //   spokenDuringIdle 被置位可她一个字都没说，那句问候永远补不回来。
+    if (api.proactiveDeclined) api.proactiveDeclined(offer);
+    return;
+  }
   // 带 offer 发请求：主进程用它记账，且只有真的说出口才记（见 main.js）
   await runChat('（自言自语）', { proactive: true, offer });
 }

@@ -54,6 +54,13 @@ let trigger = null;
 let motion = null;
 let assetReport = null;
 let proactiveTimer = null;
+// 🔴 D-7：主动搭话的审计出口。
+//   必须在**模块顶层**声明，不能直接用 app.whenReady() 里的 agentAuditLog：
+//   那是个块级 const，而 proactive-declined 的处理器是模块顶层的闭包，
+//   引用它会在事件触发时抛 TDZ 错（不是风格问题，是运行时崩溃）。
+//   显式初始化为 null，不留 undefined —— 本仓踩过「字段在但从不赋值，
+//   下一个人读到 undefined 以为没有待办」的坑。
+let proactiveAuditLog = null;
 const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
 let keyEncrypted = false;   // 面板要如实显示「已加密 / 明文降级」，不吹安全状态
 let researchService = null;
@@ -437,7 +444,12 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
   try {
     const res = await brain.ask(offer ? offer.reason : text, (delta) => {
       broadcastToWindows('chat-delta', delta);   // 流式增量：她身边与对话窗都要听得见
-    }, { proactive, proactiveHint: offer && offer.hint });
+    }, { proactive, proactiveHint: offer && offer.hint,
+         // 🔴 D-7：把「她想往哪说」透传给 brain。
+         //   ⚠️ 不做类型/内容校验：brain 那一侧有类型守卫
+         //   （见 brain.js 的 selfIntent 三条边界），两处各做一遍判定迟早漂移。
+         //   这里刻意**只传**，不加工 —— 加工过的东西会让人误以为主进程保证过。
+         selfIntent: offer && offer.selfIntent });
     // 主动搭话真的说出口了才记账；被渲染端礼貌闸门拦下时压根不会走到这
     if (proactive && trigger) trigger.commit(offer);
     // 换装是在 brain 里执行的（提案→真实状态→结果写回历史），
@@ -508,7 +520,65 @@ function checkAndPushProactive() {
   }
 }
 
-ipcGuard.on('proactive-declined', () => {
+// 🔴 D-7：她说完（或被礼貌闸门拒了）之后的收尾。
+//
+// ## 这个通道是「拒绝后不追问」的落点
+//
+//   persona.js:29：「安静不等于孤独，主动搭话可以，装可怜不行。」
+//   「不数着时间等你」意味着——用户没理她，她不能一直想问。
+//   这条通道就是那句「没理」的落地：拒绝一次，按冷却退回去。
+//   🔴 这比「她会主动开口」更重要，因为**这才是主体的证据**：
+//   工具不会在意你拒绝它；主体会。
+ipcGuard.on('proactive-declined', (e, offer) => {
+  // 🔴 校验 offer：不能照单全收。
+  //   之前是无参接收，谁发都重排计时器 —— 那意味着渲染端的一个 bug
+  //   （或在 devtools 里手调）就能让她的主动搭话被无限加速：
+  //   反复发 declined，每次都重排到 45 秒后，而真正出提案的那条路径
+  //   还要再过冷却 —— 两套计时器打架，她会越说越勤。
+  //
+  //   ⚠️ 刻意**不记录拒绝次数**：本轮要锁的是「不接受追问」，
+  //   而「拒绝几次之后她还会不会开口」是另一个量级的问题——
+  //   把它做进本轮会把一个可调参数变成安全边界。
+  //   现阶段：拒绝一次 = 退一个完整冷却，不升级、不重复。
+  //
+  //   offer 为 null 也是合法输入：渲染端可能连提案都没拿到
+  //   （busy/streaming 时连闸门都没进，见 pet.js tryProactive），
+  //   那同样属于「现在别说」，必须收干净，不能静默停摆调度。
+  const hasOffer = !!offer && typeof offer === 'object' && !Array.isArray(offer);
+  const wellFormed = hasOffer
+    && (offer.kind === 'poke' || offer.kind === 'idle')
+    && typeof offer.at === 'number' && Number.isFinite(offer.at)
+    && validOffer(offer);
+
+  if (!hasOffer) {
+    // 🔴 拿不出提案就不知道自己在拒什么 ⇒ 按「最短退回」处理：
+    //   不给加速留缝（想要更快只能靠真实开口，走commit 那条路）。
+    scheduleProactiveCheck(COOLDOWN_MS);
+    return;
+  }
+  if (!wellFormed) {
+    // 提案存在但**过期或非法** —— 这是重放或伪造。
+    //   过期的提案不该驱动任何重排决策，但要仍然收尾（否则调度停摆），
+    //   且**必须记审计**：这是本仓D-4~D-6 一贯要求的，
+    //   「拒绝也要留痕」的价值一半就在这里。
+    console.warn('[Proactive] 收到非法或已过期的 declined 提案，已按最短冷却退回');
+    // 🔴 审计可能为 null（whenReady 未完成时事件就来了）—— 必须判空，
+    //   审计写不进去绝不能反过来挡住收尾。
+    if (proactiveAuditLog) {
+      try {
+        proactiveAuditLog.append({
+          channel: 'proactive-declined',
+          outcome: 'rejected',
+          code: 'INVALID_OR_EXPIRED_OFFER',
+          capability: null,
+          via: 'renderer',
+        });
+      } catch { /* 审计写不进去也不能挡住拒绝收尾 */ }
+    }
+    scheduleProactiveCheck(COOLDOWN_MS);
+    return;
+  }
+  // 正常拒绝：退一个完整冷却。
   scheduleProactiveCheck(COOLDOWN_MS);
 });
 
@@ -969,6 +1039,9 @@ app.whenReady().then(() => {
   console.log('[Agent] 沙盒已启用:', agentSandbox);
   const agentBudget = new ExecutionBudget();
   const agentAuditLog = new AuditLog({ dir: app.getPath('userData') });
+  // 🔴 D-7：把审计出口交给模块顶层那个引用 —— 主动搭话的处理器是顶层闭包，
+  //   拿不到 whenReady 的块级变量（引用会抛 TDZ）。详见 proactiveAuditLog 的声明处注释。
+  proactiveAuditLog = agentAuditLog;
   const agentConfirmation = new UserConfirmationGate();
   // D-2 的写事务管理器在此创建：WAL 与备份都落在 userData，不与用户文件混同。
   //   D-4 起执行器写盘走它，故崩溃恢复自愈从此刻起才真正有意义。

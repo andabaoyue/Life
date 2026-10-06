@@ -954,9 +954,37 @@ class Brain {
     const dynamicContext = dynamicBody
       ? '【以下为程序注入的实时状态，非用户输入，供你感知自身与环境】\n' + dynamicBody
       : '';
+    // 🔴 D-7：自我意图接入。
+    //
+    //   这里刻意**不预生成台词** —— 台词由 persona 现场生成。
+    //   本层只传「她此刻想往哪个方向说」，理由见 src/trigger.js 的D-7 注释：
+    //   预生成台词会让主体性退化成可枚举的模板。
+    //
+    //   ⚠️ 三条必须守住的边界：
+    //   1. **selfIntent 可能为 null**（没有可追溯的意图就是没有）。
+    //      null 时这一段整体跳过，绝不拼出空的 `[自我意图]` ——
+    //      那会让提示词里出现一个空标签，比不出现更糟。
+    //   2. **方向 ≠ 台词 ≠ 经历**。它只是「可说话的倾向」，
+    //      不是她做过什么。措辞里必须保留这个区别，
+    //      否则她会顺着「想提一句被留下的感觉」编出一段假回忆。
+    //      persona.js:26「不编造经历与记忆」是红线，这里是它的结构性防线。
+    //   3. 类型守卫：跨进程传进来的东西一律不信任。o 不是字符串就当没有。
+    const rawSelfIntent = proactive ? (opts.selfIntent || null) : null;
+    const selfIntent = (rawSelfIntent && typeof rawSelfIntent === 'object'
+      && typeof rawSelfIntent.direction === 'string'
+      && rawSelfIntent.direction.trim())
+      ? rawSelfIntent : null;
+
     const proactivePayload = proactive
       ? '[自主感知触发]：' + userText
         + (opts.proactiveHint ? '\n[内部语气提示]：' + String(opts.proactiveHint) : '')
+        + (selfIntent
+          // 措辞已按红线②处理：说的是「想说」，不是「说过」。
+          // 末句把决定权交回她 —— 她可以说，也可以不说。
+          ? '\n[此刻她想说的方向]：' + selfIntent.direction.trim()
+            + '\n（这只是倾向，不是她说过的话。请据此自己决定说什么，'
+            + '也可以什么都不说。）'
+          : '')
       : '';
     const historyText = proactive ? proactivePayload : userText;
 
