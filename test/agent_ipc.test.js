@@ -265,13 +265,84 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   //   D-4 刻意加入了 agent:execute —— 它是受控执行器的唯一入口，
   //   放在这里断言「不存在」等于把阶段目标钉死成死条款。
   // 但**放宽不等于放开**：D-4 的正确不变式是下面这三条，每条都比原来更严：
-  //   ① 通道名单只有 6 条，**不多一条**（多一条 process 通道就是灾难）；
+  //   ① 通道名单恰为 7 条，**不多不少**（多一条 process 通道就是灾难）；
   //   ② 不存在任何**进程/网络**类通道（process:execute / network:* 一律不许出现）；
-  //   ③ 写能力只有一个入口，没有第二条旁路。
-  check('❌ 反例5通道名单恰为 6 条且不含任何进程/网络通道（D-4 硬约束）',
-    names.length === 6
+  //   ③ 写能力只有一个入口，没有第二条旁路；
+  //   ④ 新增的读取类通道**不得写**（get-pending-proposal 只读快照，不改任何状态）。
+  //
+  // 🔵 D-5 修订说明（原断言是「恰为 6 条」）：D-5 按用户拍板新增了
+  //   agent:get-pending-proposal —— 渲染端要拿主进程的提案真身才能画确认卡片，
+  //   而把提案对象整个丢给渲染端会重新打开 id 顶替的攻击面（D-3 刚堵上的）。
+  //   所以新增的是一条「**只读快照**」通道，不是执行通道。
+  //   **这不是把断言放宽**：数量从 6 改到 7，同时**加严**了第④条，
+  //   并且第②条（禁进程/网络通道）与第③条（写唯一入口）逐字未动。
+  //   若当初是「删掉这条断言」，那才是真的失去防线。
+  check('❌ 反例5 通道名单恰为 7 条且不含任何进程/网络通道（D-5 修订硬约束）',
+    names.length === 7
     && !names.some((c) => /process|network|spawn|shell|http|fetch/i.test(c)),
     names.join(','));
+
+  // 反例5c：读取类通道必须是**无副作用**的 —— 调用它不该消耗预算、不该建案、
+  //   也不该让提案状态变化。若日后有人在这条通道里塞进「顺便建个案」，
+  //   渲染端就能自主产生提案，直接绕过「主进程判断」这条产品底线。
+  {
+    const store = new Map();
+    const h = harness({ options: { proposalStore: store } });
+    h.policy.setScopeRoots('workspace.read', [h.appDir]);
+    h.policy.setScopeRoots('workspace.write', [h.appDir]);
+    const p = h.call('agent:propose-action', h.trustedEvent, {
+      capability: 'workspace.read', scope: path.join(h.appDir, 'n.txt'), reason: 'r',
+    });
+    const id = p.proposal.id;
+    const beforeBudget = h.budget.state().actions;
+    const snap = h.call('agent:get-pending-proposal', h.trustedEvent, { proposalId: id });
+    const afterBudget = h.budget.state().actions;
+    check('❌ 反例5c 取快照通道无副作用（不耗预算、不改提案状态、不建案）',
+      snap && snap.ok === true
+      && afterBudget === beforeBudget
+      && store.has(id)
+      && store.get(id).status === 'proposed',
+      'budget ' + beforeBudget + '->' + afterBudget);
+
+    check('❌ 反例5d 取快照拿到的必须是冻结快照（渲染端改不动）',
+      Object.isFrozen(snap.proposal));
+
+    check('❌ 反例5e 快照只含白名单字段，不是提案对象展开',
+      Object.keys(snap.proposal).sort().join(',') ===
+      'capability,dangerLevel,id,reason,requiresConfirm,scope,status',
+      Object.keys(snap.proposal).sort().join(','));
+
+    // 🔴 反例5f（2026-10-06 审核补的，**变异测试逼出来的**）：
+    //   已产生过决策的提案**不得再展示快照**。删掉 `confirmation.lookup(id)` 守卫后，
+    //   31 项测试仍全绿 —— 说明此前没有任何断言覆盖这条守卫，属**假反例**。
+    //   危害：用户点过【拒绝】或【授权】后，卡片还能被重新拉起来反复问，
+    //   违反「拒绝是终态」这条不变式，也违反零打扰的产品底线。
+    //
+    //   为何要用**独立 harness**：预算/熔断等其它闸门若先触发，会把这条守卫
+    //   挡在后面，断言就成了「意外正确」。这里用全新 harness，确保
+    //   唯一可能拦住这条请求的就是 confirmation.lookup 这道守卫。
+    const h5f = harness({ options: { proposalStore: new Map() } });
+    h5f.policy.setScopeRoots('workspace.read', [h5f.appDir]);
+    h5f.policy.setScopeRoots('workspace.write', [h5f.appDir]);
+    const p5f = h5f.call('agent:propose-action', h5f.trustedEvent, {
+      capability: 'workspace.read',
+      scope: path.join(h5f.appDir, 'decided.txt'),
+      reason: 'r',
+    });
+    const id5f = p5f.proposal.id;
+    // 先投一次反对票制造「已决策」
+    const c5f = h5f.call('agent:confirm-action', h5f.trustedEvent, {
+      proposalId: id5f, decision: 'rejected',
+    });
+    const snapAfter = h5f.call('agent:get-pending-proposal', h5f.trustedEvent,
+      { proposalId: id5f });
+    check('❌ 反例5f 已决策的提案不得再取到快照（拒绝是终态，不可反复问用户）',
+      c5f && c5f.ok === true
+      && snapAfter && snapAfter.ok === false
+      && snapAfter.error === 'ALREADY_DECIDED',
+      'confirm=' + JSON.stringify(c5f && c5f.error) +
+      ' snap=' + JSON.stringify(snapAfter && snapAfter.error));
+  }
 
   check('❌ 反例5b 写能力只有一个入口，没有第二条旁路',
     names.filter((c) => /execute/i.test(c)).length === 1

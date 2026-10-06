@@ -25,6 +25,8 @@ const { registerAgentIpc } = require('./src/agent-ipc');
 const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = require('./src/agent-interfaces');
 // D-4：写事务管理器（D-2 实现，D-4 起才真正被Agent 执行器用到）。
 const { WriteTransactionManager } = require('./src/agent-transaction');
+// D-5：沙盒目录定位与确保（创建失败即拒，绝不静默降级）。
+const { sandboxPathFor, ensureSandboxDir } = require('./src/agent-sandbox');
 const { UserConfirmationGate } = require('./src/agent-confirmation');
 
 /* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
@@ -930,20 +932,41 @@ app.whenReady().then(() => {
   }
   researchService = new ResearchService(app.getPath('userData'));
   registerResearchIpc(ipcGuard, researchService, { dialog }); // SEC-01: research IPC 同样经 sender 校验
-  // v1.0 D-1/D-3/D-4：Agent 通道（SEC-01 同样经 sender 校验）。
-  // D-4 起挂 6 条：查询状态 / 能力元数据 / 提案受理 / 用户决策登记 / **执行** / 读审计。
+  // v1.0 D-1/D-3/D-4/D-5：Agent 通道（SEC-01 同样经 sender 校验）。
+  // D-4 起挂 6 条，D-5 加了取提案快照那条，共 7 条：
+  //   查询状态 / 能力元数据 / **取待确认提案快照** / 提案受理 / 用户决策登记 / **执行** / 读审计。
   //
-  // 🔒 硬边界（**默认状态下执行器完全不可用**，这不是"谨慎"，是刻意的）：
-  //   - killSwitch: true 且 allowed: [] —— 能力一个都没开；
-  //   - 未配置任何 scope 根目录 —— 即便日后开了能力，没有根目录照样全拒；
-  //   - 未挂 agent:tell她去做什么的触发源，渲染端目前无法自主产生提案。
-  //   三重默认关闭之下，即便有人误接了调用路径也动不了用户文件。
-  //   开启需要显式三步：killSwitch=false + allowed 列入能力 + setScopeRoots 配根目录。
+  // 🔒 硬边界演进（读这段前先看清自己在哪一阶段）：
+  //   - D-1~D-4：三重默认关闭 —— killSwitch:true + allowed:[] + 未配 scope 根目录，
+  //     执行器虽在，动不了任何用户文件。开启需显式三步。
+  //   - **D-5 起：三重变成两重**（用户拍板启用桌面沙盒），见下方 D-5 区块。
+  //     即便如此，仍有一层没动：**提案必须经用户逐次确认**（D-3 第四道闸门），
+  //     执行期还要重跑全部闸门 —— 沙盒只是「能动的范围」，不是「自动能动的许可」。
   //
   // 🔒 process.execute 与 network.request **不在执行器可执行白名单内**，
-  //   即便日后误加进 policy.allowed 也会在执行器入口被硬拒（用户D-4 拍板不开）。
+  //   即便日后误加进 policy.allowed 也会在执行器入口被硬拒（用户 D-4 拍板永久不开）。
   const agentRegistry = new CapabilityRegistry();
-  const agentPolicy = new PermissionPolicy({ killSwitch: true, allowed: [] });
+  // 🔓 D-5：沙盒启用（用户 2026-10-06 拍板 1A/2A/3A）。
+  //   这是 D-4 以来**第一次**真的放开写权限，所以三重默认关闭变成两重：
+  //   killSwitch=false + allowed 列入能力 + 配沙盒根目录。
+  //
+  //   为什么放桌面而不是 userData（拍板时确认过）：用户一眼看得见、能自己清理，
+  //   出问题时能自己翻。一个「可被Agent 覆写」的目录本就该被看见。
+  //   ⚠️ 沙盒内文件一律视为可被 Agent 覆写 —— 这是给用户的正式约定，
+  //   不是内部实现细节。渲染层展示沙盒路径时必须一并展示（见 agent-sandbox.js SANDBOX_NOTICE）。
+  //
+  //   ⚠️ 仍然关着的：process.execute 与 network.request 不在 allowed 里，
+  //   且执行器入口另有硬拒（用户 D-4 拍板永久不开）。
+  const agentSandbox = ensureSandboxDir(sandboxPathFor(app.getPath('desktop')));
+  const agentPolicy = new PermissionPolicy({
+    killSwitch: false,
+    allowed: ['workspace.read', 'workspace.write'],
+  });
+  // scopeRoots 只配沙盒根：**绝不配整个桌面或整个 userData** ——
+  //   那样一旦有一条路径判错，越界写入的范围就是用户的全部文件。
+  agentPolicy.setScopeRoots('workspace.read', [agentSandbox]);
+  agentPolicy.setScopeRoots('workspace.write', [agentSandbox]);
+  console.log('[Agent] 沙盒已启用:', agentSandbox);
   const agentBudget = new ExecutionBudget();
   const agentAuditLog = new AuditLog({ dir: app.getPath('userData') });
   const agentConfirmation = new UserConfirmationGate();

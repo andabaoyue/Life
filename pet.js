@@ -219,9 +219,22 @@ function closeOtherOverlays(keepId) {
 
 function anyOverlayOpen() {
   const wd = document.getElementById('wardrobe');   // 衣橱（v1.0 独立面板）
+  // D-5：把 Agent 确认卡片纳入。
+  //
+  // ⚠️ 理由必须写对，否则会误导后人（DSH 初稿写成"模态层不许拖动"，是错的）：
+  //   这里**不是拖拽拦截**，是**鼠标穿透**开关。anyOverlayOpen() 为真时，
+  //   updateMouseIgnore() 走的是 setIgnoreMouseEvents(false) —— 关掉穿透，
+  //   好让浮层上的东西能被点到。
+  //   若不纳入 agentConfirm，卡片亮起时透明区仍在穿透，
+  //   用户就**点不到【授权】/【拒绝】两个按钮** —— 那道闸门等于废了。
+  //
+  //   而桌宠的拖拽能力**不该被一张卡片夺走**：startWindowDrag()（本文件下方）
+  //   只判 e.button，不查 anyOverlayOpen()，所以卡片亮起时照常能拖。
+  const ac = document.getElementById('agentConfirm');
   return (panel && !panel.classList.contains('hidden'))
       || (wd && !wd.classList.contains('hidden'))
-      || (researchPanel && !researchPanel.classList.contains('hidden'));
+      || (researchPanel && !researchPanel.classList.contains('hidden'))
+      || (ac && !ac.classList.contains('hidden'));
 }
 
 /* ---------------- Agent 用户确认卡片（v1.0 D-3 第四道闸门） ----------------

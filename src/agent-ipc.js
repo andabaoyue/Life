@@ -43,7 +43,8 @@ const { ControlledAgentExecutor } = require('./agent-executor');
  * 允许注册的通道名单（白名单即设计约束，不多不少）。
  *
  * D-1 时这里只有 4 条治理/查询通道；D-3 加了 agent:confirm-action；
- * D-4 加了 agent:execute，共 6 条。
+ * D-4 加了 agent:execute，共 6 条；
+ * D-5 加了 agent:get-pending-proposal，共 7 条（安全取回提案真身的唯一途径）。
  *
  * ⚠️ agent:confirm-action **只登记用户的「同意/拒绝」**，它不执行任何动作。
  * 用户点头≠ 可以动手，中间还隔着预算终态判定、TTL、以及事务层。
@@ -56,6 +57,7 @@ const { ControlledAgentExecutor } = require('./agent-executor');
 const AGENT_CHANNELS = Object.freeze([
   'agent:get-status',
   'agent:get-capabilities',
+  'agent:get-pending-proposal',
   'agent:propose-action',
   'agent:confirm-action',
   'agent:execute',
@@ -215,7 +217,62 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     };
   }));
 
-  // 3. 提案受理：过三道闸门后建案并记审计。**本通道不执行任何动作。**
+  // 3. 🔴 D-5：安全取回待确认提案的只读快照。
+  //
+  //## 为什么必须有这条通道（这不是便利功能，是安全缺口）
+  //
+  //   D-3 起确认卡片需要「提案对象」才能渲染，但 proposalStore 在主进程侧，
+  //   渲染端**拿不到真身**。于是只剩两条路：
+  //     (a) 把提案对象整个丢给渲染端 → 它就是可篡改的，顶替攻击入口重新打开；
+  //     (b) 主进程侧把卡片需要的字段组装好再返回 —— 渲染端拿到的**不是提案**，
+  //         只是一份「照着提案做的展示快照」，改它没有任何用处。
+  //   选(b)。所以下面每一条字段都是**白名单挑选**，不是 {...proposal} 展开。
+  //
+  //## 🔴 三条不变式
+  //
+  //   1. **快照必须 Object.freeze**。冻结不是装饰：渲染端拿到的对象若可改，
+  //      就能把 capability 从 workspace.read 改成 workspace.write 再去确认，
+  //      而用户看到的是另一个能力 —— 与 id 顶替同型，只是换了个入口。
+  //      （D-4 实测：Object.freeze 是这类防线里唯一真正生效的那个，
+  //      非严格模式下对冻结对象赋值是**静默失败**，不会静默通过。）
+  //   2. **绝不返回提案对象本身**，只返回挑出来的字段。
+  //   3. **只认「还没被确认过」的提案**。已确认/已拒绝/已撤销的一律不返回：
+  //      卡片再次弹出同一个提案 = 变相重放。
+  //
+  //## 只读快照不是权限判定
+  //
+  //   这条通道只解决「渲染什么」，**不解决「能不能执行」**。
+  //   即便有人伪造快照，confirm 与 execute 仍会回proposalStore 核对真身。
+  //   这里是第一层减少攻击面，不是唯一一道闸门。
+  ipcGuard.handle('agent:get-pending-proposal', guard((event, raw) => {
+    assertByHandler(event);
+    // 跨进程输入不可信：只认一个 proposalId，其余字段一概不看。
+    const id = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? String(raw.proposalId || '').trim()
+      : '';
+    if (!id) return fail('PROPOSAL_ID_REQUIRED');
+
+    const tracked = proposalStore.get(id);
+    if (!tracked) return fail('PROPOSAL_NOT_FOUND');
+
+    // 不变式 3：已经产生过决策的提案不再展示。
+    //   records 里没有才说明「还没投过票」；有则无论批还是拒都不该再弹。
+    if (confirmation.lookup(id)) return fail('ALREADY_DECIDED');
+
+    const meta = registry.metaOf(tracked.capability) || {};
+    const snapshot = Object.freeze({
+      id: tracked.id,
+      capability: tracked.capability,
+      scope: String(tracked.scope || ''),
+      reason: String(tracked.reason || ''),
+      status: String(tracked.status || ''),
+      dangerLevel: meta.dangerLevel || 'unknown',
+      requiresConfirm: meta.requiresConfirm !== false,
+    });
+    return { ok: true, proposal: snapshot, budget: budget.state() };
+  }));
+
+  // 4. 提案受理：过三道闸门后建案并记审计。**本通道不执行任何动作。**
   ipcGuard.handle('agent:propose-action', guard((event, raw) => {
     assertByHandler(event);
     const evaluated = evaluateProposal(raw);
@@ -287,7 +344,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     return { ok: true, proposal, executed: false, budget: budget.state() };
   }));
 
-  // 4. 用户显式确认（D-3 第四道闸门）
+  // 5. 用户显式确认（D-3 第四道闸门）
   // 🔴 本通道**只登记决策，绝不执行**。用户点了【授权】不代表可以动手——
   //    D-4 起真正落盘的是 agent:execute 通道，且它会重跑全部闸门（TTL/预算/提案存在性），
   //    一条授权不能被复用。这条边界不能松。
@@ -371,7 +428,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     return { ok: true, record: result.record, executed: false, budget: budget.state() };
   }));
 
-  // 5. 🔴 D-4：执行通道 —— 第一条**真正会动磁盘**的通道。
+  // 6. 🔴 D-4：执行通道 —— 第一条**真正会动磁盘**的通道。
   //
   //与 D-1~D-3 的根本区别：前四条全是纯治理（查询/ 登记），不碰用户文件；
   // 本条会真的读写真实文件。因此它的每一行都必须假设「调用方在攻击」。
@@ -407,7 +464,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     return result;
   }));
 
-  // 6. 审计读取（脱敏由 AuditLog 保证；此处只做条数上限，避免一次拉爆内存）
+  // 7. 审计读取（脱敏由 AuditLog 保证；此处只做条数上限，避免一次拉爆内存）
   ipcGuard.handle('agent:get-audit-log', guard((event, opts = {}) => {
     assertByHandler(event);
     const all = auditLog.list();
