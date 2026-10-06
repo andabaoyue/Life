@@ -354,6 +354,64 @@ class ExecutionBudget {
  * 🔴 隐私铁律：**绝不记录凭据、命令原文中的密钥、文件内容、用户隐私数据**。
  *   只记元数据：谁(confirmedBy)、要做什么(capability)、在哪个范围(scope)、判定与理由。
  */
+/* ──────────────────────────────────────────────────────────────────
+ * D-9：动机来源的分类（可追溯性的最后一跳）
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * ## 要解决的问题
+ * 审计里只能看到「她写了 note.md」，答不上「因为她想写，还是因为你说了」。
+ * 而 selfIntent.sources 形如 'traits.attachment_need' / 'tracker.lastInteractionAt'，
+ * 那是**路径**，不是**类别** —— 用户翻审计时不会去推断前缀。
+ *
+ * ## 为什么用穷举表，不做前缀泛化
+ * 与 SELF_INTENT_KINDS 同一纪律：合法来源前缀由本表白名单，
+ * 新增一类来源必须先在这里登记，**不能靠「凡是带点的都算」自动放行**。
+ * 泛化前缀 = 任何新加的状态字段都能自动获得「有动机」的标签，
+ * 等于给「凭空造动机」开了后门。
+ */
+const INTENT_ORIGIN_BY_SOURCE_PREFIX = Object.freeze({
+  // 她自己的特质（依恋渴望 / 好奇 / 活力…）
+  traits: 'self_trait',
+  // 用户行为派生（静默了多久、上次互动在什么时候）
+  tracker: 'user_action',
+});
+
+/** 合法的动机来源类别。null 表示「不知道」——不是 'unknown'。 */
+const INTENT_ORIGINS = Object.freeze(['self_trait', 'user_action']);
+
+/**
+ * 把 selfIntent.sources 归类成**一个**可读的来源类别。
+ *
+ * 🔴 拿不到、或判不出来，一律返回 null，**绝不返回 'unknown'、也不编一个**。
+ *   理由：'unknown' 长得像「我知道但没记全」，而 null 的意思是「确实没有」。
+ *   前者会让人以为动机存在只是查不到 —— 那就正好毁掉本轮唯一的目的
+ *   （区分「来自她的特质」与「来自用户行为」）。
+ *
+ * 三条判据（各有一条独立反例，缺一不可）：
+ *   ① 非数组 / 空数组 → null（没有来源，就是没有动机）
+ *   ② 任何一项前缀不在表里 → null（**不认识就不分类**，不猜）
+ *   ③ traits 与 tracker 混合 → null（有歧义，说不清是哪一类）
+ *      ⚠️ 这条不是洁癖：混起来意味着「她既想写又因为你不理她」，
+ *         硬选一个就是在替她表态。当前 computeSelfIntent 只产单元素，
+ *         这条是给未来加多来源时留的诚实出口。
+ *
+ * @param {*} sources selfIntent.sources（不信任任何形态）
+ * @returns {?('self_trait'|'user_action')}
+ */
+function classifyIntentOrigin(sources) {
+  if (!Array.isArray(sources) || sources.length === 0) return null;
+  const origins = new Set();
+  for (const raw of sources) {
+    if (typeof raw !== 'string' || !raw.length) return null;
+    const prefix = raw.split('.')[0];
+    const mapped = INTENT_ORIGIN_BY_SOURCE_PREFIX[prefix];
+    if (!mapped) return null;                    // 判据 ②：不认识就不分类
+    origins.add(mapped);
+  }
+  if (origins.size !== 1) return null;           // 判据 ③：有歧义就说不出
+  return origins.values().next().value;
+}
+
 /**
  * 提案状态机（B 阶段文档 §3.4提及）：原实现 status 硬编码 'proposed'，无法表达生命周期。
  * 合法流转：proposed → approved/rejected → executing → executed/failed/rolled_back/expired
@@ -363,11 +421,58 @@ const PROPOSAL_STATES = Object.freeze([
   'executed', 'failed', 'rolled_back', 'expired',
 ]);
 
-function createActionProposal(input = {}) {
+/**
+ * 🔴 D-9：把「动机」归一成一个可冻结的字段组。
+ *
+ * 这个函数存在的意义是**把不可信输入挡在提案之外**：
+ * 执行期与审计期拿到的都只是冻结后的字符串/数组，
+ * 渲染端在 build 之后无论如何都改不动（提案是 Object.freeze 的）。
+ *
+ * @param {*} motive 主进程侧求得的动机（可以是 null / undefined / 任何垃圾形态）
+ * @returns {{intentSources:?string[], intentKind:?string, intentOrigin:?string}}
+ *   三个字段**恒存在**，拿不到就是 null —— 形状恒定才能被 grep 与断言。
+ */
+function normalizeIntentMotive(motive) {
+  const empty = { intentSources: null, intentKind: null, intentOrigin: null };
+  if (!motive || typeof motive !== 'object' || Array.isArray(motive)) return empty;
+
+  // sources 只收有限长的非空字符串，逐项截断防日志膨胀。
+  let sources = null;
+  if (Array.isArray(motive.sources)) {
+    const kept = motive.sources
+      .filter((s) => typeof s === 'string' && s.length > 0)
+      .slice(0, 8)
+      .map((s) => s.slice(0, 80));
+    if (kept.length) sources = kept;
+  }
+
+  const kind = (typeof motive.kind === 'string' && motive.kind.length)
+    ? motive.kind.slice(0, 64) : null;
+
+  // 🔴 origin **不取调用方给的**，一律由 sources 重新分类。
+  //   否则就成了「渲染端/上游声称这是自我动机」，正是本轮要防的顶替。
+  return {
+    intentSources: sources,
+    intentKind: kind,
+    intentOrigin: classifyIntentOrigin(sources),
+  };
+}
+
+/**
+ * @param {object} input  **来自渲染端的不可信输入**，只取下面那 8 个白名单字段。
+ * @param {*} [intentMotive] 🔴 D-9 动机来源，**必须由主进程侧独立求值后传入**。
+ *   刻意做成**第二个参数**而不是 input 的一个字段 —— 若放进 input，
+ *   `agent:propose-action` 把 raw 透传进来就等于让渲染端自报动机，
+ *   那正是 D-3 顶替攻击那一族。本函数**只从 input 读白名单字段**，
+ *   `input.intentSources` / `input.intentKind` / `input.intentOrigin` 一律被忽略。
+ * @returns 冻结的提案对象
+ */
+function createActionProposal(input = {}, intentMotive = null) {
   const status = String(input.status || 'proposed');
   if (!PROPOSAL_STATES.includes(status)) {
     throw new Error(`非法提案状态: ${status}（合法值见 PROPOSAL_STATES）`);
   }
+  const motive = normalizeIntentMotive(intentMotive);
   return Object.freeze({
     //🔴 id 必须**由本函数生成，绝不接受调用方指定**（2026-10-06 实测漏洞）。
     //   原实现是 `String(input.id || 'proposal-' + Date.now())`，两个后果：
@@ -384,6 +489,13 @@ function createActionProposal(input = {}) {
     status,
     // v1.0 C 阶段：预算熔断是硬约束，提案得知道自己在哪个预算会话下出生。
     budgetSessionId: String(input.budgetSessionId || ''),
+    // 🔴 D-9 动机来源：**三个字段恒存在**（拿不到时值为 null），形状恒定才能被 grep。
+    //   语义：她为什么想做这件事 —— 由哪条状态推出来的。
+    //   ⚠️ 本轮（动机来源进审计）只让它们**可查**，不接线 _pendingAgentIntent，
+    //     所以真实运行时这里几乎恒为 null。这是如实记录，不是功能没做完。
+    intentSources: motive.intentSources,
+    intentKind: motive.intentKind,
+    intentOrigin: motive.intentOrigin,
   });
 }
 
@@ -461,4 +573,8 @@ class AuditLog {
 
 module.exports = { CAPABILITIES, CAPABILITY_META, PROPOSAL_STATES, DEFAULT_BUDGET, looksLikePath,
   CapabilityRegistry, PermissionPolicy, ExecutionBudget,
-  createActionProposal, AuditLog, AgentBridgeMock };
+  createActionProposal, AuditLog, AgentBridgeMock,
+  // D-9：动机来源的分类与归一。导出是为了让门禁能**直接测判据本身**，
+  // 而不是只能通过「建案 → 看字段」间接观察（那测不到 classify 的边界）。
+  classifyIntentOrigin, normalizeIntentMotive,
+  INTENT_ORIGIN_BY_SOURCE_PREFIX, INTENT_ORIGINS };

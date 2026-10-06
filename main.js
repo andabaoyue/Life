@@ -1120,7 +1120,24 @@ app.whenReady().then(() => {
   registerAgentIpc(ipcGuard, {
     registry: agentRegistry, policy: agentPolicy, budget: agentBudget,
     auditLog: agentAuditLog, confirmation: agentConfirmation,
-  }, { transactionManager: agentTxn, txnDir: agentTxnDir });
+  }, {
+    transactionManager: agentTxn, txnDir: agentTxnDir,
+    // 🔴 D-9：动机来源求值器 —— 「她为什么想做这件事」。
+    //
+    //   **只读 trigger.selfIntent，不接线 _pendingAgentIntent。** 本轮只让动机可查，
+    //   绝不在这里触发任何提案：`agentTriggerEnabled` 仍是默认关的三重关闭之一，
+    //   这个函数只在**渲染端已经主动调了 propose 通道之后**才被调用一次，
+    //   即它只能给已经发生的建案「补一个动机说明」，不能凭空造出建案。
+    //
+    //   ⚠️ 别把它写成 `() => brain._pendingAgentIntent` 之类：
+    //   那是「该不该动手」的判定，属于下一轮，且必须先经用户确认路径拼接方案。
+    //   本轮它只回答「已发生的这次，动机是什么」——答不出就 null。
+    intentMotiveProvider: () => {
+      const it = trigger && trigger.selfIntent;
+      if (!it || typeof it !== 'object' || !Array.isArray(it.sources) || !it.sources.length) return null;
+      return { sources: it.sources, kind: typeof it.kind === 'string' ? it.kind : null };
+    },
+  });
 
   createWindow();
 

@@ -76,7 +76,8 @@ function fail(error, extra = {}) {
  *   注意形参与 research-ipc.js 一致，但**必须传 guard 而非裸 ipcMain**——
  *   SEC-01 门禁断言 main.js 里不得出现裸注册调用，故注册一律走 ipcGuard.handle。
  * @param {object} agentContext  必填，注入 agent-interfaces 的各实例。
- * @param {object} options  { registry, policy, budget, auditLog, confirmation, maxAuditItems }
+ * @param {object} options  { registry, policy, budget, auditLog, confirmation, maxAuditItems,
+ *                            intentMotiveProvider }
  */
 function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   if (!ipcGuard || typeof ipcGuard.handle !== 'function') return false;
@@ -104,6 +105,42 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 提案注册表上界：propose 已受 ExecutionBudget 约束（默认 20 次/会话），
   //   这里只是防御 map 无限增长，不构成新的可用性限制。
   const MAX_TRACKED_PROPOSALS = 200;
+
+  // 🔴 D-9：动机来源求值器 —— **只能由主进程注入，渲染端永远传不进来**。
+  //
+  //   签名：`() => ({ sources, kind }) | null`
+  //
+  //   ## 为什么必须是「主进程注入的函数」而不是通道参数
+  //   另两条思路实测都不成立：
+  //     ① 从 raw（渲染端 payload）里读 intentSources
+  //        ⇒ 渲染端自己声称「这是她想做的」，正是 D-3 顶替攻击那一族。
+  //        本文件下面 evaluateProposal(raw) 的注释已经写明：
+  //        「renderer 侧传来的 meta 是攻击面，不是事实」。
+  //     ② 让执行器在执行期自己去读 trigger.selfIntent
+  //        ⇒ **时机是错的**。selfIntent 是「此刻」的意图，
+  //          而审计要回答的是「建案那一刻她为什么想做这件事」。
+  //          提案从建案到执行可能隔着用户的确认时间（人是会犹豫的），
+  //          期间意图早变了 ⇒ 审计会记下一个**看起来合法但答非所问**的动机，
+  //          而且不报错。这比记 null 坏得多。
+  //   所以：**在建案这一瞬间求值一次，冻结进提案对象**，之后只读不重算。
+  //
+  //   ⚠️ 拿不到就返回 null，如实记 null。绝不编一个来源。
+  const intentMotiveProvider = typeof options.intentMotiveProvider === 'function'
+    ? options.intentMotiveProvider
+    : null;
+
+  /**
+   * 在建案瞬间求一次动机。**只此一处调用**，求值结果随即冻结进提案。
+   * 任何异常都吞掉并返回 null：动机记录失败绝不能挡住建案本身。
+   */
+  function resolveIntentMotive() {
+    if (!intentMotiveProvider) return null;
+    try {
+      return intentMotiveProvider();
+    } catch {
+      return null;
+    }
+  }
 
   // D-4：受控执行器。可注入替身（测试用），默认用**同一批治理实例**组装——
   //   刻意复用 policy / budget / confirmation / proposalStore这四个：
@@ -297,7 +334,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
 
     let proposal;
     try {
-      proposal = createActionProposal(raw);
+      // 🔴 D-9：动机作为**独立第二参数**传入，刻意不进 raw。
+      //   raw 是渲染端 payload，混进去就等于让她自报动机。
+      proposal = createActionProposal(raw, resolveIntentMotive());
     } catch (err) {
       auditLog.append({
         channel: 'agent:propose-action',
@@ -317,6 +356,13 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       scope: String(proposal.scope || '').slice(0, 300),
       status: proposal.status,
       matchedRoot: evaluated.verdict ? evaluated.verdict.matchedRoot : null,
+      // 🔴 D-9：建案侧也记动机。理由：执行记录能查到动机，
+      //   但「这个提案是怎么冒出来的」在 agent:propose-action 这条通道上更早，
+      //   这里不记就得等执行后才看得到 —— 而提案可能被预算/确认拦下，永不执行。
+      //   三字段恒存在（取自刚冻结的提案，不重新求值）。
+      intentSources: proposal.intentSources,
+      intentKind: proposal.intentKind,
+      intentOrigin: proposal.intentOrigin,
       via: 'ipc',
     });
 

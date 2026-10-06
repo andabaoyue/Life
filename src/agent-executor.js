@@ -117,9 +117,32 @@ class ControlledAgentExecutor {
     return this.consumed.size;
   }
 
-  _audit(entry) {
+  /**
+   * v1.0 D-9：执行侧审计的统一出口。
+   *
+   * 🔴 **为什么动机必须在这里统一注入，而不是每个调用点各写一份**：
+   *   本文件有 9 处 `_audit(...)` 调用点。若让每处自己从提案里取动机，
+   *   漏一处就产生「有些记录有动机、有些没有」的分裂 ——
+   *   而审计分裂比没有审计更坏：翻记录的人会以为「没动机那几条是另一类情况」。
+   *   统一在出口注入 ⇒ **每条executed/rejected/failed 记录都必然带这三个字段**，
+   *   拿不到时值恒为 null。**形状恒定是这里的核心不变式，不是顺手做的。**
+   *
+   * @param {object} entry 本次事件的字段
+   * @param {?object} [proposal] 提案真身；拿不到（如 PROPOSAL_NOT_FOUND）时动机记 null
+   */
+  _audit(entry, proposal) {
     if (!this.auditLog || typeof this.auditLog.append !== 'function') return;
-    try { this.auditLog.append({ channel: 'agent:execute', ...entry }); } catch { /* 审计写不进去也不能挡住拒绝 */ }
+    // 🔴 动机只从**提案对象**读，而提案对象来自 proposalStore（主进程侧建案时冻结）。
+    //   绝不从 execute 的 input 读 —— 那是渲染端传的，那是攻击面。
+    //   提案不存在时如实记 null，不写 'unknown'，也不编一个来源。
+    const motive = {
+      intentSources: proposal && Array.isArray(proposal.intentSources) ? proposal.intentSources : null,
+      intentKind: proposal && typeof proposal.intentKind === 'string' ? proposal.intentKind : null,
+      intentOrigin: proposal && typeof proposal.intentOrigin === 'string' ? proposal.intentOrigin : null,
+    };
+    try {
+      this.auditLog.append({ channel: 'agent:execute', ...motive, ...entry });
+    } catch { /* 审计写不进去也不能挡住拒绝 */ }
   }
 
   /**
@@ -157,7 +180,8 @@ class ControlledAgentExecutor {
 
     // ── 不变式 2 前半：重放防线
     if (this.consumed.has(proposalId)) {
-      this._audit({ outcome: 'rejected', code: 'ALREADY_EXECUTED', proposalId: proposalId.slice(0, 120) });
+      // 动机仍可查：提案对象还在注册表里（重放拦的是「再执行一次」，不是「查不到它」）。
+      this._audit({ outcome: 'rejected', code: 'ALREADY_EXECUTED', proposalId: proposalId.slice(0, 120) }, proposal);
       return fail('ALREADY_EXECUTED');
     }
 
@@ -168,7 +192,7 @@ class ControlledAgentExecutor {
         code: 'PROCESS_EXECUTE_FORBIDDEN',
         capability: 'process.execute',
         proposalId: proposalId.slice(0, 120),
-      });
+      }, proposal);
       return fail('PROCESS_EXECUTE_FORBIDDEN');
     }
     if (!EXECUTABLE_CAPABILITIES.includes(proposal.capability)) {
@@ -184,7 +208,7 @@ class ControlledAgentExecutor {
         capability: proposal.capability,
         reason: verdict && verdict.reason,
         proposalId: proposalId.slice(0, 120),
-      });
+      }, proposal);
       return fail('AUTHORIZED_REJECTED', { reason: verdict && verdict.reason });
     }
 
@@ -198,7 +222,7 @@ class ControlledAgentExecutor {
           code: 'SYMLINK_ESCAPE',
           capability: proposal.capability,
           proposalId: proposalId.slice(0, 120),
-        });
+        }, proposal);
         return fail('SYMLINK_ESCAPE');
       }
     }
@@ -211,7 +235,7 @@ class ControlledAgentExecutor {
         code: 'BUDGET_TRIPPED',
         capability: proposal.capability,
         proposalId: proposalId.slice(0, 120),
-      });
+      }, proposal);
       return fail('BUDGET_TRIPPED', { budget: this.budget.state() });
     }
 
@@ -225,7 +249,7 @@ class ControlledAgentExecutor {
         reason,
         capability: proposal.capability,
         proposalId: proposalId.slice(0, 120),
-      });
+      }, proposal);
       return fail('EXECUTION_NOT_ALLOWED', { reason });
     }
 
@@ -245,7 +269,7 @@ class ControlledAgentExecutor {
         capability: proposal.capability,
         detail: String((err && err.message) || '').slice(0, 200),
         proposalId: proposalId.slice(0, 120),
-      });
+      }, proposal);
       return fail('EXECUTION_FAILED', {
         detail: String((err && err.message) || '').slice(0, 200),
       });
@@ -268,7 +292,7 @@ class ControlledAgentExecutor {
       proposalId: proposalId.slice(0, 120),
       scope: String(proposal.scope || '').slice(0, 300),
       matchedRoot: verdict.matchedRoot || null,
-    });
+    }, proposal);
 
     return { ok: true, executed: true, proposalId, result, budget: this.budget.state() };
   }
