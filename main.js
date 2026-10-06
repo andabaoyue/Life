@@ -20,6 +20,9 @@ const secureCreds = require('./src/secure-credentials');
 const { activateConnection } = require('./src/connection-switch');
 const { runConnectionTest } = require('./src/connection-test');
 const { createIpcGuard } = require('./src/ipc-guard');
+// v1.0 D-1：Agent 执行能力 IPC 治理通道（纯只读+ 提案受理，执行器仍为 Mock）
+const { registerAgentIpc } = require('./src/agent-ipc');
+const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = require('./src/agent-interfaces');
 
 /* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
    都收在这一个函数里。以前只有 wardrobe 在这里绑，tracker 若另处再绑一次，
@@ -924,6 +927,18 @@ app.whenReady().then(() => {
   }
   researchService = new ResearchService(app.getPath('userData'));
   registerResearchIpc(ipcGuard, researchService, { dialog }); // SEC-01: research IPC 同样经 sender 校验
+  // v1.0 D-1：Agent 治理通道（SEC-01 同样经 sender 校验）。
+  // 🔒 D-1 硬边界：只挂 4 条纯治理通道（查询状态/能力元数据/提案受理/读审计），
+  // **不挂 agent:execute、不挂任何写通道** —— 执行器仍是 AgentBridgeMock。
+  // policy 初始为 killSwitch=on 且 allowed 为空：即便通道注册成功，默认全部拒绝，
+  // 必须显式授权 + 显式配 scope 根目录才可能放行（D-2/D-3 接入时再开）。
+  const agentRegistry = new CapabilityRegistry();
+  const agentPolicy = new PermissionPolicy({ killSwitch: true, allowed: [] });
+  const agentBudget = new ExecutionBudget();
+  const agentAuditLog = new AuditLog({ dir: app.getPath('userData') });
+  registerAgentIpc(ipcGuard, {
+    registry: agentRegistry, policy: agentPolicy, budget: agentBudget, auditLog: agentAuditLog,
+  });
 
   createWindow();
 
