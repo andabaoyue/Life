@@ -802,10 +802,17 @@ async function main() {
 
     // 1. currentSelfContext 正常生成
     const initialSelf = prodBrain.currentSelfContext();
+    // v3.1 P0（报时口癖）：断言意图是「程序年龄这一行存在」，
+    // 不再逐字锁「：约 + 数字」—— 逐帧报数正是被修掉的病灶本身。
+    // 具体改法见 brain.js 的 runtimeLine：默认给定性事实，里程碑窗口才给一次数字。
     check('Q-04: currentSelfContext 正常生成出生时间与程序年龄',
       initialSelf.includes('【出生与程序年龄】')
       && initialSelf.includes('出生时刻（本地时间）：')
-      && initialSelf.includes('程序累计运转时长：约'));
+      && /程序累计运转时长：/.test(initialSelf)
+      // 运行时长行必须保留「物理时长非日历天数」的消歧（persona 不自创日历红线）
+      && initialSelf.includes('物理运行时间累计，非日历天数')
+      // 不得再逐帧把具体小时数灌进 prompt（那是报时口癖的根源）
+      && !/程序累计运转时长：约\s*[\d.]+\s*小时/.test(initialSelf));
 
     prodBrain.selfLedger.append({
       trait: '愿意理解自己的数字生命本质',

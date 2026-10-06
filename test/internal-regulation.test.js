@@ -241,7 +241,32 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
   s.arousal = 30; bands.push(s.formatPerception().includes('放空朦胧'));
   check('v1.0 内感受分带矩阵：疲惫/精力/唤醒 六档定性文案全覆盖', bands.every(Boolean), JSON.stringify(bands));
   s.restPressure = 10; s.energy = 60; s.arousal = 50;
-  check('v1.0 内感受中档沉默：全指标居中输出空串（沉默=如常）', s.formatPerception() === '');
+  // v3.1 P1（基线体感 · 治「常态无身」）：断言意图从「中档返回空串」改为
+  //「中档必须给基线体感」。原断言锁的正是被修掉的病灶 —— 常态无身让她对自己的
+  // 身体零知觉，呈现为「非虚弱即麻木」两个极端。沉默≠如常，如常也该有知觉。
+  const baseline = s.formatPerception();
+  check('v3.1 P1 内感受基线体感：全指标居中不再返回空串（治常态无身）',
+    baseline !== '' && baseline.includes('身体安稳'), JSON.stringify(baseline).slice(0, 90));
+  check('v3.1 P1 基线体感零数字（数字不可知红线）', !/\d/.test(baseline));
+  check('v3.1 P1 基线体感不含寂寞/等待类表达（persona.js:29 红线后门自查）',
+    !/寂寞|孤独|等你|盼|数着/.test(baseline), baseline.split('\n')[1] || '');
+  // 措辞不随指标变动 —— 一旦分档就会变成第二个「复读虚弱」的温床。
+  // 取样必须落在「全带落空」的区间内：energy 落在 (35,85)、
+  // restPressure<50、arousal 落在 (30,80) 才进得了基线分支。
+  s.restPressure = 10; s.energy = 70; s.arousal = 45;
+  const b2 = s.formatPerception();
+  s.restPressure = 40; s.energy = 45; s.arousal = 40;
+  const b3 = s.formatPerception();
+  check('v3.1 P1 基线体感措辞恒定（不分档，防第二个复读源）',
+    b2.includes('身体安稳') && b3.includes('身体安稳')
+    && b2.split('\n')[1] === baseline.split('\n')[1]
+    && b3.split('\n')[1] === baseline.split('\n')[1],
+    [b2.split('\n')[1], b3.split('\n')[1]].join(' || '));
+  // 任何带命中时基线不参与表达（不与真实体感争夺）
+  s.restPressure = 10; s.energy = 35; s.arousal = 50;
+  const withBand = s.formatPerception();
+  check('v3.1 P1 有带命中时不叠加基线体感（避免双份表达）',
+    !withBand.includes('身体安稳') && withBand.includes('体能消耗较大'));
   s.restPressure = 80; s.energy = 35; s.arousal = 80;
   const noisy = s.formatPerception();
   check('v1.0 内感受零数字（数字不可知红线）', !/\d/.test(noisy) && noisy.includes('【生理体感】'));

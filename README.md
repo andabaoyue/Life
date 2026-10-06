@@ -436,7 +436,7 @@ node test/memory-dynamics.test.js         # 32 项：v0.9.7 零 API 成本记忆
 node test/dream-gate.test.js             # 35 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性、Patch 2-B preClose 同窗口去重与跨窗口关窗间隔语义）
 node test/dream-synthesis.test.js        # 34 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获）
 node test/lifecycle-wiring.test.js    # 51 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留、生产装配下 scheduler 恒 null）
-node test/internal-regulation.test.js # 43 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合）
+node test/internal-regulation.test.js # 47 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合、v3.1 P0 入睡回补挂实睡时长而非常数与虚弱分档防复读、v3.1 P1 基线体感治常态无身及其措辞恒定/不叠加/零数字/红线后门自查）
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
 node test/attention-gate.test.js      # 36 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重、守卫拦真实枚举 SUBJECT_ACQUIRED）
 node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
@@ -449,13 +449,20 @@ node test/internal-scalar-leak-capture.test.js # 4 项：Phase 4 内部标量防
 node test/identity-provenance-fix.test.js # 11 项：定点收尾修复回归（reducer 参数 stepWeight/maxDeltaPerWindow 计入 Initial State Identity 且注入真正作用于执行、Dream Event 溯源禁止全窗口扩大归因：仅归因被证据关联的 Event，无法证明时 sourceEventIds=[] 且 eventProvenanceStatus 如实标记 unavailable）
 node test/initial-state-restore-symmetry.test.js # 21 项：Initial State 恢复对称性回归（canonicalizeExperimentState 认证的 SubjectState 全字段——schemaVersion/updatedAt/windowNo/values/history/stateChanges/seenFingerprints/seenEvidenceIds/recoveryStatus/recoveryPending/recoveryPendingReason/stepWeight/maxDeltaPerWindow 及运行时去重集合 committedFingerprints/committedEvidenceIds——必须由 audit 与 executeTrajectory 共用同一份恢复逻辑 applySubjectInitialState；单字段差异 initialStateEqual=false、注入值真正到达执行对象并参与 evidence 去重与 canalization reduce；收口：runtime recoveryStatus 与 data.recoveryStatus 成对恢复、恢复后 updateSnapshot() 刷新 frozenSnapshot 使 formatSnapshot 反映注入初始值；严格对称场景五处 runtime 观测与认证状态一致）
 node test/sleep-dream-timing.test.js    # 60 项：v3.1 梦境苏醒时序改造（入睡零 LLM 冻结残迹、sleepStartTime 与原料同盘原子持久化、深睡物理时长门禁、睡眠来源豁免窗口间隔、24h 频次与认知张力守卫、单次消费防重复、陈旧数据清洗、孤立态自愈与回话腰斩修复）
+node test/persona-manner.test.js  # 36 项：v3.1 口癖与体感回归（拔除逐轮报时的具体小时数、里程碑数字窗口化、体感虚弱分档防复读、入睡回补挂实睡时长而非常数、无入睡时刻安全降级、基线体感治常态无身及其三条自律，以及 persona「不困也不数」诚实红线的原样保留）
 python3 test/ui_test.py                  # 171 项：真实交互 + mock 衣柜桥接 + 运动步态与素体基座解耦 + 64px 整数倍立绘 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
+node test/gate-selfcheck.test.js  # 同理：门禁自检，不标项数（只断言 docs.test.js 的调度层设计，不重跑全仓）
 ```
 
 跑法：除 `ui_test.py` 外都只依赖 Node；`ui_test.py` 需要根目录下有静态服务器（默认 127.0.0.1:8000，
 可用 `DESKPET_URL` 指定），`docs.test.js` 会自己起一个临时服务器并把它要校验的测试全跑一遍，
 所以一条 `node test/docs.test.js` 就是整套回归的门禁。
+
+三档结果别混看：`PASS` 真的跑了且全绿；`FAIL` 真的跑了且有失败；`SKIP` 是**本环境跑不了**
+（沙箱禁子进程 spawn、或缺 Python 依赖如 playwright），既不算失败也不冒充通过，结尾会单独
+汇总跳过项。`ui_test.py` 用的 Python 解释器按 `DESPET_PY` → 托管 venv（自带 playwright）→
+`PATH` 里的 `python` 顺序探测，找不到才 SKIP。
 
 ui_test 用系统 chromium（`/usr/bin/chromium`，可用 `DESKPET_CHROME` 覆盖），
 跑两种页面：无 bridge 的浏览器预览模式（验证降级），和注入 mock `window.deskpet` 的模式

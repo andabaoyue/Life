@@ -7,9 +7,27 @@
  *   2. 峰谷价直接影响花费估算，判定不能依赖宿主时区。
  */
 const http = require('http');
-const { execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const { DeepSeek, isPeakHour, costOf } = require('../src/deepseek');
+
+/** 异步跑一段 node 代码并拿回 stdout。
+ *  v1.0：不用 execFileSync —— 同步 spawn 在部分沙箱下被拦成 EBUSY（见 test/docs.test.js 同源问题）。 */
+function runNodeAsync(js, extraEnv) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-e', js],
+      { env: { ...process.env, ...(extraEnv || {}) } });
+    let out = '', err = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { err += d; });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0
+      ? resolve(out.trim())
+      : reject(new Error('子进程退出码 ' + code + ': ' + err.slice(0, 200)))));
+  });
+}
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -195,17 +213,19 @@ async function main() {
   ];
   const script = path.join(__dirname, '..', 'src', 'deepseek.js');
   const TZONE = ['Asia/Shanghai', 'America/New_York', 'Europe/Berlin', 'UTC', 'Pacific/Kiritimati'];
-  const runIn = (tz) => {
+  const runIn = async (tz) => {
     const js = `const {isPeakHour}=require(${JSON.stringify(script)});
       const C=${JSON.stringify(CASES)};
       console.log(JSON.stringify(C.map(x=>isPeakHour(new Date(x[0])))));`;
-    return JSON.parse(execFileSync(process.execPath, ['-e', js],
-      { env: { ...process.env, TZ: tz }, encoding: 'utf8' }).trim());
+    // v1.0修沙箱假阴性：原先用 execFileSync，同步 spawn 在部分沙箱下被拦成 EBUSY，
+    // 于是本文件跑到这里就炸，后面 17 项全被连带成"没跑"（README 写 32 项，实际只出15 项PASS）。
+    // 与 test/docs.test.js 同一个病根，统一改异步 spawn。
+    return JSON.parse(await runNodeAsync(js, { TZ: tz }));
   };
-  const reference = runIn('Asia/Shanghai');
+  const reference = await runIn('Asia/Shanghai');
   let tzMismatch = [];
   for (const tz of TZONE) {
-    const got = runIn(tz);
+    const got = await runIn(tz);
     got.forEach((v, i) => { if (v !== CASES[i][2]) tzMismatch.push(tz + ' @ ' + CASES[i][1]); });
   }
   check('14 个关键时刻在 5 种宿主时区下判定全部正确（含 DST 时区）',

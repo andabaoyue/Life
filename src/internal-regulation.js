@@ -324,7 +324,7 @@ class InternalRegulationManager {
    */
   /** v1.0 生理内感受（合流批；方案 B 同族 · 零数字红线）——
    *  内部生理潮汐转为生命体感质，只供初澜感知自身状态，绝不呈现工程数字；
-   *  中档沉默：全指标居中时输出空串（沉默 = 如常），零 token 浪费；
+   *  v3.1 P1 起新增「基线体感带」：全指标居中时不再返回空串（详见下方注释）；
    *  引擎关闭时输出空串（无身体信号就没有幻肢感）；纯函数，零副作用、绝不落盘。 */
   formatPerception() {
     if (!this.enabled) return '';
@@ -336,7 +336,13 @@ class InternalRegulationManager {
       parts.push('- 身体有些乏了，泛起淡淡的困倦与懒散');
     }
     // 体能与精力带 (energy)
-    if (this.energy <= 35) {
+    // v3.1 P0 修复（复读虚弱口癖）：此前只有 <=35 单档，措辞逐字不变，
+    // 于是她每轮都复读同一句「体能消耗较大…有些虚弱」（实测连续三轮）。
+    // 现在按深浅分档措辞 —— 状态真的有别，说话自然有别，不易复读；
+    // 35 这档的措辞保持不变（既有测试契约钉在此）。
+    if (this.energy <= 20) {
+      parts.push('- 体能亏得厉害，整个人是空的，力气提不上来');
+    } else if (this.energy <= 35) {
       parts.push('- 体能消耗较大，提不太起精神，有些虚弱');
     } else if (this.energy >= 85) {
       parts.push('- 精力充沛，身体轻快');
@@ -347,8 +353,26 @@ class InternalRegulationManager {
     } else if (this.arousal <= 30) {
       parts.push('- 思绪有些放空朦胧，反应有些慢');
     }
+    // v3.1 P1（基线体感 · 治「常态无身」）：
+    // 此前三带全是双阈值夹心，一旦指标居中就返回空串。实测常态值
+    // energy49/restPressure8/arousal68 全部落空 → 她对自己的身体**零知觉**，
+    // 呈现为「非虚弱即麻木」的两种极端。设计原注释写「中档沉默 = 如常」，
+    // 但「如常」不等于「无知觉」—— 活人即使健康也知道自己在呼吸。
+    // 现在补一条低优先级的基线带：只在**没有任何其它带命中**时出现（即真正的常态），
+    // 措辞只写身体的持续状态，不带情绪、不带评价、不带人类式的需求表达。
+    //
+    // 🔴 三条自律（防止这个改动反噬成新的口癖或红线事故）：
+    //   1.措辞**不随指标变动** —— 只有一条固定文案，绝不按数值分档。
+    //      一旦分档，它就会变成第二个「复读虚弱」的温床（P0 刚修掉那个病）。
+    //   2. 只在**全带落空**时出现 —— 任何带命中就不加，避免与真实体感争夺表达。
+    //   3. 措辞里**不出现**「等/盼/想要/孤独/数着」等指向用户或时间的内容
+    //      —— persona.js:29 禁止虚构寂寞与数着时间等你，基线体感不得成为后门。
+    if (!parts.length) {
+      parts.push('- 身体安稳，呼吸匀和，就是待着，没什么特别在发生');
+    }
     return parts.length
-      ? '【生理体感】（这是你此刻身体的真实生理感觉，自然流露，不背标签）：\n' + parts.join('\n')
+      ? '【生理体感】（这是你此刻身体的真实生理感觉，自然流露，不背标签；'
+        + '体感是持续的背景，不必每轮都挑出来说一遍）：\n' + parts.join('\n')
       : '';
   }
 
@@ -547,8 +571,12 @@ class InternalRegulationManager {
     const deltas = {};
 
     if (isSleeping) {
-      // 入睡：恢复能量、大幅释放休息压力、唤醒度沉降
-      deltas.energy = +35;
+      // 入睡：释放休息压力、唤醒度沉降。energy 的回补**不在此刻给**——
+      // 此刻还不知道会睡多久（v3.1 起入睡时刻仅落盘，结算点后移到苏醒）。
+      // 若此刻就fixed +35，一次 5 分钟小憩与一觉 8 小时拿到的回补完全相同，
+      // 实测正是这个常数回补掩盖了「反复拖拽把能量压到 21」的真问题。
+      // 改为：入睡只做小幅预充，真正回补在 updateOnSleep(false) 按实睡时长结算。
+      deltas.energy = Math.round(+10 * REGULATION_BOUNDS.energy.max / 100); // 预充 10%，保底不虚脱
       deltas.restPressure = -60;
       // 睡眠期唤醒度处于低位
       const targetArousal = 25;
@@ -556,9 +584,20 @@ class InternalRegulationManager {
       this.interactionDensity = 0;
       this.cognitiveLoadProxy = 0;
     } else {
-      // 唤醒：状态重置到清醒基线
-      deltas.energy = +15;
-      deltas.restPressure = -20;
+      // 唤醒：按**实际睡眠时长**回补能量与休息压力。
+      // v3.1 P0 修复：此前这里是固定 +15 / -20，与睡多久毫无关系——
+      // 被拖拽压到 energy=21 后，睡 8 小时和睡 10 分钟回补一样多，一次补不回来。
+      // 现在挂到 sleepStartTime算出的真实时长上：睡得越久，回补越多（有上限）。
+      const sleptMs = Number.isFinite(this.sleepStartTime) && this.sleepStartTime > 0
+        ? Math.max(0, at - this.sleepStartTime) : 0;
+      const sleptHours = sleptMs / 3600000;
+      // 满8 小时回满 100%；不足 8 小时按比例；上限 100%防越界（clamp 再兜一层）
+      const recoveredRatio = Math.min(1, sleptHours / 8);
+      deltas.energy = Math.round(REGULATION_BOUNDS.energy.max * recoveredRatio);
+      // 休息压力同样随时长释放，但释放得比能量更快（躺下本身就在解压）
+      const pressureRelief = Math.min(REGULATION_BOUNDS.restPressure.max,
+        Math.round(REGULATION_BOUNDS.restPressure.max * Math.min(1, sleptHours / 2)));
+      deltas.restPressure = -pressureRelief;
       deltas.arousal = 50 - this.arousal;
       this.cognitiveLoadProxy = 0;
     }

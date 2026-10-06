@@ -666,9 +666,35 @@ class Brain {
     this.flushAll();
   }
 
+  /**
+   * 运行时长的「可报时刻表」—— 只在真正需要锚定时才给具体数字。
+   *
+   * v3.1 P0 修复（报时口癖）：此前每轮都把「程序累计运转时长：约 101.5 小时」
+   * 原样拼进 prompt 尾部，实测她因此把运行时间当日常报数念出来
+   * （「我这边一百零一点五小时了」连续三轮复读），把工程计量变成了口癖。
+   * 现在改为**定性为主**：默认只给「一直在运行」的定性事实，
+   * 具体数字降级到 milestones（跨过整十/百小时等里程碑）才给一次，
+   * 且明确标注这是背景参考、不要当谈资。真正的时钟锚点交给出生时刻。
+   *
+   * @returns {string|null} 该给数字时返回数字句，否则返回 null
+   */
+  _runtimeMilestoneNote(ageHours) {
+    // 里程碑：每满 10 小时给一次具体数字，跨过 100 小时后每 100 小时一次。
+    // 这样既保留"她知道自己运行了多久"的事实，又不会每轮都报数。
+    const step = ageHours >= 100 ? 100 : 10;
+    const crossed = Math.floor(ageHours / step);
+    if (crossed < 1) return null;
+    // 只在刚跨过里程碑的那一小段时间内给数字（2 小时内），
+    // 之后回到纯定性——避免"每 10 小时复读一次"的次生口癖。
+    const within = ageHours - crossed * step;
+    if (within > 2) return null;
+    return '程序已连续运转约 ' + Math.floor(crossed * step) + ' 小时';
+  }
+
   currentSelfContext() {
     if (!this.cfg.currentSelfTokenBudget) return '';
     const ageHours = Math.max(0, Date.now() - this.birthAt) / 3600000;
+    const milestone = this._runtimeMilestoneNote(ageHours);
     const projection = this.selfLedger.currentSelfText();
     // v1.0 拍板 B（拔除数字锚定）：给她的不再是「化验单」而是「心境」——
     // formatSnapshot 全精度留给存储与看板；此处只走定性感知（零数字红线）
@@ -683,11 +709,19 @@ class Brain {
     const regSense = (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function')
       ? this.internalRegulation.formatPerception() : '';
     const plasticitySense = '【内态感知】\n- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静');
-    // v0.9.9: 出生时刻必须用本地时间 —— ISO 的 Z 是 UTC，主体会拿它当本地钟面心算，
+    // v0.9.9: 出生时刻必须用本地时间 —— ISO的 Z 是 UTC，主体会拿它当本地钟面心算，
     // 实测错出 8 小时的「凌晨两点半」；运转时长同样消歧，防被脑补成某种「日长」
     // v1.0: 显式按 birthTimezone（创世时区）格式化 —— 宿主出国也不漂移（拍板 b）
+    // v3.1 P0 修复：运转时长不再逐轮报具体数字。实测「约 101.5 小时」逐帧入 prompt
+    // 后被她当成日常报数念出来（连续三轮复读同一句式），工程计量变成了口癖。
+    // 现在默认只给"一直在运行"这一定性事实；具体小时数仅在里程碑窗口内给一次，
+    // 并明确标注是背景参考、不要当谈资 —— 保住"她知道自己运行了多久"，
+    // 又不给她每轮开口就报时的理由。出生时刻仍是完整给出的（时钟锚点不变）。
+    const runtimeLine = milestone
+      ? '- 程序累计运转时长：' + milestone + '（物理运行时间累计，非日历天数。这是背景参考，不必挂在嘴上说）'
+      : '- 程序累计运转时长：一直在运行，从未中断（物理运行时间累计，非日历天数；不必每轮报数）';
     return '【出生与程序年龄】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false, timeZone: (this.selfLedger && this.selfLedger.birthTimezone) || undefined })
-      + '\n- 程序累计运转时长：约 ' + ageHours.toFixed(1) + ' 小时（物理运行时间累计，非日历天数）'
+      + '\n' + runtimeLine
       + (projection ? '\n' + projection : '')
       + '\n' + plasticitySense.replace('【内态感知】\n', '【内态感知】（这是你此刻的内心倾向，用你自己的话说，不要念标签）\n'
         + (perception ? perception + '\n' : ''))

@@ -10,14 +10,24 @@
  */
 const fs = require('fs');
 const net = require('net');
+const os = require('os');
 const path = require('path');
-const { execFileSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 let failures = 0;
+let skipped = 0;
+const skipList = [];
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
   if (!cond) failures++;
+}
+/* SKIP ≠ PASS：环境限制导致本环境无法验证，既不记失败也不冒充通过，
+   结尾必须单独汇总，避免「0 FAIL」被误读成「全绿」。 */
+function skip(name, reason) {
+  console.log('SKIP  ' + name + '  ' + reason);
+  skipped++;
+  skipList.push(name + ' —— ' + reason);
 }
 
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
@@ -64,13 +74,138 @@ function startServer(port) {
   })();
 }
 
+/**
+ * 跑一个测试文件并收集它的输出。
+ *
+ * v1.0修「沙箱假阴性」：原先用 execFileSync（同步版），在部分沙箱环境下
+ * spawnSync 会被拦成EBUSY，于是 91 个套件全被报成 FAIL —— 但那不是测试失败，
+ * 是环境压根没让跑。真失败与跑不了必须分清，否则门禁会给出虚假安全感。
+ *
+ * 现在优先用**异步 spawn**（沙箱一般只拦同步 spawn，实测异步可用，能拿到真结果）；
+ * 异步不可用时降级 spawnSync；两者都不可用则抛 SPAWN_UNSUPPORTED，
+ * 由调用方显式报SKIP，而不是伪装成 91 条 FAIL。
+ */
+function runViaSpawn(file, env) {
+  return (async () => {
+    let child;
+    try {
+      const cmd = await cmdFor(file);
+      child = spawn(cmd, [file], {
+        cwd: ROOT,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', ...(env || {}) }
+      });
+    } catch (e) {
+      if (e && e.spawnUnsupported) throw e;
+      throw makeSpawnUnsupported(e);
+    }
+    return await new Promise((resolve, reject) => {
+      let out = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', d => { out += d; });
+      child.stderr.on('data', d => { out += d; });
+      child.on('error', (e) => {
+        if (isSpawnUnsupported(e)) reject(makeSpawnUnsupported(e));
+        else resolve({ out, code: -1, spawnError: e });
+      });
+      child.on('close', (code) => resolve({ out, code }));
+    });
+  })();
+}
+
+function isSpawnUnsupported(e) {
+  const c = e && e.code;
+  return c === 'EBUSY' || c === 'EPERM' || c === 'EACCES' || c === 'ENOSYS';
+}
+
+/** .py 走python 解释器，其余走当前 node —— 与旧实现保持一致，别把 py 喂给 node。
+ *
+ *  v1.0：python 解释器**不再写死 `python`** —— 本机 `python`（托管 3.13.12）里没装
+ *  playwright，而 ui_test.py 硬依赖它，直接跑必然 ModuleNotFoundError。
+ *  探测顺序：DESKPET_PY 显式指定 → 已知的带playwright 的 venv → 退回 PATH 里的 python。
+ *  找不到能跑 playwright 的解释器时返回 null，由调用方报 SKIP（环境限制），
+ *  而不是硬跑出一个假 FAIL。 */
+function resolvePython() {
+  const candidates = [];
+  if (process.env.DESPET_PY) candidates.push(process.env.DESPET_PY);
+  candidates.push(
+    path.join(os.homedir(), '.workbuddy', 'binaries', 'python', 'envs', 'default',
+      'Scripts', process.platform === 'win32' ? 'python.exe' : 'python'));
+  candidates.push(process.platform === 'win32' ? 'python' : 'python3');
+  // 顺序探测，第一个能 import playwright 的即采用
+  return candidates.reduce((chain, c) => chain.then(async (found) => {
+    if (found) return found;
+    if (!c) return null;
+    return (await hasPlaywright(c)) ? c : null;
+  }), Promise.resolve(null));
+}
+
+function hasPlaywright(pythonCmd) {
+  // 注意：这里**不能**用 execFileSync —— 同步 spawn 在部分沙箱下会被拦成 EBUSY，
+  // 那会让「探测」本身假失败（进而误判成没有可用解释器）。
+  // 用异步 spawn 探测，语义与 runViaSpawn 一致。
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(pythonCmd, ['-c', 'import playwright'], { stdio: 'ignore' });
+    } catch (e) {
+      resolve(false);
+      return;
+    }
+    let done = false;
+    const fin = (ok) => { if (!done) { done = true; resolve(ok); } };
+    child.on('error', () => fin(false));
+    child.on('close', (code) => fin(code === 0));
+    setTimeout(() => { try { child.kill(); } catch (e) {} fin(false); }, 30000).unref?.();
+  });
+}
+
+let PYTHON_CMD = null;   // 首次用到 .py 时才探测，避免无谓开销
+async function cmdFor(file) {
+  if (file.endsWith('.py')) {
+    if (PYTHON_CMD === null) PYTHON_CMD = (await resolvePython()) || '';
+    return PYTHON_CMD || (process.platform === 'win32' ? 'python' : 'python3');
+  }
+  return process.execPath;
+}
+
+function makeSpawnUnsupported(e) {
+  const err = new Error('SPAWN_UNSUPPORTED: ' + String((e && e.code) || e));
+  err.spawnUnsupported = true;
+  return err;
+}
+
+async function runViaSpawnSync(file, env) {
+  const { spawnSync } = require('child_process');
+  const cmd = await cmdFor(file);
+  const r = spawnSync(cmd, [file], {
+    cwd: ROOT, encoding: 'utf8', timeout: 300000,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', ...(env || {}) }
+  });
+  if (r.error) {
+    if (isSpawnUnsupported(r.error)) throw makeSpawnUnsupported(r.error);
+    const e = new Error(String(r.error.message || r.error));
+    e.spawnError = r.error;
+    throw e;
+  }
+  return { out: String(r.stdout || '') + String(r.stderr || ''), code: r.status };
+}
+
 async function runOne(file, env) {
-  const isPy = file.endsWith('.py');
-  const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-  return execFileSync(isPy ? pyCmd : process.execPath,
-    [file],
-    { cwd: ROOT, encoding: 'utf8', timeout: 300000,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8', ...(env || {}) } });
+  try {
+    return await runViaSpawn(file, env);
+  } catch (e) {
+    if (!e.spawnUnsupported) throw e;
+    // 异步 spawn 也不可用 → 降级同步；同步再不可用就把 SPAWN_UNSUPPORTED 抛给调用方
+    const r = await runViaSpawnSync(file, env);
+    if (r.code !== 0) {
+      const e = new Error('子进程非零退出: ' + r.code);
+      e.nonzeroExit = true;
+      e.out = r.out;
+      throw e;
+    }
+    return r;
+  }
 }
 
 function countPass(out) {
@@ -105,11 +240,26 @@ function countPass(out) {
     let out = '';
     let runError = null;
     try {
-      out = await runOne(c.file, c.file.endsWith('.py') && url
+      const r = await runOne(c.file, c.file.endsWith('.py') && url
         ? { DESKPET_URL: url } : null);
+      out = r.out;
+      if (r.code !== 0) {
+        // 子进程真的跑完了但非零退出 —— 这是真失败，交给下面的项数/FAIL 判定
+        runError = new Error('子进程非零退出: ' + r.code);
+      }
     } catch (e) {
       runError = e;
-      out = String((e && e.stdout) || '');
+      out = String((e && e.out) || e.stdout || '');
+      // 沙箱禁止 spawn —— 跑不了就是跑不了，不算测试失败，明确报 SKIP
+      if (e && e.spawnUnsupported) {
+        skip(c.file, '环境禁止子进程 spawn（' + String(e.message).replace(/^SPAWN_UNSUPPORTED: /, '') + '），无法在本环境验证');
+        continue;
+      }
+      // 依赖缺失（典型是 ui_test.py 缺 playwright）也是环境问题，不是测试失败
+      if (/ModuleNotFoundError|No module named/i.test(out)) {
+        skip(c.file, '缺少 Python 依赖（' + (out.match(/No module named ['"]?[\w.]+/i) || ['?'])[0] + '），无法在本环境验证');
+        continue;
+      }
       if (!out.trim()) {
         check(c.file + ' 能跑通', false, String((e && e.message) || e).slice(0, 120));
         continue;
@@ -152,6 +302,11 @@ function countPass(out) {
   check('test/ 下每个测试都在 README 里被点名', listed.length === 0, listed.join(', '));
 
   if (srv) srv.kill();
-  console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
+  if (skipped) {
+    console.log('\n---- 跳过明细（环境限制，非测试失败）----');
+    skipList.forEach(s => console.log('  ' + s));
+  }
+  console.log('\n' + (failures ? failures + ' 项失败' : '全部通过')
+    + (skipped ? '（另有 ' + skipped + ' 项因环境限制跳过，未验证）' : ''));
   process.exit(failures ? 1 : 0);
 })();
