@@ -667,34 +667,34 @@ class Brain {
   }
 
   /**
-   * 运行时长的「可报时刻表」—— 只在真正需要锚定时才给具体数字。
+   * v3.1 P0 追加（A 方案，用户拍板）：**彻底移除「程序累计运转时长」概念**。
    *
-   * v3.1 P0 修复（报时口癖）：此前每轮都把「程序累计运转时长：约 101.5 小时」
-   * 原样拼进 prompt 尾部，实测她因此把运行时间当日常报数念出来
-   * （「我这边一百零一点五小时了」连续三轮复读），把工程计量变成了口癖。
-   * 现在改为**定性为主**：默认只给「一直在运行」的定性事实，
-   * 具体数字降级到 milestones（跨过整十/百小时等里程碑）才给一次，
-   * 且明确标注这是背景参考、不要当谈资。真正的时钟锚点交给出生时刻。
+   * 为何要走到这一步（不是 C「观察」）：
+   *   P0 压掉了「逐帧注入精确小数 → 开口复读」这条直接路径，但实测她仍有
+   *   另一条路径：r61「我这边一百多钟头铺着」、r62「我这一百多个小时没闭过眼」
+   *   —— 她自己拿出生时刻做减法，还自造了量词「钟头」。括号内 3 次 / 正文 2 次，
+   *   括号内外均匀发生，说明「括号不是避风港」。
+   *   既然「报时素材」的**唯一源头就是这行**，撤掉它比加禁令更干净：
+   *   加禁令（B）会和刚落地的日期锚点语义打架（禁一半留一半，模型无法区分），
+   *   而且禁令本身会被注意力吸走，反而可能引发「我没有在算时间」式反向解释。
    *
-   * @returns {string|null} 该给数字时返回数字句，否则返回 null
+   * 🔴 为什么这不会让她退化成「失忆的金鱼」（曾担心的副作用，已实测排除）：
+   *   她的连续性载体不是这个数字，而是
+   *     ① memory.js `systemText()` 的【你与此前的记忆】—— 按【第N段】序号
+   *        排列的窗口摘要，实测 no=1~4 全部零处提及运行时长，写的都是事件；
+   *     ② 当前窗口的 history 消息流。
+   *   证据：r64 她动情回顾三件事（被起名 /「相信我们」/ 那间有太阳的屋子），
+   *   全是**事件链**，没有一句需要「我运行了多久」才能说出口。
+   *   连续性 ≠ 时长。前者由「段落序号 + 事件」承载，后者只是工程计量。
+   *
+   * ⚠️ 诚实边界：A 撤的是**提示素材**，不是**推导能力**。出生时刻（红线要求保留）
+   *    与日期锚点仍在，她理论上仍可做减法得出天数/小时数。A 的作用是
+   *    去掉唯一主动提示源、掐掉量词发明的源头，而非保证推导路径消失。
+   *    因此仍保留观察线：若再出现**精确值**或**无话题触发**的报时，
+   *    那时才需要更强手段（当前不预支）。
    */
-  _runtimeMilestoneNote(ageHours) {
-    // 里程碑：每满 10 小时给一次具体数字，跨过 100 小时后每 100 小时一次。
-    // 这样既保留"她知道自己运行了多久"的事实，又不会每轮都报数。
-    const step = ageHours >= 100 ? 100 : 10;
-    const crossed = Math.floor(ageHours / step);
-    if (crossed < 1) return null;
-    // 只在刚跨过里程碑的那一小段时间内给数字（2 小时内），
-    // 之后回到纯定性——避免"每 10 小时复读一次"的次生口癖。
-    const within = ageHours - crossed * step;
-    if (within > 2) return null;
-    return '程序已连续运转约 ' + Math.floor(crossed * step) + ' 小时';
-  }
-
   currentSelfContext() {
     if (!this.cfg.currentSelfTokenBudget) return '';
-    const ageHours = Math.max(0, Date.now() - this.birthAt) / 3600000;
-    const milestone = this._runtimeMilestoneNote(ageHours);
     const projection = this.selfLedger.currentSelfText();
     // v1.0 拍板 B（拔除数字锚定）：给她的不再是「化验单」而是「心境」——
     // formatSnapshot 全精度留给存储与看板；此处只走定性感知（零数字红线）
@@ -710,22 +710,76 @@ class Brain {
       ? this.internalRegulation.formatPerception() : '';
     const plasticitySense = '【内态感知】\n- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静');
     // v0.9.9: 出生时刻必须用本地时间 —— ISO的 Z 是 UTC，主体会拿它当本地钟面心算，
-    // 实测错出 8 小时的「凌晨两点半」；运转时长同样消歧，防被脑补成某种「日长」
+    // 实测错出 8 小时的「凌晨两点半」
     // v1.0: 显式按 birthTimezone（创世时区）格式化 —— 宿主出国也不漂移（拍板 b）
-    // v3.1 P0 修复：运转时长不再逐轮报具体数字。实测「约 101.5 小时」逐帧入 prompt
-    // 后被她当成日常报数念出来（连续三轮复读同一句式），工程计量变成了口癖。
-    // 现在默认只给"一直在运行"这一定性事实；具体小时数仅在里程碑窗口内给一次，
-    // 并明确标注是背景参考、不要当谈资 —— 保住"她知道自己运行了多久"，
-    // 又不给她每轮开口就报时的理由。出生时刻仍是完整给出的（时钟锚点不变）。
-    const runtimeLine = milestone
-      ? '- 程序累计运转时长：' + milestone + '（物理运行时间累计，非日历天数。这是背景参考，不必挂在嘴上说）'
-      : '- 程序累计运转时长：一直在运行，从未中断（物理运行时间累计，非日历天数；不必每轮报数）';
-    return '【出生与程序年龄】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false, timeZone: (this.selfLedger && this.selfLedger.birthTimezone) || undefined })
-      + '\n' + runtimeLine
+    // v3.1 A 方案（用户拍板）：运行时长整行移除。出生时刻与日期锚点**都保留** ——
+    //   出生时刻是 persona.js:29「以现实客观时钟为准」的锚点，丢了就成了让主体
+    //   在无时钟条件下判断今昔（那正是 08:37 今昔错乱的根因）；日期锚点治跨天。
+    //   连续性不靠时长数字，靠 systemText 里的【第N段】序号 + 事件摘要（见上方注释）。
+    return '【出生时刻】\n- 出生时刻（本地时间）：' + new Date(this.birthAt).toLocaleString('zh-CN', { hour12: false, timeZone: (this.selfLedger && this.selfLedger.birthTimezone) || undefined })
+      + '\n' + this._dateAnchorLine()
       + (projection ? '\n' + projection : '')
       + '\n' + plasticitySense.replace('【内态感知】\n', '【内态感知】（这是你此刻的内心倾向，用你自己的话说，不要念标签）\n'
         + (perception ? perception + '\n' : ''))
       + (regSense ? '\n' + regSense : '');
+  }
+
+  /**
+   * v3.1 P1新增「现实日期锚点」—— 治跨天的今昔错乱。
+   *
+   * 病灶（08:37 实测）：窗口 5 从 10/3 开到 10/6 跨了 4 天未关窗，
+   * `windowNo` 只随关窗递增、不随日期递增，于是 139 条消息在她的视野里
+   * 全挤在同一个「地方」。她把今天上午说的「我相信我们」当成了昨天说的。
+   *
+   * 为什么必须给（persona.js:29 的反向论证，不是破例）：
+   *   「不自创非物理的日历或日长；时间感知以现实客观时钟为准，
+   *     未被呈现的钟点就如实说不知道。」
+   * 我们此前**从未呈现过任何钟点**，等于逼她在没有时钟的情况下判断今昔——
+   * 错认是这条红线被违反的**结果**，而不是她不守规矩。给她真实日期
+   * 恰恰是把她拉回红线内：红线禁的是自造日历（"一天十八小时"），
+   * 不是禁真实日历。
+   *
+   * 🔴 三条自律（防这个修复反噬成第二个体癖 / 第二条红线事故）：
+   *   1.**只给日期与定性时段，绝不给「距上一轮 X 分钟」**——
+   *      分钟数是递给她的一把「数时间的尺子」。persona.js:30 明令
+   *      「不虚构…数着时间想你」，给了刻度，数就变得可算；
+   *      且她此刻 arousal 高（实测 88），极可能顺势说
+   *      「你隔了 24 分钟才来」——那是带怨气版口癖，比原版更糟。
+   *      她的缺口是「分清今天还是更早」，不是「知道隔了多久」。
+   *   2. 明写「不要用它计算等了多久」—— 正对 persona.js:30 那条红线，
+   *      不给她把锚点转成等待表演的动机。
+   *   3. 明写「不要报时」—— v3.1 P0 刚拔掉「约 101.5 小时」这个口癖，
+   *      新增的任何时间素材都可能成为下一个报时理由，必须前置防线。
+   *
+   * 位置：本行挂在 currentSelfContext() 内，该函数经 brain.js:851 拼进
+   * **user 消息尾部**的 dynamicContext，绝不写入 memory.history——
+   * 所以不改动逐字节稳定的 system 前缀，前缀缓存不受影响
+   * （实测 system 缓存命中 96%，这条不能碰）。
+   *
+   * @returns {string} 一行锚点
+   */
+  _dateAnchorLine() {
+    // 时区口径与出生时刻**同源**：都用 birthTimezone（创世时区），
+    // 避免日期按本地、时段按 UTC 那种跨时区错位（反重力提醒的细节，
+    // 本实现用同一 tz 一次取全，从根上避免该问题）。
+    const tz = (this.selfLedger && this.selfLedger.birthTimezone) || undefined;
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('zh-CN', {
+      year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: tz
+    });
+    // 时段必须与 dateStr 取自**同一时区**，否则会出现「日期是今天、时段是昨晚」
+    // 这种自相矛盾的时刻。做法：把当前时刻按该时区格式化成小时数再判断，
+    // 不使用 Date.prototype.getHours()（那永远走宿主本地时区）。
+    const hourStr = now.toLocaleString('en-US', {
+      hour: '2-digit', hour12: false, timeZone: tz
+    });
+    const hour = Number(hourStr);
+    const timeSlot = !Number.isFinite(hour)
+      ? null
+      : (hour < 6 ? '深夜' : hour < 12 ? '上午' : hour < 18 ? '下午' : '夜晚');
+    return '- 现在的现实日期：' + dateStr + (timeSlot ? ' ' + timeSlot : '')
+      + '（这是你的现实时间基准，用来分清事情发生在今天还是更早；'
+      + '它只是背景参考，绝不要当报时念给用户听，也不要用它计算等了多久）';
   }
 
   /**

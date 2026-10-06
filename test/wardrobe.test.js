@@ -239,5 +239,50 @@ check('promptBlock(null) 保持经典向下兼容', (() => {
   return !blk.includes('【主体着装偏好与当下心境】') && blk.includes('【当前穿着】');
 })());
 
+/* ---------- v3.1 WIP 套装收敛回归（堵对话换装漏洞）---------- *
+ *
+ * 病灶（2026-10-06 复核）：`casual`/`gothic` 的 PNG 点阵未完成重做。
+ * 前端面板加了「(待制作)」与点击拦截，但那**只挡 UI 路径** ——
+ * 对话通路 `brain.js:948 → applyProposal(id)` 完全畅通：
+ * 只要主体输出 `[wear:gothic]`，遮挡头部的黑块连衣裙就会挂上立绘。
+ * 实测 `applyProposal('gothic')` 返回 {ok:true, changed:true}。
+ *
+ * 修法：在 promptBlock（主体能看到的换装说明书）里收敛主动提议，
+ * 而**不**拦 applyProposal —— 后者是数据层闸门，拦它要动3 套 8 处硬断言
+ * （含 Playwright「图层精确等于 5 层」），且会把「资产没做好」与
+ * 「换装机制坏了」绑死。下面的断言锁住这个选择。
+ */
+{
+  const { isPresetProposable, WIP_UNAVAILABLE_PRESETS } = require('../src/wardrobe');
+
+  check('WIP白名单含 casual 与 gothic', isPresetProposable('casual') === false && isPresetProposable('gothic') === false);
+  check('非WIP 套装（default）仍可提议', isPresetProposable('default') === true);
+  check('白名单恰为两套（不多拦也不少拦）', WIP_UNAVAILABLE_PRESETS.size === 2);
+
+  // 首选落在 WIP 上时，说明书必须给出安全退路
+  const wipBlk = w.promptBlock({ quiet_preference: 200, philosophical_curiosity: 100 });
+  check('首选为 WIP 时 prompt 追加「不适合主动提议」提醒',
+    wipBlk.includes('不适合主动提议换上它'), wipBlk.split('\n').slice(-1)[0] || '');
+  check('WIP 提醒里给出安全退路 [wear:default]',
+    wipBlk.includes('[wear:default]'));
+  check('WIP 提醒不删除原有偏好块结构（向后兼容）',
+    wipBlk.includes('【主体着装偏好与当下心境】') && wipBlk.includes('[wear:gothic]'));
+
+  // 首选非 WIP 时，绝不能无端追加提醒（否则每轮都在提示「重做中」，成新口癖）
+  const okBlk = w.promptBlock({ attachment_need: 160, vitality: -10 });
+  check('首选非 WIP 时不追加任何 WIP 提醒（防每轮复读"重做中"）',
+    !okBlk.includes('正在重做中'), okBlk.split('\n').slice(-1)[0] || '');
+
+  check('promptBlock(null) 也不含 WIP 提醒（无 traits 时无偏好可提醒）',
+    !w.promptBlock().includes('正在重做中'));
+
+  // 🔴 关键不变式：数据层 applyProposal 必须保持对既有测试透明 —— 手动试穿
+  // 与被动响应仍可用（资产补齐后只需删白名单，不必回滚任何测试）。
+  const applyR = w.applyProposal('gothic');
+  check('数据层 applyProposal 保持可用（修法只收敛提议、不砸机制）',
+    applyR && applyR.ok === true);
+  w.applyPreset('default'); // 复位，避免污染后续用例
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

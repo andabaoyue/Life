@@ -536,10 +536,18 @@ const slotBox = document.getElementById('wdSlots');
 
   for (const [pid, pname] of Object.entries(cat.presets)) {
     const b = document.createElement('button');
-    b.textContent = pname;
-    b.className = 'wd-preset' + (cat.preset === pid ? ' on' : '');
+    const isWip = (pid === 'casual' || pid === 'gothic');
+    b.textContent = isWip ? pname + ' (待制作)' : pname;
+    b.className = 'wd-preset' + (cat.preset === pid ? ' on' : '') + (isWip ? ' wd-wip' : '');
+    if (isWip) {
+      b.title = '点阵元素重构中，晚上台式机制作';
+    }
     b.addEventListener('click', async () => {
       wdAnchor = null;
+      if (isWip) {
+        say('这两套衣服里面的点阵元素正在重做中，晚上换上~');
+        return;
+      }
       const r = await api.wardrobePreset(pid);
       if (!r.ok) say('这套我换不上：' + r.error);
       refreshWardrobe();

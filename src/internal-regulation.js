@@ -66,6 +66,57 @@ const REGULATION_BOUNDS = Object.freeze({
   cognitiveLoadProxy: { min: 0, max: 100, default: 0 }
 });
 
+/**
+ * v3.1 P1 · 静息回血参数（清醒时的被动恢复）
+ *
+ * 🔴 病灶（2026-10-06 实测，非推断）：energy 与 restPressure **双双单向**。
+ *   - 交互回合 `deltas.energy = -1`（user 与 assistant 各一次），从不回补；
+ *   - `updateOnActivity` 的 `idle` 分支**根本没设 deltas.energy**，
+ *     且 `deltas.restPressure` 只涨不消（`+min(10, idleMin/10)`）。
+ *   实测一天（8h 聊天 + 16h 挂机）：100 → 20，挂机 16 小时后**仍是 20**，
+ *   而 restPressure 一路涨到**满值 100**。她自述「困意很沉…体能亏得厉害」，
+ *   呈现为「不睡觉就注定虚弱」。这是生理模型的漏洞，不是她"体弱"。
+ *
+ * 为什么上限取 85% 而不是 100%（用户拍板）：
+ *   最后 15% 与「清空全部困意」只留给深度睡眠 —— 若静息也能回满，深睡就失去
+ *   不可替代的生理意义（触发梦境的那扇门），且现实里也不存在"清醒休息到满"。
+ *   85% 距 35% 虚弱警戒线留50 点裕度。
+ *
+ * 🔴 睡眠互斥：`isSleeping` 为真时**整套静息回血完全停用**。
+ *   否则「入睡预充 +10」会与静息回血叠加，8 小时后唤醒时双重结算溢出，
+ *   且「睡着 20 分钟」会同时拿到小憩回补与静息回补（阈值必须对齐
+ *   `sleepMinimumDreamMinutes = 30`，故微回血档取5 分钟、静息档取 30 分钟）。
+ */
+const QUIET_RECOVERY = Object.freeze({
+  /** 清醒静息可达上限（%）—— 留 15% 给深度睡眠 */
+  awakeCeiling:85,
+  /** 微回血：短暂停手也该缓一点（分钟） */
+  microMinutes: 5,
+  /** 静息回血：真正歇够了（分钟），与 sleepMinimumDreamMinutes 对齐 */
+  restMinutes: 30,
+  /**
+   * 微回血速率（点/分钟）—— 慢，站着歇会儿的程度。
+   * 刻度依据：0.4 × 29min ≈ 12 点，够「缓一口」，不会顶到静息档。
+   */
+  microRatePerMin: 0.4,
+  /**
+   * 静息回血速率（点/分钟）。
+   * 刻度依据（v3.1 二次校准）：初版设 2.5/min，算出来「离开 30 分钟回 75 点」，
+   * 恰好抵消一整晚（40 轮）消耗 —— 那等于 energy 这个量纲失去意义，
+   * 且「短歇」与「长睡」在续航效果上等价，深睡的独占价值被稀释。
+   * 现降到 1.2/min：离开 30 分钟回 36 点（约一次中等对话），
+   * 要回到 85 需静息约 70 分钟或分次累积 —— 恢复有过程感，
+   * 也保住了「深睡 8 小时才是唯一到 100 的路」这一层。
+   */
+  restRatePerMin: 1.2,
+  /** 白天困意自愈速率（点/分钟）—— 清醒且静止时，困意会自然消散 */
+  pressureReliefPerMin: 1.5,
+  /** 困意自愈上限：清醒时最多消到这么低（留给「确实该睡了」的信号） */
+  pressureAwakeFloor: 15,
+  /** 夜间（23:00~05:00 创世时区）困意自愈打折——夜里本来就该困 */
+  nightReliefFactor: 0.3
+});
+
 class InternalRegulationManager {
   constructor(userDataDir, opts = {}) {
     this.dir = userDataDir;
@@ -423,18 +474,58 @@ class InternalRegulationManager {
       deltas.energy = -1;
       deltas.interactionDensity = +3;
     } else if (activityKind === 'idle') {
-      // 静默挂机：唤醒度回落，认知负荷降低；若清醒已久则轻微累积休息压力
+      // 静默挂机：唤醒度回落、认知负荷降低、体能被动回补、困意消散。
+      // v3.1 P1：此前本分支只让 arousal/负荷回落，**energy 完全没动**
+      // （实测静息 16 小时后 energy 纹丝不动），且 restPressure 单调只涨不消
+      //（实测挂机一天涨到满值 100）—— 于是「不睡觉就注定虚弱」。现补静息回血。
+      //
+      // 🔴 与原「静止越久越困」的语义冲突，必须分档而非叠加：
+      //   短时静止（<30 分钟）= 只是停手歇会儿 → 回血 + 困意消散；
+      //   长时静止（>=30 分钟）= 真歇够了 → 回血更强，困意**停止累积**。
+      //   若仍沿用「无上限地累积睡意」，静息回血就永远抵不过困意涨势，
+      //   她依然会「体能不虚但困得撑不住」（那正是实测一天后的状态）。
+      const night = this._isNightHour(at);
       if (idleMin >= 10) {
-        // v1.0 生物钟昼夜（合流批）：夜窗（23:00~05:00 创世时区）疲惫更快堆积、唤醒更快回落；
-        // 日间窗逐字保持原公式（对照组口径不变）
-        const night = this._isNightHour(at);
         const arousalDrop = night ? Math.min(30, Math.floor(idleMin / 3.5)) : Math.min(20, Math.floor(idleMin / 5));
         deltas.arousal = -arousalDrop;
         deltas.interactionDensity = -10;
         deltas.cognitiveLoadProxy = -15;
-        // 清醒挂机时间长，逐渐积累睡意/休息需求（夜窗加权）
-        deltas.restPressure = night ? Math.min(20, Math.floor(idleMin / 5)) : Math.min(10, Math.floor(idleMin / 10));
       }
+      if (idleMin >= QUIET_RECOVERY.microMinutes) {
+        // 体能被动回补（清醒才生效，睡眠由 updateOnSleep 独占结算）
+        if (!this.isSleeping) {
+          const restful = idleMin >= QUIET_RECOVERY.restMinutes;
+          const rate = restful ? QUIET_RECOVERY.restRatePerMin : QUIET_RECOVERY.microRatePerMin;
+          deltas.energy = Math.round(idleMin * rate);
+        }
+        // 困意自愈：清醒静止时轻度疲惫自然消散，但留floor 保住「确实该睡了」的信号
+        if (!this.isSleeping && this.restPressure > QUIET_RECOVERY.pressureAwakeFloor) {
+          const factor = night ? QUIET_RECOVERY.nightReliefFactor : 1;
+          const relief = Math.round(idleMin * QUIET_RECOVERY.pressureReliefPerMin * factor);
+          const canRelieve = this.restPressure - QUIET_RECOVERY.pressureAwakeFloor;
+          deltas.restPressure = -Math.max(0, Math.min(relief, canRelieve));
+        } else if (!this.isSleeping && idleMin >= QUIET_RECOVERY.restMinutes) {
+          // 真的歇够了：睡意不再累积（夜窗仍按原公式加权，那里确有困意积累）
+          deltas.restPressure = night ? Math.min(20, Math.floor(idleMin / 5)) : 0;
+        } else if (!this.isSleeping && idleMin >= 10) {
+          // 短时静止：保留原有的轻微困意累积（原公式逐字不动）
+          deltas.restPressure = night ? Math.min(20, Math.floor(idleMin / 5)) : Math.min(10, Math.floor(idleMin / 10));
+        }
+        // 🔴 v3.1 P1 补漏（实测验出的唯一契约缺口）：上面两个 else 分支原先**没有**isSleeping 守卫。
+        // 睡眠期若 idle 被调用（上游 tracker.recordIdle 已先行 return，此处是模块自防御的最后一层），
+        // 夜窗分支会执行 `min(20, idleMin/5)` —— **在深睡期间凭空加困意**。
+        // 实测：入睡后夜窗 idle 35 分钟 → restPressure 0→7；白天同条件 7→7（故这是夜窗专属漏洞）。
+        //生产链路不可达（tracker.js:302 + brain.js 无条件苏醒双侧封死），故定性为「模块契约缺口」而非运行时 bug。
+        //为何不加整段 early return：那会连带掐掉清醒态的 arousal 回落与认知负荷清理（L488-493），
+        // 即「静下来之后平静下来」的正确行为 —— 定点守卫才是最小差异。
+      }
+    }
+
+    // 静息回血的天花板：清醒时最多回到 awakeCeiling，剩下留给深度睡眠。
+    // 放在 clamp 之后统一夹一次——先按增量为能量上探，再拉回上限。
+    if (deltas.energy && deltas.energy > 0 && !this.isSleeping) {
+      const ceiling = Math.round(REGULATION_BOUNDS.energy.max * QUIET_RECOVERY.awakeCeiling / 100);
+      if (this.energy + deltas.energy > ceiling) deltas.energy = Math.max(0, ceiling - this.energy);
     }
 
     if (deltas.energy) this.energy = clamp(this.energy + deltas.energy, REGULATION_BOUNDS.energy.min, REGULATION_BOUNDS.energy.max);

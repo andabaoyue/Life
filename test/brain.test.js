@@ -802,17 +802,21 @@ async function main() {
 
     // 1. currentSelfContext 正常生成
     const initialSelf = prodBrain.currentSelfContext();
-    // v3.1 P0（报时口癖）：断言意图是「程序年龄这一行存在」，
-    // 不再逐字锁「：约 + 数字」—— 逐帧报数正是被修掉的病灶本身。
-    // 具体改法见 brain.js 的 runtimeLine：默认给定性事实，里程碑窗口才给一次数字。
-    check('Q-04: currentSelfContext 正常生成出生时间与程序年龄',
-      initialSelf.includes('【出生与程序年龄】')
+    // v3.1 A 方案（用户拍板）：「程序累计运转时长」整行**移除**。
+    // 理由见 brain.js currentSelfContext 上方注释：报时素材的唯一源头就是这行，
+    // 撤掉比加禁令干净，且不影响连续性（由【第N段】序号 + 事件摘要承载）。
+    // 出生时刻与日期锚点**必须保留** —— 前者是 persona.js:29 的现实时钟锚点，
+    // 丢了就是逼她在无时钟下判断今昔（08:37 今昔错乱的根因）。
+    check('Q-04: currentSelfContext 生成出生时刻与现实日期锚点，且已无运行时长概念',
+      initialSelf.includes('【出生时刻】')
       && initialSelf.includes('出生时刻（本地时间）：')
-      && /程序累计运转时长：/.test(initialSelf)
-      // 运行时长行必须保留「物理时长非日历天数」的消歧（persona 不自创日历红线）
-      && initialSelf.includes('物理运行时间累计，非日历天数')
-      // 不得再逐帧把具体小时数灌进 prompt（那是报时口癖的根源）
-      && !/程序累计运转时长：约\s*[\d.]+\s*小时/.test(initialSelf));
+      && initialSelf.includes('现在的现实日期')
+      // 运行时长概念必须彻底消失：含整行、含旧段名、含「年龄」二字
+      && !/程序累计运转时长/.test(initialSelf)
+      && !/出生与程序年龄/.test(initialSelf)
+      && !/年龄/.test(initialSelf)
+      // 里程碑机制随之上线移除，不留残余入口
+      && typeof prodBrain._runtimeMilestoneNote === 'undefined');
 
     prodBrain.selfLedger.append({
       trait: '愿意理解自己的数字生命本质',
@@ -849,12 +853,12 @@ async function main() {
     const r1UserInReq = r1Req[r1Req.length - 1].content;
     check('Q-01: 第 1 轮 API payload 包含 currentSelfContext',
       r1UserInReq.startsWith('第一轮消息：你好初澜')
-      && r1UserInReq.includes('【出生与程序年龄】')
+      && r1UserInReq.includes('【出生时刻】')
       && r1UserInReq.includes('愿意理解自己的数字生命本质'));
     check('Q-01: 第 1 轮保存后 history 中不包含 currentSelfContext',
       prodBrain.memory.history.length === 2
       && prodBrain.memory.history[0].content === '第一轮消息：你好初澜'
-      && !prodBrain.memory.history[0].content.includes('【出生与程序年龄】')
+      && !prodBrain.memory.history[0].content.includes('【出生时刻】')
       && !prodBrain.memory.history[0].content.includes('【当前自我投影】'));
 
     // 4. 第 2 轮带环境感知：payload 中带环境与自我，history 中完全无上一轮或本轮自我副本
@@ -869,11 +873,11 @@ async function main() {
       r2UserInReq.startsWith('第二轮消息：今天感觉如何')
       && r2UserInReq.includes('【当前环境感知】')
       && r2UserInReq.includes('被戳 2 次')
-      && r2UserInReq.includes('【出生与程序年龄】'));
+      && r2UserInReq.includes('【出生时刻】'));
     check('Q-01: 第 2 轮 history 中不出现上一轮或当轮的 currentSelfContext 副本',
       prodBrain.memory.history.length === 4
       && prodBrain.memory.history[2].content === '第二轮消息：今天感觉如何'
-      && !prodBrain.memory.history.some(m => m.content.includes('【出生与程序年龄】'))
+      && !prodBrain.memory.history.some(m => m.content.includes('【出生时刻】'))
       && !prodBrain.memory.history.some(m => m.content.includes('【当前自我投影】'))
       && !prodBrain.memory.history.some(m => m.content.includes('【当前环境感知】')));
 
@@ -885,7 +889,7 @@ async function main() {
       prodBrain.memory.history.length === 20);
     check('Q-01: 10 轮多轮回归后 history 内完全无动态 self context 重复堆叠',
       !prodBrain.memory.history.some(m =>
-        m.content.includes('【出生与程序年龄】') ||
+        m.content.includes('【出生时刻】') ||
         m.content.includes('【当前自我投影】') ||
         m.content.includes('【当前环境感知】')));
     const tokens10 = prodBrain.memory.historyTokens();
@@ -908,7 +912,7 @@ async function main() {
       && !archBrain.memory.systemText().includes('【当前自我投影】'));
     check('Q-04: 归档后保留的 tail history 依然保持纯净无污染',
       archBrain.memory.history.length === 2
-      && !archBrain.memory.history.some(m => m.content.includes('【出生与程序年龄】')));
+      && !archBrain.memory.history.some(m => m.content.includes('【出生时刻】')));
 
     // 7. 最终数据结构断言：严格检查 history 中每一项的结构与字段
     const allValid = prodBrain.memory.history.every(m =>

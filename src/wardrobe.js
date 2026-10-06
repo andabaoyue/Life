@@ -177,6 +177,43 @@ function evaluatePresetPreference(presetId, traits = {}) {
 }
 
 /**
+ * 🔴 WIP套装白名单 —— 决定「哪套衣服允许被主体主动提议」。
+ *
+ * v3.1 背景（2026-10-06 复核）：`casual` / `gothic` 两套的 PNG 点阵尚未完成
+ * 重做（遮挡头部的黑块连衣裙、粗糙灰短袖）。前端衣橱面板已加「(待制作)」
+ * 标签并在点击时提示，但这**只挡住了 UI 路径**：
+ * `brain.js:948` 的对话换装通路 `for (const id of wears) applyProposal(id)`
+ * 完全畅通 —— 只要主体在回复里输出 `[wear:gothic]`，残缺点阵就会挂上立绘。
+ * 实测 `applyProposal('gothic')` 返回 `{ok:true, changed:true}`。
+ *
+ * 🔴 为什么收敛在 promptBlock 而不拦 applyProposal：
+ *   `applyProposal` 是数据层闸门，拦它要同步改 wardrobe.test.js（2 处
+ *   提案断言 + 2 处预设断言）、brain.test.js（1 处）、ui_test.py（3 处，
+ *   含 Playwright「图层精确等于 5 层」）—— 共 3 套 8 处硬断言，代价与风险
+ *   都不成比例，且会把「资产没做好」和「换装机制坏了」两件事绑死在一起：
+ *   资产一补好就得去改回滚测试。
+ *
+ *   promptBlock 是「主体能看到的换装说明书」。在说明书里声明「这两套点阵
+ *   重做中，暂不主动提议」= 从**提议源头**收敛，而 applyProposal 对既有
+ *   测试完全透明（UI 手动切换与对话被动响应都仍可用，符合「关起门来
+ *   慢慢修」的现实需求 —— 用户面板仍能试穿，只是不由她主动提出）。
+ *
+ * 🔴 铁律（解除条件）：新点阵资产补齐并验收后，删掉本数组即可恢复，
+ *    不需要动任何测试。本白名单**不得**被「前端已提示」替代 ——
+ *    那正是本次修复要堵的漏。
+ */
+const WIP_UNAVAILABLE_PRESETS = new Set(['casual', 'gothic']);
+
+/**
+ * 某套预设当前是否允许被主体主动提议（WIP 期间为 false）。
+ * @param {string} presetId
+ * @returns {boolean}
+ */
+function isPresetProposable(presetId) {
+  return !WIP_UNAVAILABLE_PRESETS.has(String(presetId));
+}
+
+/**
  * 根据主体特质数值获取初澜当前最偏好的预设方案
  */
 function getSubjectPreferredPreset(traits = {}) {
@@ -421,9 +458,18 @@ class Wardrobe {
       block += '\n\n【主体着装偏好与当下心境】\n'
         + '- 当下特质驱动的着装倾向：' + pref.name + '（' + pref.mood + '）\n'
         + '- 你拥有根据自身喜好与心境挑选衣物的自主权；在交流或有需要时，你可以主动提议换上符合你心境的衣服（在回复末尾附带 [wear:' + pref.preset + '] 或具体 itemId）。';
+      // v3.1 WIP收敛：偏好首选若落在点阵重做中的套装上，改推安全退路。
+      // 只在「首选不可用」时追加一句，不改动上面的结构与既有断言文本 ——
+      // 这样 wardrobe.test.js 的 promptBlock 断言（校验含偏好块与 [wear:gothic]）
+      // 保持成立，而主体在正常对话里不会主动把残缺点阵挂上立绘。
+      if (!isPresetProposable(pref.preset)) {
+        const safeMeta = STYLE_AFFINITIES.default;
+        block += '\n- 提醒：' + pref.name + ' 这套的可用图层正在重做中，本阶段不适合主动提议换上它；'
+          + '想换衣服时，请改提「' + safeMeta.name + '」（[wear:default]）或上面列出的其他单品 itemId。';
+      }
     }
     return block;
   }
 }
 
-module.exports = { Wardrobe, CATALOG, PRESETS, SLOTS, SLOT_IDS, STYLE_AFFINITIES, evaluatePresetPreference, getSubjectPreferredPreset, validate, defaultEquip };
+module.exports = { Wardrobe, CATALOG, PRESETS, SLOTS, SLOT_IDS, STYLE_AFFINITIES, evaluatePresetPreference, getSubjectPreferredPreset, validate, defaultEquip, isPresetProposable, WIP_UNAVAILABLE_PRESETS };

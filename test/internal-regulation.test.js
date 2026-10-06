@@ -277,6 +277,15 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     && new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-off-')),
       { enabled: false }).formatPerception() === '');
   // 生物钟昼夜对比（创世时区口径：上海 10/05 02:00 vs 14:00）
+  // ⚠️ v3.1 P1 静息回血改动后，本组断言的**语义已变**，原因逐条说明：
+  //原契约「日间静置 30 分钟 → restPressure = min(10, 30/10) = 3」锁的是
+  //   「清醒挂机时间越长越困」这个单向语义。它正是 v3.1 要治的病根之一：
+  //   实测挂机一整天 → restPressure 涨到满值 100，她自述「困意很沉…很想趴下」，
+  //   而此时 energy 补满也救不了 —— 呈现为「体能不虚但困得撑不住」。
+  // 现改为两档语义（见 internal-regulation.js QUIET_RECOVERY）：
+  //   短时静止（<30 分钟）→ 保留原累积公式（逐字不变）；
+  //   真的歇够（>=30 分钟）→ 困意**停止累积**（日间），夜窗仍按原公式加权
+  //   （夜里本就该困，这是生物钟的合理部分，不在本次治疗范围内）。
   const NIGHT = Date.UTC(2026, 9, 4, 18, 0, 0);
   const DAY = Date.UTC(2026, 9, 4, 6, 0, 0);
   const n1 = new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-night-')),
@@ -286,9 +295,9 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
   const nA0 = n1.getState().arousal, dA0 = d1.getState().arousal;
   n1.updateOnActivity('idle', { idleMin: 30, timestamp: NIGHT });
   d1.updateOnActivity('idle', { idleMin: 30, timestamp: DAY });
-  check('v1.0 生物钟夜窗加权：深夜疲惫堆积更快、唤醒回落更深（创世时区口径）',
+  check('v1.0 生物钟夜窗加权：夜窗仍累积困意（夜里本就该困），唤醒回落更深（创世时区口径）',
     n1.getState().restPressure === 6 && n1.getState().arousal === nA0 - 8
-    && d1.getState().restPressure === 3 && d1.getState().arousal === dA0 - 6,
+    && d1.getState().arousal === dA0 - 6,
     'night rp=' + n1.getState().restPressure + ' arΔ=' + (n1.getState().arousal - nA0)
     + ' | day rp=' + d1.getState().restPressure + ' arΔ=' + (d1.getState().arousal - dA0));
   // 覆盖 Brain 生产接线：惰性函数回调时区（Manus P1 连带钉）
@@ -296,10 +305,142 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     { enabled: true, birthTimezone: () => 'Asia/Shanghai' });
   check('v1.0 创世时区支持惰性函数回调（Brain 生产接线覆盖）',
     fnManager._isNightHour(NIGHT) === true && fnManager._isNightHour(DAY) === false);
-  check('v1.0 生物钟日间对照：日间公式逐字不变（min(10,idle/10) / -min(20,idle/5)）',
-    d1.getState().restPressure === Math.min(10, Math.floor(30 / 10))
+  check('v3.1 日间真歇够（>=30分）后困意停止累积（原契约 min(10,idle/10) 仅对<30分钟生效）',
+    d1.getState().restPressure === 0
     && (dA0 - d1.getState().arousal) === Math.min(20, Math.floor(30 / 5)));
+  // 短时静止的日间累积公式逐字不变（未被v3.1 改动触碰）
+  const dShort = new InternalRegulationManager(fs.mkdtempSync(path.join(os.tmpdir(), 'ir-dshort-')),
+    { enabled: true, birthTimezone: 'Asia/Shanghai' });
+  dShort.updateOnActivity('idle', { idleMin: 25, timestamp: DAY });
+  check('v3.1 短时静止（<30分）日间困意累积公式逐字不变（min(10,idle/10)）',
+    dShort.getState().restPressure === Math.min(10, Math.floor(25 / 10)));
 }
+
+/* ===== v3.1 P1 静息回血：治「不睡觉就注定虚弱」=====
+ * 病灶实测（2026-10-06）：energy 与 restPressure 双单向。
+ *   交互每轮 -1（user/assistant 各一次）；idle 分支**根本没设 deltas.energy**；
+ *   restPressure 单调只涨不消。一天（8h 聊天 + 16h 挂机）→ energy 20、restPressure 100。
+ * 解法：清醒静息分两档回血（微回血/ 静息回血），清醒静息时困意自愈，
+ *      清醒上限 85%，最深的那 15% 只留给深度睡眠。 */
+(function quietRecovery() {
+  const DAYT = Date.UTC(2026, 9, 4, 6, 0, 0);  // 14:00 Asia/Shanghai（日窗）
+  const NIGHTT = Date.UTC(2026, 9, 4, 18, 0, 0); // 02:00 Asia/Shanghai（夜窗）
+  const mk = (tag, e, rp) => {
+    const m = new InternalRegulationManager(
+      fs.mkdtempSync(path.join(os.tmpdir(), tag)), { enabled: true, birthTimezone: 'Asia/Shanghai' });
+    if (e !== undefined) m.energy = e;
+    if (rp !== undefined) m.restPressure = rp;
+    return m;
+  };
+
+  check('v3.1 静息回血·微档：静止 5~29 分钟缓慢回血（缓一口，不是长睡等价）',(() => {
+    const a = mk('qr-m5-', 40, 0); a.updateOnActivity('idle', { idleMin: 5, timestamp: DAYT });
+    const b = mk('qr-m29-', 40, 0); b.updateOnActivity('idle', { idleMin: 29, timestamp: DAYT });
+    const c = mk('qr-m0-', 40, 0); c.updateOnActivity('idle', { idleMin: 2, timestamp: DAYT });
+    return c.getState().energy === 40            // 不足 5 分钟不回血
+      && a.getState().energy > 40 && a.getState().energy <= 45
+      && b.getState().energy > a.getState().energy
+      && b.getState().energy < 85;                 // 微档不得触到清醒上限
+  })());
+  check('v3.1 静息回血·静息档：>=30 分钟回血显著快于微档', (() => {
+    const m30 = mk('qr-r30-', 40, 0); m30.updateOnActivity('idle', { idleMin: 30, timestamp: DAYT });
+    const m29 = mk('qr-r29-', 40, 0); m29.updateOnActivity('idle', { idleMin: 29, timestamp: DAYT });
+    return m30.getState().energy > m29.getState().energy
+      && m30.getState().energy - 40 > (m29.getState().energy - 40) * 2;
+  })());
+  check('v3.1 清醒静息上限 85%：静息再久也不越过（最后 15% 留给深度睡眠）', (() => {
+    const m = mk('qr-cap-', 10, 0);
+    for (let i = 0; i < 12; i++) m.updateOnActivity('idle', { idleMin: 30, timestamp: DAYT + i * 30 * 60000 });
+    return m.getState().energy === 85;
+  })());
+  check('v3.1 困意自愈：清醒静置会把高困意降下来，但留floor 15（保住「该睡了」的信号）', (() => {
+    const m = mk('qr-rp-', 50, 90);
+    m.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT });
+    return m.getState().restPressure < 90 && m.getState().restPressure === 15;
+  })());
+  check('v3.1 夜窗困意自愈打折 0.3（夜里本来就该困，不该被静息清掉）', (() => {
+    const n = mk('qr-n-', 50, 90); n.updateOnActivity('idle', { idleMin: 60, timestamp: NIGHTT });
+    const d = mk('qr-d-', 50, 90); d.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT });
+    return n.getState().restPressure > d.getState().restPressure
+      && n.getState().restPressure < 90;
+  })());
+  check('v3.1 睡眠互斥：睡着时静息**完全不得**回血（否则与入睡预充/8h结算双重叠加）', (() => {
+    const m = mk('qr-sleep-', 60, 0);
+    m.updateOnSleep(true, { timestamp: DAYT });
+    const afterFall = m.getState().energy;
+    m.updateOnActivity('idle', { idleMin: 120, timestamp: DAYT + 3600000 });
+    return afterFall === 70                       // 100 上限下60 + 10 预充 = 70
+      && m.getState().energy === afterFall;       // 静息 2 小时也一点没加
+  })());
+  check('v3.1 深度睡眠仍是唯一到 100 的路（静息封 85，深睡 8h 到满）', (() => {
+    const m = mk('qr-deep-', 50, 0);
+    for (let i = 0; i < 10; i++) m.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT + i * 3600000 });
+    const afterQuiet = m.getState().energy;
+    m.updateOnSleep(true, { timestamp: DAYT + 10 * 3600000 });
+    m.updateOnSleep(false, { timestamp: DAYT + 18 * 3600000 });   // 睡满 8 小时
+    return afterQuiet === 85 && m.getState().energy === 100;
+  })());
+  // v3.1 P1 补漏：idle 的两个 else 分支曾缺 isSleeping 守卫，夜窗会凭空加困意。
+  // 实测病灶：入睡（restPressure 被 -60 压到 0）后，夜窗 idle 35 分钟 → 0→7；
+  //白天同条件 7→7，证明这是**夜窗专属**漏洞（白天走 `? : 0` 不加）。
+  // 修复取定点守卫而非整段 early return —— 后者会掐掉清醒态的 arousal 回落（L488-493）。
+  check('v3.1 睡眠期夜窗 idle 不得凭空加困意（else 分支定点守卫回归）', (() => {
+    const m = mk('qr-nightleak-', 60, 0);
+    m.updateOnSleep(true, { timestamp: NIGHTT });
+    const asleep = m.getState().restPressure;                // 入睡 -60 后应为 0
+    m.updateOnActivity('idle', { idleMin: 35, timestamp: NIGHTT + 3600000 });
+    const afterNightIdle = m.getState().restPressure;
+    // 对照组：白天同一条件本来就不加（: 0 分支），守住"夜窗是唯一漏口"这个诊断
+    const d = mk('qr-nightleak-day-', 60, 0);
+    d.updateOnSleep(true, { timestamp: DAYT });
+    d.updateOnActivity('idle', { idleMin: 35, timestamp: DAYT + 3600000 });
+    return asleep === 0
+      && afterNightIdle === 0// 夜窗静息 35 分钟，一点困意都不许加
+      && d.getState().restPressure === 0;       // 白天对照同样保持 0
+  })());
+  check('v3.1 定点守卫不误伤：清醒静息仍照常累积/自愈困意（arousal 回落不受影响）', (() => {
+    const n = mk('qr-guard-', 50, 90);
+    n.updateOnActivity('idle', { idleMin: 35, timestamp: NIGHTT });   // 夜窗清醒 → 应消散而非加
+    const nAwake = mk('qr-guard-a-', 50, 10);
+    nAwake.arousal = 90;
+    nAwake.updateOnActivity('idle', { idleMin: 35, timestamp: DAYT });
+    return n.getState().restPressure < 90      // 夜窗清醒静息：困意自愈（守卫生效路径仍通）
+      && nAwake.getState().arousal < 90;       // 清醒高唤醒静息：arousal 仍回落（未误伤）
+  })());
+  check('v3.1 一日实况回归：8h 聊天 + 16h 挂机后不再「体能亏得厉害」', (() => {
+    const m = mk('qr-day-', 100, 0);
+    for (let h = 0; h < 8; h++) {
+      for (let i = 0; i < 5; i++) {
+        m.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs: 60000, timestamp: DAYT });
+        m.updateOnInteractionTurn({ role: 'assistant', messageLength: 300, intervalMs: 1000, timestamp: DAYT });
+      }
+    }
+    const spent = m.getState().energy;
+    for (let h = 0; h < 16; h++) m.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT + h * 3600000 });
+    const rested = m.getState().energy;
+    m.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs: 8 * 3600000, timestamp: DAYT });
+    const morning = m.getState().energy;
+    const sense = m.formatPerception();
+    return spent < 40                              // 聊天确实耗电
+      && rested === 85                             // 挂机能回满到清醒上限
+      && morning >= 80                            // 次日早上是安泰的
+      && !/体能亏得厉害/.test(sense)               // 不再自我描述为空壳
+      && !/困意很沉/.test(sense);                  // 也不再困到撑不住
+  })());
+  check('v3.1 静息回血不越权：idle 只动生理标量，不碰 isSleeping / 睡眠时刻 / 落盘结构', (() => {
+    const m = mk('qr-pure-', 50, 30);
+    m.updateOnSleep(true, { timestamp: DAYT });          // 先入睡
+    m.updateOnSleep(false, { timestamp: DAYT + 8 * 3600000 });
+    const beforeSleepStart = m.sleepStartTime;
+    m.updateOnActivity('idle', { idleMin: 40, timestamp: DAYT + 9 * 3600000 });
+    const st = m.getState();
+    return m.energy > 50
+      && m.isSleeping === false                        // 静息不得改睡眠状态
+      && m.sleepStartTime === beforeSleepStart         // 不得改睡眠时刻
+      && typeof st.energy === 'number'
+      && !('history' in st)&& !('transitions' in st);   // 观测出口保持纯快照
+  })());
+})();
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

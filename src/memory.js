@@ -803,7 +803,12 @@ class Memory {
   cleanContentForSummary(content) {
     if (typeof content !== 'string') return '';
     return content
+      // 🔴【出生时刻】是 v3.1 A 方案后的段名；【出生与程序年龄】是历史段名。
+      // 两者都必须剥：磁盘上已归档的旧窗口/旧 history 里仍是老段名，
+      // 只认新段名会让那批「运行时长」原文漏进摘要 —— 那是刚拔掉的报时素材，
+      // 漏进长期记忆等于让它从另一个入口复活。新旧并列，不要只留新的。
       .replace(/(?:\r?\n)+【出生与程序年龄】[\s\S]*$/g, '')
+      .replace(/(?:\r?\n)+【出生时刻】[\s\S]*$/g, '')
       .replace(/(?:\r?\n)+【当前自我投影】[\s\S]*$/g, '')
       .replace(/(?:\r?\n)+【当前主体状态快照】[\s\S]*$/g, '')
       .replace(/(?:\r?\n)+【当前环境感知】[\s\S]*$/g, '')

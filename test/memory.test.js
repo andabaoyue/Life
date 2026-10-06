@@ -55,17 +55,17 @@ const msgsPure = mem.build();
 check('build() 无参数返回纯净消息列表',
   msgsPure.length === 4 && msgsPure[0].role === 'system' && msgsPure[3].content === '[桌宠自主感知触发]：闲置搭话');
 
-const transientSuffix = '【当前环境感知】\n- 被戳 1 次\n\n【出生与程序年龄】\n- 出生时刻：2026-01-01';
+const transientSuffix = '【当前环境感知】\n- 被戳 1 次\n\n【出生时刻】\n- 出生时刻：2026-01-01';
 const msgsWithTransient = mem.build(transientSuffix);
 check('build(transientSuffix) 动态附加在最后一条 user 消息末尾',
   msgsWithTransient[3].content.includes('闲置搭话')
   && msgsWithTransient[3].content.includes('【当前环境感知】')
-  && msgsWithTransient[3].content.includes('【出生与程序年龄】'));
+  && msgsWithTransient[3].content.includes('【出生时刻】'));
 
 check('build(transientSuffix) 不污染持久化 history',
   mem.data.history[2].content === '[桌宠自主感知触发]：闲置搭话'
   && !mem.data.history[2].content.includes('【当前环境感知】')
-  && !mem.data.history[2].content.includes('【出生与程序年龄】'));
+  && !mem.data.history[2].content.includes('【出生时刻】'));
 
 const msgsWithOpt = mem.build({ currentTurnSuffix: '【临时标记】' });
 check('build({ currentTurnSuffix }) 支持选项对象传参',
@@ -88,11 +88,21 @@ check('rollback user 消息正常回退 turnsInWindow',
   mem.data.turnsInWindow === 0 && mem.history.length === 0);
 
 // 6. cleanContentForSummary 过滤
-const dirty = '用户原话\n\n【当前环境感知】\n- 鼠标点击 3 次\n\n【出生与程序年龄】\n- 年龄 1.2 小时\n\n【当前自我投影】\n- 倾向：思考';
+const dirty = '用户原话\n\n【当前环境感知】\n- 鼠标点击 3 次\n\n【出生时刻】\n- 出生时刻（本地时间）：2026-01-01\n\n【当前自我投影】\n- 倾向：思考';
 check('cleanContentForSummary 彻底清除环境感知与自我投影',
   mem.cleanContentForSummary(dirty) === '用户原话');
 check('cleanContentForSummary 清理主动搭话前缀',
   mem.cleanContentForSummary('[桌宠自主感知触发]：你想聊什么') === '你想聊什么');
+
+// 🔴 v3.1 A 方案的漏斗防线：段名从「出生与程序年龄」改成了「出生时刻」，
+// 但磁盘上已归档的旧窗口摘要 / 旧 history 里仍是**旧段名**。
+// 若 cleanContentForSummary 只认新段名，那批含「运行时长」的原文会漏进
+// 长期记忆摘要 —— 正是刚拔掉的报时素材从另一个入口复活。
+// 故新旧段名都必须剥离，此断言专门锁住旧段名那条腿。
+check('cleanContentForSummary 同时剥离**旧**段名【出生与程序年龄】（A 方案漏斗防线）',
+  mem.cleanContentForSummary('用户原话\n\n【出生与程序年龄】\n- 程序累计运转时长：约 101.5 小时') === '用户原话');
+check('cleanContentForSummary 剥离新段名【出生时刻】',
+  mem.cleanContentForSummary('用户原话\n\n【出生时刻】\n- 出生时刻（本地时间）：2026-01-01') === '用户原话');
 
 // 7. 记忆窗口归档生命周期
 mem.append('user', '我是程序员阿哲');
