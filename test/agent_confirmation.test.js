@@ -311,11 +311,16 @@ function harness(opts = {}) {
   };
 }
 
-check('D3-9 confirm 通道已注册且通道名单不含执行写通道', (() => {
+check('D3-9 confirm 通道已注册，且执行通道只有一个受控入口（D-4 修正）', (() => {
   const h = harness();
+  // 🔴 D-4 修正（2026-10-06）：原断言是「名单里不含任何 execute 通道」。
+  //   D-4 刻意加了 agent:execute（受控执行器唯一入口），故改为断言
+  //   「执行通道有且仅有一个，且不含进程/网络类通道」——这才是 D-4 的真实不变式。
   return h.has('agent:confirm-action')
-    && !AGENT_CHANNELS.some((c) => /execute/i.test(c))
-    && !AGENT_CHANNELS.some((c) => /write|delete|remove/i.test(c));
+    && AGENT_CHANNELS.filter((c) => /execute/i.test(c)).length === 1
+    && AGENT_CHANNELS.includes('agent:execute')
+    && !AGENT_CHANNELS.some((c) => /process|network|spawn|shell|http|fetch/i.test(c))
+    && !AGENT_CHANNELS.some((c) => /delete|remove/i.test(c));
 })());
 
 check('D3-9b 合法确认被登记并返回 executed=false', (() => {
@@ -413,16 +418,26 @@ check('D3-13 get-status 带确认计数（UI 靠它决定是否亮卡片）', ((
 
 /* ================= 14. preload 契约 ================= */
 
-check('D3-14 preload 暴露 agent 命名空间但不含 execute/write', (() => {
+check('D3-14 preload 暴露 agent 命名空间，且 execute 只透传 id 与 content（D-4 修正）', (() => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   const block = src.slice(src.indexOf('agent: {'), src.indexOf('// 实验观测'));
   // 🩸 判据必须**剥掉注释**再匹配 —— 否则注释里那句「executed 恒为 false」
   // 会被/execute/ 命中，测试自己造出假阳性（本项目已踩过同型坑：
   // agent-ipc.js 里注释写 ipcMain.handle 导致源码级门禁误报）。
   const code = block.replace(/\/\/[^\n]*/g, '');
+  // 🔴 D-4 修正（2026-10-06）：原断言是「preload 里不含 execute」——
+  //   D-4 刻意加了 execute 入口，故改为断言**更严的 D-4 不变式**：
+  //   execute 只能透传 proposalId 与 content 两个字段。
+  //   为什么这条更值得守：若 preload 把 payload 整体透传，渲染端就能塞
+  //   scope/target 顶替提案路径 —— 而 scope 白名单是执行期唯一的路径约束。
+  const execCall = (code.match(/execute:[\s\S]*?\}\)/) || [''])[0];
+  const onlyIdAndContent = /proposalId:\s*payload\s*&&\s*payload\.proposalId/.test(execCall)
+    && /content:\s*payload\s*&&\s*payload\.content/.test(execCall)
+    && !/payload\s*(,|\})/.test(execCall.replace(/payload\s*&&\s*payload\.(proposalId|content)/g, ''));
   return /getStatus|propose|confirm|getAuditLog/.test(code)
-      && !/execute|delete|\.write\(/.test(code)
-      && !/agent:execute/.test(code);
+      && /agent:execute/.test(code)
+      && onlyIdAndContent
+      && !/delete|\.write\(/.test(code);
 })());
 
 check('D3-14b main.js 注入 confirmation 且仍经 ipcGuard 注册', (() => {

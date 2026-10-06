@@ -257,14 +257,27 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
     notGranted && notGranted.ok === false);
 }
 
-/* ================= 6. 反例 5：通道名单绝不含执行/写通道 ================= */
+/* ================= 6. 反例 5：通道名单的写入面被严格限定 ================= */
 {
   const h = harness();
-  const forbidden = [...h.handlers.keys()].filter((c) => /execute|write|delete|run|exec|spawn/i.test(c));
-  check('❌ 反例5 通道名单不含任何执行/写/删通道（D-1 硬约束）',
-    forbidden.length === 0, forbidden.join(','));
-
   const names = [...h.handlers.keys()];
+  // 🔴 D-4 修正（2026-10-06）：D-1 时期的断言是「名单里一个 execute 都不能有」。
+  //   D-4 刻意加入了 agent:execute —— 它是受控执行器的唯一入口，
+  //   放在这里断言「不存在」等于把阶段目标钉死成死条款。
+  // 但**放宽不等于放开**：D-4 的正确不变式是下面这三条，每条都比原来更严：
+  //   ① 通道名单只有 6 条，**不多一条**（多一条 process 通道就是灾难）；
+  //   ② 不存在任何**进程/网络**类通道（process:execute / network:* 一律不许出现）；
+  //   ③ 写能力只有一个入口，没有第二条旁路。
+  check('❌ 反例5通道名单恰为 6 条且不含任何进程/网络通道（D-4 硬约束）',
+    names.length === 6
+    && !names.some((c) => /process|network|spawn|shell|http|fetch/i.test(c)),
+    names.join(','));
+
+  check('❌ 反例5b 写能力只有一个入口，没有第二条旁路',
+    names.filter((c) => /execute/i.test(c)).length === 1
+    && names.includes('agent:execute'),
+    names.join(','));
+
   check('D1-7 通道命名遵循 domain:action 风格',
     names.every((c) => /^agent:[a-z-]+$/.test(c)), names.join(' '));
 }

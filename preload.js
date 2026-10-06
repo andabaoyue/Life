@@ -78,15 +78,25 @@ contextBridge.exposeInMainWorld('deskpet', {
     activate: (connectionId) => ipcRenderer.invoke('connections:activate', { connectionId })
   },
 
-  // v1.0 D-1/D-3：Agent 治理通道。
-  // 🔒 这里**没有 execute / write** —— 执行器在设计层就不存在，
-  // 渲染端能做的只是「提案」与「对提案投同意/反对票」。
+  // Agent 治理 + 受控执行通道（D-1 建管道 / D-3 加确认 / D-4 加执行）。
+  // 🔒 execute 存在，但它**不是万能钥匙**：主进程侧是三重默认关闭
+  //   （killSwitch=true + allowed=[] + 无 scope 根），默认状态下必然被拒。
+  //   且参数只有 proposalId 与 content —— 刻意不暴露 scope/target：
+  //   路径永远取自主进程侧的提案，若让渲染端能传路径，scope 白名单形同虚设。
+  //   渲染端能做的只是「提案」「对提案投票」「请求执行已确认的提案」。
   agent: {
     getStatus: () => ipcRenderer.invoke('agent:get-status'),
     getCapabilities: () => ipcRenderer.invoke('agent:get-capabilities'),
     propose: (payload) => ipcRenderer.invoke('agent:propose-action', payload),
     // 只登记用户决策，不代表执行 —— executed 恒为 false。
     confirm: (payload) => ipcRenderer.invoke('agent:confirm-action', payload),
+    // D-4：执行。**参数只有 proposalId 与 content**——
+    //   刻意不暴露 scope/target：路径永远取自主进程侧的提案，
+    //   若让渲染端能传路径，scope 白名单就形同虚设。
+    execute: (payload) => ipcRenderer.invoke('agent:execute', {
+      proposalId: payload && payload.proposalId,
+      content: payload && payload.content
+    }),
     getAuditLog: (opts) => ipcRenderer.invoke('agent:get-audit-log', opts || {})
   },
 

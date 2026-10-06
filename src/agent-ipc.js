@@ -1,11 +1,18 @@
 /**
  * src/agent-ipc.js
  *
- * 初澜 Agent 执行能力：D-1 阶段 IPC 主进程通道白名单。
+ * 初澜 Agent 执行能力：IPC 主进程通道白名单。
  *
- * 本阶段定位：**只铺管道，不接执行器。**
- * 四条通道全部是治理/查询性质，写通道与执行通道在设计层就不存在
- * （不是靠运行时拦截，而是根本没有注册入口）。
+ * 阶段演进（读本文件前先看清自己在哪一阶段，注释即规格）：
+ *   - D-1：只铺管道，不接执行器。四条通道全是治理/查询性质，
+ *           写通道与执行通道**在设计层就不存在**（没有注册入口）。
+ *   - D-2/D-3：补齐事务层与用户显式确认闸门，仍**不含**执行通道。
+ *   - D-4：挂载 agent:execute，通道名单扩到 6 条，闸门一根都不许松。
+ *
+ * 🔴 D-4 起「通道存在」≠「能力可用」。当前 main.js 是三重默认关闭：
+ *   killSwitch=true + allowed=[] + 未配置 scope 根目录，
+ *   即便渲染端摸到本文件也写不动用户文件。开启需显式三步，见 main.js。
+ *   所以下面凡是写「执行」的地方，都不代表真的能落盘。
  *
  * 核心安全边界（逐条对应 C 阶段五道闸门）：
  *   1. 所有 handler 必须经调用方注入的 ipcGuard 注册 —— 严防非受信渲染窗口
@@ -16,10 +23,11 @@
  *   4. 提案创建走 createActionProposal()，非法输入直接拒，不进入状态机。
  *   5. 审计只记元数据，绝不记凭据/文件内容/隐私数据（由 AuditLog 内部保证）。
  *
- * ⚠️ D-1 明确不包含（留待 D-2/D-3）：
- *   - agent:execute          执行通道 —— 执行器仍为 AgentBridgeMock
- *   - workspace.write 落盘   事务回滚未实现
- *   - 逐次用户确认弹窗       UI 未接
+ * ⚠️ D-1~D-3 阶段明确不包含（各自留待后续阶段，现已全部落地）：
+ *   - agent:execute          执行通道 —— D-1 时执行器仍是 AgentBridgeMock（execute() 必抛），
+ *                            D-4 起换成 ControlledAgentExecutor，闸门判定全部下沉到agent-executor.js
+ *   - workspace.write 落盘   D-1 时事务回滚未实现 → D-2 补齐单文件事务 + WAL
+ *   - 逐次用户确认弹窗D-1 时 UI 未接 → D-3 补齐确认闸门（UI 卡片接线仍待后续）
  *
  * ipcGuard / ipcMain 对象均由调用方注入 —— 本模块不 require electron，可在纯 Node 测试。
  */
@@ -29,19 +37,28 @@ const {
   createActionProposal, AuditLog, CAPABILITIES,
 } = require('./agent-interfaces');
 const { UserConfirmationGate } = require('./agent-confirmation');
+const { ControlledAgentExecutor } = require('./agent-executor');
 
 /**
- * D-3 起允许注册的通道名单（白名单即设计约束，不多不少）。
+ * 允许注册的通道名单（白名单即设计约束，不多不少）。
  *
- * ⚠️ 这里新增的 agent:confirm-action **只登记用户的「同意/拒绝」**，
- *它不执行任何动作。执行通道 agent:execute 依然不在名单里——
- * 用户点头 ≠ 可以动手，中间还隔着预算终态判定与事务层。
+ * D-1 时这里只有 4 条治理/查询通道；D-3 加了 agent:confirm-action；
+ * D-4 加了 agent:execute，共 6 条。
+ *
+ * ⚠️ agent:confirm-action **只登记用户的「同意/拒绝」**，它不执行任何动作。
+ * 用户点头≠ 可以动手，中间还隔着预算终态判定、TTL、以及事务层。
+ * 真正动手的是 agent:execute，且它执行时会**重跑一遍全部闸门**——
+ * 提案期通过不算数，授权会过期、预算会熔断、提案会被逐出。
+ *
+ * ⚠️ 写「不含 execute 通道」这类源码级断言时，别用裸 /execute/ 去grep 本名单——
+ * agent:execute 本身就是通道名，会自己命中自己。先剥注释再匹配通道字面量。
  */
 const AGENT_CHANNELS = Object.freeze([
   'agent:get-status',
   'agent:get-capabilities',
   'agent:propose-action',
   'agent:confirm-action',
+  'agent:execute',
   'agent:get-audit-log',
 ]);
 
@@ -85,6 +102,21 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 提案注册表上界：propose 已受 ExecutionBudget 约束（默认 20 次/会话），
   //   这里只是防御 map 无限增长，不构成新的可用性限制。
   const MAX_TRACKED_PROPOSALS = 200;
+
+  // D-4：受控执行器。可注入替身（测试用），默认用**同一批治理实例**组装——
+  //   刻意复用 policy / budget / confirmation / proposalStore这四个：
+  //   执行器若自己另建一套，就等于给自己开了旁路闸门（提案查不到、
+  //   确认记录查不到、预算各算各的）。它必须在同一张表上做判定。
+  // ⚠️ 位置必须在 proposalStore 之后 —— 提前声明会TDZ 报错。
+  const executor = options.executor || ctx.executor || new ControlledAgentExecutor({
+    policy,
+    budget,
+    confirmation,
+    auditLog,
+    proposalStore,
+    transactionManager: options.transactionManager || ctx.transactionManager || undefined,
+    txnDir: options.txnDir || ctx.txnDir || undefined,
+  });
 
   /**
    * 提案入口的公共前置：校验 → 授权 → 预算。
@@ -231,9 +263,10 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       via: 'ipc',
     });
 
-    // D-1：只建案，绝不执行。执行器是 AgentBridgeMock，其 execute() 会抛
-    // '尚未连接真实执行器' —— 这是刻意的：一旦有人误接执行器会立刻炸，
-    // 而不是静默半执行。
+    // 建案通道：只建案，绝不执行。D-1 时这里刻意不接执行器，
+    // 一旦有人误接会立刻炸而不是静默半执行；D-4 起执行器换成
+    // ControlledAgentExecutor，但仍**必须**经agent:execute 通道由用户确认后驱动，
+    // 本通道无论如何都不碰文件。
     // D-3 加固：建案即登记进提案注册表 —— confirm 通道要靠它做存在性校验。
     //   超上界时逐出**最早的**提案。
     //   🔴 逐出必须**同步作废该提案的授权**（2026-10-06 复核修正）：
@@ -255,8 +288,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   }));
 
   // 4. 用户显式确认（D-3 第四道闸门）
-  //🔴 本通道**只登记决策，绝不执行**。用户点了【授权】不代表可以动手——
-  //    执行器仍不存在（AgentBridgeMock.execute() 依旧抛），这条边界不能松。
+  // 🔴 本通道**只登记决策，绝不执行**。用户点了【授权】不代表可以动手——
+  //    D-4 起真正落盘的是 agent:execute 通道，且它会重跑全部闸门（TTL/预算/提案存在性），
+  //    一条授权不能被复用。这条边界不能松。
   ipcGuard.handle('agent:confirm-action', guard((event, raw) => {
     assertByHandler(event);
     // 跨进程输入一律视为不可信：结构不符直接拒。
@@ -337,7 +371,43 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     return { ok: true, record: result.record, executed: false, budget: budget.state() };
   }));
 
-  // 5. 审计读取（脱敏由 AuditLog 保证；此处只做条数上限，避免一次拉爆内存）
+  // 5. 🔴 D-4：执行通道 —— 第一条**真正会动磁盘**的通道。
+  //
+  //与 D-1~D-3 的根本区别：前四条全是纯治理（查询/ 登记），不碰用户文件；
+  // 本条会真的读写真实文件。因此它的每一行都必须假设「调用方在攻击」。
+  //
+  //本通道**只做一件事**：把 proposalId 交给受控执行器。
+  // 闸门判定全部在 agent-executor.js 内部（那里才是闸门所在，本层不重复实现）——
+  //   重复实现闸门是这类系统最常见的漏洞来源：两处判定迟早会漂移，
+  //   然后攻击者挑那处漂移的走。本层只做身份校验 + 错误信封化。
+  //
+  //   content 只能从这一层传入（执行器内部不接受对象，只接受字符串），
+  //   路径**永远取自提案**，绝不信调用方传的路径 —— 否则 scope 白名单形同虚设。
+  ipcGuard.handle('agent:execute', guard((event, raw) => {
+    assertByHandler(event);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return fail('INVALID_INPUT');
+    }
+    const result = executor.execute({
+      proposalId: raw.proposalId,
+      content: raw.content,
+    });
+    // 执行器已返回统一信封，这里只做形状归一：ok=false 时把 code 提升为 error，
+    // 保持与其余五条通道 { ok, error } 的约定一致（渲染层只需认一种形状）。
+    // 两个刻意的取舍：
+    //   ① **不保留 code** —— 两条同义字段会让渲染端不知认哪个，
+    //      日后有人只读 code 而另一处只读 error，就会出现「同一错误两种表现」。
+    //   ② **保留 ok:false** —— 不能把 ok 一起丢掉：渲染层的 if (r.ok) 分支
+    //      是全通道共用的，少了 ok 会被判成"成功但无字段"，比报错更危险。
+    //      （实测踩过：归一化时 destructuring 掉了 ok，渲染端会走成功分支。）
+    if (!result.ok) {
+      const { ok, code, ...rest } = result;
+      return { ok: false, ...rest, error: code };
+    }
+    return result;
+  }));
+
+  // 6. 审计读取（脱敏由 AuditLog 保证；此处只做条数上限，避免一次拉爆内存）
   ipcGuard.handle('agent:get-audit-log', guard((event, opts = {}) => {
     assertByHandler(event);
     const all = auditLog.list();

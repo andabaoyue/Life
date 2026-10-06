@@ -23,6 +23,8 @@ const { createIpcGuard } = require('./src/ipc-guard');
 // v1.0 D-1：Agent 执行能力 IPC 治理通道（纯只读+ 提案受理，执行器仍为 Mock）
 const { registerAgentIpc } = require('./src/agent-ipc');
 const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = require('./src/agent-interfaces');
+// D-4：写事务管理器（D-2 实现，D-4 起才真正被Agent 执行器用到）。
+const { WriteTransactionManager } = require('./src/agent-transaction');
 const { UserConfirmationGate } = require('./src/agent-confirmation');
 
 /* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
@@ -928,21 +930,43 @@ app.whenReady().then(() => {
   }
   researchService = new ResearchService(app.getPath('userData'));
   registerResearchIpc(ipcGuard, researchService, { dialog }); // SEC-01: research IPC 同样经 sender 校验
-  // v1.0 D-1/D-3：Agent 治理通道（SEC-01 同样经 sender 校验）。
-  // 🔒 硬边界：只挂 5 条纯治理通道（查询状态/能力元数据/提案受理/**用户决策登记**/读审计），
-  // **不挂 agent:execute、不挂任何写通道** —— 执行器仍是 AgentBridgeMock。
-  // 「用户点了授权」≠「可以动手」：confirm 只登记决策，放行与否由确认闸门独立判定。
-  // policy 初始为 killSwitch=on 且 allowed 为空：即便通道注册成功，默认全部拒绝，
-  // 必须显式授权 + 显式配 scope 根目录才可能放行。
+  // v1.0 D-1/D-3/D-4：Agent 通道（SEC-01 同样经 sender 校验）。
+  // D-4 起挂 6 条：查询状态 / 能力元数据 / 提案受理 / 用户决策登记 / **执行** / 读审计。
+  //
+  // 🔒 硬边界（**默认状态下执行器完全不可用**，这不是"谨慎"，是刻意的）：
+  //   - killSwitch: true 且 allowed: [] —— 能力一个都没开；
+  //   - 未配置任何 scope 根目录 —— 即便日后开了能力，没有根目录照样全拒；
+  //   - 未挂 agent:tell她去做什么的触发源，渲染端目前无法自主产生提案。
+  //   三重默认关闭之下，即便有人误接了调用路径也动不了用户文件。
+  //   开启需要显式三步：killSwitch=false + allowed 列入能力 + setScopeRoots 配根目录。
+  //
+  // 🔒 process.execute 与 network.request **不在执行器可执行白名单内**，
+  //   即便日后误加进 policy.allowed 也会在执行器入口被硬拒（用户D-4 拍板不开）。
   const agentRegistry = new CapabilityRegistry();
   const agentPolicy = new PermissionPolicy({ killSwitch: true, allowed: [] });
   const agentBudget = new ExecutionBudget();
   const agentAuditLog = new AuditLog({ dir: app.getPath('userData') });
   const agentConfirmation = new UserConfirmationGate();
+  // D-2 的写事务管理器在此创建：WAL 与备份都落在 userData，不与用户文件混同。
+  //   D-4 起执行器写盘走它，故崩溃恢复自愈从此刻起才真正有意义。
+  const agentTxnDir = app.getPath('userData');
+  const agentTxn = new WriteTransactionManager({ dir: agentTxnDir });
+  try {
+    const healed = agentTxn.recoverPendingTransactions();
+    if (healed.recovered > 0) {
+      console.log(`[AgentTxn] 启动自愈：还原 ${healed.recovered} 笔被强杀的写入，失败 ${healed.failed.length} 笔`);
+    }
+    if (healed.failed.length) {
+      //还原失败必须让人看得见 —— 静默失败等于让用户以为文件是原样的
+      for (const f of healed.failed) console.error('[AgentTxn] 还原失败:', f.target, f.error);
+    }
+  } catch (err) {
+    console.error('[AgentTxn] 启动自愈异常:', err && err.message);
+  }
   registerAgentIpc(ipcGuard, {
     registry: agentRegistry, policy: agentPolicy, budget: agentBudget,
     auditLog: agentAuditLog, confirmation: agentConfirmation,
-  });
+  }, { transactionManager: agentTxn, txnDir: agentTxnDir });
 
   createWindow();
 
