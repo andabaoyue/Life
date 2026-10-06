@@ -383,7 +383,7 @@ node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右
 node test/deferred-writer.test.js # 8 项：脏标记、防抖延迟合并写盘、同步 flush、写失败保持 dirty、unref 定时器
 node test/migration.test.js       # 17 项：通用数据迁移、版本号升序执行、缺少迁移函数报错、版本防回退、自定义版本字段名
 node test/self-ledger.test.js   # 37 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线、sourceType与角色语义兼容核验、淘汰条目转存归档（D2 遗忘非物理删除）
-node test/agent_interfaces.test.js # 6 项：能力白名单、默认 deny、行动提案、审计日志和 Mock 禁止执行
+node test/agent_interfaces.test.js # 57 项：Agent 五道闸门安全基座（v1.0 C 阶段）——既有契约保持兼容[能力白名单、默认 deny、行动提案、审计日志、Mock 禁止执行]、① CapabilityRegistry 运行时 register()与能力元数据且返回副本防篡改、② PermissionPolicy 作用域路径白名单硬约束[治 !!scope 裸奔：未配根目录一律拒绝、scope="*" 拒、白名单外拒、../ 穿越拒、前缀相似目录不误配、followSymlink 默认关闭、根目录本身可达、空/非字符串拒、未授权能力拒、killSwitch 优先、authorize 返回判定明细供审计追溯]、network.request C阶段硬封死[标记 hardDenied 带理由、显式授权+合法 scope 仍拒、不可被悄悄放行]、process.execute 拒绝路径冒充走命令独立校验、③ ExecutionBudget 执行预算熔断[默认动作20/写5/连续错误3/墙钟10min、达上限熔断带用户可见原因、写走更严独立上限、连续失败熔断防死循环、成功重置计数、墙钟超时、熔断后不放行不得静默重试、reset 清空、state 暴露剩余配额]、④ AuditLog append-only 落盘[可回读重启不丢、多条不覆盖、凭据类字段绝不落盘、超长截断、内存上限、无 dir 退化纯内存]、提案状态机[合法状态可构造、非法状态被拒、携带预算会话id、对象冻结]、三条端到端链路[白名单内只读走完全链路、network.request 被拒且留痕、预算熔断留痕]、以及 C 阶段加固回归三处[① 带路径参数的合法命令不得被误判为路径（只看命令名参数不参与）、命令名本身是路径仍拒；② 🔴 network.request 不传 ctx.meta 也必须硬拒（原 allowed:true 绕过）、can() 透传默认元数据（原 git status 恒 false）、显式 ctx.meta 仍优先；③ 🔴 register() 不得覆盖 hardDenied 能力（原可洗白 network）、非硬封死能力仍可正常注册]
 node test/animation-controller.test.js # 30 项：自然动画控制器、60fps 驱动循环、状态转移、多图层独立物理摆动、Poke 动力学与打断机制
 node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸/眨眼/打哈欠/伸懒腰权重分发、打断与状态互斥、确定性覆盖
 node test/render-adapter.test.js       # 10 项：DOM 动画渲染适配器、数据驱动单向流动、异常隔离与无头渲染器
