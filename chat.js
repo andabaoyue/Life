@@ -121,6 +121,40 @@ function renderChat() {
 ChatStore.onChange(() => renderChat());
 ChatStore.load();
 
+/* 🔴 v1.0 她说完了 → 重新对账。
+ *
+ *   ## 这个监听解决的是什么
+ *
+ *   她开口的路有三条，而本窗只在第一条路上会自己刷新：
+ *   ① 用户发消息 → submit() 的 finally 里 await ChatStore.load()
+ *   ② 主动搭话 → pet.js 收到 proactive-offer 后runChat（**桌宠窗口**）
+ *   ③ 睡眠后醒来自己开口（**桌宠窗口**）
+ *
+ *   ②③ 发生在桌宠窗口，本窗全程不知情 —— 用户看到的现象是
+ *   「她气泡里说了，对话框里没有，退出重开才看得到」。
+ *   主进程在她说完后会广播 chat-history-changed，本窗收到即回查历史。
+ *
+ *   ## 三条必须守住的边界
+ *
+ *   1. **不在 busy（正在流式/正在提交）时对账。**
+ *      那一刻本窗正在显示流式临时气泡，中途换掉 DOM 会把打字动效打断、
+ *      也会和 submit() 的收尾对账撞车两次。等submit 自己收尾即可。
+ *   2. **不碰用户正在输入的内容。**
+ *      load() 只改 messages 并 emit，**不动 input.value**，
+ *      用户打到一半的字不会被清掉（这是当初复用来不及重写的既有行为，不是新引入的）。
+ *   3. **信号不带内容，只当"去查"的提示。**
+ *      真实内容一律回查 memory.history（单一事实源，见 ui-chat-store.js 头注释）。
+ *      这里绝不拿payload 里的文本直接渲染 —— 那样就造了第二份真相。
+ */
+if (api && api.onChatHistoryChanged) {
+  api.onChatHistoryChanged(() => {
+    // 边界①：她正在说话/用户正在提交 ⇒ 交给 submit() 的收尾对账，别抢。
+    if (busy) return;
+    // 边界③：这里只取"该去查了"这个事实，payload 的 reason 仅用于日志/调试。
+    ChatStore.load();
+  });
+}
+
 // 流式：临时气泡逐字上屏（遮蔽走 stripState），智能贴底不打断回看
 if (api && api.onDelta) {
   api.onDelta((d) => {

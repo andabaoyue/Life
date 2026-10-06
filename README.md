@@ -370,6 +370,7 @@ node test/ui-chat-render.test.js    # 17 项：气泡流纯函数决策层（分
 node test/ui-outfit-complete.test.js  # 9 项：配件智能成套（家族策展表对照真实 CATALOG、补齐主行为、dress↔top/bottom 互斥、off_ 先行有序性、身份层零触碰、已成套零噪声、不读 tags）
 node test/ui-provider-presets.test.js # 8 项：服务商预设与 Key 前缀本地识别（预设字典、tp-/ttp-/mimo-/sk- 命中、非法防御、零网络零落盘、与 provider-policy 口径防漂移）
 node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投影契约、synthetic 双态保留、零伪造时间戳、SYNTHETIC_RENDER 契约、双环境守卫与边界铁律）
+node test/chat-history-refresh.test.js # 14 项：对话窗刷新链路（v1.0「她说了但对话框里查无此话」修复）。缺陷本体：数据层 ChatStore.load() 只在页面加载时跑一次，此后唯一刷新入口是 chat-send 自己的收尾对账 ⇒ 只有「用户发消息」会刷新对话窗；而主动搭话与睡眠唤醒续答都发生在**桌宠窗口**，对话窗全程不知情，用户看到的现象就是「退出重开才看得到」。修法是主进程在她说完后广播 chat-history-changed，对话窗收到即回查 memory.history（单一事实源）。覆盖：她说完必广播 / 广播 channel 名不可改（改名⇒永远收不到，症状与没修一样）/ payload 只带信号不带文本（塞文本=造第二份真相）/ 无 offer 的 proactive 也刷/ 过期 offer 被拒不刷 / 真实 offer 的 proactive 刷且 reason 标记 / preload 暴露订阅入口 / 对话窗订阅后真的回查（只订阅不回查=装饰代码）/ busy 时不抢对账（流式气泡中途被换会打断打字动效）/ 未引入 setInterval（D-001 铁律）/ ChatStore 仍是只读投影；变异测试 6 个全部捕获（M1 channel 改名/M2 payload 夹文本/M3 广播挪进 proactive 分支/M4 订阅不回查/M5 删 busy 守卫/M6 preload 不暴露入口）
 node test/ui-i18n.test.js           # 11 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律）
 node test/lexicon-expectations.test.js  # 28 项：v1.0 生命机制门槛（词汇表+预期账本+生命看板：零先验/引证强校验/快照引证/状态流转/注入预算/别名归一/除零与轻量口护栏/防工具化与防漂移红线）
 node test/nonhuman-framework-prompt.test.js # 36 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话、A 方案后日历红线由日期锚点边界约束接管）

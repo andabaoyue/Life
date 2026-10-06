@@ -33,6 +33,14 @@ contextBridge.exposeInMainWorld('deskpet', {
   report: () => ipcRenderer.invoke('chat-report'),
   listMemory: () => ipcRenderer.invoke('memory-list'),
   chatHistory: () => ipcRenderer.invoke('chat-history'),
+  // 🔴 v1.0 她说完了 → 对话窗重新对账（信号，不带内容）。
+  //   为什么必须存在：对话窗的数据层只在页面加载时拉一次历史（chat.js 的 ChatStore.load()），
+  //   此前只有「用户发消息」会刷新它。而她主动搭话、睡眠后醒来开口这两条路
+  //   都发生在桌宠窗口，对话窗不知情 ⇒ 她说了但对话框里查无此话，
+  //   退出重开才看得到（重开= 重新 load 一次）。
+  //   ⚠️ 刻意不传文本：对话窗必须自己回查 memory.history（单一事实源），
+  //   这里塞第二份真相将来必然对不上。
+  onChatHistoryChanged: (cb) => ipcRenderer.on('chat-history-changed', (e, p) => cb(p)),
   chatWindowOpen: () => ipcRenderer.invoke('chat-window-open'),
   chatWindowClose: () => ipcRenderer.invoke('chat-window-close'),
   chatWindowToggle: () => ipcRenderer.invoke('chat-window-toggle'),

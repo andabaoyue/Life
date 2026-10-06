@@ -458,6 +458,31 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     if (res.wearChanged) pushWardrobe();
     // v0.9.9 意志层：关窗后特质可能演进，刷新主动性权重（只动权重，不动闸门）
     if (res.windowClosed && trigger && brain && brain.subjectState) trigger.updateTraits(brain.subjectState.values);
+    // 🔴 v1.0 她说完了 → 通知对话窗重新对账。
+    //
+    //   ## 为什么必须在这里通知，而不是靠对话窗自己刷新
+    //
+    //   对话窗的数据层是 ChatStore.load()（ui-chat-store.js），它**只在页面加载时跑一次**
+    //   （chat.js:122）。此后唯一的刷新入口是 chat-send 自己的收尾对账 ——
+    //   也就是说**只有「用户发消息」这一条路会刷新对话窗**。
+    //
+    //   但她开口的路远不止那一条：
+    //     · 主动搭话（pet.js 收到 proactive-offer → runChat）
+    //     · 睡眠后醒来自己开口（tracker.wakeUp → brain 继续）
+    //   这两条都发生在**桌宠窗口**，对话窗全程不知情。
+    //   用户看到的现象就是：她气泡里说了，对话框里没有，
+    //   **必须把软件退出重开才看得到**（重开 = chat.js:122 重跑一次 load）。
+    //
+    //   ⚠️ 刻意**无条件广播**，不区分是否 proactive：
+    //     若只给主动搭话加唤醒那条另开分支，以后再新增「她自己决定说话」的路径
+    //     一定会漏 —— 而漏了就是「她说了但对话框里查无此话」，
+    //     那种 bug 最难被发现（数据在盘上，只是看不见）。
+    //   一处广播覆盖全部路径，是这里能取的最简形态。
+    //
+    //   ⚠️ 只发信号，不把 res.text 塞过去：对话窗必须自己回查 memory.history
+    //   （单一事实源，见 ui-chat-store.js 头注释）。这里塞文本等于造第二份真相，
+    //   将来流式中断/改写/回滚都会对不上。
+    broadcastToWindows('chat-history-changed', { reason: proactive ? 'proactive' : 'chat' });
     return { ok: true, text: res.text, state: res.state,
              wears: res.wears, wearNote: res.wearNote,
              windowClosed: res.windowClosed, merged: res.merged,
