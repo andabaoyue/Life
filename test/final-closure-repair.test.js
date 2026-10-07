@@ -58,6 +58,51 @@ function pass(name) { console.log('PASS  ' + name); }
   assert.strictEqual(record.payload.verifiedEvidence.length, 0);
   assert.strictEqual(JSON.stringify(brain.subjectState.data.values), before);
   pass('UNCERTIFIED plain-text summary 不产生未经验证的 SubjectState mutation');
+
+  // 🔴 2026-10-07 真实事故回归：解析失败时**绝不能让原始输出进她的意识**。
+  //
+  //   事故经过：第 5 段小结的 LLM 输出是 JSON，但中文引号未转义 ⇒ JSON.parse 抛错
+  //   ⇒ 当时 `summaryTextForMemory` 的初值是 `text`（原始坏 JSON）⇒ 原封不动经
+  //   closeWindow() 进了 memory.windows[].text ⇒ 她的 system prompt 里出现了
+  //   `{"segments":[{"range":"1-20"…` 这串碎片，还带 `m-000401` 内部 ID。
+  //
+  //   这条断言锁的是**结果**（她的记忆里是什么），不是实现细节。
+  const memWinText = String(brain.memory.data.windows[0].text || '');
+  // ⚠️ 判据是**精准**的：只有「看起来像 JSON 但坏了」才拦；
+  //   普通散文小结（本 mock 就是）**必须放行** —— 丢掉它等于白丢一段真实经历。
+  assert.strictEqual(memWinText, 'plain text summary: structured summary unavailable',
+    '散文小结必须原样放行（不得被降级误伤），实际 = ' + JSON.stringify(memWinText.slice(0, 60)));
+  pass('🔴 散文小结放行（精准判据不误伤非 JSON 输出）');
+
+  // 对照的另一半：**看起来像 JSON 的坏输出必须被拦下** —— 这才是本次事故的形态。
+  //   单独起一个 brain，让 mock 回一段坏 JSON（模拟 LLM 未转义引号导致解析失败）。
+  {
+    const jsonDir = tmp('closure-badjson-');
+    const bj = new Brain(jsonDir, { ...DEFAULTS, experimentMode: 'baseline', windowTurns: 2, keepTailMessages: 1 });
+    bj.memory.append('user', '坏 JSON 小结测试。');
+    bj.memory.append('assistant', '应当被拦下。');
+    // 形态与事故一致：半截 JSON + 未转义引号
+    bj.api = { complete: async () => ({ text: '{"segments":[{"range":"1-20","userGiven":["用户说"喂"（m-000401）"]', usage: {} }) };
+    await bj.closeWindow();
+    const t = String(bj.memory.data.windows[0].text || '');
+    assert.ok(!t.trim().startsWith('{'),
+      '坏 JSON 不得进她的记忆，实际 = ' + JSON.stringify(t.slice(0, 60)));
+    assert.ok(!/m-[0-9]{6}/.test(t), '内部 messageId 不得出现在她的记忆里');
+    assert.ok(t.includes('未能结构化解析'), '应替换为中性降级文本，实际 = ' + JSON.stringify(t.slice(0, 60)));
+    pass('🔴 坏 JSON 被拦下并降级为中性文本（事故形态回归）');
+    // 对照：归档里仍如实保留原始输出（证据不被清洗）
+    const recBad = bj.experiencesArchive.readAll().find(r => r.recordType === 'window_summary');
+    assert.ok(recBad.payload.rawSummaryText.trim().startsWith('{'),
+      '归档必须保留原始坏 JSON（研究证据不得篡改）');
+    pass('对照：归档仍保留原始坏 JSON（证据不被清洗）');
+    fs.rmSync(jsonDir, { recursive: true, force: true });
+  }
+
+  // 反向对照：归档里仍**如实保留** rawSummaryText —— 降级只针对「她的意识」，
+  //   归档是研究证据，绝不能也被清洗（否则等于篡改证据）。
+  assert.strictEqual(record.payload.rawSummaryText, 'plain text summary: structured summary unavailable');
+  pass('对照：归档 rawSummaryText 仍如实保留原始输出（证据不被清洗）');
+
   const report = ArchiveIntegrityService.checkArchive(path.join(dir, 'experiences.jsonl'));
   assert.strictEqual(report.integrity, 'uncertified');
   pass('ArchiveIntegrity 传播 UNCERTIFIED summary 状态');

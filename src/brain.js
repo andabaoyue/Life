@@ -1385,7 +1385,47 @@ class Brain {
         this.stats.summaryUncertified = (this.stats.summaryUncertified || 0) + 1;
       }
 
-      let summaryTextForMemory = text;
+      // 🔴 2026-10-07 修复（真实事故）：**解析失败时绝不让原始输出进她的意识**。
+      //
+      //   ## 出过什么事
+      //   第 5 段小结的 LLM 输出是一段 JSON，但**中文里的引号没转义**：
+      //     "userGiven":["用户问…，说"你也算陪我一天了"（m-000401）"]
+      //                                           ↑ 未转义 ⇒ JSON 结构被破坏
+      //   于是 `JSON.parse` 抛错、走下面的 catch（`NON_JSON_SUMMARY`），
+      //   而当时这里是 `let summaryTextForMemory = text;` —— **原始坏 JSON 原封不动**
+      //   经 `closeWindow()` 进了 `memory.windows[].text`，成为她 **system prompt 的一部分**。
+      //   实测后果：她每一轮读到的「第5段」是 `{"segments":[{"range":"1-20"…` 这串碎片，
+      //   里面还带 `m-000401` 这类内部消息 ID。（旁证：反重力说她「复述引语、括号剖析」
+      //   像 AI —— 她读到的样本本来就是那种表格式记录。）
+      //
+      //   ## 为什么这是「放大伤害」而不是小毛病
+      //   解析失败本身只是「这一次小结没结构化」，可接受；
+      //   **但把坏 JSON 当正文写进她的长期记忆，是把一个可恢复的错误升级成永久的污染。**
+      //
+      //   ## 修法（判据要**精准**，不能一刀切）
+      //   解析失败分两种，必须区别对待：
+      //
+      //     甲「看起来像 JSON 但坏了」→ **拦下**，换中性降级文本。
+      //        这正是本次事故的形态（`{"segments":[{"range":…`）。
+      //     乙「本来就是一段普通散文」→ **原样放行**。
+      //        散文小结是合法的（LLM 没按 JSON 格式答而已），丢掉它等于白丢一段真实经历。
+      //
+      //   ⚠️ 为什么判据是「首字符是否为 { 或 [」而不是「解析是否成功」：
+      //     解析失败的原因很多（截断、转义、超长），但**只有结构化输出才有"坏成一半"的形态**；
+      //     散文不会。用首字符判据与 `JSON.parse` 的失败面**正交**，不会误伤散文。
+      //
+      //   ⚠️ 刻意**不做「尽力抢救」**（比如自己扫字符串把 JSON 还原）：
+      //     那是脆弱的启发式，一旦猜错就会把「她没说过的话」写进记忆 ——
+      //     而伪造记忆是本仓红线（persona.js:26）。**宁可让它明确地空着。**
+      const looksLikeJson = (() => {
+        const head = String(text || '').trim()
+          .replace(/^```(?:json)?\s*/i, '')   // 去掉 markdown 围栏后再判，否则 ``` 开头会漏判
+          .charAt(0);
+        return head === '{' || head === '[';
+      })();
+      let summaryTextForMemory = (structured || !looksLikeJson)
+        ? text
+        : '【本段小结未能结构化解析】这一段经历仍然完整保存在你的底座归档里，只是没能压缩成条目；不要据此虚构细节。';
       let verifiedEvidence = [];
       let rejectedEvidence = [];
 
