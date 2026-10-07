@@ -93,9 +93,7 @@ function syncMotionPriority() {
     bubble: !bubble.classList.contains('hidden'),
     talking: document.body.classList.contains('talking'),
     chatBusy: busy,
-    hidden: false   // v1.0 记录退役：showlog 让位机制随面板拔除
-      || !panel.classList.contains('hidden')
-      || (researchPanel && !researchPanel.classList.contains('hidden'))
+    hidden: typeof anyOverlayOpen === 'function' ? anyOverlayOpen() : false   // v1.0 记录退役：showlog 让位机制随面板拔除
   });
 }
 
@@ -1472,6 +1470,7 @@ function toggleWardrobe(on) {
   if (showIt) closeOtherOverlays('wardrobe');
   wd.classList.toggle('hidden', !showIt);
   if (showIt) refreshWardrobe();
+  syncMotionPriority();   // 衣橱开闭时同步阻断/恢复漫步状态机，防开面板时桌宠带面板游走
   syncPanelViewport();
 }
 bindPanelDrag(document.getElementById('wardrobe'));   // 衣橱空白处拖动同样移动整体
@@ -1846,7 +1845,27 @@ function renderSubjectStateTab(state) {
       (() => { const s = document.createElement('span'); s.className = deltaCls; s.textContent = deltaStr; return s; })()
     );
 
-    card.append(titleEl, valEl, metaEl);
+    // 可视化极性状态槽：以中点 0 为基准向正负双向延伸
+    const barWrap = document.createElement('div');
+    barWrap.className = 'r-trait-bar-wrap';
+    const barMid = document.createElement('div');
+    barMid.className = 'r-trait-bar-mid';
+    const barFill = document.createElement('div');
+    const curVal = Math.max(-999, Math.min(999, Number(info.current) || 0));
+    if (curVal >= 0) {
+      const pct = Math.min(50, (curVal / 999) * 50);
+      barFill.style.left = '50%';
+      barFill.style.width = pct + '%';
+      barFill.className = 'r-trait-bar-fill pos';
+    } else {
+      const pct = Math.min(50, (Math.abs(curVal) / 999) * 50);
+      barFill.style.left = (50 - pct) + '%';
+      barFill.style.width = pct + '%';
+      barFill.className = 'r-trait-bar-fill neg';
+    }
+    barWrap.append(barMid, barFill);
+
+    card.append(titleEl, valEl, barWrap, metaEl);
     card.addEventListener('click', () => {
       document.querySelectorAll('.r-trait-card').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');

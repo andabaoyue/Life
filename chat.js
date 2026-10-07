@@ -51,6 +51,7 @@ let busy = false;
 
 function applyTexts() {
   if (chatTitle) chatTitle.textContent = t('chat.title');
+  if (chatClose) chatClose.title = t('chat.closeTitle');   // 关闭按钮提示也走双表（HTML 里的中文只是默认值）
   if (chatHint) chatHint.textContent = t('panel.closeHint');   // 只留关闭提示（「拖到舒服的位置」是卡片时代措辞，已随卡片退役）
 }
 applyTexts();
