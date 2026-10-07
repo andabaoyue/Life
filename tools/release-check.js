@@ -37,7 +37,7 @@ console.log('====================================================');
   // P1-05: 版本描述统一以 package.json 为当前软件版本唯一来源，不硬编码
   let _bannerVersion = 'unknown';
   try { _bannerVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version; } catch {}
-  console.log(`       Life (初澜) v${_bannerVersion} 发布包资源完整性自动化检查     `);
+  console.log(`       Life v${_bannerVersion} 发布包资源完整性自动化检查     `);
 }
 console.log('====================================================\n');
 
@@ -255,10 +255,10 @@ function checkFallbackSprite() {
   }
   const w = buf.readUInt32BE(16);
   const h = buf.readUInt32BE(20);
-  if (w === 1015 && h === 1171) {
-    report('PASS', '单图兜底皮套', `assets/pet.png 存在且符合 1015×1171 兜底比例规范 (${buf.length} 字节)`);
+  if ((w === 64 && h === 80) || (w === 1015 && h === 1171)) {
+    report('PASS', '单图兜底皮套', `assets/pet.png 存在且符合标准尺寸 ${w}×${h} (${buf.length} 字节)`);
   } else {
-    report('WARN', '单图兜底皮套', `assets/pet.png 尺寸为 ${w}×${h} (标准兜底测试基准为 1015×1171)`);
+    report('WARN', '单图兜底皮套', `assets/pet.png 尺寸为 ${w}×${h} (标准原生推荐为 64×80 像素)`);
   }
 }
 

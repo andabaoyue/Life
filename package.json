@@ -1,8 +1,8 @@
 {
   "name": "life",
   "productName": "Life",
-  "characterName": "初澜",
-  "characterNameEn": "Chulan",
+  "characterName": "Life",
+  "characterNameEn": "Life",
   "version": "1.0.0-dev",
   "description": "Life — 桌面数字生命实验平台 (Desktop Digital Being Experimental Platform)",
   "main": "main.js",
