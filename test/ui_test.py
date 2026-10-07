@@ -911,6 +911,11 @@ with sync_playwright() as p:
           max:getComputedStyle(document.documentElement).getPropertyValue('--bubble-max'),
           ch:el.clientHeight, sh:el.scrollHeight, top:el.getBoundingClientRect().top});
         const before=snap();
+        // 64x80 像素资产规整化后图层与单图高宽比一致；注入测试级样式差模拟图层更大幅身姿场景，测试 fitBubble 动态重算
+        const style = document.createElement('style');
+        style.id = 'test-layer-delta';
+        style.textContent = '#figure.layered #layers .layer.base { height: 114px !important; }';
+        document.head.appendChild(style);
         applyLayers([{src:'assets/character/dresses/gothic_black_01.png',z:30},
                      {src:'assets/character/hair/silver_wavy_01.png',z:10}]);
         // 等 Promise.all 落地（含 .then 里的重算）
@@ -952,9 +957,12 @@ with sync_playwright() as p:
         for(let i=0;i<40 && f.classList.contains('layered');i++)
           await new Promise(r=>setTimeout(r,25));
         await new Promise(r=>setTimeout(r,120));
-        return {b0, h1:f.offsetHeight, layered:f.classList.contains('layered'),
+        const res = {b0, h1:f.offsetHeight, layered:f.classList.contains('layered'),
           max1:getComputedStyle(document.documentElement).getPropertyValue('--bubble-max'),
           top:el.getBoundingClientRect().top};
+        const st = document.getElementById('test-layer-delta');
+        if (st) st.remove();
+        return res;
     }""")
     check("图片缺失回退单图时也重算（旧值不会留在更大的立绘上）",
           fail["h1"] == h_fallback and abs(
