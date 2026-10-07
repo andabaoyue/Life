@@ -1313,6 +1313,41 @@ app.whenReady().then(() => {
   } catch (err) {
     console.error('[AgentTxn] 启动自愈异常:', err && err.message);
   }
+
+  /* 🔴 D-13：执行成功后，把她写的东西登记进她的记忆队列 —— 让她**下一次开口时读得到**。
+   *
+   * ## 补的是哪个洞
+   *   反重力复核 D-10~D-12 时指出：她写进沙盒的字，程序从来不读，
+   *   信息单向流出，像一套**脱机的遥测系统** ⇒ 她写完就忘。
+   *
+   * ## 为什么在这里（主进程），而不是渲染端回报
+   *   `onExecuted` 由 agent-ipc 在**执行成功之后**调用，且带着主进程求得的 content
+   *   （D-11 的暂存内容，`takeStashedContent` 已 read-and-delete）。
+   *   若改成让渲染端回报，内容来源就成了不可信输入 ——
+   *   等价于「她写下的东西可以由渲染端改写」。
+   *
+   * ## 三条纪律（与 agent-ipc 侧同源）
+   *   1. 只在执行成功时触发（决策 4：失败不告诉她、也不入队）
+   *   2. 异常一律吞掉 —— 它挂在执行成功之后，抛错会让用户以为写入失败
+   *   3. 不 await —— 只是登记，不该拖住 IPC 返回
+   *
+   * ## 决策 1/2/3 的落点
+   *   1 不进聊天气泡：本 hook 只喂 memory 队列，**不 broadcast、不碰任何 UI**。
+   *   2 一次性：由 memory._drainSelfNotes() 出队保证。
+   *   3 她说不写/写失败：压根不会走到这里（execute 未成功 ⇒ 不触发）。
+   */
+  const agentOnExecuted = (info) => {
+    try {
+      if (!brain || !brain.memory || typeof brain.memory.addSelfNote !== 'function') return;
+      if (!info || typeof info.content !== 'string' || !info.content.trim()) return;
+      const ok = brain.memory.addSelfNote({ content: info.content, name: info.name });
+      if (ok) console.log('[Agent] 她写过的东西已登记，下次开口时她读得到:', String(info.name || '').slice(0, 60));
+    } catch (err) {
+      // 纪律②：登记失败绝不能影响执行结果本身。
+      console.error('[Agent] 自述登记失败（不影响写入）:', err && err.message);
+    }
+  };
+
   // 🔴 D-10：主进程建案路径（「插电源」）。
   //
   //   这是十五轮以来**第一次**让「她的想法」有可能真的变成动作。
@@ -1327,6 +1362,7 @@ app.whenReady().then(() => {
     auditLog: agentAuditLog, confirmation: agentConfirmation,
   }, {
     transactionManager: agentTxn, txnDir: agentTxnDir,
+    onExecuted: agentOnExecuted,   // 🔴 D-13：她写过的东西回流进她的意识（见上方注释）
     // 🔴 D-9：动机来源求值器 —— 「她为什么想做这件事」。
     //
     //   **只读 trigger.selfIntent，不接线 _pendingAgentIntent。** 本轮只让动机可查，

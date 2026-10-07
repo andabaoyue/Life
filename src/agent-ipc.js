@@ -136,6 +136,13 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     ? options.takeStashedContent
     : null;
 
+  // 🔴 D-13：执行成功后的回调。主进程用它把「她写了什么」登记进 memory 的自述队列，
+  //   从而在**她下一次开口时**回到她的意识里（D-11 的洞：她写完就忘）。
+  //   不注入则完全退回旧行为（不登记任何东西）。
+  const onExecuted = typeof options.onExecuted === 'function'
+    ? options.onExecuted
+    : null;
+
   /**
    * 在建案瞬间求一次动机。**只此一处调用**，求值结果随即冻结进提案。
    * 任何异常都吞掉并返回 null：动机记录失败绝不能挡住建案本身。
@@ -563,6 +570,35 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       const { ok, code, ...rest } = result;
       return { ok: false, ...rest, error: code };
     }
+
+    // 🔴 D-13：执行成功后，把「她写了什么」交回调用方（主进程侧的 onExecuted hook）。
+    //
+    //   为什么必须在这里、而不是让渲染端回报：
+    //     `effectiveContent` 是**主进程求得的**（D-11 的暂存内容，或本次调用的 raw.content），
+    //     且 `takeStashedContent` 已把它从暂存表删除（read-and-delete）。
+    //     若等渲染端回报，内容来源就变成不可信输入 —— 与她写下的东西由渲染端改写等价。
+    //
+    //   ⚠️ 三条纪律：
+    //     1. **只在 ok===true 时触发**（决策 4：写失败不告诉她，也不入队）。
+    //     2. **hook 异常一律吞掉** —— 它挂在执行成功之后，抛错会让用户以为写入失败。
+    //     3. **不 await** —— hook 只是登记，不该拖住 IPC 返回。
+    //
+    //   注：proposal.scope 是主进程的绝对路径，fileName 只取 basename（由 memory 侧再兜一层）。
+    //   ⚠️ 字段名以执行器的**实际返回**为准（写文件返回 { bytes, target }，
+    //      target 已经是 basename；读文件返回的东西不同，故这里做形状守卫而不硬取）。
+    if (typeof onExecuted === 'function') {
+      try {
+        const r = (result && result.result) || {};
+        onExecuted({
+          proposalId: String(raw.proposalId || ''),
+          // 写文件路径：执行器已给 basename；读文件没有 target，则退回 null
+          name: typeof r.target === 'string' ? r.target : null,
+          bytes: typeof r.bytes === 'number' ? r.bytes : null,
+          content: effectiveContent,
+        });
+      } catch (e) { /* 旁路：登记失败绝不能影响执行结果本身 */ }
+    }
+
     return result;
   }));
 

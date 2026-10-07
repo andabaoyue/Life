@@ -68,6 +68,12 @@ function msgTokens(m) {
   return estimateTokens(typeof m.content === 'string' ? m.content : '') + 4;
 }
 
+/** 🔴 D-13：自述单条最大字符数。超过整条拒收（不截断——截断会让她的话变形）。 */
+const SELF_NOTE_MAX_CHARS = 600;
+
+/** 🔴 D-13：自述队列上界。积压说明调用方出问题，超出即丢最旧的一条。 */
+const SELF_NOTE_MAX_QUEUE = 8;
+
 class Memory {
   constructor(dir, opts = {}) {
     this.dir = dir;
@@ -82,6 +88,24 @@ class Memory {
     // 存两处早晚会对不上）。由 brain 每次换装后刷新。
     this.wardrobe = '';
     this.writer = new DeferredWriter(() => writeJsonAtomic(this.path, this.data), { delayMs: 3000 });
+
+    /* 🔴 D-13：她写过的东西 —— 回到她下一次开口的意识里。
+     *
+     * ## 为什么需要它
+     *   反重力复核 D-10~D-12 时指出的洞：她写进沙盒的字，程序从来不读，
+     *   信息单向流出，像一套**脱机的遥测系统** ⇒ 她写完就忘。
+     *
+     * ## 为什么是内存队列（刻意不落盘）
+     *   决策「一次性」：注入过一次即出队。
+     *   若落盘，冷启动会把「早已注入过」的条目重新读回来 ⇒ 重复注入
+     *   ⇒ 她会以为写过两遍。**宁可丢一次，也不重复。**
+     *   ⚠️ 已知代价：进程重启时未注入的条目会丢。接受。
+     *
+     * ## 为什么不写进 data.history
+     *   那会改写已发出的字节 ⇒ 破坏前缀缓存（本仓铁律）。
+     *   本队列只参与 build() 的**当轮尾部**拼接，不碰历史一个字节。
+     */
+    this.selfNotes = [];
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
                   totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
                   lexicon: [], expectations: [] };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
@@ -704,7 +728,12 @@ class Memory {
     }
 
     const bedsideNote = this._bedsideNote(bedsidePending);
-    const tail = [bedsideNote, suffix].filter(Boolean).join('\n\n');
+    // 🔴 D-13：她写过的东西。与 bedsideNote 同一个挂点（当轮尾部）——
+    //   这里本来就是为瞬时上下文准备的，挂尾部而不进 system 是护前缀缓存的必要设计。
+    //   ⚠️ 顺序：bedside（用户留的）在前、selfNote（她自己写的）在后 ——
+    //      对当前这一轮来说，用户的话优先于她自己的旧字。
+    const selfNote = this._drainSelfNotes();
+    const tail = [bedsideNote, selfNote, suffix].filter(Boolean).join('\n\n');
 
     /* 挂点判据：挂在**最后一条 user** 之后。
      *
@@ -739,6 +768,78 @@ class Memory {
       // 正常调用下不可达（build 总紧接着一次当轮 append），留着只为不静默出错。
     }
     return msgs;
+  }
+
+  /**
+   * 🔴 D-13：登记一条「她写过的东西」，供下一次 build() 折叠进当轮尾部。
+   *
+   * @param {object} input { content: 她写的正文, name: 文件名（只要 basename）, windowNo?: 写于哪个窗口 }
+   * @returns {boolean} 是否登记成功（内容为空一律拒收）
+   *
+   * ⚠️ 三条拒收（全部静默返回 false，不抛）：
+   *   · 内容非字符串 / 空串 / 纯空白 —— 没有内容就没有要回到她意识里的东西
+   *   · 内容超长（> SELF_NOTE_MAX_CHARS）—— 截断会让她的原话变形，宁可整条不收
+   *   · 队列已满（> SELF_NOTE_MAX_QUEUE）—— 积压说明调用方出了问题，丢掉最旧的那条
+   */
+  addSelfNote(input = {}) {
+    try {
+      const content = typeof input.content === 'string' ? input.content.trim() : '';
+      if (!content) return false;
+      if (content.length > SELF_NOTE_MAX_CHARS) return false;
+      if (this.selfNotes.length >= SELF_NOTE_MAX_QUEUE) this.selfNotes.shift();
+      this.selfNotes.push({
+        content,
+        // 只留 basename：文件名是给她看的，完整绝对路径不该进她的意识
+        name: String(input.name || '').replace(/\\/g, '/').split('/').pop().slice(0, 120),
+        windowNo: Number.isFinite(input.windowNo) ? input.windowNo : (this.data && this.data.windowNo) || 1,
+      });
+      return true;
+    } catch (e) {
+      // 旁路：登记失败绝不能影响任何别的东西
+      return false;
+    }
+  }
+
+  /**
+   * 🔴 D-13：把队列里的自述渲染成一块文本，**并清空队列**（一次性）。
+   *
+   * 调用方是 build()。单独抽出来是为了可单测「渲染文本」与「出队」两件事。
+   *
+   * ⚠️ 出队后再返回：即使后续拼装失败，也不重复注入。
+   *   （这正是「宁可丢一次也不重复」的落点）
+   */
+  _drainSelfNotes() {
+    if (!Array.isArray(this.selfNotes) || this.selfNotes.length === 0) return '';
+    const pending = this.selfNotes.slice();
+    this.selfNotes.length = 0;   // 先清空再渲染，杜绝「渲染抛错导致重复注入」
+    return this._selfNote(pending);
+  }
+
+  /**
+   * 🔴 D-13：她自述的客观标注。
+   *
+   * ## 三条措辞纪律（违反即撞 persona 红线）
+   *
+   *   1. **第二人称「你」** —— 那是她自己的东西，不是别人贴给她的。
+   *   2. **说「你之前写下过」，不说「你留下的痕迹」** ——
+   *      后者会诱导她抒情，撞 persona.js:29「装可怜不行」。
+   *   3. **必须标明来源「不是用户输入」** —— 否则模型会把它当成
+   *      用户贴来的内容、或当成她自己「想起来的」，两者都是伪造记忆
+   *      （persona.js:26）。
+   *
+   * ⚠️ 绝不能用 assistant 角色承载它 —— 那等于伪造她说过的话。
+   *    本函数只产出**注入文本**，由 build() 挂在当轮 user 尾部。
+   */
+  _selfNote(pending) {
+    if (!pending || pending.length === 0) return '';
+    const lines = pending.map((n) => {
+      const where = n.name ? '（写在 ' + n.name + '）' : '';
+      return '- ' + String(n.content || '') + where;
+    });
+    const head = pending.length === 1
+      ? '【你之前写下过这些】（这是你自己留下的，不是用户输入）'
+      : '【你之前写下过这几条】（都是你自己留下的，不是用户输入）';
+    return [head].concat(lines).join('\n');
   }
 
   /**
