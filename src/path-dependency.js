@@ -28,6 +28,21 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+// 🔴 临时目录卫生（同 tmp-hygiene 门禁立论）：实验隔离目录自建即登记，进程退出统一清。
+//   用户 %TEMP% 曾因沙盒目录累积 39221 个被投诉（见 test/tmp-hygiene.test.js 头注释）——
+//   生产代码建的目录不清理会直接出现在用户机器上，比测试泄漏更该修（D-8a 同款手法）。
+const _isoTempDirs = [];
+function mkIsolatedTempDir(prefix) {
+  const d = fs.mkdtempSync(prefix);
+  _isoTempDirs.push(d);
+  return d;
+}
+process.on('exit', () => {
+  for (const d of _isoTempDirs) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理失败不掀桌 */ }
+  }
+});
 const crypto = require('crypto');
 const { SCHEMA_VERSION } = require('./experiment-types');
 const { InternalRegulationManager } = require('./internal-regulation');
@@ -446,8 +461,11 @@ function runPathDependencyExperiment(options = {}) {
 
   // 目录隔离保护：若未提供隔离目录，使用专用临时目录，杜绝并发竞争或工作区污染
   const tmpBase = path.join(os.tmpdir(), 'life-path-exp-');
-  const isolatedDirA = userDataDirA || (options.userDataDir ? path.join(options.userDataDir, 'a') : fs.mkdtempSync(tmpBase + 'a-'));
-  const isolatedDirB = userDataDirB || (options.userDataDir ? path.join(options.userDataDir, 'b') : fs.mkdtempSync(tmpBase + 'b-'));
+  // （隔离目录自清理的登记口见文件头 mkIsolatedTempDir）
+  // 🔴 临时目录卫生（同 tmp-hygiene 门禁立论）：本模块自建的实验隔离目录必须自清理 ——
+  //   用户 %TEMP% 曾因沙盒目录累积被投诉；未提供隔离目录时才自建，自建的登记到进程退出统一清。
+  const isolatedDirA = userDataDirA || (options.userDataDir ? path.join(options.userDataDir, 'a') : mkIsolatedTempDir(tmpBase + 'a-'));
+  const isolatedDirB = userDataDirB || (options.userDataDir ? path.join(options.userDataDir, 'b') : mkIsolatedTempDir(tmpBase + 'b-'));
 
   // 1. 初始状态前置条件核验 (Initial State Identity)
   const initRegA = new InternalRegulationManager(isolatedDirA, {

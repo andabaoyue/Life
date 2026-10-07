@@ -11,6 +11,21 @@ const {
 let pass = 0;
 function check(name, value) { assert.ok(value, name); pass++; console.log('PASS', name); }
 
+// [D-8a 手法] 临时目录卫生：包住 fs.mkdtempSync 登记 + process.on('exit') 统一清。
+// 不清理单次跑净留沙盒目录（%TEMP% 累积投诉的根因，见 tmp-hygiene.test.js 头注释）。
+const _hygDirs = [];
+const _hygOrigMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _hygOrigMkdtemp.apply(fs, a);
+  _hygDirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _hygDirs) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理失败不掀桌 */ }
+  }
+});
+
 function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
 
 /* ===== v0.9.1 原有契约（必须保持向后兼容）===== */

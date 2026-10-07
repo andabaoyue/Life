@@ -19,6 +19,21 @@ const { Memory } = require('../src/memory');
 const { SubjectState, DEFAULT_TRAITS } = require('../src/subject-state');
 const { ExperiencesArchive } = require('../src/experiences-archive');
 
+// [D-8a 手法] 临时目录卫生：包住 fs.mkdtempSync 登记 + process.on('exit') 统一清。
+// 不清理单次跑净留沙盒目录（%TEMP% 累积投诉的根因，见 tmp-hygiene.test.js 头注释）。
+const _hygDirs = [];
+const _hygOrigMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _hygOrigMkdtemp.apply(fs, a);
+  _hygDirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _hygDirs) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* 清理失败不掀桌 */ }
+  }
+});
+
 let failures = 0;
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
