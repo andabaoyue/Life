@@ -1,0 +1,47 @@
+appId: com.andabaoyue.life
+productName: Life
+copyright: "Copyright © 2026 andabaoyue"
+electronVersion: "44.4.5"
+
+directories:
+  output: dist
+  buildResources: assets
+
+files:
+  - "main.js"
+  - "index.html"
+  - "style.css"
+  - "renderer.js"
+  - "src/**"
+  - "assets/**"
+  - "package.json"
+  - "!test/**"
+  - "!tools/**"
+  - "!research/**"
+  - "!**/*.md"
+  - "!dist/**"
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  icon: assets/app.ico
+  artifactName: "${productName}-${version}-win-${arch}.${ext}"
+
+portable:
+  artifactName: "${productName}-${version}-win-x64-portable.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Life
+  artifactName: "${productName}-${version}-Setup.${ext}"
