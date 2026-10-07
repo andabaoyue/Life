@@ -237,7 +237,10 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   const eng = liveEngine;
   const { computeSelfIntent, SELF_INTENT_KINDS } = RealTriggerMod;
   const traitKinds = Object.keys(SELF_INTENT_KINDS)
-    .filter((k) => SELF_INTENT_KINDS[k].requires !== 'idleness_minutes');
+    // 🔵 D-25：只列**特质档**（来源是 traits.*）—— 静默档与好奇档各有来源类别，
+    //   不归本探针管（好奇档的探针在 d25 门禁里，走 curiosityPending 输入）。
+    .filter((k) => SELF_INTENT_KINDS[k].requires !== 'idleness_minutes'
+      && SELF_INTENT_KINDS[k].requires !== 'curiosity_pending');
   check('🔴 D-8a 主进程确实构造出了 TriggerEngine 实例（否则下面几条是空断言）',
     eng instanceof RealTriggerMod.TriggerEngine,
     eng ? '' : 'liveEngine=null —— 拦截失效，本节全部断言失去意义');

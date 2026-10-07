@@ -513,9 +513,46 @@ class Memory {
       ? unresolved.filter(q => typeof q === 'string' && q.trim())
         .map(q => ({ q: q.trim().slice(0, 120), windowNo: windowNo || null }))
       : [];
-    const queue = Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [];
+    // 🔴 D-25：关窗出队 —— 被问出口的疑问**只在这里**移除（护前缀缓存红线）。
+    //   【尚未解开的疑问】块长在 systemText 里，队列一变 systemText 就变；
+    //   所以增删全部收敛在关窗这一刻（与 incoming 同刻），窗口内逐字节稳定。
+    //   开口那一次只打 asked 标记（标记不改注入文本，见 markCuriosityAsked）。
+    const queue = (Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [])
+      .filter((x) => x && x.asked !== true);
     this.data.curiosityQueue = queue.concat(incoming).slice(-5);
     return this.data.curiosityQueue;
+  }
+
+  /**
+   * 🔴 D-25：她真的把问题问出口了 —— 对着**队首原话**打 asked 标记。
+   *
+   *   ## 为什么只标记、不删除
+   *   删除 = 当场改 systemText = 破前缀缓存（D-22 / D-23 的实测教训）；
+   *   标记对注入文本零影响（build 里 asked 条目照常列出，直到关窗统一出队）。
+   *
+   *   ## 为什么按原话精确匹配、找不到就什么都不标
+   *   若她现场换了问法/问了别的，我们**猜不出**她问的是哪个 ——
+   *   猜一个去标就是伪造事实。宁可这次不标（最坏结果：那问题将来再被问一次，
+   *   有 40 分钟节流与 spokenDuringIdle 刹车兜底），也绝不标错。
+   */
+  markCuriosityAsked(question) {
+    const q = typeof question === 'string' ? question.trim() : '';
+    if (!q || !Array.isArray(this.data.curiosityQueue)) return false;
+    const hit = this.data.curiosityQueue.find((x) => x && x.q === q);
+    if (!hit) return false;
+    if (hit.asked === true) return true;   // 幂等：已标过
+    hit.asked = true;
+    // 标记不急着同步刷盘（最坏 = 重启后同题再问一次，节流兜底）；内容不丢。
+    this.save(false);
+    return true;
+  }
+
+  /** 🔴 D-25：供主动破冰取「放最久的那个」未解疑问（不改状态；已问的跳过）。 */
+  nextCuriosity() {
+    if (!Array.isArray(this.data.curiosityQueue)) return null;
+    const hit = this.data.curiosityQueue.find((x) => x && x.asked !== true
+      && typeof x.q === 'string' && x.q.trim());
+    return hit ? hit.q : null;
   }
 
   /* ---------- v1.0 生命机制（§4.7 #3 词汇表）：语言指纹的唯一入库口 ----------

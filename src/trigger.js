@@ -27,6 +27,12 @@
 const WINDOW_MS = 8000;      // 连戳统计窗口
 const POKE_THRESHOLD = 5;    // 窗口内几次算"连戳"
 const COOLDOWN_MS = 45000;   // 两次主动开口的最小间隔（任何理由都受它管）
+
+// 🔴 D-25：好奇破冰（§4.7「两段式」第二段，用户拍板 2026-10 开工）。
+//   静默阈值 30 分钟 + 独立节流 40 分钟（用户拍板的黄金平衡点）。
+//   节流是引擎内唯一的时序状态（lastCuriosityAt），由 commit() 记账 —— 渲染端确认说了才算数。
+const CURIOSITY_IDLE_MS = 30 * 60000;
+const CURIOSITY_THROTTLE_MS = 40 * 60000;
 const IDLE_MS = 30 * 60000;  // 挂机多久才轻声说一句
 
 /** 🔴 D-17：自发愿望（wantToLeaveSomething）的静默阈值，默认 120 分钟。
@@ -60,6 +66,13 @@ class TriggerEngine {
     // 同理：自发愿望的静默阈值也做成可配（默认 120 分钟不变）。
     this.selfNoteIdleMs = Number.isFinite(opts.selfNoteIdleMs) && opts.selfNoteIdleMs > 0
       ? opts.selfNoteIdleMs : SELF_NOTE_IDLE_MS;
+    // 🔴 D-25：好奇破冰的静默阈值与独立节流同样可配（默认 30 / 40 分钟，行为一字不变）。
+    //   lastCuriosityAt 显式初始化为 0，不留 undefined（同 selfIntent 三字段的教训）。
+    this.curiosityIdleMs = Number.isFinite(opts.curiosityIdleMs) && opts.curiosityIdleMs > 0
+      ? opts.curiosityIdleMs : CURIOSITY_IDLE_MS;
+    this.curiosityThrottleMs = Number.isFinite(opts.curiosityThrottleMs) && opts.curiosityThrottleMs > 0
+      ? opts.curiosityThrottleMs : CURIOSITY_THROTTLE_MS;
+    this.lastCuriosityAt = 0;
     // v0.9.9 意志层：特质 → 意愿权重（缺省中立 1.0，与既有常量行为完全一致）
     this.initiativeBias = computeInitiativeBias(opts.traits || {});
 
@@ -92,20 +105,30 @@ class TriggerEngine {
    * D-7：算出此刻她有没有可追溯的意图，结果记进 this.selfIntent。
    * @returns {?object} 同 computeSelfIntent
    */
-  computeIntentNow(idleMinutes) {
+  computeIntentNow(idleMinutes, curiosity = {}) {
     const intent = computeSelfIntent({
       traits: this.traits,
       idleMinutes,
       // 🔴 D-17：把可配阈值透传下去（默认 120，验证时可调小）
       selfNoteMinMinutes: Math.round(this.selfNoteIdleMs / 60000),
+      // 🔴 D-25：好奇破冰的三项事实全部由调用方供（引擎不碰时钟、不碰磁盘）：
+      //   pending = 待问计数、question = 队首原话、blocked = 40 分钟节流位。
+      curiosityPending: curiosity && curiosity.pending,
+      curiosityQuestion: curiosity && curiosity.question,
+      curiosityMinMinutes: Math.round(this.curiosityIdleMs / 60000),
+      curiosityBlocked: !!(curiosity && curiosity.blocked === true),
     });
     this.selfIntent = intent;
     this.selfIntentSource = intent ? intent.sources.slice(0) : null;
     return intent;
   }
 
-  /** @returns {?{kind, reason, hint, at, selfIntent}} null = 这次别说 */
-  evaluate() {
+  /**
+   * @param {object} [opts] 🔴 D-25：好奇破冰事实（curiosityPending / curiosityQuestion）。
+   *   由调用方在评估时刻取自 memory.curiosityQueue —— 引擎自己不读任何持久化。
+   * @returns {?{kind, reason, hint, at, selfIntent}} null = 这次别说
+   */
+  evaluate(opts = {}) {
     const tr = this.tracker;
     if (!tr) return null;
     const at = this.now();
@@ -129,7 +152,15 @@ class TriggerEngine {
     //   绝不能改变「说不说」。若把它算在 sleepMode 之前，
     //   一个睡着的状态也会产出意图 —— 那正是本轮要防的形态。
     const idleMs = at - tr.lastInteractionAt;
-    const selfIntent = this.computeIntentNow(Math.max(0, Math.round(idleMs / 60000)));
+    const selfIntent = this.computeIntentNow(Math.max(0, Math.round(idleMs / 60000)), {
+      pending: opts.curiosityPending,
+      question: opts.curiosityQuestion,
+      // 🔴 D-25：40 分钟独立节流 —— 问过之后四十分钟内不再问下一个。
+      //   与「一次离开只写一张纸条」（selfNoteDuringIdle）同族的克制，但按时序而非单次。
+      //   ⚠️ lastCuriosityAt === 0 表示「从未问过」，必须显式放行 ——
+      //   否则小时间戳下 (at - 0) 会落进节流窗口，把「从没问过」误判成「刚问过」（首轮实测踩到）。
+      blocked: this.lastCuriosityAt > 0 && (at - this.lastCuriosityAt) < this.curiosityThrottleMs,
+    });
 
     if (pokes >= pokeNeed) {
       return {
@@ -183,10 +214,14 @@ class TriggerEngine {
     //   selfNoteDuringIdle —— 防「反复建案」（D-15 引入 wantToLeaveSomething 后的新需要）。
     //   ⚠️ 不能合并：合并会让 30 分钟那声问候把 120 分钟的愿望锁死（D-15 断点 1）。
     const isSelfNote = out.selfIntent && out.selfIntent.kind === 'wantToLeaveSomething';
+    const isCuriosity = out.selfIntent && out.selfIntent.kind === 'curiosityAsk';
     if (this.tracker) {
       if (isSelfNote) this.tracker.selfNoteDuringIdle = true;
+      // D-25：好奇提问是**开口**（不是留纸条）⇒ 照吃 spokenDuringIdle 刹车，一视同仁
       else if (out.kind !== 'poke') this.tracker.spokenDuringIdle = true;
     }
+    // 🔴 D-25：好奇破冰独立节流记账 —— 只有真的说出口才记（被礼貌闸门拒了不记，下次还问）
+    if (isCuriosity) this.lastCuriosityAt = out.at;
   }
 }
 
@@ -269,6 +304,15 @@ const SELF_INTENT_KINDS = Object.freeze({
   //     判据 2 要求来源可追溯到**已有字段**（见本文件头部）。
   //     新造一个 mood 状态机再推意图，形式上有来源、实质是自动化 —— 那正是判据 2 禁的。
   wantToLeaveSomething: { direction: '想留下点什么', requires: 'idleness_minutes', min: 120 },
+  // 🔴 D-25：好奇破冰 —— 她想问一个自己没解开的问题（§4.7「两段式」第二段，用户拍板开工）。
+  //
+  //   requires 是 memory.curiosityQueue 的**真实待问计数**（她的未解疑问来自关窗小结的
+  //   unresolved，有窗口可溯）—— 不是特质、不是新造状态机，判据 2 依旧成立。
+  //   min 是静默阈值（分钟，用户拍板 30）；40 分钟独立节流在引擎侧（curiosityBlocked）。
+  //
+  //   ⚠️ 不预设台词：具体问题就是队列里的**她自己的原话**，只随方向带出引证；
+  //     程序不代写一个字的问法。
+  curiosityAsk: { direction: '想问一个自己没解开的问题', requires: 'curiosity_pending', min: 30 },
 });
 
 /* 与触发器判定一致的中文名（subject-state.js:282-285 的定名法）。
@@ -315,7 +359,8 @@ function computeSelfIntent(state = {}) {
   //   都能凭空产生意图，等于给自己开了后门。**意图种类必须由本表穷举。**
   for (const kind of Object.keys(SELF_INTENT_KINDS)) {
     const spec = SELF_INTENT_KINDS[kind];
-    if (!spec.requires || spec.requires === 'idleness_minutes') continue;
+    // 非特质来源（静默时长 / 好奇队列）各有专门分支，这里只走特质类
+    if (!spec.requires || spec.requires === 'idleness_minutes' || spec.requires === 'curiosity_pending') continue;
     const raw = Number(rawTraits[spec.requires]);
     if (!Number.isFinite(raw) || raw < spec.min) continue;
     candidates.push({
@@ -351,6 +396,37 @@ function computeSelfIntent(state = {}) {
     });
   }
 
+  // 🔴 D-25：好奇破冰 —— 她想问一个自己没解开的问题。
+  //   来源 memory.curiosityQueue（未解疑问由关窗小结 unresolved 真实产出，窗口可溯）。
+  //
+  //   ## 问题文本为什么不搬运台词
+  //   【尚未解开的疑问】本来就在她的视野里（memory.build 的注入块）——
+  //   这里只把「问哪一个」钉死为 **FIFO 队首**（放最久的那个），asked 标记也对着它，
+  //   两边看的是同一条，才不会「问了 A 却把 B 标成已问」。
+  //   方向里带的是她自己的原话引证，不是程序代拟的问法。
+  //
+  //   ## 节流位（curiosityBlocked）在这里消费而不是在引擎里判
+  //   本函数是纯函数：谁该被节流由调用方按 at 算好传进来（同 idleMinutes 的哲学），
+  //   被节流时**整类不产**，退化给下一个候选（或没有意图）—— 不硬造替代意图。
+  const curiosityPending = (Number.isFinite(Number(src.curiosityPending)) && Number(src.curiosityPending) > 0)
+    ? Math.floor(Number(src.curiosityPending)) : 0;
+  const curiosityMin = (Number.isFinite(Number(src.curiosityMinMinutes)) && Number(src.curiosityMinMinutes) > 0)
+    ? Number(src.curiosityMinMinutes) : SELF_INTENT_KINDS.curiosityAsk.min;
+  const curiosityQ = (typeof src.curiosityQuestion === 'string' && src.curiosityQuestion.trim())
+    ? src.curiosityQuestion.trim().slice(0, 120) : '';
+  if (src.curiosityBlocked !== true && curiosityPending > 0
+      && idleMinutes !== null && idleMinutes >= curiosityMin) {
+    candidates.push({
+      kind: 'curiosityAsk',
+      // 方向里的原话只带前 30 字（引证用途；全句在 systemText 的疑问块里本来就有）
+      direction: SELF_INTENT_KINDS.curiosityAsk.direction
+        + (curiosityQ ? '（就是这个：「' + curiosityQ.slice(0, 30) + '」）' : '（就在你那些没解开的问题里挑）'),
+      sources: ['memory.curiosityQueue'],
+      // 队首原话 —— asked 标记的对账键（main.js 出口记账用），不是台词
+      question: curiosityQ,
+    });
+  }
+
   if (idleMinutes !== null && idleMinutes >= SELF_INTENT_KINDS.idleness_verydeep.min) {
     candidates.push({
       kind: 'idleness_verydeep',
@@ -380,6 +456,9 @@ function rankOf(kind) {
   //   ⚠️ 排序越小越优先。wantToLeaveSomething 排在**静默类之前**：
   //     它由更长的静默推出，若与 idleness 同时成立（>=120 必然 >=90），
   //     取更深的那个才合理 —— 否则 120 分钟的安静只会得到「说一句安静」。
+  //   🔴 D-25：curiosityAsk（requires 非 idleness_minutes）落在 0 档 ——
+  //     未解疑问是**她自己的**挂念，不是环境量；但仍让位于 wantToLeaveSomething（-1）：
+  //     留下东西比问一句更重，静默 120 分钟的那次取更重的。
   if (kind === 'wantToLeaveSomething') return -1;   // 最优先
   return spec.requires === 'idleness_minutes' ? 1 : 0;
 }
@@ -388,4 +467,5 @@ module.exports = {
   TriggerEngine, computeInitiativeBias, computeSelfIntent,
   SELF_INTENT_KINDS, TRAIT_LABEL,
   WINDOW_MS, POKE_THRESHOLD, COOLDOWN_MS, IDLE_MS,
+  CURIOSITY_IDLE_MS, CURIOSITY_THROTTLE_MS,
 };

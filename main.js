@@ -675,6 +675,12 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
          selfIntent: offer && offer.selfIntent });
     // 主动搭话真的说出口了才记账；被渲染端礼貌闸门拦下时压根不会走到这
     if (proactive && trigger) trigger.commit(offer);
+    // 🔴 D-25：好奇问题真的问出口了才打 asked 标记（同 commit 语义：说了才算）。
+    //   对着 intent.question 精确匹配队列原话 —— 匹配不上就不标（不猜、不伪造）。
+    if (proactive && offer && offer.selfIntent && offer.selfIntent.kind === 'curiosityAsk'
+        && brain && brain.memory && typeof brain.memory.markCuriosityAsked === 'function') {
+      brain.memory.markCuriosityAsked(offer.selfIntent.question);
+    }
     // 换装是在 brain 里执行的（提案→真实状态→结果写回历史），
     // 这里只在真的换上了时把新图层推给渲染端，
     // 保证屏幕上穿的、系统提示里说的、历史里记的三者是同一件事。
@@ -799,7 +805,13 @@ function checkAndPushProactive() {
     tracker.recordIdle(idleMin, at);
   }
 
-  const offer = trigger.evaluate();
+  // 🔴 D-25：好奇破冰的事实随评估带入 —— 待问计数与队首原话，**只取不加工**。
+  //   队列的读口是 memory.nextCuriosity()（跳过已问的），与 asked 标记看的是同一条。
+  const curQuestion = (brain.memory && typeof brain.memory.nextCuriosity === 'function')
+    ? brain.memory.nextCuriosity() : null;
+  const curPending = (brain.memory && Array.isArray(brain.memory.data.curiosityQueue))
+    ? brain.memory.data.curiosityQueue.filter((x) => x && x.asked !== true).length : 0;
+  const offer = trigger.evaluate({ curiosityPending: curPending, curiosityQuestion: curQuestion });
   if (offer) {
     win.webContents.send('proactive-offer', offer);
   } else {

@@ -327,15 +327,24 @@ const ALLOWED_TRAITS = new Set([
   'quiet_preference', 'social_initiative', 'attachment_need',
   'vitality', 'philosophical_curiosity',
 ]);
+// 🔵 D-25 修订：探针按**来源类别**构造输入（特质 / 静默 / 好奇队列），
+//   与 trigger.js 的三条分支一一对应 —— 新来源类别必须在这里显式登记才测得到
+//   （D-11 加 wantToLeaveSomething 时同款修订；不登记会让探针喂错输入、断言空转）。
+function probeInput(spec, boost) {
+  if (spec.requires === 'idleness_minutes') return { traits: {}, idleMinutes: spec.min + boost };
+  if (spec.requires === 'curiosity_pending') {
+    return { traits: {}, idleMinutes: spec.min + boost, curiosityPending: 1, curiosityQuestion: '探针问题' };
+  }
+  return { traits: { [spec.requires]: spec.min + boost }, idleMinutes: 0 };
+}
 for (const kind of Object.keys(SELF_INTENT_KINDS)) {
   const spec = SELF_INTENT_KINDS[kind];
-  const input = spec.requires === 'idleness_minutes'
-    ? { traits: {}, idleMinutes: spec.min + 1 }
-    : { traits: { [spec.requires]: spec.min + 1 }, idleMinutes: 0 };
+  const input = probeInput(spec, 1);
   const got = computeSelfIntent(input);
   const ok = got && got.kind === kind && Array.isArray(got.sources) && got.sources.length > 0
     && got.sources.every((s) => {
       if (s === 'tracker.lastInteractionAt') return true;
+      if (s === 'memory.curiosityQueue') return true;   // 🔵 D-25：好奇队列（真实字段）
       if (s.startsWith('traits.')) return ALLOWED_TRAITS.has(s.slice(7));
       return false;
     });
@@ -345,10 +354,7 @@ for (const kind of Object.keys(SELF_INTENT_KINDS)) {
 check('sources 一律非空（没有来源的意图等于没有依据）',
   Object.keys(SELF_INTENT_KINDS).every((kind) => {
     const spec = SELF_INTENT_KINDS[kind];
-    const input = spec.requires === 'idleness_minutes'
-      ? { traits: {}, idleMinutes: spec.min + 1 }
-      : { traits: { [spec.requires]: spec.min + 1 }, idleMinutes: 0 };
-    const got = computeSelfIntent(input);
+    const got = computeSelfIntent(probeInput(spec, 1));
     return got && got.sources && got.sources.length > 0;
   }));
 check('维度名用中文定名而非程序变量名（她会照念 attachment_need）',
@@ -376,25 +382,21 @@ const kindCount = Object.keys(SELF_INTENT_KINDS).length;
 //   产物是「留给自己的东西」而非「说一句话」—— 见 trigger.js 的 SELF_INTENT_KINDS）。
 //   **断言的意图没变**：仍是「种类有限、由本表穷举」，只是数字 +1。
 //   这条断言的价值正在于此 —— 它拦住了一次「顺手加意图」，逼我们显式登记。
+// 🔵 D-25 修订：6 → 7。新增 `curiosityAsk`（好奇破冰：她的未解疑问，
+//   来源 memory.curiosityQueue，问题文本是她自己的原话引证 —— 见 d25 门禁）。
 check('意图种类是有限且由本表穷举的（' + kindCount + ' 种，不多不少）',
-  kindCount === 6);
+  kindCount === 7);
 check('每种意图的 direction 是静态的（同样输入必得同样方向，非随机）',
   Object.keys(SELF_INTENT_KINDS).every((kind) => {
     const spec = SELF_INTENT_KINDS[kind];
-    const input = spec.requires === 'idleness_minutes'
-      ? { traits: {}, idleMinutes: spec.min + 5 }
-      : { traits: { [spec.requires]: spec.min + 5 }, idleMinutes: 0 };
-    const a = computeSelfIntent(input);
-    const b = computeSelfIntent(input);
+    const a = computeSelfIntent(probeInput(spec, 5));
+    const b = computeSelfIntent(probeInput(spec, 5));
     return a && a.direction === b.direction;
   }));
 check('方向文案长度都在合理范围（不是台词、不含换行堆砌）',
   Object.keys(SELF_INTENT_KINDS).every((kind) => {
     const spec = SELF_INTENT_KINDS[kind];
-    const input = spec.requires === 'idleness_minutes'
-      ? { traits: {}, idleMinutes: spec.min + 5 }
-      : { traits: { [spec.requires]: spec.min + 5 }, idleMinutes: 0 };
-    const d = computeSelfIntent(input).direction;
+    const d = computeSelfIntent(probeInput(spec, 5)).direction;
     return d.length > 4 && d.length < 60 && !/[\r\n]/.test(d);
   }));
 
