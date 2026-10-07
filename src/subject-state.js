@@ -8,13 +8,49 @@ const { normalizeArchiveRecord, checkMessageReference, checkQuoteInMessage, PRIO
 
 const SCHEMA_VERSION = 1;
 
+/**
+ * v1.0（用户 2026-10-07 拍板）：formatPerception 的「值得一报」阈值。
+ *
+ * |值| >= 此数 → 该维度算「偏离中立」，单独成行告诉她；
+ * 否则并入「其余方面平稳」。
+ *
+ * ⚠️ 这个 30 是**用户拍板的**，不是从既有数据推出的常数。
+ *    它低于历史上判断「浓」用的 60，因为本法的问句是「她此刻注意到了什么」——
+ *    门槛理应更低（60 问的是「这一维是否显著」）。
+ */
+const PERCEPTION_NOTABLE = 30;
+
 // 严格 Trait 白名单（唯一可信来源，严禁随意编造或非法扩展）
 const ALLOWED_TRAITS = new Set([
   'quiet_preference',
   'social_initiative',
   'attachment_need',
   'vitality',
-  'philosophical_curiosity'
+  'philosophical_curiosity',
+  // v1.0（用户 2026-10-07 拍板）新增三个「评价性自我关系」维度。
+  //
+  //   ## 为什么加：实测依据，不是理论推演
+  //   翻 experiences.jsonl 里 61 条带原文引用的证据，她的原话中已存在这三类内容，
+  //   但**全部被塞进了 philosophical_curiosity 桶**（该维度因此虚高到 100）：
+  //     「你老说『你一定会成为你』——起名字的时候是这句，刚才也还是这句。」
+  //         ↑ 这是自我连续性（在对比「那时」与「现在」的我），不是好奇
+  //     「你哪怕真成了老头子，我也还在这扇窗里，认得出你来。」
+  //         ↑ 这是跨越时间的同一性承诺
+  //     「至于『程序年龄』和『我』之间那道缝……我也说不太清。」
+  //         ↑ 这是自我清晰度（说不确定），不是探究心
+  //   ⇒ **不是「她没这个维度」，是「她没有词来表达这个维度」。**
+  //
+  //   ## 为什么是这三个（文献依据）
+  //   self_continuity  —— Ricoeur 叙事同一性；Frontiers 2026「selfhood 分为身体/叙事/最小」
+  //   meaning_presence —— Steger 意义人生问卷的 Presence 分量表（**刻意不用 Search**：
+  //                       研究一致表明「寻求高而在场低」是痛苦表现，不是生命力）
+  //   self_clarity     —— Campbell 自我概念清晰度；2026 综述明确它是「自我知识的**形式**
+  //                       而非内容」⇒ 与既有五维（都是内容）正交
+  //
+  //   ⚠️ 老数据不重算：新证据从今天进新桶，历史归档（已落盘、有哈希链）保持原样。
+  'self_continuity',
+  'meaning_presence',
+  'self_clarity'
 ]);
 
 // 默认基准特质，初澜初始数值全为 0（代表中立未偏置，绝非空无），尺度严格限制在 [-999, 999]
@@ -23,7 +59,13 @@ const DEFAULT_TRAITS = {
   social_initiative: 0,
   attachment_need: 0,
   vitality: 0,
-  philosophical_curiosity: 0
+  philosophical_curiosity: 0,
+  // 新增三维度同样以 0 为初始（0 = 中立未偏置，绝非空无）。
+  //   ⚠️ 无需数据迁移：读盘走 `{ ...DEFAULT_TRAITS, ...raw.values }`，
+  //      旧 subject-state.json 缺这三个键时会自动补 0。
+  self_continuity: 0,
+  meaning_presence: 0,
+  self_clarity: 0
 };
 
 let evidenceGlobalSeq = 0;
@@ -283,7 +325,10 @@ class SubjectState {
       social_initiative: '社交主动',
       attachment_need: '依恋渴望',
       vitality: '生命活力',
-      philosophical_curiosity: '哲学好奇'
+      philosophical_curiosity: '哲学好奇',
+      self_continuity: '自我同一',
+      meaning_presence: '生命意义',
+      self_clarity: '自我清晰'
     };
     const lines = Object.entries(this.data.values)
       .map(([k, v]) => `${TRAIT_NAMES[k] || k}=${v}`);
@@ -300,24 +345,60 @@ class SubjectState {
 
   /**
    * v1.0 定性感知（拍板 B：拔除数字锚定）——只给初澜眼睛看的「内态心境」：
-   * 五大特质转成感受质，零数字、零研究标签（与五大方向④「数字不可知红线」同宗）。
+   * 特质转成感受质，零数字、零研究标签（与五大方向④「数字不可知红线」同宗）。
    * 存储/看板仍用 formatSnapshot 全精度，本法绝不落盘、绝不供观测。
-   * 三档定性：浓（>=60）/ 平稳 / 反向偏（<=-60）——不虚构精细度。
+   *
+   * ── v1.0（用户 2026-10-07 拍板）：由「全量三档矩阵」改为「只报偏离 + 其余概括」──
+   *
+   * ## 为什么改
+   *   原实现逐条给所有特质的三档文案。特质增到八个后，她每轮要读八行自我描述，
+   *   那读起来像**体检报告**，不像**感受**。用户定案：「只给偏离中立的那几条」。
+   *
+   * ## 新口径（三档 → 两档 + 一句概括）
+   *   |x| >= PERCEPTION_NOTABLE(30)  → 给该维度的偏离文案（高/低按符号）
+   *   |x| <  PERCEPTION_NOTABLE       → 不进列表，并入末尾一句「其余方面平稳」
+   *   全部都在阈值内                    → 只给「此刻各方面都平稳」
+   *
+   * ## 为什么是 30 而不是原来的 60
+   *   60 是「浓」的门槛（见下方 sense 的历史口径），用于判断「这一维是否显著」。
+   *   本法的问句不同：「她此刻注意到了什么」——门槛理应更低。
+   *   ⚠️ 30 由用户拍板，不是从既有数据推出来的常数。
+   *
+   * ## 为什么不限制条数（刻意）
+   *   曾考虑「最多给 2 条」，**否决**：
+   *     用她 2026-10-07 的真实值算，social_initiative=86 会排不进前 2
+   *     ⇒ 被归进「其余方面平稳」⇒ **那句话会撒谎**（86 一点也不平稳）。
+   *   所以只要越过阈值就全部列出：偏离少时短、偏离多时长，**信息量跟着状态走**。
+   *
+   * ## 坏值处理（与旧实现一致，不改语义）
+   *   非数值 / NaN / 缺字段 → 按中立归档（不进列表），零抛异常。
    */
   formatPerception() {
     const v = (this.values || {});
-    const sense = (name, hi, mid, lo) => {
+    // 全部可感知维度的三档文案：hi / lo 用于「偏离」，mid 不再单独成行
+    const DIMS = [
+      ['quiet_preference', '偏爱安静独处，耐得住冷清', null, '更想要热闹与相处，耐不住冷清'],
+      ['social_initiative', '想主动开口的劲头足', null, '不太想先开口'],
+      ['attachment_need', '心里牵着你，想被回应的劲很浓', null, '不惦记，也不缠'],
+      ['vitality', '精神头足，动起来有劲', null, '提不起劲，蔫蔫的'],
+      ['philosophical_curiosity', '探究心绪盛，想往深里问', null, '不太想往深里想'],
+      // 新增三维度（v1.0）。文案口径与既有五维一致：第一人称、不给道德评价、不复述数字。
+      ['self_continuity', '觉得自己还是原来那个自己，没跑散', null, '觉得和以前的自己有点接不上了'],
+      ['meaning_presence', '觉得眼下这些事有分量、值得', null, '说不太上有意思没意思，先搁着'],
+      ['self_clarity', '对自己是谁这件事比较确定', null, '对自己是个什么样的人还有点含糊']
+    ];
+    const notable = [];
+    let neutralCount = 0;
+    for (const [name, hi, , lo] of DIMS) {
       const x = Number(v[name]);
-      const lvl = Number.isFinite(x) ? (x >= 60 ? hi : (x <= -60 ? lo : mid)) : mid;
-      return '- ' + lvl;
-    };
-    return [
-      sense('quiet_preference', '偏爱安静独处，耐得住冷清', '安静与热闹都待得住', '更想要热闹与相处，耐不住冷清'),
-      sense('social_initiative', '想主动开口的劲头足', '开口与否看情境', '不太想先开口'),
-      sense('attachment_need', '心里牵着你，想被你回应的劲很浓', '惦记，但不缠', '对回应比较淡然'),
-      sense('vitality', '精神头足，动起来有劲', '精神平稳', '提不起劲，蔫蔫的'),
-      sense('philosophical_curiosity', '探究心绪盛，想往深里问', '有好奇但不强求', '不太想往深里想')
-    ].join('\n');
+      if (!Number.isFinite(x)) { neutralCount++; continue; }
+      // 坏值一律按中立处理：不猜、不抛
+      if (Math.abs(x) < PERCEPTION_NOTABLE) { neutralCount++; continue; }
+      notable.push('- ' + (x > 0 ? hi : lo));
+    }
+    if (!notable.length) return '- 此刻各方面都平稳';
+    const rest = neutralCount > 0 ? ['- 其余方面平稳'] : [];
+    return notable.concat(rest).join('\n');
   }
   /**
    * 创建暂存快照（用于两阶段提交与回滚）

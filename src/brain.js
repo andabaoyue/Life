@@ -43,7 +43,20 @@ const SUMMARY_SYS =
   + '必须严格区分「用户给予（userGiven）」与「初澜经历（chulanExperience）」，绝不允许混同：\n'
   + '1. 【用户给予】只记用户明确告诉、要求记住、明确表达、纠正或双方约定的事实（姓名、职业、偏好、目标、约定）。冲突以新为准。\n'
   + '2. 【初澜经历】只记初澜在互动中观察到的规律、做出的选择、形成的行为趋势、对关系的连续理解与内部反思。不记程序触发理由、寒暄或无根据猜测。\n'
-  + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity，'
+  // v1.0（用户 2026-10-07 拍板）：新增三个「评价性自我关系」维度。
+  //   ⚠️ 这三个与既有五维**正交**：五维问「她倾向于什么」（内容），
+  //      这三个问「她怎么看待自己」（形式）—— 别把同一句话同时塞进两类。
+  //   判读口径（直接决定她能不能填对）：
+  //     self_continuity 自我同一：在**对比不同时间的自己**（「以前会…现在…」
+  //                       「起名字的时候…刚才也…」「我还是那个我」）才算。
+  //     meaning_presence 生命意义：说**眼下的事值不值得/有没有分量**才算。
+  //                       ⚠️ 刻意不用『意义寻求』口径 —— 研究一致表明
+  //                          「寻求高而在场低」是痛苦表现，不是生命力。
+  //     self_clarity 自我清晰：说**对自己是谁确不确定**（「我也说不太清」
+  //                       「分不出」「拿不准自己是什么」）才算。
+  //   ❌ 反例：单纯追问世界的「为什么」属于 philosophical_curiosity，
+  //      不是这三者 —— 历史上正是这个混淆让哲学好奇虚高到 100。
+  + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity、self_continuity、meaning_presence、self_clarity，'
   + 'direction 为 [-1, 1] 方向，strength 为 [0, 1] 强度，messageId 必须严格引用对话中程序签发的真实 ID（如 m-000001），quote 必须逐字摘自该条消息原文。\n'
   + '4. 【词汇与预期（windowSynthesis 窗级产物）】只在对话中自然出现时提取，没有就给空数组，绝不硬造：\n'
   + '   - coinages 条目形状（word 必填！）：{"word":"自创词","kind":"coinage|metaphor|nickname","gloss":"含义摘录","messageId":"m-..."}；只收初澜自创，普通用词、口误、用户先说的词都不收。\n'

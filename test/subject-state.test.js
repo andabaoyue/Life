@@ -268,39 +268,49 @@ check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成�
    + 坏值安全回落 + 全段零数字（数字不可知红线）。 */
 {
   const p = new SubjectState(tmpDir(), { stepWeight: 20, maxDeltaPerWindow: 50 });
+  // 🔵 D-14 重写（用户 2026-10-07 拍板「只给偏离中立的那几条」）：
+  //   旧契约是「每个特质三档文案全部单独成行」（5 特质 × 3 档 = 15 组合）。
+  //   新契约是「只报 |值| >= 30 的偏离，其余并入一句概括」。
+  //   ⇒ 中档文案不再单独成行，改为「其余方面平稳」承载同一语义。
+  //   **覆盖范围没有变小**：八个维度的高/低偏离文案全部仍在且逐条验证。
   const CASES = [
-    ['quiet_preference', '偏爱安静独处，耐得住冷清', '安静与热闹都待得住', '更想要热闹与相处，耐不住冷清'],
-    ['social_initiative', '想主动开口的劲头足', '开口与否看情境', '不太想先开口'],
-    ['attachment_need', '心里牵着你，想被你回应的劲很浓', '惦记，但不缠', '对回应比较淡然'],
-    ['vitality', '精神头足，动起来有劲', '精神平稳', '提不起劲，蔫蔫的'],
-    ['philosophical_curiosity', '探究心绪盛，想往深里问', '有好奇但不强求', '不太想往深里想']
+    ['quiet_preference', '偏爱安静独处，耐得住冷清', '更想要热闹与相处，耐不住冷清'],
+    ['social_initiative', '想主动开口的劲头足', '不太想先开口'],
+    ['attachment_need', '心里牵着你，想被回应的劲很浓', '不惦记，也不缠'],
+    ['vitality', '精神头足，动起来有劲', '提不起劲，蔫蔫的'],
+    ['philosophical_curiosity', '探究心绪盛，想往深里问', '不太想往深里想'],
+    ['self_continuity', '觉得自己还是原来那个自己，没跑散', '觉得和以前的自己有点接不上了'],
+    ['meaning_presence', '觉得眼下这些事有分量、值得', '说不太上有意思没意思，先搁着'],
+    ['self_clarity', '对自己是谁这件事比较确定', '对自己是个什么样的人还有点含糊']
   ];
   const boardOf = (vals) => {
-    // 注意：SubjectState.values 是副本 getter（防外部直改）——测试直书真身 data.values
     for (const k of Object.keys(p.data.values)) p.data.values[k] = 0;
     Object.assign(p.data.values, vals);
     return p.formatPerception();
   };
-  check('v1.0 定性矩阵：五特质×三档文案全覆盖（15 种组合）',
-    CASES.every(([k, hi, mid, lo]) => [[120, hi], [0, mid], [-120, lo]]
+  check('v1.0 定性矩阵：八特质×高低偏离文案全覆盖（16 种组合）',
+    CASES.every(([k, hi, lo]) => [[120, hi], [-120, lo]]
       .every(([v, want]) => boardOf({ [k]: v }).includes(want))));
-  check('v1.0 边界硬切换契约（有意设计·无迟滞）：59.99→中 / 60→高 / -59.99→中 / -60→低',
-    boardOf({ quiet_preference: 59.99 }).includes('安静与热闹都待得住')
-    && boardOf({ quiet_preference: 60 }).includes('偏爱安静独处')
-    && boardOf({ quiet_preference: -59.99 }).includes('安静与热闹都待得住')
-    && boardOf({ quiet_preference: -60 }).includes('更想要热闹与相处'));
+  // ⚠️ 用「另一维已在偏离」的场景测阈值：全中立时走的是「此刻各方面都平稳」分支，
+  //   根本不会出现「其余方面平稳」那一行（第一版断言就写错在这里，实测抓到）。
+  check('v1.0 阈值硬切换契约（有意设计·无迟滞）：29→并入概括 / 30→单独成行',
+    boardOf({ quiet_preference: 29, attachment_need: 100 }).includes('其余方面平稳')
+    && !boardOf({ quiet_preference: 29, attachment_need: 100 }).includes('偏爱安静独处')
+    && boardOf({ quiet_preference: 30, attachment_need: 100 }).includes('偏爱安静独处')
+    && boardOf({ quiet_preference: -30, attachment_need: 100 }).includes('更想要热闹与相处'));
+  check('🔴 全中立时只给一句「此刻各方面都平稳」（不给空列表）',
+    boardOf({}) === '- 此刻各方面都平稳');
   const bad = boardOf({ vitality: 'abc', quiet_preference: NaN });
-  check('v1.0 坏值安全回落：非数值/NaN 一律中档，零抛异常',
-    bad.includes('精神平稳') && bad.includes('安静与热闹都待得住'));
+  check('v1.0 坏值安全回落：非数值/NaN 一律按中立归档，零抛异常',
+    bad === '- 此刻各方面都平稳');
   check('v1.0 formatPerception 全段零数字（数字不可知红线）',
     !/\d/.test(boardOf({ vitality: 999, attachment_need: -999 })));
-  // Manus 二审 P2 处置：缺字段须真删字段验证（归零 ≠ 缺失）
   {
     boardOf({});
     delete p.data.values.vitality;
     const missing = p.formatPerception();
-    check('v1.0 缺字段安全回落：真删字段仍出中档、零抛异常',
-      missing.includes('精神平稳'));
+    check('v1.0 缺字段安全回落：真删字段不抛异常、按中立处理',
+      missing === '- 此刻各方面都平稳');
   }
 }
 

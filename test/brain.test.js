@@ -1020,9 +1020,14 @@ async function main() {
 
     // 验证 State Snapshot 注入位置：仅在瞬时 user 尾部，绝不进入 systemText
     const selfCtx = p0Brain.currentSelfContext();
+    // 🔵 D-14 修订（原断言查中档文案「安静与热闹都待得住」）：
+    //   formatPerception 改为「只报偏离 + 其余概括」后，本场景 quiet_preference=18
+    //   且**其余维度全为 0** ⇒ 没有任何一维越过阈值 30
+    //   ⇒ 走的是「全部都在阈值内」分支，输出「此刻各方面都平稳」。
+    //   **断言的意图没变**：仍是「瞬时尾部注入定性内态感知」且「零数字锚定」。
     check('P0-07: currentSelfContext 瞬时尾部注入定性内态感知（拍板 B：数字不可知红线）',
       selfCtx.includes('【内态感知】') &&
-      selfCtx.includes('安静与热闹都待得住') &&   // 安静偏好=18 → 中档定性感受质
+      selfCtx.includes('此刻各方面都平稳') &&     // 安静偏好=18，全维度未过阈值
       !selfCtx.includes('安静偏好='));           // 数字锚定已拔除
     check('P0-07: systemText 保持纯净人设与小结，绝不包含主体状态快照（保卫前缀缓存）',
       !p0Brain.memory.systemText().includes('【当前主体状态快照】'));
