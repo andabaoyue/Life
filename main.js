@@ -75,7 +75,179 @@ let proactiveTimer = null;
 //   引用它会在事件触发时抛 TDZ 错（不是风格问题，是运行时崩溃）。
 //   显式初始化为 null，不留 undefined —— 本仓踩过「字段在但从不赋值，
 //   下一个人读到 undefined 以为没有待办」的坑。
+/* ────────────────────────────────────────────────────────────────
+ * 🔴 D-10：把「她的想法」变成提案 —— 十五轮以来第一次真的动手
+ * ────────────────────────────────────────────────────────────────
+ *
+ * ## 三条硬约束（越界即打回）
+ *
+ *   1. **复用 evaluateProposal / proposeInternal，不许复刻。**
+ *      registerAgentIpc 返回的是**已绑定本进程 policy/budget** 的实例。
+ *      在这里重写「形态校验 → 授权 → 预算 → 建案 → 进注册表」= 两套判定。
+ *      注册表登记、逐出、授权作废这些**必须单点**，漂移的那一侧就是漏洞。
+ *
+ *   2. **scope 只能在这里拼，渲染端不许参与。**
+ *      意图只给出 `hint`（文件名），绝对路径由本函数拼。
+ *      若让渲染端传路径，scope 白名单当场形同虚设（D-3 顶替攻击就是这一族）。
+ *
+ *   3. **失败静默降级，绝不砸掉她这一轮的回话。**
+ *      这是第一次把 Agent 接进生产对话路径；任何异常都只能记日志，不能外抛。
+ *
+ * ## 用户拍板：沙盒内自由（方案 A'）
+ *
+ *   用户原话：「我想让她自由一点，毕竟，我们要赋予她生命。」
+ *   经讨论，接受的是这个版本的「自由」——
+ *     写什么内容 ✅ 完全自由 ｜ 什么时候提 ✅ 完全自由
+ *     **文件名 ✅ 完全自由** ｜ 写到哪：沙盒内自由，外面不行
+ *
+ *   ⇒ **不对 hint 做任何白名单/重命名/净化**（除下面的安全边界）。
+ *     她想叫「我的日记.md」还是「1234.txt」都随她。
+ *
+ * ⚠️ 为什么这个函数在**模块顶层**而不是 whenReady 里：
+ *   调用它的是 chat-send 的 handler，那个 handler 在模块顶层注册（ipcGuard.handle）。
+ *   若把本函数定义在 whenReady 块内，顶层闭包引用它会抛 ReferenceError ——
+ *   实测踩过（"tryBuildProposalFromIntent is not defined"，4 项门禁红）。
+ *   依赖通过模块级 agentBuildDeps 传入，理由见其声明处注释。
+ */
+function tryBuildProposalFromIntent() {
+  // 🔴🔴 D-12：**本函数当前一律不建案** —— 通路 B 暂缓（用户拍板 + 反重力复核裁定）。
+  //
+  //   ## 这个函数原本要做什么
+  //     处理「用户让她写某个文件」：判定命中 → 拼 scope → 建案 → 亮卡。
+  //
+  //   ## 为什么停掉
+  //     这类意图**只有 scope（文件名），没有 content（要写什么）**。
+  //     建出来会是一个**空内容的案**：用户点授权 → 执行器 CONTENT_EMPTY 拒写
+  //     → 用户得到一张白弹的卡片和一句错误。
+  //     **不留半截功能**比「先跑起来」重要 —— 半截功能会让人以为它通了。
+  //
+  //   ## 通路 B 的正解（留待后续，两条都不草率）
+  //     · 内容来自**会话记忆提炼**（把最近聊的整理成档）
+  //     · 内容来自**先读沙盒里那个文件再改写**（依赖尚未实现的 read 通路）
+  //
+  //   ## ⚠️ 与通路 A 的分工（别混）
+  //     通路 A（wantToLeaveSomething）走 maybeAskForSelfNote 的**独立建案路径** ——
+  //     它在建案前就用 askForSelfNote 拿到了她写的内容并暂存，
+  //     所以那条路能建案、也能落盘，**不经过本函数**。
+  //
+  //   ## 恢复条件
+  //     接上内容来源那天，把下面那个 return null 换成原来的建案逻辑即可
+  //     （原始实现见 D-10 提交的 git 历史）。
+  //     在那之前它只是**如实拒绝**，不是静默吞掉 —— 日志能看到判定命中过。
+  try {
+    const intent = brain && brain._pendingAgentIntent;
+    if (intent && intent.shouldPropose === true) {
+      console.log('[Agent] 通路 B 判定命中但暂无内容来源，按设计不建案:', String(intent.hint || '').slice(0, 60));
+    }
+    return null;
+  } catch (err) {
+    // 绝不外抛：它挂在 chat-send 的收尾上，崩了会砸掉她这一轮的回话。
+    return null;
+  }
+}
+
+
+
+
 let proactiveAuditLog = null;
+// 🔴 D-10：主进程建案所需的两样东西，从 whenReady 的块级作用域提升到模块级。
+//   原因：调用点 `chat-send` 的 handler 在**模块顶层**注册（ipcGuard.handle），
+//   而 agentIpc / agentSandbox 是在 app.whenReady 里创建的块级 const ——
+//   顶层闭包直接引用它们会抛 TDZ（本仓已踩过同型坑：agentAuditLog → proactiveAuditLog）。
+//
+//   ⚠️ 两者在 whenReady 里赋值完成之后才会被 chat-send 用到
+//     （chat-send 只可能在窗口就绪、用户说话时触发），所以不存在"用了还没赋值"的窗口。
+//     若为 null 则建案路径整体跳过 —— 静默降级，绝不抛。
+let agentBuildDeps = null;
+
+/* ────────────────────────────────────────────────────────────────
+ * 🔴 D-11：她想留下点什么 —— 那个文件的内容从哪来
+ * ────────────────────────────────────────────────────────────────
+ *
+ * ## 为什么需要这个函数
+ *
+ *   D-10 接通了「建案 → 卡片 → 执行」，但 content 一直没有来源。
+ *   本函数补上它：**她为自己组织一句话**，那句话就是写进沙盒的内容。
+ *
+ * ## 与 tryBuildProposalFromIntent 的分工
+ *
+ *   那个负责「用户让她做某事」（来源是用户的输入）；
+ *   这个负责「她自己想留下什么」（来源是她自己的状态）。
+ *   两者最终都走同一条建案路径（proposeInternal），**不各写一份**。
+ *
+ * ## 三条硬性边界
+ *
+ *   1. **她的意图必须是 wantToLeaveSomething。**
+ *      不是「安静久了想说话」—— 那是 idleness 两档，阈值低得多（45/90 分钟），
+ *      它们**不触发本函数**。这条防止「她每次安静久了都写文件」。
+ *   2. **她说「不」就不建案。** askForSelfNote 已判定，这里拿到 null 直接返回。
+ *   3. **全程静默。** 旁路异常一律吞掉，不影响任何别的东西。
+ *
+ * ⚠️ 本函数**不 await**（调用方 void 起 promise）：她已经说完了，
+ *   留下东西不该让用户多等一次 LLM 往返。
+ */
+function maybeAskForSelfNote() {
+  try {
+    const deps = agentBuildDeps;
+    if (!deps || !deps.agentSandbox) return;
+    const intent = brain && brain._pendingAgentIntent;
+    // 边界①：只有「想留下点什么」才走这条路
+    if (!intent || intent.kind !== 'wantToLeaveSomething') return;
+
+    void (async () => {
+      try {
+        const note = await brain.askForSelfNote({ intentKind: intent.kind });
+        // 边界②：她说不留 → note 为 null → 不建案。这是合法结果，不是失败。
+        if (!note || !note.content) return;
+
+        const rawHint = String(intent.hint == null ? '' : intent.hint).trim();
+        if (!rawHint) return;
+        if (path.isAbsolute(rawHint)) return;
+        if (/[\\/]/.test(rawHint)) return;
+        if (rawHint === '.' || rawHint === '..') return;
+        if (/\.\./.test(rawHint)) return;
+        if (rawHint.length > 200) return;
+
+        const scope = path.join(deps.agentSandbox, rawHint);
+        const evaluated = deps.agentIpc && typeof deps.agentIpc.evaluateProposal === 'function'
+          ? deps.agentIpc.evaluateProposal({ capability: 'workspace.write', scope, reason: intent.reason })
+          : { ok: false, code: 'EVALUATOR_UNAVAILABLE' };
+        if (!evaluated || evaluated.ok !== true) return;
+
+        const res = typeof deps.agentIpc.proposeInternal === 'function'
+          ? deps.agentIpc.proposeInternal({ capability: 'workspace.write', scope, reason: intent.reason }, 'main')
+          : null;
+        if (res && res.ok && res.proposal) {
+          // 内容由渲染端在授权后随 agent:execute 提交（见 preload 的 execute 参数）；
+          //   这里把它暂存在提案旁，等用户点授权时由渲染端取用。
+          //   ⚠️ 不塞进提案对象（D-9 定的：动机独立第二参数，同理内容也不进 raw）。
+          pendingSelfNoteContent.set(res.proposal.id, note.content);
+          deps.broadcastToWindows('agent-proposal-available', { proposalId: res.proposal.id });
+        }
+      } catch (err) {
+        // 边界③：静默。
+      }
+    })();
+  } catch (err) {
+    // 连同步段都不许抛 —— 它挂在 chat-send 的收尾上。
+  }
+}
+
+/** 提案 id → 她想留下的那句话。用户点授权后由 agent:execute 取用，**取完即删**。
+ *
+ *  ⚠️ 为什么取用即删：一条内容只应对应一次写入。
+ *     留着重放时可能被反复写进文件 —— 内容是她的，不该被重复使用。 */
+const pendingSelfNoteContent = new Map();
+
+/** 供 agent-ipc 的 execute 通道取用（read-and-delete）。取不到返回 null。 */
+function takeStashedContent(proposalId) {
+  const id = String(proposalId || '');
+  if (!id || !pendingSelfNoteContent.has(id)) return null;
+  const v = pendingSelfNoteContent.get(id);
+  pendingSelfNoteContent.delete(id);
+  return v;
+}
+
 const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
 let keyEncrypted = false;   // 面板要如实显示「已加密 / 明文降级」，不吹安全状态
 let researchService = null;
@@ -498,6 +670,30 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     //   （单一事实源，见 ui-chat-store.js 头注释）。这里塞文本等于造第二份真相，
     //   将来流式中断/改写/回滚都会对不上。
     broadcastToWindows('chat-history-changed', { reason: proactive ? 'proactive' : 'chat' });
+
+    // 🔴 D-10：她说完之后，看这一轮有没有命中「提案意图」。
+    //
+    //   位置刻意在这里：**在她回话成功之后**。
+    //   · 若判定没过（或被闸门拦），brain 里那个字段是 null，本调用直接返回；
+    //   · 建案失败只记日志、绝不抛 —— 第一次把 Agent 接进生产对话路径，
+    //     任何异常都不能砸掉她这一轮的回话（tryBuildProposalFromIntent 内部已包死）。
+    //
+    //   ⚠️ 本轮**不打开 agentTriggerEnabled**：它仍是默认关，
+    //     所以真实运行时这条链大概率不会自己走通 —— 那是设计如此，
+    //     用户拍板「先验证链路，再决定开不开」。
+    tryBuildProposalFromIntent();
+
+    // 🔴 D-11：如果她想留下点什么（静默 ≥120 分钟才会成立），追一次专门调用。
+    //
+    //   ⚠️ 三个刻意选择：
+    //     1. **不 await**（`void` 起一个独立 promise）—— 她这句话已经说完了，
+    //        留下东西是旁路，绝不能让用户多等一次 LLM 往返。
+    //     2. **只在 wantToLeaveSomething 时跑**。这个意图的阈值（120 分钟）
+    //        远高于 idleness 两档，所以绝大部分主动搭话根本不会走到这里。
+    //     3. **失败静默**。她说不出、不想留、调用出错 —— 都是 null，不建案。
+    //        「她说不想留」是**合法结果**，不是错误（见 brain.askForSelfNote 判据 1）。
+    if (!proactive) maybeAskForSelfNote();
+
     return { ok: true, text: res.text, state: res.state,
              wears: res.wears, wearNote: res.wearNote,
              windowClosed: res.windowClosed, merged: res.merged,
@@ -1117,7 +1313,16 @@ app.whenReady().then(() => {
   } catch (err) {
     console.error('[AgentTxn] 启动自愈异常:', err && err.message);
   }
-  registerAgentIpc(ipcGuard, {
+  // 🔴 D-10：主进程建案路径（「插电源」）。
+  //
+  //   这是十五轮以来**第一次**让「她的想法」有可能真的变成动作。
+  //   前面建的全是安全（五道闸门、白名单、默认关），而到今天为止
+  //   `_pendingAgentIntent` 4 处写 0 处读、`agent-audit.jsonl` 从未存在过。
+  //
+  //   刻意放在 registerAgentIpc 之前定义、之后引用 —— 它要用到注册返回的
+  //   那个**实例化绑定了 policy/budget 的 evaluateProposal**（见 agent-ipc.js 尾部注释）。
+  //   **绝不允许在这里复刻「形态校验 → 授权 → 预算」这三步**：两套判定等于没有判定。
+  const agentIpc = registerAgentIpc(ipcGuard, {
     registry: agentRegistry, policy: agentPolicy, budget: agentBudget,
     auditLog: agentAuditLog, confirmation: agentConfirmation,
   }, {
@@ -1138,6 +1343,38 @@ app.whenReady().then(() => {
       return { sources: it.sources, kind: typeof it.kind === 'string' ? it.kind : null };
     },
   });
+
+  /* ────────────────────────────────────────────────────────────────
+   * 🔴 D-10：把「她的想法」变成提案 —— 第一次真的动手
+   * ────────────────────────────────────────────────────────────────
+   *
+   * ## 三条硬约束（越界即打回）
+   *
+   *   1. **复用 evaluateProposal，不许复刻。**
+   *      那个函数是 registerAgentIpc 返回的、**已绑定本进程 policy/budget** 的实例。
+   *      在这里重写「形态校验 → 授权 → 预算」= 两套判定迟早漂移，攻击者挑漂移的那条走。
+   *
+   *   2. **scope 只能在这里拼，渲染端不许参与。**
+   *      意图只给出 `hint`（文件名），绝对路径由本函数拼。
+   *      若让渲染端传路径，scope 白名单当场形同虚设（D-3 顶替攻击就是这一族）。
+   *
+   *   3. **失败静默降级，绝不砸掉她这一轮的回话。**
+   *      这是第一次把 Agent 接进生产对话路径；任何异常都只能记日志，不能外抛。
+   *
+   * ## 用户拍板：沙盒内自由（方案 A'）
+   *
+   *   用户原话：「我想让她自由一点，毕竟，我们要赋予她生命。」
+   *   经讨论，接受的是这个版本的「自由」——
+   *     写什么内容 ✅ 完全自由 ｜ 什么时候提 ✅ 完全自由
+   *     **文件名 ✅ 完全自由** ｜ 写到哪：沙盒内自由，外面不行
+   *
+   *   ⇒ **不对 hint 做任何白名单/重命名/净化**（除下面的安全边界）。
+   *     她想叫「我的日记.md」还是「1234.txt」都随她。
+   */
+  // 🔴 D-10：把建案所需的三样交给模块顶层的 tryBuildProposalFromIntent。
+  //   必须是**赋值**而不是局部 const —— 调用点（chat-send handler）在模块顶层，
+  //   它读的是这个模块级变量。
+  agentBuildDeps = { agentIpc, agentSandbox, broadcastToWindows, takeStashedContent };
 
   createWindow();
 

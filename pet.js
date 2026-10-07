@@ -254,6 +254,28 @@ const agentConfirmCard = (typeof window.AgentConfirm !== 'undefined' && window.A
       } catch (e) {
         // 上报失败就静默收起卡片：留着半张卡比不弹更糟，
         // 而审计里主进程已记了「确认未送达」。
+        return;
+      }
+
+      // 🔴 D-12 修：**确认之后必须真的执行** —— 否则用户点了【授权】什么都不会发生。
+      //
+      //   实测（反重力复核）：`api.agent.execute` 全仓调用点为 0。
+      //   confirm 通道的注释写得很明白「只登记决策，绝不执行」——
+      //   但**没有任何地方负责接着执行**，于是卡片点了授权、沙盒里永远没有文件。
+      //
+      //   ⚠️ 三条边界：
+      //     1. **只有 approved 才执行。** rejected 是终态，不该落盘。
+      //     2. **不传 content。** 主进程若为该提案暂存了内容（D-11 她为自己写的话），
+      //        由主进程侧取用；渲染端传的话反而可能覆盖她的原话。
+      //        普通通路（用户让她写）的 content 也应由主进程决定 ——
+      //        渲染端能自造内容 = 她能写的东西由渲染端决定，那是条不该开的口子。
+      //     3. **失败静默**。执行结果主进程有审计；渲染端出错不该影响别的东西。
+      if (decision === 'approved' && typeof api.agent.execute === 'function') {
+        try {
+          await api.agent.execute({ proposalId });
+        } catch (e) {
+          // 静默：审计里主进程已记录拒绝原因。
+        }
       }
     },
     (k, f) => (typeof t === 'function' ? t(k, f) : f)
@@ -289,6 +311,31 @@ async function showAgentProposal(proposal) {
     return false;
   }
 }
+/* 🔴 D-10：主进程建案后亮确认卡 —— showAgentProposal 从「零调用点」到真正接线。
+ *
+ *   链路：主进程 [形态校验 → 授权 → 预算 → 建案] → 广播 agent-proposal-available
+ *         → 本处收到 → 回查冻结快照 → showAgentProposal(快照)
+ *
+ *   ⚠️ 三条边界：
+ *     1. **只收 proposalId，不收提案对象**。快照必须回查主进程（D-5 定的安全设计）——
+ *        渲染端拿到的永远是 Object.freeze 的只读快照，篡改它没有用处。
+ *     2. **取不到就不亮卡**。过期/已决策/不存在一律静默 ——
+ *        凭空弹一张确认框比不弹更糟（用户会闭眼点授权，那道闸门就白设了）。
+ *     3. **异常静默**。这是她说话之后触发的旁路，绝不能反向影响对话。 */
+if (api && api.agent && typeof api.agent.onProposalAvailable === 'function') {
+  api.agent.onProposalAvailable(async (payload) => {
+    try {
+      const id = payload && payload.proposalId;
+      if (!id) return;
+      const snap = await api.agent.getPendingProposal(id);
+      if (!snap || snap.ok !== true || !snap.proposal) return;
+      await showAgentProposal(snap.proposal);
+    } catch (e) {
+      // 边界③：静默。亮卡失败不该影响任何别的东西。
+    }
+  });
+}
+
 /* v1.0 缩放退役：零漂移账目随缩放一起退役（没有缩放档就没有欠账）。
    面板扩收仍走 panel-viewport，收口由主进程复位基准（main:360 实锤）。 */
 /* 面板视窗家族化（v1.0）：设置/记录/实验任一在场 → 窗体扩到 440×680（满幅盖住她）；

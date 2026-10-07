@@ -105,7 +105,11 @@ function harness(opts = {}) {
   };
 
   return { appDir, dataDir, handlers, calls, registry, policy, budget, auditLog,
-    trustedEvent, untrustedEvent, childEvent, call, registered: ok };
+    trustedEvent, untrustedEvent, childEvent, call,
+    // D-10：ok 现在是 {ok,evaluateProposal} 对象。registered 保持布尔语义
+    //   （旧断言消费它），evaluateProposal 单独透出供新门禁断言。
+    registered: !!(ok && ok.ok === true),
+    evaluateProposal: ok && ok.evaluateProposal };
 }
 
 console.log('--- D-1 Agent IPC 治理通道门禁 ---');
@@ -113,8 +117,15 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
 /* ================= 1. 装配与通道白名单 ================= */
 {
   const h = harness();
+  // 🔵 D-10 修订（原断言 h.registered === true）：
+  //   registerAgentIpc 的返回值从 `true` 改成「成功对象」（见 agent-ipc.js 尾部注释），
+  //   目的是把**实例化绑定了 policy/budget 的 evaluateProposal** 交给主进程建案路径，
+  //   避免在别处复刻那三步判定。
+  //   ⇒ **断言的意图没变**（仍是「注册成功」），只是成功的载体从布尔变成对象。
+  //   这里断言 ok===true **且** 确实带出了判定函数 —— 比原来更严，不是放宽。
   check('D1-1 注册成功且只注册 4 条治理通道',
     h.registered === true &&
+    typeof h.evaluateProposal === 'function' &&
     h.calls.length === 0 &&
     [...h.handlers.keys()].length === AGENT_CHANNELS.length &&
     [...h.handlers.keys()].sort().join(',') === [...AGENT_CHANNELS].sort().join(','),
@@ -423,8 +434,14 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   check('D1-10 无 ipcGuard 时安全返回 false（不抛异常）', registerAgentIpc(null, {}) === false);
   check('D1-10b 传入裸 ipcMain（无 handle 语义）也安全返回 false',
     registerAgentIpc({}, {}) === false);
+  // 🔵 D-10 修订（原断言「返回值是 boolean」）：
+  //   同上，返回值改为成功对象。**意图不变**：仍是「不抛异常、装配可用」。
+  //   改为断言「返回成功对象且带出判定函数」，仍能抓住「装配失败返回 false」的退化。
   check('D1-10c 无 agentContext 时用默认实例装配不抛异常',
-    typeof registerAgentIpc({ handle() {} }, {}) === 'boolean');
+    (() => {
+      const r = registerAgentIpc({ handle() {} }, {});
+      return r && r.ok === true && typeof r.evaluateProposal === 'function';
+    })());
 }
 
 /* ================= 11. 源码级门禁 ================= */

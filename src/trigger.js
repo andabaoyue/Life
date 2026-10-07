@@ -211,6 +211,19 @@ const SELF_INTENT_KINDS = Object.freeze({
   // 客观事实驱动：静默到了某个量级
   idleness_deep:      { direction: '想说一句此刻的安静',   requires: 'idleness_minutes',       min: 45 },
   idleness_verydeep:  { direction: '想说一句这次的安静比平时长', requires: 'idleness_minutes',   min: 90 },
+  // 🔴 D-11：想留下点什么 —— **与 idleness 同源（都是长静默），但不同质**。
+  //
+  //   区别：idleness_* 是「想说话」（对着此刻的安静说一句）；
+  //   本类别的产物是**一件留在那儿的东西**（写进沙盒的文件）。
+  //
+  //   为什么单独一类而不是复用 idleness_verydeep：
+  //     复用会让「她每次安静久了都想写文件」—— 那是行为噪音，不是主体性。
+  //     阈值也更高：说一句话随时可以，留下东西要安静得足够久。
+  //
+  //   为什么仍挂在 tracker 而非新造状态机：
+  //     判据 2 要求来源可追溯到**已有字段**（见本文件头部）。
+  //     新造一个 mood 状态机再推意图，形式上有来源、实质是自动化 —— 那正是判据 2 禁的。
+  wantToLeaveSomething: { direction: '想留下点什么', requires: 'idleness_minutes', min: 120 },
 });
 
 /* 与触发器判定一致的中文名（subject-state.js:282-285 的定名法）。
@@ -275,6 +288,18 @@ function computeSelfIntent(state = {}) {
   //   ⚠️ 括号里的补充必须**与主句不重复**（实测踩过：
   //   「这次的安静比平时长（这次的静比平时长）」读着像卡带，
   //   而这串字是要进提示词、影响她语气的，不是给人看的日志）。
+  // 🔴 D-11：「想留下点什么」——静默超过 120 分钟才成立，**优先于 idleness 两档**。
+  //   理由：留下东西比说一句话更重，安静得足够久才会冒出来这个念头。
+  //   ⚠️ 这里**不产出台词**（台词由 LLM 现场生成，见头部判据）；
+  //     本类别只回答「她想不想留」，具体写什么由建案时专门问一次。
+  if (idleMinutes !== null && idleMinutes >= SELF_INTENT_KINDS.wantToLeaveSomething.min) {
+    candidates.push({
+      kind: 'wantToLeaveSomething',
+      direction: SELF_INTENT_KINDS.wantToLeaveSomething.direction + '（安安静静地待了很久）',
+      sources: ['tracker.lastInteractionAt'],
+    });
+  }
+
   if (idleMinutes !== null && idleMinutes >= SELF_INTENT_KINDS.idleness_verydeep.min) {
     candidates.push({
       kind: 'idleness_verydeep',
@@ -300,6 +325,11 @@ function computeSelfIntent(state = {}) {
 
 function rankOf(kind) {
   const spec = SELF_INTENT_KINDS[kind] || {};
+  // 特质类是 0（她自己），静默类是 1（环境），留下东西是 2。
+  //   ⚠️ 排序越小越优先。wantToLeaveSomething 排在**静默类之前**：
+  //     它由更长的静默推出，若与 idleness 同时成立（>=120 必然 >=90），
+  //     取更深的那个才合理 —— 否则 120 分钟的安静只会得到「说一句安静」。
+  if (kind === 'wantToLeaveSomething') return -1;   // 最优先
   return spec.requires === 'idleness_minutes' ? 1 : 0;
 }
 

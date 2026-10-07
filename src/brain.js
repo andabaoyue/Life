@@ -24,6 +24,20 @@ const { InternalRegulationManager } = require('./internal-regulation');
 const { createExperimentRunManifest, createWindowExperimentSnapshot } = require('./experiment-run');
 const { buildGenerationContext, collectPromptHashes } = require('./experiment-metadata');
 
+const WANT_TO_LEAVE_SYS =
+  '此刻用户不在。你有一段长时间的安静，没有被谁要求做什么。'
+  + '这不是一个任务，也不是必须完成的动作 —— 只是给你一个机会：'
+  + '如果你确实想留下点什么，就写下来；如果不想，就说不。\n'
+  + '规则：\n'
+  + '1. 【可以说不】不想留就只回一个「不」。这不丢人，也不代表你冷淡 ——'
+  + '   安静本来就不等于有话要说。硬凑一句比不写更糟。\n'
+  + '2. 【只写你自己的】留下来的应该是**你此刻想留下的东西**，不是给用户的留言，'
+  + '   也不是任务汇报。不要写「等你回来」「如果你想的话」这类把对方牵进来的话。\n'
+  + '3. 【不编造】不许虚构没发生过的经历、不许编日期或时长。'
+  + '   你不知道现在几点，就不要写出钟点。\n'
+  + '4. 【长度】两三句话之内。这是留给自己的，不是写给别人看的文章。\n'
+  + '5. 直接给内容本身，不要加引号、不要加标题、不要加任何说明或元话语。';
+
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
   + '必须严格区分「用户给予（userGiven）」与「初澜经历（chulanExperience）」，绝不允许混同：\n'
@@ -2145,6 +2159,73 @@ class Brain {
     return true;
   }
 
+
+  /**
+   * 🔴 D-11：问她想不想留下点什么，想的话那句话就是 content。
+   *
+   * ## 为什么单独一次调用，而不是复用她刚才说的话
+   *
+   *   她刚才那句是「对用户说的」（比如「你回来啦」），写进文件会串味 ——
+   *   读起来像聊天记录，不像她给自己留了东西。
+   *   本方法专门问一次，让那句话**指向她自己**。
+   *
+   * ## 三条硬性边界
+   *
+   *   1. **允许她说「不」。** 不想留就返回 null，**绝不建案**。
+   *      硬凑一句比不写更糟 —— 那是逼她表演，正是 persona.js:29
+   *      「装可怜不行」要防的形态。
+   *   2. **不编造。** prompt 里明令不许虚构经历/日期/钟点（见 WANT_TO_LEAVE_SYS），
+   *      与 persona.js:26/28 两条红线对齐。
+   *   3. **失败即 null。** 任何异常都吞掉 —— 这是旁路，不能影响别的东西。
+   *
+   * ⚠️ 依赖已经离开的「用户不在」状态：调用方应只在 wantToLeaveSomething
+   *   意图成立时调它。本方法自身**不判断该不该问**，只负责问和解析。
+   *
+   * @returns {Promise<?{content:string, usage:object}>} null = 她说不留/失败
+   */
+  async askForSelfNote(opts = {}) {
+    try {
+      if (this.shutdownRequested) return null;
+      if (this.api && typeof this.api.complete !== 'function') return null;
+
+      // 把「她此刻的状态」如实给她 —— 但**只给方向，不给程序数字**。
+      //   ⚠️ 绝不把 idleMinutes 这类程序换算值拼进 prompt：
+      //     实测踩过（D-7 那次她真的说出「静了 50000 分钟」），
+      //     那既是内部时钟泄漏，也违反 persona.js:28。
+      const intentKind = opts.intentKind ? String(opts.intentKind).slice(0, 64) : null;
+      const userContent = '【此刻】'
+        + '\n用户不在。你独自安静了一段时间 —— 这是事实，不是情绪。'
+        + (intentKind === 'wantToLeaveSomething' ? '\n你想留下点什么。' : '')
+        + '\n\n如果你确实想留下点什么，就写下来；不想就说不。';
+
+      const res = await this.api.complete(
+        [{ role: 'system', content: WANT_TO_LEAVE_SYS },
+         { role: 'user', content: userContent }],
+        { maxTokens: 400, temperature: 0.7 }
+      );
+      const text = String((res && res.text) || '').trim();
+      if (res && res.usage) this.track(res.usage, true, 'selfNote');
+      if (this.shutdownRequested) return null;
+
+      // 判据 1：她说「不」就是不留。识别几种常见的拒绝写法。
+      //   ⚠️ 只认**极短且明确**的拒绝，不要用「含不含某个词」的大网：
+      //     那会把「不想留」和「不想留遗憾」混为一谈。
+      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没什么想留', '没有'];
+      const head = text.slice(0, 12);
+      const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
+      if (!text || isRefusal) return null;
+
+      // 判据 2：长度护栏。这是留给自己的两三句话，不是文章。
+      //   超长说明它跑偏了（在写汇报或留言），宁可不要。
+      if (text.length > 600) return null;
+
+      return { content: text, usage: (res && res.usage) || null };
+    } catch (err) {
+      // 判据 3：旁路异常一律吞掉。这是「她安静时想留点什么」，
+      //   失败了不该影响任何别的东西。
+      return null;
+    }
+  }
   async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;

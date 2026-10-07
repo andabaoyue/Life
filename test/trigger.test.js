@@ -338,8 +338,12 @@ check('🔴 深静默档（>=90 分钟）方向同样不含数字',
 // 变体相同的方向不许出现不同的文案集合 —— 若每个 kind 返回一句成品台词，
 // 那么「不可枚举」这条就破了，主体性做成了可枚举的东西。
 const kindCount = Object.keys(SELF_INTENT_KINDS).length;
+// 🔵 D-11 修订：5 → 6。新增 `wantToLeaveSomething`（静默 ≥120 分钟，
+//   产物是「留给自己的东西」而非「说一句话」—— 见 trigger.js 的 SELF_INTENT_KINDS）。
+//   **断言的意图没变**：仍是「种类有限、由本表穷举」，只是数字 +1。
+//   这条断言的价值正在于此 —— 它拦住了一次「顺手加意图」，逼我们显式登记。
 check('意图种类是有限且由本表穷举的（' + kindCount + ' 种，不多不少）',
-  kindCount === 5);
+  kindCount === 6);
 check('每种意图的 direction 是静态的（同样输入必得同样方向，非随机）',
   Object.keys(SELF_INTENT_KINDS).every((kind) => {
     const spec = SELF_INTENT_KINDS[kind];

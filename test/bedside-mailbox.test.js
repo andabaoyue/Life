@@ -201,9 +201,26 @@ async function main() {
     /第一条/.test(multiTail) && /第二条/.test(multiTail));
   check('多条留置合并且仍无连续 user', hasConsecutiveUser(multiReq) === 0);
 
-  server.close();
-  console.log('\n失败 ' + failures + ' 项');
-  process.exit(failures ? 1 : 0);
+  // 🔴 D-10 修的退出竞态（真凶不是 server.close 的时机，是 process.exit 本身）。
+  //
+  //   症状：**偶发**（实测 6 次崩 1~2 次）—— 22 项断言全 PASS、0 失败，
+  //   但退出码是 -1073740791，stderr 里是
+  //     Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c
+  //   在 CI / 门禁里等于 FAIL，而报告里显示是绿的。
+  //   这是本仓「全绿不等于通过」的又一种形态：**断言全绿但进程崩了**。
+  //
+  //   ⚠️ 第一版修法是「等 server.close 回调再 exit」，**实测不够** ——
+  //     仍崩。因为进程里还活着两个 keep-alive Socket（客户端侧），
+  //     `process.exit()` 在任何句柄处于 CLOSING 时强退都会撞上这个断言。
+  //
+  //   正确修法：**不用 process.exit()**，改用 process.exitCode + 让事件循环自然排空。
+  //     · 本测试没有悬挂的定时器，server 关掉、socket 排空后循环会自己结束；
+  //     · exitCode 照样把失败传给 CI，退出码语义不变；
+  //     · 不再有「强退 vs 句柄关闭」的赛跑，断言不会被触发。
+  server.close(() => {
+    console.log('\n失败 ' + failures + ' 项');
+    process.exitCode = failures ? 1 : 0;   // 交给自然退出，不 process.exit()
+  });
 }
 
 main().catch(e => { console.error('门禁崩了：', e); server.close(); process.exit(1); });

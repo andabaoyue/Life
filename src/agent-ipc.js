@@ -129,6 +129,13 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     ? options.intentMotiveProvider
     : null;
 
+  // 🔴 D-11：主进程侧暂存的内容（她为自己留下的那句话）。
+  //   由调用方注入 `takeStashedContent(proposalId)` —— **取用即删**。
+  //   不注入则退回「只认渲染端传的 content」，行为与 D-10 一致。
+  const takeStashedContent = typeof options.takeStashedContent === 'function'
+    ? options.takeStashedContent
+    : null;
+
   /**
    * 在建案瞬间求一次动机。**只此一处调用**，求值结果随即冻结进提案。
    * 任何异常都吞掉并返回 null：动机记录失败绝不能挡住建案本身。
@@ -177,8 +184,25 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     if (!verdict.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: verdict.reason, verdict };
 
     // ③ 预算熔断：熔断为终态，触发后不放行任何动作。
-    const isWrite = capability === 'workspace.write';
-    if (!budget.consume(isWrite)) {
+    //
+    // 🔴 D-12 修正（反重力复核裁定的架构缺陷）：**建案期只扣 actions，不扣 writes。**
+    //
+    //   原先这里写 `budget.consume(capability === 'workspace.write')` ——
+    //   即「只要是写能力，建案时就吃掉一次写额度」。
+    //   错在哪：
+    //     · 提案**可能被用户拒绝、或超时放弃**，文件从头到尾没碰过磁盘，
+    //       而写额度已被永久扣掉 —— 这违背 writes 存在的全部意义。
+    //     · `writes`（默认 5）是「防不可逆落盘」的高危闸门，
+    //       它该管的时刻是**真正写磁盘那一瞬间**，不是「有人提了个议」。
+    //     · `actions`（默认 20）才是通用动作计数：建案/确认/执行各算一次，合法。
+    //
+    //   ⇒ 现在三阶段的扣减口径：
+    //       建案  consume(false) → actions      （本处）
+    //       确认  consume(false) → actions      （下方 confirm 通道）
+    //       执行  consume(isWrite) → writes     （agent-executor.js，真正落盘处）
+    //
+    //   ⚠️ capability 变量仍要保留做日志/审计，别删。
+    if (!budget.consume(false)) {
       return { code: 'BUDGET_TRIPPED', ok: false, state: budget.state() };
     }
     return { code: 'OK', ok: true, capability, verdict };
@@ -310,8 +334,17 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   }));
 
   // 4. 提案受理：过三道闸门后建案并记审计。**本通道不执行任何动作。**
-  ipcGuard.handle('agent:propose-action', guard((event, raw) => {
-    assertByHandler(event);
+  //
+  // 🔴 D-10：函数体抽成 `proposeInternal`，**通道与主进程建案路径共用这一份**。
+  //   为什么抽：主进程现在也要建案（读 _pendingAgentIntent），
+  //   如果它自己再写一遍「形态校验 → 授权 → 预算 → createActionProposal → 进注册表」，
+  //   就出现两套建案逻辑 —— 而注册表登记、逐出、授权作废这些**必须单点**，
+  //   两套迟早漂移，且漂移的那一侧就是漏洞。
+  //
+  //   ⚠️ 抽出来之后通道只剩「身份校验 + 信封化」，`via: 'ipc'` 由调用方区分：
+  //     通道传 'ipc'，主进程传 'main'。审计里能看出提案是谁发起的。
+  function proposeInternal(raw, via) {
+    const src = via === 'main' ? 'main' : 'ipc';
     const evaluated = evaluateProposal(raw);
     if (!evaluated.ok) {
       // 拒绝也要留痕 —— 审计的价值一半在这里。
@@ -321,7 +354,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         code: evaluated.code,
         capability: String((raw && raw.capability) || '').slice(0, 64),
         reason: evaluated.reason || null,
-        via: 'ipc',
+        via: src,
       });
       if (evaluated.code === 'BUDGET_TRIPPED') {
         return fail('BUDGET_TRIPPED', { budget: evaluated.state });
@@ -343,7 +376,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         outcome: 'rejected',
         code: 'PROPOSAL_CONSTRUCTION_FAILED',
         capability: evaluated.capability,
-        via: 'ipc',
+        via: src,
       });
       return fail('INVALID_PROPOSAL', { detail: String(err && err.message || '').slice(0, 200) });
     }
@@ -388,6 +421,12 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     proposalStore.set(proposal.id, proposal);
 
     return { ok: true, proposal, executed: false, budget: budget.state() };
+  }
+
+  // 通道外壳：只做身份校验 + 信封化，业务体与主进程共用 proposeInternal。
+  ipcGuard.handle('agent:propose-action', guard((event, raw) => {
+    assertByHandler(event);
+    return proposeInternal(raw, 'ipc');
   }));
 
   // 5. 用户显式确认（D-3 第四道闸门）
@@ -491,9 +530,26 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return fail('INVALID_INPUT');
     }
+
+    // 🔴 D-11：主进程若为该提案暂存了内容（她为自己留下的那句话），
+    //   **以主进程的为准，无视渲染端传的 content**。
+    //
+    //   为什么：那条内容是她现场生成、由主进程求得的；若让渲染端覆盖它，
+    //   就等于「她写下的东西可以由渲染端改写」—— 与 D-9「动机不信上游」同一条纪律。
+    //   渲染端传的内容只在**没有主进程暂存**时才用（走 proposeInternal 的普通通路）。
+    //
+    //   ⚠️ 取用即删（read-and-delete）：一条内容只能执行一次，
+    //     否则重放时可能被反复写入。
+    const stashed = typeof takeStashedContent === 'function'
+      ? takeStashedContent(raw.proposalId)
+      : null;
+    const effectiveContent = stashed !== null && stashed !== undefined
+      ? stashed
+      : raw.content;
+
     const result = executor.execute({
       proposalId: raw.proposalId,
-      content: raw.content,
+      content: effectiveContent,
     });
     // 执行器已返回统一信封，这里只做形状归一：ok=false 时把 code 提升为 error，
     // 保持与其余五条通道 { ok, error } 的约定一致（渲染层只需认一种形状）。
@@ -521,7 +577,20 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     return { ok: true, total: all.length, returned: slice.length, events: slice };
   }));
 
-  return true;
+  // 🔴 D-10：把**实例化的**判定函数交出去，而不是导出模块级的裸函数。
+  //
+  //   为什么不能直接 `module.exports.evaluateProposal = evaluateProposal`：
+  //   它是个闭包，依赖本次注册时的 policy / budget 实例。
+  //   导出它等于导出一个「没有绑定任何策略」的空壳 —— 调用方拿到的判定
+  //   与真正生效的那套不是同一份，那就是**两套判定**，正是本仓最不吃的东西。
+  //
+  //   所以返回对象：注册成功时附带一个 `evaluateProposal`，
+  //   调用方（main.js 的主进程建案路径）复用它，
+  //   **绝不允许**在别处复刻这三步（形态校验 → 授权 → 预算）。
+  //
+  //   兼容性：旧调用方只判真假（`if (!registerAgentIpc(...))`），
+  //   对象恒为 truthy，行为不变。
+  return { ok: true, evaluateProposal, proposeInternal };
 }
 
 module.exports = { registerAgentIpc, AGENT_CHANNELS };

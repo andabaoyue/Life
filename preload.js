@@ -105,7 +105,14 @@ contextBridge.exposeInMainWorld('deskpet', {
       proposalId: payload && payload.proposalId,
       content: payload && payload.content
     }),
-    getAuditLog: (opts) => ipcRenderer.invoke('agent:get-audit-log', opts || {})
+    getAuditLog: (opts) => ipcRenderer.invoke('agent:get-audit-log', opts || {}),
+
+    // D-10：主进程建案后通知渲染端「去取提案快照」。
+    //   ⚠️ 信号里**只有 proposalId**，不含提案对象本身 ——
+    //     渲染端必须自己回查 agent:get-pending-proposal（冻结快照）。
+    //     若在这里把提案对象塞过来，D-3 顶替攻击那一族就重新打开了。
+    getPendingProposal: (proposalId) => ipcRenderer.invoke('agent:get-pending-proposal', { proposalId }),
+    onProposalAvailable: (cb) => ipcRenderer.on('agent-proposal-available', (e, p) => cb(p))
   },
 
   // 实验观测与可复盘工具链 (v0.9.5)
