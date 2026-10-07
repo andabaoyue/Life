@@ -1,6 +1,16 @@
-# Life · 初澜 (Chulan) v1.0.0-dev
+# Life v1.0.0-dev
 
-Life 数字生命实验平台：初澜（Chulan）是其中的数字生命主体；接 DeepSeek（OpenAI 兼容接口），有长期记忆、自我成长账本、逐字回话和分层换装。
+```text
+        . ~ ~ ~ ~ ~ .
+    . ~   . - - - .   ~ .
+   /   ~'   . - .   '~   \     Life — Chulan · 2026
+  |   :    (  o  )    :   |    Copyright (c) andabaoyue
+   \   ~.   ' - '   .~   /
+    ' ~   ' - - - '   ~ '
+        ' ~ ~ ~ ~ ~ '
+```
+
+Life 桌面数字生命实验平台：接 DeepSeek 等大语言模型服务商（OpenAI 兼容接口），拥有长期记忆动力学、自我成长账本、逐字流式会话和分层换装系统。
 
 ## 运行
 
@@ -808,4 +818,22 @@ pip install opencv-contrib-python numpy pillow
 
 DeepSeek 的上下文缓存按完整前缀单元工作，不是模糊相似匹配。程序因此保持 system 文本稳定，把时间和活动遥测放在当前 user 消息中，并把主动搭话作为带 `synthetic` 标记的 user/assistant 消息链保留下来。这样下一轮正常聊天可以完整复用上一轮消息前缀，同时不会把程序触发误记成用户事实。
 
-缓存服务是 best-effort，实际命中请查看用量返回中的 `prompt_cache_hit_tokens` 和 `prompt_cache_miss_tokens`；不要把前缀连续误解成每次都必然命中。详情参见 [DeepSeek 上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。 🔴 **D-18（实测抓到的真缺口）**：`takeStashedContent` 的取用口**从未注入给 agent-ipc** —— 后果是主进程自动执行时取不到暂存内容 ⇒ 执行器抛 `CONTENT_REQUIRED` ⇒ **建案成功但永远落不了盘**，审计里只留一句 `detail:"CONTENT_REQUIRED"` 极难反推。这条接线在 D-13 就该有（暂存表在 main.js、取用口在 agent-ipc），之前没暴露是因为没有主进程自动执行路径（用户点卡片走通道，通道里另有 raw.content 兜底）。补了一条**行为断言**：复刻 main.js 真实接线，验证「暂存 → 直连执行 → 落盘」全通 —— **只看源码含不含某个名字抓不住「注入了但没用」**。 🔴 **D-19（真实事故，用户当场发现）**：D-17 在自动执行成功后**仍广播了 `agent-proposal-available`**，注释还写着「这不是确认卡片」—— **那句话是错的**。该事件的语义由名字决定：「有提案等你决定」，渲染端 `pet.js` 收到就无条件亮确认卡。事故链：她写完便签 → 用户被弹多余的授权卡 → 点【授权】→ 执行器回 `ALREADY_EXECUTED`（白点，审计时间戳 320500 执行成功 / 321272 才点授权，相隔 10.8 秒）。**修两层**：① 主因——自动执行成功后不再广播该事件（语义铁律：**「已执行完」和「待你决定」是两件事，不能共用一个事件**，将来若要让 UI 知情必须另起语义明确的事件名如 `agent-selfnote-written`）；② 纵深防御——`get-pending-proposal` 只查 `confirmation.lookup` 挡不住免确认路径（selfNote **从不产生决策记录**，执行器的 `revoke()` 对无记录提案返回 NOT_CONFIRMED 等于没兜住），改为同时查 `executor.consumed`（执行器真实的消费记录，不是推断）⇒ 已执行的提案一律 `ALREADY_EXECUTED`。对照断言：执行前可获取 / 普通未决策提案仍可获取（不误伤「待确认」）。变异 2/2 捕获（把广播加回去 → 捕获；删掉纵深防御 → 捕获）。⚠️ 如实记录：mB 首轮报「未捕获」，查清是**我的变异锚点用了 CRLF 而该文件是 LF**（编辑时用 `\n` 写入），换锚点后捕获 —— 非漏网。
+缓存服务是 best-effort，实际命中请查看用量返回中的 `prompt_cache_hit_tokens` 和 `prompt_cache_miss_tokens`；不要把前缀连续误解成每次都必然命中。详情参见 [DeepSeek 上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。
+
+## 社区贡献 (Contributing)
+
+欢迎对数字生命实验平台、桌面交互与像素美术感兴趣的开发者与画师参与 Life 的建设！
+贡献指引详见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
+- **Q 版像素画社区共创**：Life 平台的 64×80 Q 版点阵立绘、待机动作、走动循环与换装图层正处于开源后社区协同精修阶段。美术规范详见 [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md)。
+- **测试门禁验收**：在提交 Pull Request 前，请确保在根目录执行并通过 `npm test`（全量 117 项自动化契约）。
+
+## 开源协议与使用规范 (License)
+
+Life 采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 源码可用许可证（Source-Available）：
+
+- **允许**：个人学习、学术研究、教学展示、非商业实验、个人二次修改与非商业讨论；
+- **禁止**：未经书面授权，严禁用于任何商业目的（包括但不限于将本项目打包出售、作为收费服务/商业 SaaS 运营、或更名后进行商业再发行）；
+- **商业合作**：如有商业授权需求，请联系项目权利人（andabaoyue）签署独立商业授权协议。
+
+Copyright (c) 2026 andabaoyue. All rights reserved.

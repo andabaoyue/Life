@@ -4,8 +4,16 @@
   "characterName": "初澜",
   "characterNameEn": "Chulan",
   "version": "1.0.0-dev",
-  "description": "Life — 数字生命实验平台 (主体: 初澜 / Chulan)",
+  "description": "Life — 桌面数字生命实验平台 (Desktop Digital Being Experimental Platform)",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andabaoyue/Life.git"
+  },
+  "bugs": {
+    "url": "https://github.com/andabaoyue/Life/issues"
+  },
+  "homepage": "https://github.com/andabaoyue/Life#readme",
   "scripts": {
     "start": "electron .",
     "check": "find . -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check",
@@ -14,6 +22,6 @@
   "dependencies": {
     "electron": "^44.4.3"
   },
-  "author": "",
-  "license": "MIT"
+  "author": "andabaoyue",
+  "license": "PolyForm-Noncommercial-1.0.0"
 }

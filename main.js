@@ -1286,6 +1286,17 @@ ipcGuard.handle('connections:activate', (e, opts = {}) => {
 });
 
 app.whenReady().then(() => {
+  console.log([
+    '',
+    '        . ~ ~ ~ ~ ~ .',
+    '    . ~   . - - - .   ~ .',
+    '   /   ~\'   . - .   \'~   \\     Life — Chulan · 2026',
+    '  |   :    (  o  )    :   |    Copyright (c) andabaoyue',
+    '   \\   ~.   \' - \'   .~   /',
+    '    \' ~   \' - - - \'   ~ \'',
+    '        \' ~ ~ ~ ~ ~ \'',
+    ''
+  ].join('\n'));
   Menu.setApplicationMenu(null);
   const r = secure.loadConfig(getSS, app.getPath('userData'),
     () => load(app.getPath('userData')));
@@ -1500,11 +1511,16 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // v1.0 系统托盘（合流批）：16x16 图标 + 双击呼出对话 + 右键菜单；退出严守安全退出链
+  // v1.0 系统托盘：水波微澜专用图标（assets/tray.png / tray.ico）+ 双击呼出对话 + 右键菜单；退出严守安全退出链
   try {
-    const trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'pet.png'))
-      .resize({ width: 16, height: 16 });
+    const trayIcoPath = path.join(__dirname, 'assets', 'tray.ico');
+    const trayPngPath = path.join(__dirname, 'assets', 'tray.png');
+    const iconFile = (process.platform === 'win32' && fs.existsSync(trayIcoPath))
+      ? trayIcoPath
+      : (fs.existsSync(trayPngPath) ? trayPngPath : path.join(__dirname, 'assets', 'pet.png'));
+    const trayIcon = nativeImage.createFromPath(iconFile);
     tray = new Tray(trayIcon);
+    tray.setToolTip('Life');
     const rebuildTrayMenu = () => {
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '打开对话 (Alt+Shift+C)', click: () => showChatWindow() },
