@@ -83,6 +83,9 @@ class Memory {
     this.windowMaxTokens = opts.windowMaxTokens ?? 12000; // 兜底：单窗口 token 上限
     this.keepTail = opts.keepTailMessages ?? 6;           // 重置时保留几条原文，避免失忆感
     this.memoryCap = opts.memoryCapTokens ?? 6000;        // Prompt Memory 长期记忆预算（基线 6000）
+    // 🔴 D-23：每条消息最多增强几条记忆印痕（召回 top-N）。0 = 关闭增强。
+    //   默认 1 —— 一句话只加深最相关的那一段（注意力聚焦），防洪泛。
+    this.memoryRecallTopN = opts.memoryRecallTopN ?? 1;
     this.persona = opts.persona || '';
     // 穿着块：不属于记忆数据，不落盘（它是 wardrobe.json 的投影，
     // 存两处早晚会对不上）。由 brain 每次换装后刷新。
@@ -265,10 +268,14 @@ class Memory {
     const text = userText.trim();
     if (text.length < 2) return [];
 
-    const dormantTraces = this.engramManager.getDormantTraces();
-    if (!dormantTraces || dormantTraces.length === 0) return [];
-
-    const reactivated = [];
+    // 🔴 D-23：候选范围放开到**全部** trace（原来只认 DORMANT ⇒ 增强几乎不触发）。
+    //   实测：她 5 段记忆里零条 DORMANT，整个强化系统空转。
+    //   但**必须同时做去重**：只让「本窗口尚未被巩固」的印痕参与 top-N 争夺，
+    //   否则已吃饱的段霸占名额，白错过抢救别段的机会。
+    const curWin = currentWindow || this.data.windowNo;
+    const candidates = this.engramManager.getAllTraces()
+      .filter((t) => t && t.lastRetrievedWindow !== curWin);
+    if (candidates.length === 0) return [];
     const winMap = new Map();
     for (const w of this.data.windows) {
       if (w && typeof w.no === 'number') winMap.set(w.no, w.text || '');
@@ -309,25 +316,33 @@ class Memory {
     const uniqueTokens = Array.from(new Set(candidateTokens));
     if (uniqueTokens.length === 0) return [];
 
-    for (const trace of dormantTraces) {
+    // 🔴 D-23：按命中 token 数打分，**只增强 top-N（默认 1）** —— 防洪泛。
+    //   实测：一句话可命中 4 段（全范围）。若不限流，每条消息都点亮多段
+    //   ⇒ 数值狂涨 ⇒ 失去「记忆的分量」。top-N 模拟注意力聚焦：
+    //   你聊 life 项目，最相关的那一段被加深，而不是全部。
+    const scored = [];
+    for (const trace of candidates) {
       const winNo = trace.sourceWindowNo || trace.createdWindow;
       const winText = winMap.get(winNo);
       if (!winText) continue;
 
       const lowerWin = winText.toLowerCase();
-      let matched = false;
-
+      let score = 0;
       for (const tok of uniqueTokens) {
-        if (lowerWin.includes(tok)) {
-          matched = true;
-          break;
-        }
+        if (lowerWin.includes(tok)) score++;
       }
+      if (score > 0) scored.push({ trace, score });
+    }
+    if (scored.length === 0) return [];
 
-      if (matched) {
-        const res = this.engramManager.reactivate(trace.traceId, currentWindow || this.data.windowNo);
-        if (res) reactivated.push(res);
-      }
+    scored.sort((a, b) => b.score - a.score);   // 高分优先（同分保持稳定序）
+    const topN = Number.isFinite(this.memoryRecallTopN) ? this.memoryRecallTopN : 1;
+    if (topN <= 0) return [];   // 0 = 关闭增强
+
+    const reactivated = [];
+    for (let i = 0; i < Math.min(topN, scored.length); i++) {
+      const res = this.engramManager.reactivate(scored[i].trace.traceId, curWin);
+      if (res) reactivated.push(res);
     }
 
     if (reactivated.length > 0) {

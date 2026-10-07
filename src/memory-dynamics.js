@@ -237,8 +237,17 @@ class EngramTraceManager {
     trace.retrievalCount = (trace.retrievalCount || 0) + 1;
     trace.lastRetrievedWindow = currentWindow;
 
-    const updated = computeEngramDecay(trace, currentWindow, this.config);
-    const result = { ...trace, ...updated };
+    // 🔴 D-23：只记账，**不重算 tier**（护前缀缓存铁律）。
+    //
+    //   原实现在这里调 computeEngramDecay 并写回 tier —— 那会在**对话中途**
+    //   改变 systemText（FADING→ACTIVE 跳变 = prompt 突变 = 破缓存）。
+    //   实测（真实数据）：跳变那一轮 systemText 变化 194 字，前缀缓存全失。
+    //
+    //   现在：retrievalCount / lastRetrievedWindow 是**账本**，不进 prompt；
+    //   tier 的变化统一在关窗 decayAll() 时结算（那时 system 本来就要刷新）。
+    //   ⚠️ 这与 tierForDisplay 的注释一致：「tierForPrompt = trace.tier，
+    //      只在关窗 decayAll() 时写定，进 Prompt 永不变化（护前缀缓存）」。
+    const result = { ...trace };
     this.traces.set(traceId, result);
     return result;
   }

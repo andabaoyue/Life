@@ -123,7 +123,13 @@ function check(name, cond, extra) {
   const reactivated = mgr.reactivate('trace-dormant', 12);
   check('重新激活后 retrievalCount 增至 1', reactivated.retrievalCount === 1);
   check('重新激活后 lastRetrievedWindow 更新为 12', reactivated.lastRetrievedWindow === 12);
-  check('重新激活后由于未召回跨度清零，立即脱离 DORMANT 态', reactivated.tier !== ENGRAM_TIERS.DORMANT);
+  // 🔴 D-23 修订：召回只记账（retrievalCount++ / lastRetrievedWindow），**不改 tier**。
+  //   原断言测的是「当场翻 tier」—— 那会改 systemText、破前缀缓存（已实测证伪）。
+  //   现在 tier 的变化统一在关窗 decayAll() 结算（那时 system 本来就要刷新）。
+  check('🔴 记账后 tier 仍为 DORMANT（只记账不改 tier）',
+    reactivated.tier === ENGRAM_TIERS.DORMANT);
+  mgr.decayAll(12);
+  check('关窗结算后脱离 DORMANT 态', mgr.getTrace('trace-dormant').tier !== ENGRAM_TIERS.DORMANT);
 }
 
 // -------------------------------------------------------------
@@ -198,17 +204,23 @@ function check(name, cond, extra) {
   check('日常高频停用词绝不误唤醒休眠记忆 (零假阳性)', noMatch.length === 0);
 
   // 用户提及关键具象线索：“海螺贝壳”
+  const sysBefore = mem2.systemText();
   const reactivated = mem2.reactivateByContext('初澜，你还收着那枚海螺贝壳吗？', 11);
 
   check('关联线索匹配成功触发重新激活',
     Array.isArray(reactivated) && reactivated.length === 1 && reactivated[0].traceId === 'tr-w1'
   );
-  check('重新激活后脱离 DORMANT 态',
-    mem2.engramManager.getTrace('tr-w1').tier !== 'DORMANT'
-  );
-  check('重新激活后该窗口小结重新出现在 systemText 中',
-    mem2.systemText().includes('白色的海螺贝壳')
-  );
+  // 🔴 D-23 修订：召回只记账，prompt 在对话中途逐字节稳定（护前缀缓存铁律）
+  check('🔴 记账后 systemText 逐字节相等（护前缀缓存铁律）',
+    mem2.systemText() === sysBefore);
+  check('🔴 记账后 tier 仍为 DORMANT（只记账不改 tier）',
+    mem2.engramManager.getTrace('tr-w1').tier === 'DORMANT');
+  // 模拟下一次关窗结算 —— 效果在这里生效
+  mem2.engramManager.decayAll(11);
+  check('关窗结算后脱离 DORMANT 态',
+    mem2.engramManager.getTrace('tr-w1').tier !== 'DORMANT');
+  check('关窗结算后该窗口小结重新出现在 systemText 中',
+    mem2.systemText().includes('白色的海螺贝壳'));
 
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 }

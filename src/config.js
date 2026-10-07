@@ -91,6 +91,9 @@ const DEFAULTS = {
   //      **默认值必须稳** —— 行为变更走用户显式配置，不靠改默认值偷袭。
   memoryActiveThreshold: 0.60,
   memoryFadingMaxChars: 60,
+  // 🔴 D-23：每条消息最多增强几条记忆印痕（召回 top-N）。0 = 关闭增强。
+  //   默认 1 —— 一句话只加深最相关的那一段（注意力聚焦），防洪泛。
+  memoryRecallTopN: 1,
   motionSpeed: 2,
   motionTickMs: 50,
   motionMargin: 20,
@@ -210,6 +213,7 @@ function sanitize(raw = {}) {
     // 丙：强度门限 0~1；渐褪截断字数 20~4000（下界保证「能读出一件事」，上界防它退化成全文投影）
     memoryActiveThreshold: finiteNumber(raw.memoryActiveThreshold, DEFAULTS.memoryActiveThreshold, 0.05, 0.99),
     memoryFadingMaxChars: finiteInt(raw.memoryFadingMaxChars, DEFAULTS.memoryFadingMaxChars, 20, 4000),
+    memoryRecallTopN: finiteInt(raw.memoryRecallTopN, DEFAULTS.memoryRecallTopN, 0, 5),
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
     motionMargin: finiteInt(raw.motionMargin, DEFAULTS.motionMargin, 0, 200),

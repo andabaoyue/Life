@@ -192,6 +192,7 @@ class Brain {
       windowMaxTokens: this.cfg.windowMaxTokens,
       keepTailMessages: this.cfg.keepTailMessages,
       memoryCapTokens: this.cfg.memoryCapTokens,
+      memoryRecallTopN: this.cfg.memoryRecallTopN,
       experimentModules: this.cfg.experimentModules,
       memoryDynamics: this.cfg.experimentModules?.memoryDynamics,
       // 🔴 丙（2026-10-07）：把「渐褪」的两个参数透传给记忆动力学。
