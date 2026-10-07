@@ -64,6 +64,13 @@ class ActivityTracker {
     this.lastPhysicalAt = now;
     this.lastConversationAt = now;
     this.spokenDuringIdle = false;
+    // 🔴 D-16：自发愿望（wantToLeaveSomething）的**独立**单次刹车。
+    //   为什么不能复用 spokenDuringIdle：那个在 30 分钟问候后就置位了，
+    //   复用它会让 120 分钟的愿望被一起锁死 —— 那正是 D-15 撞的第一个断点。
+    //   为什么也不能只靠 spokenDuringIdle（反重力建议的修法）：120 分钟后
+    //   selfIntent 恒为 wantToLeaveSomething，光锁 spokenDuringIdle 挡不住
+    //   每 45 秒冷却一过就重复建案。**必须有独立标志。**
+    this.selfNoteDuringIdle = false;
     this.lastReportedIdleMin = 0;
 
     /* ---- Phase 0.5: 内部稳态调节中枢与环境知觉流水线接线 ---- */
@@ -83,6 +90,7 @@ class ActivityTracker {
   recordUserInput(text, at = this.now()) {
     this.lastUserInputAt = at;
     this.spokenDuringIdle = false;
+    this.selfNoteDuringIdle = false;   // D-16：用户回来了，这次离开的「已留过」作废
     this.lastReportedIdleMin = 0;
     const intent = ActivityTracker.isSleepIntent(String(text || ''));
     // v2.0 枕边信箱：睡着时消息不再吵醒 —— 只留置（信箱在 brain 层），醒来由她自己决定怎么接
@@ -124,6 +132,7 @@ class ActivityTracker {
     }
     this.lastPhysicalAt = at;
     this.spokenDuringIdle = false;
+    this.selfNoteDuringIdle = false;   // D-16：物理互动也算「她回来了」
     this.lastReportedIdleMin = 0;
     // v2.0 摇晃式唤醒（纯物理扰动，零台词）：轻碰 1~4 不醒，短时连击 5 下才摇醒。醒来不冒任何话。
     // v1.0 睡相安放容错（物理尺度判据，无时间窗）：小位移挪动 = 整理桌面/挪位安放，不惊醒；
@@ -247,6 +256,7 @@ class ActivityTracker {
     this.sleepMode = true;
     this.sleepStartTime = at;
     this.spokenDuringIdle = true;
+    this.selfNoteDuringIdle = true;    // D-16：睡着期间不该产愿望，与 spokenDuringIdle 同口径
     this.justWokenUp = false;
     this.wokenUpAt = null;
 
@@ -266,6 +276,8 @@ class ActivityTracker {
     this.justWokenUp = true;
     this.wokenUpAt = at;
     this.spokenDuringIdle = false;
+    this.selfNoteDuringIdle = false;   // D-16：醒来是一次新的在场
+  
 
     // v3.1 梦境时序改造：被唤醒 → 搭这条通路顺带结算梦境。
     // 顺序很关键：先抓睡眠上下文（此刻原料还在），再让 updateOnSleep(false) 清空它，

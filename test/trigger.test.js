@@ -133,19 +133,47 @@ h = harness();
 h.at(IDLE_MS);
 const g1 = h.eng.evaluate();
 h.eng.commit(g1);
-h.at(IDLE_MS * 3);
-  // 🔵 D-15 修订：原来断言 evaluate() === null。加入 wantToLeaveSomething 后，
-  //   120 分钟时它会绕过 spokenWhenIdle 刹车（那是「留东西」不是「说话骚扰」）。
-  //   **断言的意图没变**：spokenWhenIdle 仍要刹住普通 idle 问候。
-  const brakeResult = h.eng.evaluate();
-  check('挂机问候说过之后不再重复（spokenWhenIdle 刹住）',
-    brakeResult === null || (brakeResult.selfIntent && brakeResult.selfIntent.kind === 'wantToLeaveSomething'),
-    'kind=' + (brakeResult && brakeResult.kind) + ' selfIntent=' + (brakeResult && brakeResult.selfIntent && brakeResult.selfIntent.kind));
+
+// 🔵 D-16 重写（反重力复核指出 D-15 的测试漏测了两个区间）：
+//   旧断言只测「累计 120 分钟」这一处，恰好命中 wantToLeaveSomething 被放行，
+//   于是把 60/90 分钟刹车失效的致命回归漏了过去（变量名手误 spokenWhenIdle）。
+//   现在**逐档钉死**：30 开口、60 刹住、90 刹住、120 允许（一次）。
+
+h.at(IDLE_MS);   // 累计 60 分钟
+check('🔴 60 分钟必须刹住（不得重复挂机问候）', h.eng.evaluate() === null,
+  'kind=' + (h.eng.evaluate() && h.eng.evaluate().kind));
+
+h.at(IDLE_MS);   // 累计 90 分钟
+check('🔴 90 分钟必须刹住', h.eng.evaluate() === null,
+  'kind=' + (h.eng.evaluate() && h.eng.evaluate().kind));
+
+h.at(IDLE_MS);   // 累计 120 分钟 —— 自发愿望允许放行
+const g2 = h.eng.evaluate();
+check('🔴 120 分钟自发愿望放行（绕过的只是说话刹车，不是无刹车）',
+  g2 && g2.selfIntent && g2.selfIntent.kind === 'wantToLeaveSomething',
+  g2 ? ('kind=' + g2.kind + ' selfIntent=' + (g2.selfIntent && g2.selfIntent.kind)) : 'null');
+h.eng.commit(g2);
+
+// 🔴 反重力指出的第二个致命回归：光靠 spokenDuringIdle 挡不住重复建案 ——
+//   120 分钟后意图恒成立，冷却（45 秒）一过就会再触发。必须有独立单次刹车。
+let selfNoteRepeats = 0;
+for (let i = 0; i < 20; i++) {
+  h.at(COOLDOWN_MS + 1000);
+  const r = h.eng.evaluate();
+  if (r) selfNoteRepeats++;
+  h.eng.commit(r);
+}
+check('🔴 120 分钟后不得每 45 秒重复建案（一次离开只写一张）',
+  selfNoteRepeats === 0, '重复次数=' + selfNoteRepeats);
+
+// 用户互动后刹车必须解除 —— 否则「修 bug」变成「她永远只能写一次」
 h.at(IDLE_MS);
 h.tracker.record('click');              // 用户回来了（物理互动）
-h.at(IDLE_MS * 3);
-check('用户真的互动过之后刹车解除（下次离开还能问候）',
-  h.eng.evaluate() && h.eng.evaluate().kind === 'idle');
+check('用户互动解除两项刹车', h.tracker.spokenDuringIdle === false && h.tracker.selfNoteDuringIdle === false);
+h.at(IDLE_MS * 4);
+const g3 = h.eng.evaluate();
+check('用户真的互动过之后能再次问候/再留一次（刹车真的解除了）',
+  g3 && g3.kind === 'idle', g3 ? g3.kind : 'null');
 
 h = harness();
 h.at(IDLE_MS);

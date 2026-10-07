@@ -124,15 +124,24 @@ class TriggerEngine {
 
     // 单次刹车由 tracker 持有：它同时被"用户说话了""被戳了"解除，
     // 放这边就会漏掉其中一条路径。
-    // 🔴 D-15 修断点 1（反重力复核发现）：spokenWhenIdle 刹车会把 120 分钟的
-    //   wantToLeaveSomething 意图一起锁死 —— 30 分钟那声问候之后 spokenWhenIdle=true，
-    //   到 120 分钟时这里 return null，她永远没机会留下东西。
+    // 🔴 D-16 修 D-15 的两处致命回归（反重力复核发现，已实测复现）：
     //
-    //   **why bypass**：spokenWhenIdle 防的是「反复说话骚扰」，
-    //   而 wantToLeaveSomething 是「想留一件东西」——不同质。
-    //   但冷却（cooldownMs）仍然生效，不会反复触发。
+    //   ① **变量名手误**：D-15 把 spokenDuringIdle 误写成 spokenWhenIdle，
+    //      而 tracker 里根本没有后者 ⇒ tr.spokenWhenIdle 恒 undefined
+    //      ⇒ !undefined 恒 true ⇒ **挂机单次刹车彻底失效**，
+    //      实测 60min / 90min 都会继续开口（撞 persona.js:29 防骚扰铁律）。
+    //   ② **只设 spokenDuringIdle 挡不住重复建案**（反重力建议的修法不够）：
+    //      120 分钟后 selfIntent 恒为 wantToLeaveSomething，
+    //      光锁 spokenDuringIdle 时 isSelfNote 仍为 true ⇒ 每 45 秒冷却一过
+    //      就再建一案。实测 15 分钟触发 20 次。
+    //
+    //   ⇒ 正解：**用独立的单次刹车 selfNoteDuringIdle**。
+    //      它由 commit() 置位、由用户互动/醒来解除（与 spokenDuringIdle 同时机）。
+    //      语义是「这一次漫长离开里，她已经留过东西了」。
+    //      **一次离开只写一张纸条** —— 这才是该有的克制。
     const isSelfNote = selfIntent && selfIntent.kind === 'wantToLeaveSomething';
-    if (idleMs >= idleNeed && (!tr.spokenWhenIdle || isSelfNote)) {
+    const selfNoteBlocked = isSelfNote && tr.selfNoteDuringIdle === true;
+    if (idleMs >= idleNeed && !selfNoteBlocked && (!tr.spokenDuringIdle || isSelfNote)) {
       return {
         kind: 'idle', at,
         reason: '用户已经离开 ' + Math.round(idleMs / 60000) + ' 分钟',
@@ -149,10 +158,15 @@ class TriggerEngine {
     this.lastFiredAt = out.at;
     // 连戳不需要单独记账：那 5 下过了 8 秒窗口自然不再算连戳，
     // 期间想再开口由冷却挡着 —— 同串去重是它的严格子集（见文件头）。
-    // 🔴 D-15 修断点 1 续：wantToLeaveSomething 不设 spokenWhenIdle 刹车。
-    //   理由同上：它不是「说话骚扰」，是「留东西」。冷却已控频。
+    // 🔴 D-16：两条刹车分开记。
+    //   spokenDuringIdle  —— 防「反复说话骚扰」（原有铁律，一个字不许松）。
+    //   selfNoteDuringIdle —— 防「反复建案」（D-15 引入 wantToLeaveSomething 后的新需要）。
+    //   ⚠️ 不能合并：合并会让 30 分钟那声问候把 120 分钟的愿望锁死（D-15 断点 1）。
     const isSelfNote = out.selfIntent && out.selfIntent.kind === 'wantToLeaveSomething';
-    if (out.kind !== 'poke' && !isSelfNote && this.tracker) this.tracker.spokenDuringIdle = true;
+    if (this.tracker) {
+      if (isSelfNote) this.tracker.selfNoteDuringIdle = true;
+      else if (out.kind !== 'poke') this.tracker.spokenDuringIdle = true;
+    }
   }
 }
 
