@@ -43,7 +43,7 @@ function check(name, cond, extra) {
 function hintRejectReason(rawHint) {
   const h = String(rawHint == null ? '' : rawHint).trim();
   if (!h) return 'EMPTY';
-  if (path.isAbsolute(h)) return 'ABSOLUTE';
+  if (path.win32.isAbsolute(h) || path.posix.isAbsolute(h)) return 'ABSOLUTE';
   if (/[\\/]/.test(h)) return 'SEPARATOR';
   if (h === '.' || h === '..') return 'DOT_SEG';
   // ⚠️ 不能用 split('.').includes('..')：'a..b.md'.split('.') 里没有 '..' 元素，
