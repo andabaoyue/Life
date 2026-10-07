@@ -852,7 +852,7 @@ function renderTimezonePanel() {
   setV('tzZone', (home || '?') + ' (UTC' + fmtOff(tzOffsetHours(home)) + ') 🔒');
   setV('tzBirth', compassBirthAt ? formatDisplayTime(compassBirthAt) : '—');
   setV('tzUptime', compassBirthAt
-    ? ('约 ' + ((Date.now() - compassBirthAt) / 3600000).toFixed(1) + ' ' + t('tz.hours'))
+    ? (t('tz.about', '约') + ' ' + ((Date.now() - compassBirthAt) / 3600000).toFixed(1) + ' ' + t('tz.hours'))
     : '—');
   if (host && home && host !== home) {
     const diff = Math.round((tzOffsetHours(home) - tzOffsetHours(host)) * 10) / 10;
@@ -902,12 +902,15 @@ for (const it of document.querySelectorAll('.pnav-item')) {
 }
 selectPanelSection((() => { try { return localStorage.getItem('panelSection'); } catch (e) { return 'conn'; } })());
 
-if (langSelect) langSelect.addEventListener('change', () => {
+if (langSelect) {
+  if (typeof UI_LOCALE !== 'undefined' && UI_LOCALE) langSelect.value = UI_LOCALE;
+  langSelect.addEventListener('change', () => {
   setLocale(langSelect.value);
   renderI18nPanel();
   renderProviderPanel();
   if (chatTitle) chatTitle.textContent = t('chat.title');
-});
+  });
+}
 renderI18nPanel();
 
 /* ---------- 服务商预设与 Key 智能识别（v1.0 笔 7 / UX-01） ----------
