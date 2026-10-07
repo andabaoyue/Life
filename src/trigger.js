@@ -29,6 +29,11 @@ const POKE_THRESHOLD = 5;    // 窗口内几次算"连戳"
 const COOLDOWN_MS = 45000;   // 两次主动开口的最小间隔（任何理由都受它管）
 const IDLE_MS = 30 * 60000;  // 挂机多久才轻声说一句
 
+/** 🔴 D-17：自发愿望（wantToLeaveSomething）的静默阈值，默认 120 分钟。
+ *   抽成常量是为了让它与 IDLE_MS 一样**可被构造参数覆盖**（联调验证用）。
+ *   ⚠️ 生产默认值不变：120 分钟。 */
+const SELF_NOTE_IDLE_MS = 120 * 60000;
+
 /* v0.9.9 意志层·性格驱动主动性：特质 → 意愿权重（有界 [0.5, 1.5]）。
    只调「多愿意开口」的阈值 / 间隔，绝不触碰冷却、挂机刹车与睡眠闸门 ——
    那三道是防骚扰铁律，任何性格都不配绕过。中立特质 = 1.0，与既有常量行为完全一致。 */
@@ -45,6 +50,16 @@ class TriggerEngine {
     this.now = opts.now || Date.now;
     this.lastFiredAt = 0;
     this.cooldownMs = opts.cooldownMs ?? COOLDOWN_MS;
+    // 🔴 D-17：idleMs 可配（验证用）。默认仍是 IDLE_MS，**行为一字不变**。
+    //   为什么要可配：联调自发愿望时 120 分钟太长，而**不能去动 evaluate() 里
+    //   那道 `idleMs >= idleNeed` 门槛** —— 那行是防骚扰铁律的外层，
+    //   在那里开旁路等于给铁律留一个永久的洞。
+    //   把整个基准调小是等价且干净的：铁律结构原样，只是「多久算久」变短。
+    //   ⚠️ 副作用（验证期间可接受）：普通挂机问候也一并变频繁。
+    this.idleMs = Number.isFinite(opts.idleMs) && opts.idleMs > 0 ? opts.idleMs : IDLE_MS;
+    // 同理：自发愿望的静默阈值也做成可配（默认 120 分钟不变）。
+    this.selfNoteIdleMs = Number.isFinite(opts.selfNoteIdleMs) && opts.selfNoteIdleMs > 0
+      ? opts.selfNoteIdleMs : SELF_NOTE_IDLE_MS;
     // v0.9.9 意志层：特质 → 意愿权重（缺省中立 1.0，与既有常量行为完全一致）
     this.initiativeBias = computeInitiativeBias(opts.traits || {});
 
@@ -81,6 +96,8 @@ class TriggerEngine {
     const intent = computeSelfIntent({
       traits: this.traits,
       idleMinutes,
+      // 🔴 D-17：把可配阈值透传下去（默认 120，验证时可调小）
+      selfNoteMinMinutes: Math.round(this.selfNoteIdleMs / 60000),
     });
     this.selfIntent = intent;
     this.selfIntentSource = intent ? intent.sources.slice(0) : null;
@@ -101,7 +118,10 @@ class TriggerEngine {
     // 睡眠、冷却、挂机刹车三道防骚扰铁律不归它管，任何性格都别想绕过。
     const bias = this.initiativeBias;
     const pokeNeed = Math.max(3, Math.min(8, Math.round(POKE_THRESHOLD / bias)));
-    const idleNeed = Math.max(IDLE_MS / 2, Math.min(IDLE_MS * 2, Math.round(IDLE_MS / bias)));
+    // 🔴 D-17：基准换成本实例的 this.idleMs（默认 IDLE_MS，验证时可调小）。
+    //   **铁律结构一字未改**：仍是 max(基准/2, min(基准*2, 基准/bias))。
+    const base = this.idleMs;
+    const idleNeed = Math.max(base / 2, Math.min(base * 2, Math.round(base / bias)));
 
     const pokes = tr.recentClicks(WINDOW_MS, at);
     // 🔴 D-7：自意图在这里算，**在全部三道铁律之后**。
@@ -268,6 +288,10 @@ const TRAIT_LABEL = Object.freeze({
  * @param {object} [state]
  * @param {object} [state.traits]  subjectState.values（必须是已存在的特质键）
  * @param {number} [state.idleMinutes] 距上次互动的分钟数（tracker 已有的客观事实）
+ * @param {number} [state.selfNoteMinMinutes] 🔴 D-17：自发愿望的静默阈值（分钟）。
+ *   缺省 = SELF_INTENT_KINDS.wantToLeaveSomething.min（120）。**仅供联调验证覆盖**。
+ *   为什么做成入参而不是改表里的 min：表是「意图种类穷举」的声明处，
+ *   改它会让生产默认值也变 —— 而入参只在调用方显式传时才生效。
  * @returns {?{direction:string, kind:string, sources:string[]}}
  *   null = 她现在没有可追溯的意图 ⇒调用方**必须**退化成既有 reason 通路
  */
@@ -317,7 +341,9 @@ function computeSelfIntent(state = {}) {
   //   理由：留下东西比说一句话更重，安静得足够久才会冒出来这个念头。
   //   ⚠️ 这里**不产出台词**（台词由 LLM 现场生成，见头部判据）；
   //     本类别只回答「她想不想留」，具体写什么由建案时专门问一次。
-  if (idleMinutes !== null && idleMinutes >= SELF_INTENT_KINDS.wantToLeaveSomething.min) {
+  const selfNoteMin = (Number.isFinite(Number(src.selfNoteMinMinutes)) && Number(src.selfNoteMinMinutes) > 0)
+    ? Number(src.selfNoteMinMinutes) : SELF_INTENT_KINDS.wantToLeaveSomething.min;
+  if (idleMinutes !== null && idleMinutes >= selfNoteMin) {
     candidates.push({
       kind: 'wantToLeaveSomething',
       direction: SELF_INTENT_KINDS.wantToLeaveSomething.direction + '（安安静静地待了很久）',

@@ -221,15 +221,34 @@ function maybeAskForSelfNote(selfIntent) {
           : { ok: false, code: 'EVALUATOR_UNAVAILABLE' };
         if (!evaluated || evaluated.ok !== true) return;
 
+        // 🔴 D-17（用户拍板 C1）：自发愿望**盖 selfNote 戳** ⇒ 执行器闸门 4 免逐次确认。
+        //   为什么：留便签的本质是「趁你不在时悄悄写下」；若要弹卡片等你回来才授权，
+        //   那就毁掉了自发留字本身。
+        //   ⚠️ 免确认 ≠ 无约束：沙盒范围/格式白名单/长度/预算/写事务**一个都没松**。
         const res = typeof deps.agentIpc.proposeInternal === 'function'
-          ? deps.agentIpc.proposeInternal({ capability: 'workspace.write', scope, reason: intent.reason }, 'main')
+          ? deps.agentIpc.proposeInternal(
+            { capability: 'workspace.write', scope, reason: intent.reason },
+            'main',
+            'selfNote'
+          )
           : null;
         if (res && res.ok && res.proposal) {
-          // 内容由渲染端在授权后随 agent:execute 提交（见 preload 的 execute 参数）；
-          //   这里把它暂存在提案旁，等用户点授权时由渲染端取用。
+          // 内容暂存在提案旁，**随即自动执行**（没有卡片可点，主进程自己收尾）。
           //   ⚠️ 不塞进提案对象（D-9 定的：动机独立第二参数，同理内容也不进 raw）。
           pendingSelfNoteContent.set(res.proposal.id, note.content);
-          deps.broadcastToWindows('agent-proposal-available', { proposalId: res.proposal.id });
+
+          const exec = typeof deps.agentIpc.executeInternal === 'function'
+            ? deps.agentIpc.executeInternal({ proposalId: res.proposal.id })
+            : null;
+          if (exec && exec.ok) {
+            console.log('[Agent] 她自己留下了一张纸条:', String(rawHint).slice(0, 60));
+            // 仍然广播一次：让 UI 知道盘上多了东西（用户可能正看着桌面）。
+            //   ⚠️ 这不是确认卡片 —— selfNote 免确认，广播只是知情通知。
+            deps.broadcastToWindows('agent-proposal-available', { proposalId: res.proposal.id });
+          } else {
+            // 决策 4：写失败不告诉她，只记日志（审计里执行器已记了原因）。
+            console.log('[Agent] 自发留条未落盘（按设计不告诉她）:', exec && exec.error);
+          }
         }
       } catch (err) {
         // 边界③：静默。
@@ -305,7 +324,7 @@ function createWindow() {
       win.webContents.send('asset-warning', assetReport);
     }
   });
-  scheduleProactiveCheck(IDLE_MS);
+  scheduleProactiveCheck(proactiveBaseMs());
 }
 
 function syncMotionBlock(reason = 'user-priority') {
@@ -613,7 +632,7 @@ ipcGuard.on('quit-app', () => {
 ipcGuard.on('activity', (e, type, details) => {
   if (tracker) tracker.record(type, undefined, details);
   // 用户有了新交互，重置空闲检查闹钟
-  scheduleProactiveCheck(IDLE_MS);
+  scheduleProactiveCheck(proactiveBaseMs());
   // v0.9.9 P2-2a: 收敛到唯一出口（内态变更由 onChange 自动推送，这里保留一次
   // 兜底推送，确保旧路径行为逐字不变）
   pushRegulationState();
@@ -715,7 +734,7 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
   } finally {
     motionUi.chatBusy = false;
     syncMotionBlock('chat-done');
-    scheduleProactiveCheck(IDLE_MS);
+    scheduleProactiveCheck(proactiveBaseMs());
   }
 });
 
@@ -742,6 +761,21 @@ function scheduleProactiveCheck(delayMs) {
   if (proactiveTimer.unref) proactiveTimer.unref();
 }
 
+/* 🔴 D-17：调度用的基准必须取**引擎的真实值**，不能用模块常量 IDLE_MS。
+ *
+ *   为什么：D-17 让 idleMs 可配（验证时调成 3 分钟），但 main.js 的调度
+ *   仍在用 import 进来的 IDLE_MS（恒 30 分钟）⇒ **首次轮询要等 30 分钟**，
+ *   配置改小完全不起作用。反重力复核指出了这条，属实。
+ *
+ *   ⚠️ 回落顺序：引擎值 → 常量。trigger 未就绪时用常量（启动早期）。
+ */
+function proactiveBaseMs() {
+  const v = trigger && Number.isFinite(trigger.idleMs) && trigger.idleMs > 0
+    ? trigger.idleMs : IDLE_MS;
+  // 调度粒度上限：即使基准很大也要定期醒来处理分段事件（原逻辑就是 10 分钟）。
+  return v;
+}
+
 function checkAndPushProactive() {
   if (!trigger || !brain || !brain.ready || !win || win.isDestroyed()) return;
 
@@ -759,7 +793,7 @@ function checkAndPushProactive() {
   if (offer) {
     win.webContents.send('proactive-offer', offer);
   } else {
-    const idleRemaining = IDLE_MS - idleMs;
+    const idleRemaining = proactiveBaseMs() - idleMs;
     const nextDelay = idleRemaining > 0 ? idleRemaining : COOLDOWN_MS;
     // 挂机检查调度：步长不超过 10 分钟，确保 10、20 分钟阶段性挂机事件能被及时检测
     const checkDelay = Math.min(Math.max(COOLDOWN_MS, nextDelay), 10 * 60000);
@@ -1246,7 +1280,13 @@ app.whenReady().then(() => {
   // 换装执行器 + 本地活动追踪器注入：模型给提案 -> wardrobe 落真实状态 ->
   // 结果写回历史；她被戳了几下 -> tracker 记账 -> 随当轮 user 消息如实告知。
   bindBrainDeps(brain);
-  trigger = new TriggerEngine(tracker);
+  // 🔴 D-17：把「挂机基准 / 自发愿望阈值」从配置传进引擎（默认 30 / 120 分钟，行为不变）。
+  //   联调验证时改 life-config.json 的两项即可整体调小 ——
+  //   而 **trigger.js 里那道 `idleMs >= idleNeed` 铁律一字未动**。
+  trigger = new TriggerEngine(tracker, {
+    idleMs: cfg.agentIdleMinutes * 60000,
+    selfNoteIdleMs: cfg.agentSelfNoteIdleMinutes * 60000,
+  });
   // 🔴 D-8a：补刷启动时的 traits。
   //
   //   bindBrainDeps 里那句 updateTraits 在这一行**跑不到**（那时 trigger 还是 null），

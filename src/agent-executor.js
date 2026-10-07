@@ -240,7 +240,32 @@ class ControlledAgentExecutor {
     }
 
     // ── 闸门 4：用户显式确认（D-3 第四道闸门，这里是**执行前**的最后一次复核）
-    const gate = this.confirmation.isExecutionAllowed(proposalId);
+    //
+    // 🔴🔴 D-17（用户拍板 C1）：`proposalSource === 'selfNote'` 免逐次确认。
+    //
+    //   ## 为什么是这里、而不是在通道层放行
+    //   D-4 不变式 1：**闸门判定一律在执行器内**。在通道层开旁路会让
+    //   「判定」分裂成两处，迟早漂移，而漂移的那一侧就是漏洞。
+    //
+    //   ## 为什么自发愿望可以免确认（用户原话与理由）
+    //   留便签的本质是「趁你不在时悄悄写下」。若要弹卡片等你授权，
+    //   你回来才看到 —— 那就毁掉了自发留字本身。
+    //
+    //   ## 🔴 免确认 ≠ 无约束：以下四道**一个都没松**
+    //     ① 闸门 1：能力白名单（只能 workspace.write，process.execute 仍硬拒）
+    //     ② 闸门 2：scope 必须落在桌面 LifeSandbox 内（执行期重跑，不信提案期 verdict）
+    //     ③ 闸门 3：预算（maxWritesPerSession 仍是 5）+ 格式白名单 + 长度上限
+    //     ④ 第五道闸门：写事务（WAL + 原子写 + 崩溃自愈）
+    //   ⇒ 她只能**在沙盒里**、**写白名单格式**、**有配额**地留字。
+    //
+    //   ## ⚠️ 来源是不可伪造的
+    //   `proposalSource` 由 `createActionProposal` 的**独立第三参数**写入，
+    //   渲染端在 payload 里塞同名字段一律被忽略（有门禁钉死）。
+    //   通道来的提案永远是 'user' —— 只有主进程建案时才能给 'selfNote'。
+    const isSelfNote = proposal && proposal.proposalSource === 'selfNote';
+    const gate = isSelfNote
+      ? { allowed: true, reason: 'SELF_NOTE_EXEMPT' }
+      : this.confirmation.isExecutionAllowed(proposalId);
     if (!gate || gate.allowed !== true) {
       const reason = (gate && gate.reason) || 'NOT_CONFIRMED';
       this._audit({

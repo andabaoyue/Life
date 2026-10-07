@@ -467,7 +467,20 @@ function normalizeIntentMotive(motive) {
  *   `input.intentSources` / `input.intentKind` / `input.intentOrigin` 一律被忽略。
  * @returns 冻结的提案对象
  */
-function createActionProposal(input = {}, intentMotive = null) {
+/** 🔴 D-17：提案来源白名单。只有这两个值合法，其余一律回落 'user'（fail-closed）。
+ *   'user'     —— 用户让她写：保留第五道闸门（D-3 原则不动）
+ *   'selfNote' —— 她自己想留的：免逐次确认（沙盒/格式/长度/预算四道硬约束仍在） */
+const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote']);
+
+/**
+ * @param {object} input **来自渲染端的不可信输入**，只取白名单字段。
+ * @param {*} [intentMotive] 🔴 D-9 动机来源，**由主进程侧独立求值后传入**。
+ * @param {string} [proposalSourceArg] 🔴 D-17 提案来源，**由主进程侧决定**。
+ *   刻意做成**独立第三参数**（与 intentMotive 同一手法）：
+ *   渲染端在 payload 里塞 proposalSource 一律无效 —— 否则自报来源即可免确认，
+ *   那是 D-3 顶替攻击那一族。
+ */
+function createActionProposal(input = {}, intentMotive = null, proposalSourceArg = 'user') {
   const status = String(input.status || 'proposed');
   if (!PROPOSAL_STATES.includes(status)) {
     throw new Error(`非法提案状态: ${status}（合法值见 PROPOSAL_STATES）`);
@@ -485,6 +498,29 @@ function createActionProposal(input = {}, intentMotive = null) {
     scope: String(input.scope || ''),
     reason: String(input.reason || '').slice(0, 500),
     createdAt: Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
+    // 🔴 D-17：origin 是**主进程盖的来源戳**（三态），执行器据此决定要不要第五道闸门。
+    //
+    //   ## 为什么必须新加一个字段，而不是复用 requiresUserConfirmation
+    //   `requiresUserConfirmation` 的写法是 `input.requiresUserConfirmation !== false`，
+    //   而 **input 就是渲染端 payload** —— 谁传 false 谁就能拆掉第五道闸门。
+    //   现在它没人读所以无害；但把它接到执行器上等于把一个渲染端可控的免确认开关
+    //   接进安全链，那正是 D-3 顶替攻击那一族。
+    //
+    //   ## proposalSource 的两个取值（由主进程写入，渲染端同名键一律忽略）
+    //     'user'      用户让她写 → **保留**第五道闸门（D-3 原则不动）
+    //     'selfNote'  她自己想留的 → 免逐次确认（走沙盒+格式+长度+预算四道硬约束）
+    //     缺失/未知  → 一律按 'user' 处理（fail-closed，绝不因缺字段而放行）
+    //
+    //   ## ⚠️ 为什么不叫 origin
+    //   提案上已有 D-9 的 `intentOrigin`（动机类别：self_trait / user_action），
+    //   那是「她为什么想」，本字段是「谁发起的」。两个 origin 并存会误导后人，
+    //   所以本字段叫 proposalSource。
+    //
+    //   ⚠️ 刻意**不从 input 读它**：与 D-9 动机同一条纪律 ——
+    //     来源只能由主进程产生，渲染端自报来源 = 伪造主体性。
+    //     所以它走**独立第三参数**（与 D-9 的 intentMotive 同一手法）：
+    //     渲染端即便在 payload 里塞同名字段也会被完全忽略。
+    proposalSource: PROPOSAL_SOURCES.includes(proposalSourceArg) ? proposalSourceArg : 'user',
     requiresUserConfirmation: input.requiresUserConfirmation !== false,
     status,
     // v1.0 C 阶段：预算熔断是硬约束，提案得知道自己在哪个预算会话下出生。

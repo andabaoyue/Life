@@ -68,6 +68,16 @@ const DEFAULTS = {
   //   沙盒写权限在 D-5 已打开，本开关是触发源接线的最后一道闸门。
   //   打开方式：把 life-config.json 里这一项改成 true（需同时在 sanitize 白名单里，见下）。
   agentTriggerEnabled: false,
+
+  // 🔴 D-17：挂机基准与自发愿望阈值（分钟）。**默认值与既有常量完全一致**，
+  //   抽成配置只为联调验证时能整体调小 —— 而**不必去动 trigger.js 里
+  //   `idleMs >= idleNeed` 那道防骚扰铁律**（在那里开旁路会留下永久的洞）。
+  //
+  //   ⚠️ 调小 agentIdleMinutes 会让**普通挂机问候**也一并变频繁（验证期间可接受）。
+  //   ⚠️ agentSelfNoteIdleMinutes 必须 >= agentIdleMinutes 才有意义
+  //      （否则普通问候先触发、自发愿望永远排不上）。
+  agentIdleMinutes: 30,
+  agentSelfNoteIdleMinutes: 120,
   motionSpeed: 2,
   motionTickMs: 50,
   motionMargin: 20,
@@ -173,6 +183,9 @@ function sanitize(raw = {}) {
     // ⚠️ 必须同时加进 DEFAULTS 与本白名单，只加 DEFAULTS 等于没加：
     //   不在 sanitize 白名单里的键，手写进 life-config.json 会被整份丢弃（见上方 :54 注释）。
     agentTriggerEnabled: raw.agentTriggerEnabled === true,
+    // D-17：上下界防手滑（1 分钟 ~ 24 小时）。越界即回落默认，不静默接受。
+    agentIdleMinutes: finiteInt(raw.agentIdleMinutes, DEFAULTS.agentIdleMinutes, 1, 1440),
+    agentSelfNoteIdleMinutes: finiteInt(raw.agentSelfNoteIdleMinutes, DEFAULTS.agentSelfNoteIdleMinutes, 1, 1440),
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
     motionMargin: finiteInt(raw.motionMargin, DEFAULTS.motionMargin, 0, 200),

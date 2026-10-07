@@ -350,8 +350,13 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //
   //   ⚠️ 抽出来之后通道只剩「身份校验 + 信封化」，`via: 'ipc'` 由调用方区分：
   //     通道传 'ipc'，主进程传 'main'。审计里能看出提案是谁发起的。
-  function proposeInternal(raw, via) {
+  function proposeInternal(raw, via, source) {
     const src = via === 'main' ? 'main' : 'ipc';
+    // 🔴 D-17：来源由**主进程侧**决定，经独立参数传入（不读 raw）。
+    //   通道来的（渲染端）永远只能是 'user'；只有主进程建案时才能给 'selfNote'。
+    //   ⚠️ 这里不做白名单校验（createActionProposal 内已兜底），
+    //     但**必须只认这两个值** —— 未知值一律按 'user' 传下去。
+    const proposalSource = src === 'main' && source === 'selfNote' ? 'selfNote' : 'user';
     const evaluated = evaluateProposal(raw);
     if (!evaluated.ok) {
       // 拒绝也要留痕 —— 审计的价值一半在这里。
@@ -376,7 +381,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     try {
       // 🔴 D-9：动机作为**独立第二参数**传入，刻意不进 raw。
       //   raw 是渲染端 payload，混进去就等于让她自报动机。
-      proposal = createActionProposal(raw, resolveIntentMotive());
+      // 🔴 D-17：来源作为**独立第三参数**传入，理由同上 ——
+      //   渲染端能自报来源，就等于能给自己的提案免确认。
+      proposal = createActionProposal(raw, resolveIntentMotive(), proposalSource);
     } catch (err) {
       auditLog.append({
         channel: 'agent:propose-action',
@@ -403,7 +410,11 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       intentSources: proposal.intentSources,
       intentKind: proposal.intentKind,
       intentOrigin: proposal.intentOrigin,
-      via: 'ipc',
+      // 🔴 D-17：建案侧也记来源，便于事后核对「这条是她自发的还是用户要的」。
+      //   ⚠️ 同时修掉一个 D-10 留下的笔误：这里原写死 `via: 'ipc'`，
+      //      导致**主进程建案也被记成通道来的** —— src 才是真实来源。
+      proposalSource: proposal.proposalSource,
+      via: src,
     });
 
     // 建案通道：只建案，绝不执行。D-1 时这里刻意不接执行器，
@@ -532,8 +543,15 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //
   //   content 只能从这一层传入（执行器内部不接受对象，只接受字符串），
   //   路径**永远取自提案**，绝不信调用方传的路径 —— 否则 scope 白名单形同虚设。
-  ipcGuard.handle('agent:execute', guard((event, raw) => {
-    assertByHandler(event);
+  // 🔴 D-17：把执行体抽成 `executeInternal`，**通道与主进程自动执行共用这一份**。
+  //   为什么抽（与 D-10 抽 proposeInternal 同一理由）：
+  //   自发愿望（selfNote）没有卡片可点 ⇒ 主进程要自己触发执行；
+  //   若它另写一遍「取暂存内容 → 调执行器 → 触发 hook」，就出现两套执行路径，
+  //   而**闸门判定、审计、hook 必须单点** —— 两套迟早漂移，漂移的那侧就是漏洞。
+  //
+  //   ⚠️ 通道外壳只多一件事：`assertByHandler(event)` 身份校验。
+  //     主进程侧不需要它（调用方不是渲染端），但闸门 1~5 一个不少。
+  function executeInternal(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return fail('INVALID_INPUT');
     }
@@ -600,6 +618,12 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     }
 
     return result;
+  }
+
+  // 通道外壳：只做身份校验，执行体与主进程自动执行共用 executeInternal。
+  ipcGuard.handle('agent:execute', guard((event, raw) => {
+    assertByHandler(event);
+    return executeInternal(raw);
   }));
 
   // 7. 审计读取（脱敏由 AuditLog 保证；此处只做条数上限，避免一次拉爆内存）
@@ -626,7 +650,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //
   //   兼容性：旧调用方只判真假（`if (!registerAgentIpc(...))`），
   //   对象恒为 truthy，行为不变。
-  return { ok: true, evaluateProposal, proposeInternal };
+  return { ok: true, evaluateProposal, proposeInternal, executeInternal };
 }
 
 module.exports = { registerAgentIpc, AGENT_CHANNELS };
