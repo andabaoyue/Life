@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "hypothesisId": "H000-template",
+  "title": "假说标题",
+  "formalHypothesis": "实验假说的形式化清晰表述",
+  "nullHypothesis": "H0: 零假说表述，明确无显著差异情况",
+  "falsificationCriteria": "明确的证伪判据与观测差值门限（注：Phase 0 仅定义数据格式与原始差值，Phase 1+ 开展正式推断统计）",
+  "independentVariables": [
+    "自变量1"
+  ],
+  "dependentVariables": [
+    "因变量1"
+  ],
+  "baselineControlRequirements": "基线对照组控制要求",
+  "counterObservations": [
+    "需警惕的反向观测与系统偏差"
+  ]
+}

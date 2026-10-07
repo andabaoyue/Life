@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Environment and sensitive keys
+.env
+.env.*
+*.key
+*.pem
+*.secret
+credentials/
+secrets/
+
+# Runtime and persistent user state (stored in %APPDATA% by design, protected if placed locally)
+experiences.jsonl
+*.jsonl
+subject-state.json
+self-ledger.json
+memory.json
+wardrobe.json
+stats.json
+life-config.json
+life-key
+gpt-girl-config.json
+gpt-girl-key
+*.bak
+
+# Logs and temp files
+logs/
+*.log
+temp/
+tmp/
+coverage/
+dist/
+build/
+.cache/
+*.zip
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# WorkBuddy local workspace (audit evidence, cleanup scripts, memory) — never belongs in the repo
+.workbuddy/
+.npmcache/
+
+# Scratch reports / prompts produced during review rounds
+_*.md
+_parse.js
+_dshfind.html

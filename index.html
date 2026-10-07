@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- SEC-02: CSP 第二层浏览器级边界。script-src 严格 'self'（无 unsafe-inline/无远程）；
+     style-src 保留 'unsafe-inline' 仅因现存行内 style 属性；img data:/blob: 供动态图层。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none';">
+<title>Life</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="stage">
+
+    <!-- 衣橱（v1.0 自设置独立、改名「衣橱」）：设置同级满幅面板 -->
+    <div id="wardrobe" class="hidden">
+      <div class="p-title" id="wardrobeTitle">衣橱</div>
+      <div id="wdCurrent" class="wd-current"></div>
+      <div id="wdPresets" class="wd-presets"></div>
+      <!-- 智能成套建议条（v1.0 UX-02b）：只建议不强制 -->
+      <div id="wdSuggest" class="hint hidden"><span id="wdSuggestText"></span><button id="wdSuggestBtn">一键成套</button></div>
+      <div id="wdSlots" class="wd-slots"></div>
+      <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
+      <div class="hint panel-hint">按 ESC 或右键空白处即可关闭</div>
+    </div>
+
+    <!-- Agent 用户确认卡片（v1.0 D-3 第四道闸门）：
+         🔒 默认 hidden —— 没有待确认提案时绝不出现。桌宠常驻桌面，
+         凭空弹出的确认框会被用户当系统弹窗闭眼点【授权】，那道闸门就白设了。
+         数据字段用 data-agent-field 标记，由 ui-agent-confirm.js 填充。 -->
+    <div id="agentConfirm" class="hidden" role="dialog" aria-hidden="true" aria-label="操作确认">
+      <div class="ac-title" data-agent-field="capability">—</div>
+      <div class="ac-danger" data-agent-field="danger">—</div>
+      <div class="ac-row"><span class="ac-key">目标</span><span class="ac-val" data-agent-field="scope">—</span></div>
+      <div class="ac-row"><span class="ac-key">理由</span><span class="ac-val" data-agent-field="reason">—</span></div>
+      <div class="ac-row"><span class="ac-key">预算</span><span class="ac-val" data-agent-field="budget">—</span></div>
+      <div class="ac-warn hint" data-agent-field="warn"></div>
+      <div class="ac-actions" data-agent-actions></div>
+    </div>
+
+    <!-- 设置 / 统计面板 -->
+<div id="panel" class="hidden">
+      <div class="p-title">设置</div>
+      <!-- 两栏布局（v1.0 用户设计）：左栏四区点击切换 + 右侧详情；用量沉于「连接与模型」底部 -->
+      <div class="panel-body">
+        <div class="panel-nav">
+          <div class="pnav-item on" data-sec="conn" id="secConn">连接</div>
+          <div class="pnav-item" data-sec="memory" id="secMemory">记忆</div>
+          <div class="pnav-item" data-sec="timezone" id="secTimezone">时区</div>
+          <div class="pnav-item danger" data-sec="danger" id="secDanger">危险区</div>
+        </div>
+        <div class="panel-content">
+          <!-- ① 连接与模型 -->
+          <div class="psec on" data-sec="conn">
+            <!-- 快速连接（v1.0 方案 A：分组卡 + 两列栅格，分组要狠） -->
+            <div class="fgroup">
+              <div class="fg-title">快速连接</div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>API Key</label>
+                  <div class="row">
+                    <input id="keyInput" type="password" placeholder="sk-..." spellcheck="false">
+                  </div>
+                </div>
+                <div class="fg-cell fg-btn-cell"><label>&nbsp;</label>
+                  <div class="row"><button id="keySave" class="btn-primary">保存</button></div>
+                </div>
+              </div>
+              <div class="hint" id="keyState">未配置 Key — 填一下才能对话</div>
+            </div>
+
+            <!-- 连接（0.9.8 Z3：Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
+            <div class="fgroup">
+              <div class="fg-title">高级</div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>连接列表</label>
+                  <div class="row"><select id="connList"></select></div>
+                </div>
+                <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
+                <div class="fg-cell"><label id="presetLabel">服务商预设</label>
+                  <div class="row">
+                    <select id="connPresetSelect">
+                      <option value="custom">CUSTOM</option>
+                      <option value="deepseek">DEEPSEEK</option>
+                      <option value="mimo">MIMO</option>
+                      <option value="gpt">GPT</option>
+                      <option value="claude">CLAUDE</option>
+                      <option value="gemini">GEMINI</option>
+                      <option value="glm">GLM</option>
+                      <option value="kimi">KIMI</option>
+                      <option value="qwen">QWEN</option>
+                      <option value="doubao">DOUBAO</option>
+                      <option value="siliconflow">SILICONFLOW</option>
+                      <option value="groq">GROQ</option>
+                      <option value="mistral">MISTRAL</option>
+                      <option value="openrouter">OPENROUTER</option>
+                      <option value="ernie">ERNIE</option>
+                      <option value="spark">SPARK</option>
+                      <option value="local">LOCAL</option>
+                      <option value="mimo-token-plan" hidden>MIMO (TOKEN PLAN)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="row"><span class="hint" id="connActive"></span><div class="hint" id="presetHint"></div></div>
+              <label>连接名称</label>
+              <div class="row"><input id="connName" type="text" placeholder="给它起个名（比如：家用 / 公司）" spellcheck="false"></div>
+              <div class="fg-row">
+                <div class="fg-cell"><label>Provider Identity</label>
+                  <div class="row">
+                    <select id="connProvider">
+                      <option value="deepseek">DeepSeek</option>
+                      <option value="local">Local</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="fg-cell"><label>Protocol</label>
+                  <div class="row">
+                    <select id="connProtocol">
+                      <option value="openai-compatible">OpenAI-compatible</option>
+                      <option value="anthropic-native">Anthropic-native（未实现）</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            
+              <div class="fg-row">
+                <div class="fg-cell"><label>API Key</label>
+                  <div class="row"><input id="connKey" type="password" placeholder="仅写入，不回显" spellcheck="false"></div>
+                </div>
+                <div class="fg-cell"><label>Endpoint</label>
+                  <div class="row"><input id="connUrl" type="text" placeholder="https://..." spellcheck="false"></div>
+                </div>
+              </div>
+              <label>Model</label>
+              <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
+              <div class="row btns">
+                <button id="connNew" class="btn-ghost">新建</button>
+                <button id="connSave" class="btn-primary">保存</button>
+                <button id="connTest" class="btn-ghost">测试连接</button>
+                <button id="connActivate" class="btn-ghost">设为当前</button>
+              </div>
+              <div class="hint" id="connState">—</div>
+              <div class="row btns"><button id="openCfg" class="btn-ghost">打开配置文件</button></div>
+            </div>
+
+            <!-- 用量（拍板：排在连接区最下面） -->
+            <div class="fgroup">
+              <div class="fg-title">用量</div>
+              <div id="stats" class="stats">—</div>
+            </div>
+          </div>
+
+          <!-- ③ 记忆（v1.0 拆分：记忆与时区分家） -->
+          <div class="psec" data-sec="memory">
+            <div class="p-title">我的记忆</div>
+            <div id="memList" class="memlist">—</div>
+          </div>
+
+          <!-- ③b 时区（v1.0 拆分） -->
+          <div class="psec" data-sec="timezone">
+            <!-- 国际化与物理时空（v1.0 笔 6 / UX-05）：时区创世锁定，只读展示 -->
+            <div class="p-title" id="i18nTitle">国际化与物理时空</div>
+            <div class="row"><span id="langLabel">界面语言</span>
+              <select id="langSelect"><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
+            <!-- 时空罗盘（v1.0 拍板 c）：她的物理坐标系 -->
+            <div class="fgroup">
+              <div class="fg-title" id="tzCompassTitle">时空罗盘</div>
+              <div class="tz-row"><span class="tz-k" id="tzKBirth">创世时刻</span><span class="tz-v" id="tzBirth">—</span></div>
+              <div class="tz-row"><span class="tz-k" id="tzKZone">创世时区</span><span class="tz-v" id="tzZone">—</span></div>
+              <div class="tz-row"><span class="tz-k" id="tzKUptime">陪伴时长</span><span class="tz-v" id="tzUptime">—</span></div>
+              <div class="tz-row"><span class="tz-k" id="tzKSync">时空同步</span><span class="tz-v" id="tzSync">—</span></div>
+            </div>
+            <div class="hint" id="tzNote">创世已锚定，不可修改</div>
+          </div>
+
+          <!-- ④ 危险区（操作不可逆，与常规操作彻底隔离） -->
+          <div class="psec danger-zone" data-sec="danger">
+            <div class="hint danger-hint" id="dangerHint">以下操作不可逆，请确认后再动手</div>
+            <div class="row btns">
+              <button id="connDelete" class="btn-danger">删除当前连接</button>
+              <button id="resetSelf" class="btn-danger">重置成长档案</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="hint panel-hint" id="panelCloseHint">按 ESC 或右键空白处即可关闭</div>
+      <div class="panel-brand-note" style="text-align: center; font-size: 10px; color: #505868; padding: 4px 0 6px; user-select: none;">Life — Chulan · © 2026 andabaoyue</div>
+    </div>
+
+
+    <!-- 实验观测与可复盘工具面板 (v0.9.5) -->
+    <div id="researchPanel" class="hidden">
+      <div id="researchHeader">
+        <span id="researchTitle">实验观测与复盘工具</span>
+        <div class="r-actions">
+          <button id="rRefreshBtn" class="r-btn-sm" title="手动刷新快照">刷新快照</button>
+          <button id="rCloseBtn" class="r-btn-close" title="关闭">×</button>
+        </div>
+      </div>
+      <div id="researchTabs">
+        <button class="r-tab active" data-rtab="state">主体状态</button>
+        <button class="r-tab" data-rtab="dreams">梦境</button>
+        <button class="r-tab" data-rtab="provenance">归因与 EOI</button>
+        <button class="r-tab" data-rtab="replay">Replay 实验室</button>
+        <button class="r-tab" data-rtab="windows">Window 浏览器</button>
+        <button class="r-tab" data-rtab="export">数据导出</button>
+      </div>
+      <div id="researchBody">
+        <!-- 1. 主体状态面板 -->
+        <!-- 梦境（v1.0 大分区：与主体状态同级）——会变得很多很多，排版向记忆看齐 -->
+        <div id="rPaneDreams" class="r-pane hidden">
+          <div class="r-section-title">梦境（只读 · 离线重组，非亲历）</div>
+          <div id="dreamList" class="r-table-container">—</div>
+        </div>
+
+        <div id="rPaneState" class="r-pane">
+          <div class="r-section-title">初澜主体状态 (Trait Bounds: [-999, 999])</div>
+          <div id="rTraitsList" class="r-traits-grid"></div>
+          <div class="r-section-title" style="margin-top: 8px;">生理潮汐（只读）</div>
+          <div id="rVitalsList" class="r-table-container">—</div>
+          <div class="r-section-title" style="margin-top: 8px;">发育景观（只读）</div>
+          <div id="rDevList" class="r-table-container">—</div>
+          <div class="r-section-title" style="margin-top: 8px;">认知张力（只读）</div>
+          <div id="rCogList" class="r-table-container">—</div>
+          <div class="r-section-title" style="margin-top: 8px;">关系与存在（只读）</div>
+          <div id="rRelList" class="r-table-container">—</div>
+          <div class="r-section-title" style="margin-top: 8px;">她的词汇（只读）</div>
+          <div id="rLexiconList" class="r-table-container">—</div>
+          <div class="r-section-title" style="margin-top: 8px;">预期账本（只读）</div>
+          <div id="rExpectList" class="r-table-container">—</div>
+          <div class="r-section-title" style="margin-top: 8px;">特质跃迁与演化历史</div>
+          <div id="rTraitHistory" class="r-table-container">—</div>
+        </div>
+
+        <!-- 2. Window 浏览器面板 -->
+        <div id="rPaneWindows" class="r-pane hidden">
+          <div class="r-toolbar">
+            <label>选择窗口：</label>
+            <select id="rWindowSelect"></select>
+            <span id="rWindowIntegrityBadge" class="r-badge badge-certified">CERTIFIED</span>
+            <span id="rWindowReplayBadge" class="r-badge badge-certified">COMPLETE</span>
+          </div>
+          <div id="rWindowSummaryCard" class="r-card">—</div>
+          <div class="r-seg-tabs" id="rSegTabs">
+            <button class="r-seg-btn active" data-seg="1">分段 1</button>
+            <button class="r-seg-btn" data-seg="2">分段 2</button>
+            <button class="r-seg-btn" data-seg="3">分段 3</button>
+            <button class="r-seg-btn" data-seg="4">分段 4</button>
+            <button class="r-seg-btn" data-seg="5">分段 5</button>
+          </div>
+          <div id="rRoundsList" class="r-rounds-list">—</div>
+        </div>
+
+        <!-- 3. 归因与 EOI 溯源面板 -->
+        <div id="rPaneProvenance" class="r-pane hidden">
+          <div class="r-subtabs">
+            <button class="r-subtab active" data-subtab="prov">StateChange 归因溯源</button>
+            <button class="r-subtab" data-subtab="eoi">EOI 事实三层追溯</button>
+            <button class="r-subtab" data-subtab="rejected">被拒证据审计</button>
+          </div>
+          <div id="rSubPaneProv" class="r-subpane">
+            <div class="r-toolbar">
+              <input id="rScInput" placeholder="输入 StateChange ID (如 sc-000001)...">
+              <button id="rTraceBtn" class="r-btn-sm">开始溯源</button>
+            </div>
+            <div id="rProvResult" class="r-tree-view">请选择或输入 StateChange ID 进行溯源反查</div>
+          </div>
+          <div id="rSubPaneEoi" class="r-subpane hidden">
+            <div class="r-toolbar">
+              <input id="rEoiInput" placeholder="输入 ID (如 int-000001 或 obs-000001)...">
+              <button id="rTraceEoiBtn" class="r-btn-sm">EOI 追溯</button>
+            </div>
+            <div id="rEoiResult" class="r-tree-view">Interpretation → Observation → Event → Message 结构追溯</div>
+          </div>
+          <div id="rSubPaneRejected" class="r-subpane hidden">
+            <div id="rRejectedList" class="r-table-container">—</div>
+          </div>
+        </div>
+
+        <!-- 4. Replay 实验室面板 -->
+        <div id="rPaneReplay" class="r-pane hidden">
+          <div class="r-section-title">确定性离线 Replay (Fail-Stop 熔断保护)</div>
+          <div class="r-replay-controls">
+            <div class="r-row">
+              <button id="rReplayAllBtn" class="r-btn-action">完整重演 (Replay All)</button>
+              <button id="rReplayCancelBtn" class="r-btn-danger" disabled>取消重演</button>
+            </div>
+            <div class="r-row">
+              <input id="rReplayUntilWin" type="number" placeholder="重演至指定 Window No" min="1">
+              <button id="rReplayUntilBtn" class="r-btn-sm">指定窗口重演</button>
+            </div>
+          </div>
+          <div class="r-progress-box">
+            <div class="r-progress-bar">
+              <div id="rProgressBarFill" class="r-progress-fill" style="width: 0%;"></div>
+            </div>
+            <div class="r-progress-meta">
+              <span id="rProgressStage">就绪</span>
+              <span id="rProgressPercent">0%</span>
+            </div>
+          </div>
+          <div id="rReplayResultCard" class="r-card">—</div>
+        </div>
+
+        <!-- 5. 数据导出面板 -->
+        <div id="rPaneExport" class="r-pane hidden">
+          <div class="r-section-title">实验观测与复盘数据导出（严格只读）</div>
+          <div class="fgroup">
+            <div class="fg-title">状态类导出</div>
+            <div class="r-export-btns">
+              <button id="rExpTrajJson" class="r-btn-sm">状态轨迹 (JSON)</button>
+              <button id="rExpTrajCsv" class="r-btn-sm">状态轨迹 (CSV)</button>
+              <button id="rExpScCsv" class="r-btn-sm">状态跃迁 (CSV)</button>
+            </div>
+          </div>
+          <div class="fgroup">
+            <div class="fg-title">证据与打包</div>
+            <div class="r-export-btns">
+              <button id="rExpEvCsv" class="r-btn-sm">证据清单 (CSV)</button>
+              <button id="rExpFullBundle" class="r-btn-action">完整实验包 (Bundle)</button>
+            </div>
+          </div>
+          <div class="fgroup">
+            <div class="r-preview-head">
+              <span id="rExportMeta" class="r-preview-meta">尚未生成</span>
+              <span class="r-preview-ops"><button id="rExportCopy" class="r-btn-sm">复制内容</button>
+              <button id="rExportSave" class="r-btn-sm">保存文件</button></span>
+            </div>
+            <textarea id="rExportOutput" class="r-export-textarea" readonly spellcheck="false" placeholder="导出数据预览将在此处生成..."></textarea>
+          </div>
+        </div>
+      </div>
+      <div id="researchFooter">
+        <span id="rFooterStatus">Snapshot: 就绪 | 观察层只读受控</span>
+        <span id="rFooterHashes">SHA-256: 校验中</span>
+      </div>
+    </div>
+
+    <!-- 桌宠本体 -->
+    <div id="pet">
+      <div id="bubble" class="hidden"></div>
+      <div id="figure">
+        <!-- 兜底单图：衣柜图层不可用时显示它（CSS 按 .layered 切换）。
+             图层 <img> 由 pet.js 依 wardrobe.layers() 动态创建，全部共用
+             760x1000 画布锚点，绝对定位叠在 base 上。 -->
+        <img id="sprite" src="assets/pet.png" alt="初澜" draggable="false">
+        <div id="layers"></div>
+      </div>
+      <div id="shadow"></div>
+    </div>
+
+    <!-- v1.0 方案二：对话已迁独立对话窗（chat.html），主窗只留她的头顶短气泡 #bubble -->
+
+
+  </div>
+
+  <div id="menu" class="hidden">
+    <div data-act="talk">对话</div>
+      <div data-act="wardrobe">衣橱</div>
+    <div data-act="panel">设置</div>
+    <div data-act="research">个体观测</div>
+    <div data-act="pin" id="menuPin">固定在最前</div>
+    <div data-act="outline">切换描边</div>
+    <div data-act="quit">退出</div>
+  </div>
+
+  <script src="src/animation-state.js"></script>
+  <script src="src/render-adapter.js"></script>
+  <script src="src/animation-controller.js"></script>
+  <script src="src/behavior-scheduler.js"></script>
+    <script src="ui-i18n.js"></script>
+  <script src="ui-chat-store.js"></script>
+  <script src="ui-chat-render.js"></script>
+  <script src="ui-provider-presets.js"></script>
+  <script src="ui-outfit-complete.js"></script>
+  <script src="ui-agent-confirm.js"></script>
+  <script src="pet.js"></script>
+</body>
+</html>
