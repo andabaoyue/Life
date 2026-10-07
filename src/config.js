@@ -78,6 +78,19 @@ const DEFAULTS = {
   //      （否则普通问候先触发、自发愿望永远排不上）。
   agentIdleMinutes: 30,
   agentSelfNoteIdleMinutes: 120,
+
+  // 🔴 丙（2026-10-07）：长期记忆「渐褪」的投影参数。
+  //   背景（实测真实数据）：开启记忆动力学后，5 段小结**全部**被压成 63 字，
+  //   其中一段原文 1844 字 —— 因为 activeThreshold=0.60 恰好卡在初始强度
+  //   (baseStrength 0.50 + salienceBonus 0.10 = 0.60) 上，过 1 个窗口必跌破。
+  //   结果不是「近的清晰、远的模糊」，而是「除最新一段外全成断句碎片」。
+  //
+  //   ⚠️ 这两个键**只在 experimentModules.memoryDynamics 为真时生效**；
+  //      基线模式下 notruncate、不剔除，既有行为一字不变。
+  //   ⚠️ 默认值与 DEFAULT_DYNAMICS_CONFIG 保持一致（0.60 / 60），
+  //      **默认值必须稳** —— 行为变更走用户显式配置，不靠改默认值偷袭。
+  memoryActiveThreshold: 0.60,
+  memoryFadingMaxChars: 60,
   motionSpeed: 2,
   motionTickMs: 50,
   motionMargin: 20,
@@ -124,6 +137,14 @@ function finiteInt(v, fallback, min, max) {
 function finiteNonNegative(v, fallback) {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/** 🔴 丙：有界浮点数（与 finiteInt 同款语义，但不要求是整数）。
+ *  用于 activeThreshold 这类 0~1 之间的小数配置 ——
+ *  finiteInt 会把 0.4 判成非整数而回落默认值，用它是个隐蔽的错。 */
+function finiteNumber(v, fallback, min, max) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
 
 /* 手改配置仍然支持，但坏类型不能直接流入 Brain。 */
@@ -186,6 +207,9 @@ function sanitize(raw = {}) {
     // D-17：上下界防手滑（1 分钟 ~ 24 小时）。越界即回落默认，不静默接受。
     agentIdleMinutes: finiteInt(raw.agentIdleMinutes, DEFAULTS.agentIdleMinutes, 1, 1440),
     agentSelfNoteIdleMinutes: finiteInt(raw.agentSelfNoteIdleMinutes, DEFAULTS.agentSelfNoteIdleMinutes, 1, 1440),
+    // 丙：强度门限 0~1；渐褪截断字数 20~4000（下界保证「能读出一件事」，上界防它退化成全文投影）
+    memoryActiveThreshold: finiteNumber(raw.memoryActiveThreshold, DEFAULTS.memoryActiveThreshold, 0.05, 0.99),
+    memoryFadingMaxChars: finiteInt(raw.memoryFadingMaxChars, DEFAULTS.memoryFadingMaxChars, 20, 4000),
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
     motionMargin: finiteInt(raw.motionMargin, DEFAULTS.motionMargin, 0, 200),

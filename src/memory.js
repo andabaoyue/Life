@@ -129,8 +129,14 @@ class Memory {
     if (dynamicsEnabled) {
       const { EngramTraceManager } = require('./memory-dynamics');
       this.engramManager = new EngramTraceManager(opts.engramConfig);
+      // 🔴 丙：FADING 截断字数也要能被配置覆盖。
+      //   生效值取「管理器合并后的 config」（构造器已做 {...DEFAULT, ...config}），
+      //   所以这里读 engramManager.config 而不是 opts —— 单一真源，不会两处漂移。
+      this.fadingMaxChars = this.engramManager.config.fadingMaxChars;
     } else {
       this.engramManager = null;
+      // 无动力学时不截断（基线模式：全文投影，既有行为不变）
+      this.fadingMaxChars = null;
     }
 
     this.load();
@@ -392,6 +398,40 @@ class Memory {
     return this.data.windows.reduce((s, w) => s + estimateTokens(w.text), 0);
   }
 
+  /**
+   * 🔴 丙（2026-10-07）：**她实际看得到的**长期记忆 token 数。
+   *
+   * ## 为什么不能直接用 memoryTokens()
+   *   `memoryTokens()` 统计 `data.windows` 的**全部原文**。但开启动力学后：
+   *     · DORMANT 段**整段移出** systemText（她看不到）
+   *     · FADING 段只投影 `fadingMaxChars` 字
+   *   于是「看不到的段落仍在挤占预算」—— 预算账目与她的视野不一致。
+   *
+   * ## 后果（实测口径）
+   *   真实数据：原文合计 5152 tok，但按可见口径只有约 3000 出头。
+   *   继续用全原文口径 ⇒ **虚高计费** ⇒ 过早触发不可逆的 applyMerge。
+   *
+   * ## 判据与渲染严格同源
+   *   ⚠️ 这里的「可见」必须与 `systemText()` 的投影规则**逐条一致**，
+   *      否则两份口径迟早漂移（那正是本仓反复踩过的坑）。
+   *      对应关系：dormant → 0；fading → min(len, fadingMaxChars)+3（省略号）；其余 → 全文。
+   *      无动力学（基线）时**不截断也不剔除** ⇒ 与 memoryTokens() 等价，既有行为不变。
+   */
+  visibleTokens() {
+    if (!this.engramManager) return this.memoryTokens();
+    const dormantNos = new Set(this.engramManager.getDormantTraces().map((t) => t.sourceWindowNo));
+    const fadingNos = new Set(this.engramManager.getFadingTraces().map((t) => t.sourceWindowNo));
+    const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
+    return this.data.windows.reduce((sum, w) => {
+      if (dormantNos.has(w.no)) return sum;                 // 整段移出视野
+      const full = String(w.text || '');
+      if (fadingNos.has(w.no) && full.length > cap) {
+        return sum + estimateTokens(full.slice(0, cap) + '...');
+      }
+      return sum + estimateTokens(full);
+    }, 0);
+  }
+
   contextTokens() {
     // 穿着块也在 system 里，统计必须算上，否则面板上的上下文数字偏低
     return estimateTokens(this.persona) + estimateTokens(this.wardrobe || '')
@@ -407,9 +447,15 @@ class Memory {
         && this.historyTokens() > this.windowMaxTokens;
   }
 
-  /** 长期记忆是否超预算 */
+  /** 长期记忆是否超预算。
+   *
+   *  🔴 丙：判据改用 `visibleTokens()`（她实际看得到的部分）——
+   *    理由见 visibleTokens() 的注释：预算的物理目的是「防 prompt 过长」，
+   *    而看不到的段（DORMANT）根本不进 prompt。用全原文口径会导致
+   *    **虚高计费 + 过早触发不可逆合并**。
+   *  ⚠️ 无动力学时 visibleTokens() 与 memoryTokens() 完全等价，基线行为不变。 */
   needsMemoryMerge() {
-    return this.memoryTokens() > this.memoryCap && this.data.windows.length > 1;
+    return this.visibleTokens() > this.memoryCap && this.data.windows.length > 1;
   }
 
   /**
@@ -644,8 +690,11 @@ class Memory {
           .map(w => {
             const isFading = this.engramManager && fadingNos.has(w.no);
             if (isFading) {
-              const tag = w.early ? '【早期（渐褪）】' : `【第${w.no}段（渐褪）】`;
-              const text = (w.text && w.text.length > 60) ? (w.text.slice(0, 60) + '...') : (w.text || '');
+                      const tag = w.early ? '【早期（渐褪）】' : `【第${w.no}段（渐褪）】`;
+              // 🔴 丙：截断长度可配（原先硬编码 60 —— 实测连一句完整的话都放不下，
+              //   读起来是断句碎片而不是「渐褪」）。生效值来自 engramManager.config。
+              const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
+              const text = (w.text && w.text.length > cap) ? (w.text.slice(0, cap) + '...') : (w.text || '');
               return tag + text;
             }
             const tag = w.early ? '【早期】' : `【第${w.no}段】`;
@@ -1080,9 +1129,24 @@ class Memory {
   planMerge() {
     const budget = this.memoryCap * 0.6;
     const ws = this.data.windows;
+    // 🔴 丙：与 needsMemoryMerge 用**同一口径**（可见 token）。
+    //   两处口径若不一致，会出现「判定超了但这里算不出该合谁」或反之 ——
+    //   而 applyMerge 不可逆，这种漂移代价很高。
+    const dormantNos = this.engramManager
+      ? new Set(this.engramManager.getDormantTraces().map((t) => t.sourceWindowNo)) : null;
+    const fadingNos = this.engramManager
+      ? new Set(this.engramManager.getFadingTraces().map((t) => t.sourceWindowNo)) : null;
+    const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
+    const seeTokens = (w) => {
+      const full = String(w.text || '');
+      if (!this.engramManager) return estimateTokens(full);
+      if (dormantNos.has(w.no)) return 0;
+      if (fadingNos.has(w.no) && full.length > cap) return estimateTokens(full.slice(0, cap) + '...');
+      return estimateTokens(full);
+    };
     let acc = 0, split = 0;
     for (let i = ws.length - 1; i >= 0; i--) {
-      acc += estimateTokens(ws[i].text);
+      acc += seeTokens(ws[i]);
       if (acc > budget) { split = i + 1; break; }
     }
     // 最新一条自己就超预算时 split 会顶到 ws.length，直接返回 null

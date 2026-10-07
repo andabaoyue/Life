@@ -193,7 +193,18 @@ class Brain {
       keepTailMessages: this.cfg.keepTailMessages,
       memoryCapTokens: this.cfg.memoryCapTokens,
       experimentModules: this.cfg.experimentModules,
-      memoryDynamics: this.cfg.experimentModules?.memoryDynamics
+      memoryDynamics: this.cfg.experimentModules?.memoryDynamics,
+      // 🔴 丙（2026-10-07）：把「渐褪」的两个参数透传给记忆动力学。
+      //   为什么需要：默认 0.60 的门限恰好等于初始强度(0.50+0.10) ——
+      //   过 1 个窗口必跌破 ⇒ 除最新一段外**全部**被截成断句碎片，没有梯度。
+      //   默认 60 字连一句完整的话都放不下。这两个值必须可配，否则
+      //   一开动力学就把她积攒的长期记忆砍成碎片。
+      //   ⚠️ EngramTraceManager 构造器做 `{...DEFAULT, ...config}`，
+      //      所以这里只传覆盖项即可；未传字段仍走 DEFAULT（默认行为不变）。
+      engramConfig: {
+        activeThreshold: this.cfg.memoryActiveThreshold,
+        fadingMaxChars: this.cfg.memoryFadingMaxChars
+      }
     });
 
     const currentWinNo = (this.memory.data && typeof this.memory.data.windowNo === 'number')
