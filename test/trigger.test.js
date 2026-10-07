@@ -134,7 +134,13 @@ h.at(IDLE_MS);
 const g1 = h.eng.evaluate();
 h.eng.commit(g1);
 h.at(IDLE_MS * 3);
-check('挂机问候说过之后不再重复（spokenDuringIdle 刹住）', h.eng.evaluate() === null);
+  // 🔵 D-15 修订：原来断言 evaluate() === null。加入 wantToLeaveSomething 后，
+  //   120 分钟时它会绕过 spokenWhenIdle 刹车（那是「留东西」不是「说话骚扰」）。
+  //   **断言的意图没变**：spokenWhenIdle 仍要刹住普通 idle 问候。
+  const brakeResult = h.eng.evaluate();
+  check('挂机问候说过之后不再重复（spokenWhenIdle 刹住）',
+    brakeResult === null || (brakeResult.selfIntent && brakeResult.selfIntent.kind === 'wantToLeaveSomething'),
+    'kind=' + (brakeResult && brakeResult.kind) + ' selfIntent=' + (brakeResult && brakeResult.selfIntent && brakeResult.selfIntent.kind));
 h.at(IDLE_MS);
 h.tracker.record('click');              // 用户回来了（物理互动）
 h.at(IDLE_MS * 3);

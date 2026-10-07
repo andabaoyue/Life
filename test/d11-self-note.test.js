@@ -146,7 +146,7 @@ console.log('--- D-11 她想留下点什么门禁 ---');
 {
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   check('❌ main.js 有 maybeAskForSelfNote（否则 content 永远无来源）',
-    mainSrc.includes('function maybeAskForSelfNote()'));
+    mainSrc.includes('function maybeAskForSelfNote('));   // 🔵 D-15：签名改为 (selfIntent)，匹配不带右括号
   check('❌ 它只在 wantToLeaveSomething 时跑（防止安静久了就写文件）',
     mainSrc.includes("intent.kind !== 'wantToLeaveSomething'"));
   check('❌ 主进程暂存内容且取用即删（重放不许重复写）',

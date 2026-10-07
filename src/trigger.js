@@ -124,7 +124,15 @@ class TriggerEngine {
 
     // 单次刹车由 tracker 持有：它同时被"用户说话了""被戳了"解除，
     // 放这边就会漏掉其中一条路径。
-    if (idleMs >= idleNeed && !tr.spokenDuringIdle) {
+    // 🔴 D-15 修断点 1（反重力复核发现）：spokenWhenIdle 刹车会把 120 分钟的
+    //   wantToLeaveSomething 意图一起锁死 —— 30 分钟那声问候之后 spokenWhenIdle=true，
+    //   到 120 分钟时这里 return null，她永远没机会留下东西。
+    //
+    //   **why bypass**：spokenWhenIdle 防的是「反复说话骚扰」，
+    //   而 wantToLeaveSomething 是「想留一件东西」——不同质。
+    //   但冷却（cooldownMs）仍然生效，不会反复触发。
+    const isSelfNote = selfIntent && selfIntent.kind === 'wantToLeaveSomething';
+    if (idleMs >= idleNeed && (!tr.spokenWhenIdle || isSelfNote)) {
       return {
         kind: 'idle', at,
         reason: '用户已经离开 ' + Math.round(idleMs / 60000) + ' 分钟',
@@ -141,7 +149,10 @@ class TriggerEngine {
     this.lastFiredAt = out.at;
     // 连戳不需要单独记账：那 5 下过了 8 秒窗口自然不再算连戳，
     // 期间想再开口由冷却挡着 —— 同串去重是它的严格子集（见文件头）。
-    if (out.kind !== 'poke' && this.tracker) this.tracker.spokenDuringIdle = true;
+    // 🔴 D-15 修断点 1 续：wantToLeaveSomething 不设 spokenWhenIdle 刹车。
+    //   理由同上：它不是「说话骚扰」，是「留东西」。冷却已控频。
+    const isSelfNote = out.selfIntent && out.selfIntent.kind === 'wantToLeaveSomething';
+    if (out.kind !== 'poke' && !isSelfNote && this.tracker) this.tracker.spokenDuringIdle = true;
   }
 }
 

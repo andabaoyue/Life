@@ -186,22 +186,29 @@ let agentBuildDeps = null;
  * ⚠️ 本函数**不 await**（调用方 void 起 promise）：她已经说完了，
  *   留下东西不该让用户多等一次 LLM 往返。
  */
-function maybeAskForSelfNote() {
+function maybeAskForSelfNote(selfIntent) {
   try {
     const deps = agentBuildDeps;
     if (!deps || !deps.agentSandbox) return;
-    const intent = brain && brain._pendingAgentIntent;
-    // 边界①：只有「想留下点什么」才走这条路
-    if (!intent || intent.kind !== 'wantToLeaveSomething') return;
-
-    void (async () => {
+    // 🔴 D-15 修断点 3（反重力复核发现）：原来读 brain._pendingAgentIntent，
+    //   但 wantToLeaveSomething 存在 trigger.selfIntent 里，两者从未接线 ⇒ intent 恒 null。
+    //   现在由调用方传入 trigger.selfIntent（自发愿望路径），不再依赖 evaluateTrigger。
+    const intent = selfIntent || (brain && brain._pendingAgentIntent);
+    if (!intent || intent.kind !== 'wantToLeaveSomething') return;    void (async () => {
       try {
         const note = await brain.askForSelfNote({ intentKind: intent.kind });
         // 边界②：她说不留 → note 为 null → 不建案。这是合法结果，不是失败。
         if (!note || !note.content) return;
 
-        const rawHint = String(intent.hint == null ? '' : intent.hint).trim();
-        if (!rawHint) return;
+        // 🔴 D-15 修断点 4（反重力复核发现）：自发愿望没有用户给的文件名，
+        //   intent.hint 是 undefined ⇒ rawHint 为空 ⇒ 直接 return，永远不建案。
+        //   现在：无文件名时生成默认名（日期 + 随机后缀防撞）。
+        let rawHint = String(intent.hint == null ? '' : intent.hint).trim();
+        if (!rawHint) {
+          const d = new Date();
+          const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+          rawHint = 'note-' + ds + '-' + Math.random().toString(36).slice(2, 6) + '.txt';
+        }
         if (path.isAbsolute(rawHint)) return;
         if (/[\\/]/.test(rawHint)) return;
         if (rawHint === '.' || rawHint === '..') return;
@@ -692,7 +699,11 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     //        远高于 idleness 两档，所以绝大部分主动搭话根本不会走到这里。
     //     3. **失败静默**。她说不出、不想留、调用出错 —— 都是 null，不建案。
     //        「她说不想留」是**合法结果**，不是错误（见 brain.askForSelfNote 判据 1）。
-    if (!proactive) maybeAskForSelfNote();
+    // 🔴 D-15 修断点 2（反重力复核发现）：原来 if (!proactive)，
+    //   把自发愿望完全排除在外（proactive=true 才是她主动开口）。
+    //   现在：proactive 时传 trigger.selfIntent；用户发消息时传 _pendingAgentIntent。
+    if (proactive) maybeAskForSelfNote(trigger && trigger.selfIntent);
+    else maybeAskForSelfNote(brain && brain._pendingAgentIntent);
 
     return { ok: true, text: res.text, state: res.state,
              wears: res.wears, wearNote: res.wearNote,
