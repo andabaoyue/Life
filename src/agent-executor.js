@@ -319,7 +319,9 @@ class ControlledAgentExecutor {
       matchedRoot: verdict.matchedRoot || null,
     }, proposal);
 
-    return { ok: true, executed: true, proposalId, result, budget: this.budget.state() };
+    // 🔴 D-24：把提案来源随执行回执带出（proposalSource 由建案侧写入、渲染端不可伪造），
+    //   供 onExecuted 判定「这是不是她自发写下的字」—— 只有自发便签有资格铸进她的自传。
+    return { ok: true, executed: true, proposalId, result, budget: this.budget.state(), proposalSource: (proposal && proposal.proposalSource) || 'user' };
   }
 
   _readFile(proposal) {

@@ -628,6 +628,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
           name: typeof r.target === 'string' ? r.target : null,
           bytes: typeof r.bytes === 'number' ? r.bytes : null,
           content: effectiveContent,
+          // 🔴 D-24：提案来源随回执带出（执行器闸门内已认定，非渲染端自报），
+          //   主进程据此只把「她自发写下的字」标为可铸自传的 selfNote。
+          proposalSource: String((result && result.proposalSource) || ''),
         });
       } catch (e) { /* 旁路：登记失败绝不能影响执行结果本身 */ }
     }

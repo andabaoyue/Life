@@ -229,6 +229,12 @@ class Memory {
           windowNo: Number.isFinite(n.windowNo) ? n.windowNo : this.data.windowNo || 1,
           at: Number.isFinite(n.at) && n.at > 0 ? n.at : null,
           drained: n.drained === true,
+          // 🔴 D-24：来源戳 / 铸造标记 / 引证 id 必须随载入保留（D-24 门禁实测抓到的洞）：
+          //   丢了 source  = 未铸的自发便签重启后永远铸不进自传（漏铸）；
+          //   丢了 engraved = 同一条便签重启后被重铸（幂等被击穿）。
+          source: n.source === 'selfNote' ? 'selfNote' : (n.source || null),
+          engraved: n.engraved === true,
+          ...(typeof n.noteId === 'string' && n.noteId ? { noteId: n.noteId } : {}),
         }))
         .slice(-SELF_NOTE_MAX_QUEUE);   // 上限同 addSelfNote：超出丢最旧
       if (this.engramManager && this.data && this.data.engrams) {
@@ -902,6 +908,13 @@ class Memory {
         windowNo: Number.isFinite(input.windowNo) ? input.windowNo : (this.data && this.data.windowNo) || 1,
         at,
         drained: false,
+        // 🔴 D-24：来源戳 + 铸造幂等标记（随 data 落盘，跨重启有效）。
+        //   source === 'selfNote'：她**自发**留下的字（提案来源由主进程从执行回执带下来，
+        //     渲染端无法伪造）—— 只有它有资格铸进自传经历档案（用户拍板：受托任务不算）。
+        //   engraved === true：已铸进 experiences.jsonl，终身只铸一次。
+        //   ⚠️ 旧数据（D-24 之前）没有 source 字段 ⇒ 一律不铸（宁缺毋滥，不猜来源）。
+        source: input.source === 'selfNote' ? 'selfNote' : (input.source || null),
+        engraved: false,
       });
       // 🔴 D-20：立即落盘 —— 不能等 3 秒防抖（进程可能在这之前退出）。
       this.save(true);
@@ -949,6 +962,48 @@ class Memory {
   pendingSelfNotes() {
     if (!Array.isArray(this.data.selfNotes)) return [];
     return this.data.selfNotes.filter((n) => n && n.drained !== true);
+  }
+
+  /**
+   * 🔴 D-24（A 段取用口）：返回「她自发写下、尚未铸进经历档案」的条目。
+   *
+   *   判据三条，缺一不铸：
+   *     1. source === 'selfNote' —— 只铸她的自发之举（受托写下的任务产物不算她的经历）；
+   *     2. engraved !== true    —— 幂等：同一条便签终身只铸一次（含跨重启）；
+   *     3. content 非空字符串   —— 空内容不是经历（沿用 addSelfNote 的拒收口径）。
+   *   ⚠️ 不要求 drained：「她写下」这个事实与「她看到」无关，
+   *      关窗时刻如实铸造，不因她还没开口就漏掉她真实做过的事。
+   */
+  selfNotesToEngrave() {
+    if (!Array.isArray(this.data.selfNotes)) return [];
+    return this.data.selfNotes.filter((n) => n
+      && n.engraved !== true
+      && n.source === 'selfNote'
+      && typeof n.content === 'string' && n.content.trim());
+  }
+
+  /**
+   * 🔴 D-24（A 段落账口）：归档**确认写入成功之后**才许置 engraved 标记。
+   *
+   *   ⚠️ 顺序不可反（防坑锦囊 2）：若先置标记再归档，归档失败时这条便签
+   *      就会被误判为「已铸」而永远漏铸；反之最坏结果只是重试时再铸一次，
+   *      而铸入动作本身由 experiences.jsonl 的哈希链 + appendRecord 单点保证。
+   *   @param {Array} entries 由 selfNotesToEngrave() 取出的同一批对象（引用相同）
+   *   @param {Array} noteIds 与 entries 一一对应的引证 id（写回记录，供证据链溯源）
+   */
+  markSelfNotesEngraved(entries, noteIds) {
+    if (!Array.isArray(entries) || !entries.length) return 0;
+    let n = 0;
+    for (let i = 0; i < entries.length; i++) {
+      const item = entries[i];
+      if (!item || item.engraved === true) continue;
+      item.engraved = true;
+      if (Array.isArray(noteIds) && noteIds[i]) item.noteId = String(noteIds[i]);
+      n++;
+    }
+    // 标记必须立即落盘（与 addSelfNote 同款理由：防抖窗口内进程可能退出）
+    if (n > 0) this.save(true);
+    return n;
   }
 
   /**

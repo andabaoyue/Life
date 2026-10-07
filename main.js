@@ -1401,7 +1401,8 @@ app.whenReady().then(() => {
     try {
       if (!brain || !brain.memory || typeof brain.memory.addSelfNote !== 'function') return;
       if (!info || typeof info.content !== 'string' || !info.content.trim()) return;
-      const ok = brain.memory.addSelfNote({ content: info.content, name: info.name });
+      // 🔴 D-24：来源戳一并登记（'selfNote' = 她自发写下的字，将来才可能铸进她的自传）
+      const ok = brain.memory.addSelfNote({ content: info.content, name: info.name, source: info.proposalSource });
       if (ok) console.log('[Agent] 她写过的东西已登记，下次开口时她读得到:', String(info.name || '').slice(0, 60));
     } catch (err) {
       // 纪律②：登记失败绝不能影响执行结果本身。

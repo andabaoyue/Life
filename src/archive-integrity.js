@@ -55,7 +55,12 @@ const VALID_RECORD_TYPES = new Set([
   'self_ledger_evicted',
   'subject_dream',
   'memory_dynamics_snapshot',
-  'internal_regulation_snapshot'
+  'internal_regulation_snapshot',
+  // 🔴 D-24 便签入传：她自发写下的字铸进自传（A 段），及其派生的特质微调记录（C 段）。
+  //   self_note        —— 自发留痕事实本体（引证锚点，与消息同级的真实来源）
+  //   self_note_state  —— 便签证据经核验后的特质增量（payload.verifiedEvidence 被 Replay 对称消费）
+  'self_note',
+  'self_note_state'
 ]);
 
 // 完整性状态枚举
@@ -375,6 +380,13 @@ function validateRecordRelationships(records) {
     const p = (rec && rec.payload) || {};
     if (rec.recordType === 'event') addEvent(p);
     if (Array.isArray(p.events)) p.events.forEach(addEvent);
+    // 🔴 D-24：自发留痕（self_note）是与消息同级的引证锚点 —— 她真实做过的事，
+    //   有哈希链背书。noteId 进溯源池后，引用它的证据可解析；
+    //   引用不存在 noteId 的证据仍如实判 UNRESOLVED（绝不放宽防伪）。
+    if (rec.recordType === 'self_note') {
+      const nid = p.noteId;
+      if (typeof nid === 'string' && nid.trim()) messageIds.add(nid);
+    }
     if (rec.recordType === 'observation') addObservation(p);
     if (Array.isArray(p.observations)) p.observations.forEach(addObservation);
     if (rec.recordType === 'evidence') addEvidence(p);
@@ -728,6 +740,37 @@ function validateArchiveRecord(record, options = {}) {
     case 'internal_regulation_snapshot': {
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_INTERNAL_REGULATION_PAYLOAD' };
+      }
+      break;
+    }
+
+    case 'self_note': {
+      // 🔴 D-24 A 段：自发留痕 —— 她真实做过的事，内容零改写地铸入。
+      //   proposalSource 必须是 'selfNote'（提案来源戳由主进程从执行回执带下来、
+      //   渲染端不可伪造）：受托任务产物没有资格冒充她的自传经历。
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_SELF_NOTE_PAYLOAD' };
+      }
+      if (typeof payload.noteId !== 'string' || !payload.noteId.trim()) {
+        return { valid: false, reason: 'MISSING_SELF_NOTE_ID' };
+      }
+      if (typeof payload.content !== 'string' || !payload.content.trim()) {
+        return { valid: false, reason: 'MISSING_SELF_NOTE_CONTENT' };
+      }
+      if (payload.proposalSource !== 'selfNote') {
+        return { valid: false, reason: 'SELF_NOTE_REQUIRES_SELF_NOTE_SOURCE' };
+      }
+      break;
+    }
+
+    case 'self_note_state': {
+      // 🔴 D-24 C 段：便签证据 → 特质增量。与 window_archive 证据段同构
+      //   （verifiedEvidence / stateChanges 数组），SubjectState.replay 原样折叠重放。
+      if (!payload || typeof payload !== 'object') {
+        return { valid: false, reason: 'INVALID_SELF_NOTE_STATE_PAYLOAD' };
+      }
+      if (!Array.isArray(payload.verifiedEvidence) || !Array.isArray(payload.stateChanges)) {
+        return { valid: false, reason: 'SELF_NOTE_STATE_REQUIRES_EVIDENCE_AND_CHANGES' };
       }
       break;
     }

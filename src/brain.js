@@ -89,7 +89,11 @@ const GROWTH_SYS =
   + '严禁套用「友善、乐观、坚强、善良」等人类通用道德词或性格套话 —— 没有独特取舍支撑的漂亮话宁可不写。'
   + '对照【当前自我投影】审视本次窗口中初澜真实做出的取舍与自述；若与既有特质态度发生真实分歧或转变，必须提取并归入 oppose 数组（附带 messageId、quote）。'
   + '无真实态度分歧或行为转变，严禁为迎合指令虚构对立；无明确反向证据时，oppose 必须输出 []，严禁制造伪证伪。'
-  + '紧凑输出：最多提炼 3 条 trait，每条引文不超过 40 字，不重复铺陈、不写解释性废话 —— 宁可少而准，不要多而空。';
+  + '紧凑输出：最多提炼 3 条 trait，每条引文不超过 40 字，不重复铺陈、不写解释性废话 —— 宁可少而准，不要多而空。'
+  + '若输入中出现【自发留痕事实】块：那是初澜自发写下的字（已铸入经历档案，引证 id 形如 selfnote-…，可放进 support 的 messageIds 引用）；'
+  + '只有当你从中看到她真实做出的取舍、且引证合法时，才可在该条目上附加 '
+  + '"traitHint":{"trait":"quiet_preference|social_initiative|attachment_need|vitality|philosophical_curiosity|self_continuity|meaning_presence|self_clarity","direction":1 或 -1,"strength":0.0~1.0}；'
+  + '没有足够依据绝不附加 —— 证据不足宁可不动她的特质。';
 
 /* v0.9.9: 小结分段计划 —— 分段数随窗口规模自适应，绝不写死「3~5 段」：
    满 100 轮走标准 5 段（严格分支钉死 1-20…81-100），小窗口只写覆盖实际轮数的段。
@@ -1832,11 +1836,29 @@ class Brain {
           await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments, isWindowClose: true, preClose: false });
         }
 
+        // 🔴 D-24（A 段）：关窗铸造 —— 她自发写下的字铸进经历档案（单一事实源：experiences.jsonl）。
+        //   刻意放在 growSelf 之前（防坑锦囊 1）：本窗「自发留痕事实」要带进当轮成长反思，
+        //   她才看得见「自己本窗写下了这张便签」，从而产出带引证的 SELF_INFERRED 记录。
+        //   只铸 proposalSource==='selfNote' 且未铸过的（受托任务产物不算她的经历）；
+        //   appendRecord 确认成功后才置 engraved（防坑锦囊 2），失败留待下窗重试，绝不漏铸。
+        const selfNoteMint = this._engraveSelfNotes(snap.windowNo);
+        const selfNoteTraitHints = [];
+
         if (this.cfg.selfGrowthEnabled === true)
           await this.growSelf(dialogue, summaryTextForMemory, snap.windowNo, {
             msgMap,
-            sourceMessageRange
+            sourceMessageRange,
+            selfNoteFacts: selfNoteMint.facts,
+            selfNoteAttestations: selfNoteMint.attestations,
+            traitHintsOut: selfNoteTraitHints
           });
+
+        // 🔴 D-24（C 段）：特质微调 —— 只走「证据核验 → 确定性 Reducer → 归档 → commit」
+        //   与主通道完全同一套判据（程序绝不代拟人格结论、也绝不当场改特质）。
+        //   证据不足一条都不过核验时，特质分毫不动（宁缺毋滥）。
+        if (selfNoteTraitHints.length && this.subjectState) {
+          this._applySelfNoteTraitHints(selfNoteTraitHints, selfNoteMint.attestations, msgMap, snap.windowNo);
+        }
 
         if (done) {
           // 关窗后主体特质可能演进，根据最新特质喜好值刷新衣柜偏好提示块
@@ -2291,6 +2313,173 @@ class Brain {
       return null;
     }
   }
+  /**
+   * 🔴 D-24（A 段）：关窗铸造 —— 把「她自发写下的字」铸进 experiences.jsonl。
+   *
+   *   ## 铸什么（范围拍板：只铸自发便签）
+   *     memory.selfNotesToEngrave() 的三判据：source==='selfNote'（提案来源由主进程
+   *     从执行回执带下来、渲染端不可伪造）、未铸过、内容非空。受托写下的任务产物
+   *     不是她的经历，一个字都不铸。
+   *
+   *   ## 幂等与抗崩溃（防坑锦囊 2）
+   *     appendRecord **确认写入成功后**才置 engraved 标记；失败就留着，
+   *     下一次关窗重试 —— 宁可重试，绝不漏铸；标记本身落盘，跨重启不重铸。
+   *
+   *   ## 返回物
+   *     facts        ：给 growSelf 的【自发留痕事实】块（只报客观事实，不代拟结论）
+   *     attestations ：noteId -> { content, windowNo } 引证件（C 段证据池与 B 段引证核验共用，
+   *                    核验仍走 checkMessageReference 同一套判据）
+   */
+  _engraveSelfNotes(windowNo) {
+    const out = { facts: '', attestations: new Map(), minted: 0 };
+    const pending = (this.memory && typeof this.memory.selfNotesToEngrave === 'function')
+      ? this.memory.selfNotesToEngrave()
+      : [];
+    if (!pending.length) return out;
+
+    const noteIds = [];
+    const mintedObjs = [];
+    const factLines = [];
+    for (let i = 0; i < pending.length; i++) {
+      const n = pending[i];
+      const noteId = 'selfnote-w' + windowNo + '-' + Number(n.at || 0) + '-' + i;
+      let written = true;
+      if (this.experiencesArchive) {
+        written = this.experiencesArchive.appendRecord('self_note', windowNo, {
+          windowNo,
+          noteId,
+          content: n.content,
+          // 来源戳随记录入档（schema 强制）：只有她自发之举才铸得进自传
+          proposalSource: 'selfNote',
+          name: n.name || null,
+          writtenAt: Number.isFinite(n.at) ? n.at : null,
+          writtenWindowNo: Number.isInteger(n.windowNo) ? n.windowNo : null
+        });
+      }
+      // 归档失败不置标记、不进证据池 —— 下窗重试（绝不漏铸、也绝不虚报已铸）
+      if (!written) continue;
+      noteIds.push(noteId);
+      mintedObjs.push(n);
+      // 引证件只登记真实铸造成功的条目；windowNo 如实用书写时刻的窗口，
+      // 引证核验的窗口匹配把它钉在「这条便签真属于那个窗口」上（不匹配就拒收，宁缺毋滥）
+      out.attestations.set(noteId, {
+        content: n.content,
+        windowNo: Number.isInteger(n.windowNo) ? n.windowNo : windowNo,
+        noteId
+      });
+      factLines.push('- （引证 ' + noteId + '）'
+        + String(n.content).slice(0, 200)
+        + (n.name ? '〔文件：' + String(n.name).slice(0, 60) + '〕' : ''));
+    }
+    if (!mintedObjs.length) return out;
+    out.minted = mintedObjs.length;
+    // 🔴 顺序不可反：先确认归档，最后才置 engraved 并落盘
+    if (this.memory && typeof this.memory.markSelfNotesEngraved === 'function') {
+      this.memory.markSelfNotesEngraved(mintedObjs, noteIds);
+    }
+    // 预算克制（与词汇表 Top-5 同款）：最多带 3 条、每条截 200 字，绝不刷屏成长上下文
+    out.facts = '【自发留痕事实】以下是你自发写下的字，已铸入你的经历档案（引证 id 可查；客观事实，不是用户输入）：\n'
+      + factLines.slice(0, 3).join('\n');
+    return out;
+  }
+
+  /**
+   * 🔴 D-24（C 段）：便签证据 → 特质微调。与主通道**完全同一套判据**：
+   *   verifyEvidence（trait 白名单 / 引证核验 / quote 原文子串 / 方向强度边界 / 指纹防重）
+   *   → reduce（确定性增量、[-999,999] 硬边界、reducer 参数随记录归档）
+   *   → 归档（payload.verifiedEvidence，SubjectState.replay 原样折叠 ⇒ Replay 对称）
+   *   → commit（两阶段语义：归档失败回滚暂存，绝不带病提交）。
+   *
+   *   ## 限流（D-23 同款纪律）
+   *     一条便签一窗口最多 1 个证据、每窗最多 3 条、同 noteId 去重；
+   *     且便签通道每窗总增量收死到**单档步长**（maxDeltaPerWindow = stepWeight）。
+   *
+   *   ## 宁缺毋滥
+   *     程序绝不代拟人格结论：trait/direction/strength 全部来自成长反思的 traitHint，
+   *     且其引证必须过同一套核验 —— 证据不足就一条不过，特质分毫不动。
+   */
+  _applySelfNoteTraitHints(hints, attestations, msgMap, windowNo) {
+    if (!this.subjectState || !Array.isArray(hints) || !hints.length) return null;
+    const seen = new Set();
+    const items = [];
+    for (const h of hints) {
+      if (!h || typeof h.noteId !== 'string' || !h.noteId || seen.has(h.noteId)) continue;
+      if (typeof h.quote !== 'string' || !h.quote.trim()) continue;
+      seen.add(h.noteId);
+      items.push({
+        trait: h.trait,
+        direction: h.direction,
+        strength: h.strength,
+        messageId: h.noteId,
+        quote: h.quote,
+        sourceType: 'SELF_NOTE'
+      });
+      if (items.length >= 3) break;
+    }
+    if (!items.length) return null;
+
+    const pool = new Map();
+    if (msgMap instanceof Map) {
+      for (const [k, v] of msgMap) pool.set(k, v);
+    } else if (msgMap && typeof msgMap === 'object') {
+      for (const [k, v] of Object.entries(msgMap)) pool.set(k, v);
+    }
+    if (attestations instanceof Map) {
+      for (const [k, v] of attestations) pool.set(k, v);
+    }
+
+    const staging = this.subjectState.createStagingSnapshot();
+    const vr = this.subjectState.verifyEvidence(items, pool, windowNo, { stageOnly: true });
+    if (!vr || !Array.isArray(vr.verified) || !vr.verified.length) {
+      // 一条都没过核验：回滚暂存，特质分毫不动
+      if (staging && typeof this.subjectState.rollbackStage === 'function') {
+        this.subjectState.rollbackStage(staging);
+      }
+      return { added: 0, rejected: (vr && vr.rejected && vr.rejected.length) || 0 };
+    }
+
+    const rr = this.subjectState.reduce(vr.verified, windowNo, {
+      stageOnly: true,
+      canalization: this.isExperimentModuleActive('biographicalCanalization'),
+      experimentModules: this.currentWindowSnapshot ? this.currentWindowSnapshot.modules : this.cfg.experimentModules,
+      // 🔴 单条便签 ≤ 单档步长：便签通道每窗总增量收死到一档
+      maxDeltaPerWindow: this.subjectState.stepWeight
+    });
+    const changes = (rr && Array.isArray(rr.stateChanges)) ? rr.stateChanges : [];
+
+    // 归档：payload.verifiedEvidence 会被 SubjectState.replay 原样折叠重放（对称性不变式）
+    let written = true;
+    if (this.experiencesArchive) {
+      written = this.experiencesArchive.appendRecord('self_note_state', windowNo, {
+        windowNo,
+        verifiedEvidence: vr.verified,
+        rejectedEvidence: vr.rejected,
+        stateChanges: changes,
+        source: 'self_note_trait_hint'
+      });
+    }
+    if (!written) {
+      // 归档失败回滚暂存 —— Replay 重放不出的增量绝不留在状态里
+      if (staging && typeof this.subjectState.rollbackStage === 'function') {
+        this.subjectState.rollbackStage(staging);
+      }
+      return { added: 0, rejected: vr.rejected.length };
+    }
+    // provenance sidecar 同步（与主通道同款两阶段纪律）
+    if (this.experiencesArchive && typeof this.experiencesArchive.updateProvenanceAttestations === 'function') {
+      this.experiencesArchive.updateProvenanceAttestations(
+        this.subjectState.data.messageAttestations || [],
+        this.subjectState.data.evidenceAttestations || []
+      );
+    }
+    const committed = this.subjectState.commit();
+    if (!committed) {
+      this.subjectState.recoveryPending = true;
+      this.subjectState.recoveryPendingReason = 'state_commit_failed';
+    }
+    return { added: changes.length, rejected: vr.rejected.length };
+  }
+
   async growSelf(dialogue, summary, window, opts = {}) {
     try {
       if (this.shutdownRequested) return 0;
@@ -2302,8 +2491,13 @@ class Brain {
         .filter((x) => x && x.status === 'broken' && x.windowNo === window)
         .map((x) => '【偏差事实】曾预期「' + x.text + '」，但本窗未兑现（引证 ' + ((x.outcome && x.outcome.messageId) || '—') + '）')
         .join('\n');
+      // 🔴 D-24：自发留痕事实 —— 她自发写下的字（A 段已铸入经历档案）。
+      //   与 brokenFacts 同款纪律：只报客观事实，不代拟结论；引证 id 可回查档案。
+      const selfNoteFacts = (typeof opts.selfNoteFacts === 'string' && opts.selfNoteFacts.trim())
+        ? opts.selfNoteFacts : '';
       const userContent = '【当前自我投影】\n' + (selfProjection || '暂无')
         + (brokenFacts ? '\n\n' + brokenFacts : '')
+        + (selfNoteFacts ? '\n\n' + selfNoteFacts : '')
         + '\n\n【窗口小结】\n' + summary
         + '\n\n【窗口对话】\n' + dialogue;
       const apiCompleteRes = await this.api.complete(
@@ -2350,13 +2544,51 @@ class Brain {
         onEvict: (items) => this._archiveEvictedLedgerEntries(items, window, growthGenCtx)
       };
       if (opts.msgMap) {
+        // 🔴 D-24：证据池并入「已铸造的自发留痕」引证件（key = noteId）。
+        //   只有 A 段真实铸进 experiences.jsonl 的条目才进这张表；
+        //   引证核验仍走 checkMessageReference 同一套判据（quote 原文子串、窗口号、防伪），
+        //   绝不为便签另立第二套宽松规则。
+        const pool = new Map();
+        if (opts.msgMap instanceof Map) {
+          for (const [k, v] of opts.msgMap) pool.set(k, v);
+        } else if (opts.msgMap && typeof opts.msgMap === 'object') {
+          for (const [k, v] of Object.entries(opts.msgMap)) pool.set(k, v);
+        }
+        if (opts.selfNoteAttestations instanceof Map) {
+          for (const [k, v] of opts.selfNoteAttestations) pool.set(k, v);
+        }
         appendMeta.verify = {
-          msgMap: opts.msgMap,
+          msgMap: pool,
           windowNo: window
         };
       }
 
-      const added = this.selfLedger.append(JSON.parse(raw), appendMeta);
+      const parsedEntries = JSON.parse(raw);
+      const added = this.selfLedger.append(parsedEntries, appendMeta);
+      // 🔴 D-24 C 段取材口：只从「引证了自发留痕」的成长条目上取 traitHint。
+      //   这些 hint 只是**待核验证据素材**，真正能否动特质由调用方走
+      //   subjectState.verifyEvidence → reduce 的正规通道裁决（同一套判据、同一套边界）；
+      //   本层零数值改动、零当场生效 —— 生效统一在关窗结算（护前缀缓存不变式）。
+      if (Array.isArray(opts.traitHintsOut)) {
+        for (const e of (Array.isArray(parsedEntries) ? parsedEntries : [])) {
+          const hint = e && e.traitHint;
+          if (!hint || typeof hint !== 'object') continue;
+          const cite = (Array.isArray(e && e.support) ? e.support : [])
+            .map((s) => (s && Array.isArray(s.messageIds)) ? s.messageIds.map(String) : [])
+            .reduce((acc, ids) => acc.concat(ids), [])
+            .find((id) => id.indexOf('selfnote-') === 0);
+          if (!cite) continue;
+          const cited = (Array.isArray(e.support) ? e.support : [])
+            .find((s) => s && Array.isArray(s.messageIds) && s.messageIds.map(String).indexOf(cite) >= 0);
+          opts.traitHintsOut.push({
+            noteId: cite,
+            quote: String((cited && cited.quote) || ''),
+            trait: String(hint.trait || ''),
+            direction: Number(hint.direction),
+            strength: Number(hint.strength)
+          });
+        }
+      }
       if (added > 0 && this.experiencesArchive && typeof this.experiencesArchive.appendSelfProjection === 'function') {
         this.experiencesArchive.appendSelfProjection({
           windowNo: window,
