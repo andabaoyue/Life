@@ -29,6 +29,10 @@ const DEFAULT_DYNAMICS_CONFIG = Object.freeze({
   alpha: 1.15,              // 幂律衰减指数
   activeThreshold: 0.60,    // ACTIVE 状态门限
   dormantThreshold: 0.35,   // DORMANT 状态门限
+  // 🔴 D-26 深睡突触巩固：γ = 每笔巩固的留存支持系数；cap = 累计封顶。
+  //   数值刻意又小又低 —— 巩固是「减缓遗忘」，不是「刻骨铭心」；调参只动这两个常量。
+  dreamSupportGamma: 0.05,
+  dreamSupportCap: 3,
   dormantWindowGap: 5,      // 进入休眠所需的未召回窗口跨度
   baseStrength: 0.50,       // 基础记忆强度初始值
   // 🔴 丙（2026-10-07）：FADING 段的截断字数。
@@ -121,7 +125,14 @@ function computeEngramDecay(trace, currentWindow, config = DEFAULT_DYNAMICS_CONF
   const lambda = config.lambda ?? DEFAULT_DYNAMICS_CONFIG.lambda;
   const alpha = config.alpha ?? DEFAULT_DYNAMICS_CONFIG.alpha;
 
-  const numerator = s0 * (1 + beta * Math.log(1 + retrievals));
+  // 🔴 D-26：dreamSupport 是**留存支持项**（夜间巩固带来的抗衰减能力）。
+  //   ⚠️ 与 retrievalCount 严格分离：retrievalCount = 她真实被召回的次数（事实，伪造即污染）；
+  //   dreamSupport = 离线巩固的记账，只减缓遗忘，**绝不冒充召回**。
+  //   两项都有界（cap 先截断、外层 clamp 仍在）。
+  const gamma = config.dreamSupportGamma ?? DEFAULT_DYNAMICS_CONFIG.dreamSupportGamma;
+  const supportCap = config.dreamSupportCap ?? DEFAULT_DYNAMICS_CONFIG.dreamSupportCap;
+  const support = Math.min(supportCap, Math.max(0, Number(trace.dreamSupport) || 0));
+  const numerator = s0 * (1 + beta * Math.log(1 + retrievals)) * (1 + gamma * support);
   const denominator = Math.pow(1 + lambda * deltaW, alpha);
   const rawStrength = numerator / denominator;
   const currentStrength = Math.min(1.0, Math.max(0.0, Number(rawStrength.toFixed(4))));
@@ -179,6 +190,9 @@ class EngramTraceManager {
       currentStrength: initialStrength,
       lastRetrievedWindow: createdWindow,
       retrievalCount: 0,
+      // 🔴 D-26：夜间巩固记账（有界）+ 同窗去重水位。旧快照无此字段 ⇒ 视为 0 / 未巩固。
+      dreamSupport: 0,
+      lastConsolidatedWindow: null,
       tier: initialStrength >= this.config.activeThreshold ? ENGRAM_TIERS.ACTIVE : ENGRAM_TIERS.FADING,
       contentRef: opts.contentRef || null
     };
@@ -224,6 +238,51 @@ class EngramTraceManager {
       tierCounts,
       changedTraces,
       parameterSnapshot: { ...this.config }
+    };
+  }
+
+  /**
+   * 🔴 D-26：深睡突触巩固（Dream Consolidation）—— 梦真实发生时，对本窗真实活跃的
+   *   记忆印痕做**有界的抗衰减加固**。
+   *
+   *   ## 不变式（用户拍板：只强化抗衰减能力，绝不借梦境伪造记忆事实）
+   *   1. 只动**既有真实 trace** 的记账字段 dreamSupport —— 不新建、不删除（D-005）、
+   *      不动 contentRef 与内容本体；
+   *   2. **绝不加 retrievalCount** —— 那是「她真实被召回过」的事实计数，梦里重放不是召回，
+   *      加了就是伪造她的经历（对应 dream-system 的 DREAM_GENERATED_ARTIFACT 不冒充亲历）；
+   *   3. **只记账不结算**：当场零重算 strength / tier（同 reactivate 的护缓存铁律），
+   *      效果统一在关窗 decayAll() 显现；
+   *   4. **选择零梦境内容参与**：候选 = 本窗真实活跃（retrievalCount > 0 或本窗新建），
+   *      按 (retrievalCount, currentStrength, traceId) 确定性排序取 Top-N —— 梦不能「挑」记忆，
+   *      选择判据全部是真实数据；
+   *   5. 同窗去重（一条印痕一窗最多 +1，水位 lastConsolidatedWindow）+ 累计封顶（dreamSupportCap）。
+   *
+   * @param {number} currentWindow 当前窗口号
+   * @param {{topN?: number}} [opts]
+   * @returns {{consolidated: string[], skipped: number}} 巩固了哪些 traceId（可审计）
+   */
+  consolidateByDream(currentWindow, opts = {}) {
+    const topN = Math.max(1, Math.min(5, Number(opts && opts.topN) || 3));
+    const cap = this.config.dreamSupportCap ?? DEFAULT_DYNAMICS_CONFIG.dreamSupportCap;
+    const win = Number.isFinite(currentWindow) ? currentWindow : 1;
+    const candidates = this.getAllTraces()
+      .filter((t) => t && ((Number(t.retrievalCount) || 0) > 0 || t.createdWindow === win))
+      .filter((t) => (Number(t.dreamSupport) || 0) < cap)
+      .filter((t) => t.lastConsolidatedWindow !== win)   // 同窗去重（D-23 同款）
+      .sort((a, b) => (Number(b.retrievalCount) || 0) - (Number(a.retrievalCount) || 0)
+        || (Number(b.currentStrength) || 0) - (Number(a.currentStrength) || 0)
+        || String(a.traceId).localeCompare(String(b.traceId)));
+    const picked = candidates.slice(0, topN);
+    for (const t of picked) {
+      this.traces.set(t.traceId, {
+        ...t,
+        dreamSupport: Math.min(cap, (Number(t.dreamSupport) || 0) + 1),
+        lastConsolidatedWindow: win
+      });
+    }
+    return {
+      consolidated: picked.map((t) => t.traceId),
+      skipped: Math.max(0, candidates.length - picked.length)
     };
   }
 

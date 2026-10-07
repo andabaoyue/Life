@@ -2194,6 +2194,24 @@ class Brain {
               });
 
               if (dreamRecord) {
+                // 🔴 D-26：深睡突触巩固 —— 梦**真实产出后**才记账（合成失败/被门禁拦下都零巩固）。
+                //   不变式见 memory-dynamics.consolidateByDream：只加固既有真实 trace 的抗衰减能力
+                //   （dreamSupport 记账），绝不加 retrievalCount（那是她真实被召回的事实计数）、
+                //   选择零梦境内容参与、当场零重算（tier/strength 统一在关窗 decayAll 结算）。
+                //   刻意放在 append 之前：被巩固的 traceId 随梦境记录进哈希链，加固全程可审计。
+                if (this.memory && this.memory.engramManager
+                    && typeof this.memory.engramManager.consolidateByDream === 'function') {
+                  try {
+                    const c = this.memory.engramManager.consolidateByDream(snap.windowNo, { topN: 3 });
+                    if (c && Array.isArray(c.consolidated) && c.consolidated.length) {
+                      dreamRecord.payload = dreamRecord.payload || {};
+                      dreamRecord.payload.consolidatedTraceIds = c.consolidated;
+                      this.memory.save();
+                    }
+                  } catch (e) {
+                    // 巩固是旁路增益：失败绝不影响梦境归档本身（与 Dream fail-safe 同款纪律）
+                  }
+                }
                 if (!Array.isArray(this.dreamHistory)) this.dreamHistory = [];
                 this.dreamHistory.push(dreamRecord);
                 this.experiencesArchive.append(dreamRecord);
