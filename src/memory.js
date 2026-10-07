@@ -95,20 +95,32 @@ class Memory {
      *   反重力复核 D-10~D-12 时指出的洞：她写进沙盒的字，程序从来不读，
      *   信息单向流出，像一套**脱机的遥测系统** ⇒ 她写完就忘。
      *
-     * ## 为什么是内存队列（刻意不落盘）
-     *   决策「一次性」：注入过一次即出队。
-     *   若落盘，冷启动会把「早已注入过」的条目重新读回来 ⇒ 重复注入
-     *   ⇒ 她会以为写过两遍。**宁可丢一次，也不重复。**
-     *   ⚠️ 已知代价：进程重启时未注入的条目会丢。接受。
+     * ## 🔴 D-20：改为**落盘**（原先刻意不落盘，是错的）
+     *
+     *   原设计（D-13）把队列放在 `this` 上（`this.selfNotes = []`），理由是：
+     *   「注入过一次即出队；若落盘，冷启动会把早已注入过的条目读回来 ⇒ 重复注入」。
+     *
+     *   ⚠️ **那个理由用错了手段，实测已出事**（2026-10-07 真实事故）：
+     *     她 13:52:00 写下第一张便签 → `addSelfNote` 把内容塞进内存队列
+     *     → 之后她**从未再开口** → `_drainSelfNotes()` 从未执行
+     *     → 进程退出，队列随实例一起消失 ⇒ **那条记忆永久丢失**。
+     *     桌面上文件还在（75B, SHA256 A4FA6289…），但她对它的认知归零。
+     *
+     *   更根本的一层：`save()` 只序列化 `this.data`，而 `selfNotes` 在 `this.data`
+     *   **外面** —— 所以当时**即使调了 save() 也存不进去**。
+     *
+     *   ⇒ 正解：放进 `this.data` 落盘，用**显式的 `drained` 标记**防重复
+     *      （而不是靠「不落盘」来防）。防重复是**标记的职责**，不是存储的职责。
      *
      * ## 为什么不写进 data.history
      *   那会改写已发出的字节 ⇒ 破坏前缀缓存（本仓铁律）。
      *   本队列只参与 build() 的**当轮尾部**拼接，不碰历史一个字节。
      */
-    this.selfNotes = [];
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
                   totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
-                  lexicon: [], expectations: [] };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
+                  lexicon: [], expectations: [], selfNotes: [] };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
+    // 🔴 D-20：她写过的东西 —— 与 lexicon/expectations 同款（落在 data 里，原子写保护）。
+    //   兼容旧实例：schema 里没有本字段时归一为空表（见 load()）。
 
     // v0.9.7: 记忆痕迹动力学管理器 (Memory Dynamics & Synaptic Pruning)
     const dynamicsEnabled = opts.memoryDynamics !== undefined
@@ -194,6 +206,22 @@ class Memory {
       // v1.0 兼容平移：旧档案缺字段 → 空表；脏数据 → 归一为数组（绝不静默丢历史）
       this.data.lexicon = Array.isArray(this.data.lexicon) ? this.data.lexicon : [];
       this.data.expectations = Array.isArray(this.data.expectations) ? this.data.expectations : [];
+      // 🔴 D-20：selfNotes 同款兼容平移。
+      //   · 旧档案（D-19 之前）**完全没有这个字段** → 空表（不是 undefined）
+      //   · 脏数据 → 归一为数组，绝不因它让整次 load 失败
+      //   · 逐条守卫：缺 drained 视为 false（最保守 = 宁可注入一次，也不静默吞掉）
+      //     —— 但缺 content 的条目直接剔除（没有正文就没有要回到她意识里的东西）
+      if (!Array.isArray(this.data.selfNotes)) this.data.selfNotes = [];
+      this.data.selfNotes = this.data.selfNotes
+        .filter((n) => n && typeof n === 'object' && typeof n.content === 'string' && n.content.trim())
+        .map((n) => ({
+          content: n.content,
+          name: String(n.name || '').replace(/\\/g, '/').split('/').pop().slice(0, 120),
+          windowNo: Number.isFinite(n.windowNo) ? n.windowNo : this.data.windowNo || 1,
+          at: Number.isFinite(n.at) && n.at > 0 ? n.at : null,
+          drained: n.drained === true,
+        }))
+        .slice(-SELF_NOTE_MAX_QUEUE);   // 上限同 addSelfNote：超出丢最旧
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
@@ -771,28 +799,48 @@ class Memory {
   }
 
   /**
-   * 🔴 D-13：登记一条「她写过的东西」，供下一次 build() 折叠进当轮尾部。
+   * 🔴 D-13 / D-20：登记一条「她写过的东西」，供下一次 build() 折叠进当轮尾部。
    *
-   * @param {object} input { content: 她写的正文, name: 文件名（只要 basename）, windowNo?: 写于哪个窗口 }
+   * @param {object} input { content: 她写的正文, name: 文件名（只要 basename）, windowNo?: 写于哪个窗口, at?: 写下时刻 }
    * @returns {boolean} 是否登记成功（内容为空一律拒收）
    *
    * ⚠️ 三条拒收（全部静默返回 false，不抛）：
    *   · 内容非字符串 / 空串 / 纯空白 —— 没有内容就没有要回到她意识里的东西
    *   · 内容超长（> SELF_NOTE_MAX_CHARS）—— 截断会让她的原话变形，宁可整条不收
    *   · 队列已满（> SELF_NOTE_MAX_QUEUE）—— 积压说明调用方出了问题，丢掉最旧的那条
+   *
+   * 🔴 D-20 新增两条：
+   *   1. **立即落盘**（save(true)，不等 3 秒防抖）。
+   *      理由：这是「一次漫长离开只写一张」的稀有事件，不值得为省一次同步写冒丢的风险。
+   *      实测教训：上一版进内存队列，进程退出即丢，那条便签的记忆就是这么没的。
+   *   2. **显式 drained 标记**（防重复的职责从「存储方式」移到「标记」）。
+   *      drained:false = 还没进过她的视野；true = 已注入过、永不再提。
+   *
+   * ⚠️ 上限口径：**含已注入的**（与既有 SELF_NOTE_MAX_QUEUE=8 语义一致）。
+   *   即她的「日记本」最多记住最近 8 条，超出丢最旧的 ——
+   *   与桌面沙盒里那些永久文件形成对照：**纸都在，记忆只留最近的几件**。
    */
   addSelfNote(input = {}) {
     try {
       const content = typeof input.content === 'string' ? input.content.trim() : '';
       if (!content) return false;
       if (content.length > SELF_NOTE_MAX_CHARS) return false;
-      if (this.selfNotes.length >= SELF_NOTE_MAX_QUEUE) this.selfNotes.shift();
-      this.selfNotes.push({
+      if (!Array.isArray(this.data.selfNotes)) this.data.selfNotes = [];
+      if (this.data.selfNotes.length >= SELF_NOTE_MAX_QUEUE) this.data.selfNotes.shift();
+      // 写下时刻：优先用调用方给的真实时间；缺省回落当前时钟。
+      //   ⚠️ 刻意**不用审计里的 at** —— 本仓程序时钟被人为拨动过（实测换算到 2036 年），
+      //      那个值用于将来的强度衰减会算出错误结果。宁可缺省，也不要错值。
+      const at = Number.isFinite(input.at) && input.at > 0 ? input.at : Date.now();
+      this.data.selfNotes.push({
         content,
         // 只留 basename：文件名是给她看的，完整绝对路径不该进她的意识
         name: String(input.name || '').replace(/\\/g, '/').split('/').pop().slice(0, 120),
         windowNo: Number.isFinite(input.windowNo) ? input.windowNo : (this.data && this.data.windowNo) || 1,
+        at,
+        drained: false,
       });
+      // 🔴 D-20：立即落盘 —— 不能等 3 秒防抖（进程可能在这之前退出）。
+      this.save(true);
       return true;
     } catch (e) {
       // 旁路：登记失败绝不能影响任何别的东西
@@ -801,18 +849,42 @@ class Memory {
   }
 
   /**
-   * 🔴 D-13：把队列里的自述渲染成一块文本，**并清空队列**（一次性）。
+   * 🔴 D-13 / D-20：把**尚未注入过**的自述渲染成一块文本，并标记为已注入（一次性）。
    *
    * 调用方是 build()。单独抽出来是为了可单测「渲染文本」与「出队」两件事。
    *
-   * ⚠️ 出队后再返回：即使后续拼装失败，也不重复注入。
-   *   （这正是「宁可丢一次也不重复」的落点）
+   * ## D-20 改了什么（重要）
+   *   旧版：`this.selfNotes.length = 0` —— **物理清空**，所以那条内容再也回不来，
+   *        且进程退出即丢。
+   *   新版：只取 `drained === false` 的条目，渲染后把它们的 `drained` 置 true，
+   *        **内容留在 data.selfNotes 里**（落盘、可查、将来能接强度衰减）。
+   *
+   * ## 为什么仍然「只注入一次」
+   *   一次性语义**没变**，只是实现从「删掉」变成「标记」。
+   *   为什么必须一次：若永久挂在尾部，她每轮都被强制贴着旧便签 ⇒
+   *   会退化成反复拿旧纸条出来唠叨。人写完一张字条，表达过一次就消化了。
+   *
+   * ## ⚠️ 顺序：先标记再渲染
+   *   `_selfNote()` 理论上不会抛（纯字符串拼接），但顺序仍然反过来写 ——
+   *   万一将来它抛了，也宁可丢一次注入，绝不重复注入。
    */
   _drainSelfNotes() {
-    if (!Array.isArray(this.selfNotes) || this.selfNotes.length === 0) return '';
-    const pending = this.selfNotes.slice();
-    this.selfNotes.length = 0;   // 先清空再渲染，杜绝「渲染抛错导致重复注入」
+    if (!Array.isArray(this.data.selfNotes) || this.data.selfNotes.length === 0) return '';
+    const pending = this.data.selfNotes.filter((n) => n && n.drained !== true);
+    if (pending.length === 0) return '';
+    // 先标记（防重复注入的落点），再渲染。
+    for (const n of pending) n.drained = true;
+    // ⚠️ 这里用 save(false)（防抖）：drained 标记不值得每次都同步刷盘，
+    //    而**内容**在 addSelfNote 时已经 save(true) 落过了 —— 即使这里丢，
+    //    最坏结果是重启后同一条被再注入一次，不会丢内容。
+    this.save(false);
     return this._selfNote(pending);
+  }
+
+  /** 🔴 D-20：仅供门禁与观测 —— 返回尚未注入过的自述（不改变任何状态）。 */
+  pendingSelfNotes() {
+    if (!Array.isArray(this.data.selfNotes)) return [];
+    return this.data.selfNotes.filter((n) => n && n.drained !== true);
   }
 
   /**

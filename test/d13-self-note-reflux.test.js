@@ -112,7 +112,15 @@ console.log('--- D-13 自述回流门禁 ---');
   const second = withHistory(m).map((x) => String(x.content)).join('\n');
   check('🔴 第一次出现', first.includes('只该出现一次'));
   check('🔴 第二次不再出现（一次性出队）', !second.includes('只该出现一次'));
-  check('出队后队列为空', m.selfNotes.length === 0);
+  // 🔴 D-20 修订：旧断言是 `m.selfNotes.length === 0`（物理清空）。
+  //   现在改成 drained 标记 —— **意图完全一致**：不再有待注入项。
+  //   而内容仍然留在 data.selfNotes 里（落盘、可查），只是标记为已注入。
+  check('出队后无待注入项（drained 标记生效）', m.pendingSelfNotes().length === 0,
+    'pending=' + m.pendingSelfNotes().length);
+  check('🔴 D-20：内容仍留在 data.selfNotes 里（不再物理删除）',
+    Array.isArray(m.data.selfNotes) && m.data.selfNotes.length === 1
+    && m.data.selfNotes[0].drained === true,
+    'len=' + (m.data.selfNotes || []).length);
 }
 
 /* ============ 6. 反例①：漏传 / 坏值一律拒收且不抛 ============ */
@@ -132,7 +140,7 @@ console.log('--- D-13 自述回流门禁 ---');
   });
   check('❌ 反例：坏值一律拒收（返回 false）', accepted.length === 0, accepted.join('/'));
   check('❌ 反例：坏值不抛异常', !threw);
-  check('❌ 反例：坏值后队列仍为空', m.selfNotes.length === 0);
+  check('❌ 反例：坏值后队列仍为空', m.data.selfNotes.length === 0);
 }
 
 /* ============ 7. 反例②：超长 / 灌爆 / 路径泄漏 ============ */
@@ -146,10 +154,11 @@ console.log('--- D-13 自述回流门禁 ---');
   // 队列上界：灌爆后仍不超上限
   const m2 = freshMem();
   for (let i = 0; i < 20; i++) m2.addSelfNote({ content: 'note-' + i });
-  check('❌ 反例：队列有上界（不会无限增长）', m2.selfNotes.length <= 8,
-    'len=' + m2.selfNotes.length);
+  // 🔴 D-20：上限口径 = **含已注入的**（与 SELF_NOTE_MAX_QUEUE 语义一致）。
+  check('❌ 反例：队列有上界（含已注入的，不会无限增长）', m2.data.selfNotes.length <= 8,
+    'len=' + m2.data.selfNotes.length);
   check('❌ 反例：超上界时丢最旧的（保留最近的）',
-    m2.selfNotes[m2.selfNotes.length - 1].content === 'note-19');
+    m2.data.selfNotes[m2.data.selfNotes.length - 1].content === 'note-19');
 }
 
 /* ============ 8. 🔴 路径泄漏：绝对路径不许进她的意识 ============ */
@@ -157,10 +166,10 @@ console.log('--- D-13 自述回流门禁 ---');
   const m = freshMem();
   m.addSelfNote({ content: 'x', name: 'C:/Users/andab/Desktop/LifeSandbox/note.md' });
   check('🔴 只保留 basename（完整绝对路径不进她的意识）',
-    m.selfNotes[0].name === 'note.md', m.selfNotes[0].name);
+    m.data.selfNotes[0].name === 'note.md', m.data.selfNotes[0].name);
   const m2 = freshMem();
   m2.addSelfNote({ content: 'x', name: 'C:\\Users\\andab\\note.md' });
-  check('🔴 反斜杠路径同样只留 basename', m2.selfNotes[0].name === 'note.md', m2.selfNotes[0].name);
+  check('🔴 反斜杠路径同样只留 basename', m2.data.selfNotes[0].name === 'note.md', m2.data.selfNotes[0].name);
   const out = withHistory(m).map((x) => String(x.content)).join('\n');
   check('🔴 注入文本里不含任何盘符/绝对路径',
     !/[A-Za-z]:[\\/]/.test(out), out.slice(0, 80));
