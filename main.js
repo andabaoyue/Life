@@ -961,7 +961,9 @@ ipcGuard.handle('life-mechanisms', () => {
   try {
     const ledger = brain && brain.selfLedger;
     if (ledger && ledger.getEntryMetrics) {
-      const TRAITS = ['quiet_preference', 'social_initiative', 'attachment_need', 'vitality', 'philosophical_curiosity'];
+      // 🔴 D-14 收口（2026-10）：认知聚合必须覆盖全部 8 维（含三个评价性自我关系维度），
+      //   否则 cognition 指标只看旧 5 维、自我关系类条目被系统性漏统计。
+      const TRAITS = ['quiet_preference', 'social_initiative', 'attachment_need', 'vitality', 'philosophical_curiosity', 'self_continuity', 'meaning_presence', 'self_clarity'];
       const ms = TRAITS.map((t) => ledger.getEntryMetrics(t)).filter(Boolean);
       if (ms.length) {
         cognition = {

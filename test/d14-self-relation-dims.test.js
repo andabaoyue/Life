@@ -143,5 +143,40 @@ console.log('--- D-14 自我关系维度门禁 ---');
 }
 
 console.log('');
+/* ============ 7. 🔴 UI / 聚合同步锁（2026-10 收口） ============ */
+// 背景（实测）：D-14 之后，pet.js 的研究面板卡片清单与 main.js 的 life-status 认知聚合
+// 仍硬编码旧 5 维 —— 新 3 维「底层有、看不见」，实验事实没有如实呈现。
+// 这组断言钉死三处同源：pet.js 卡片清单 / pet.js 中文定名镜像 / main.js cognition 聚合；
+// 中文定名的**单一事实源**是 subject-state.js 的 TRAIT_NAMES（她认知层在用的正典名），
+// pet.js 只是展示镜像 —— 逐键断言防「两处各改各的」漂移。
+{
+  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const ssSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'subject-state.js'), 'utf8');
+  const all8 = Object.keys(DEFAULT_TRAITS);
+
+  check('🔴 研究面板卡片清单覆盖全部 8 维（含新 3 维）',
+    all8.every((k) => petSrc.includes("'" + k + "'")),
+    all8.filter((k) => !petSrc.includes("'" + k + "'")).join(',') || '8/8');
+  check('❌ 反向对照：renderStateDemo mock 同步补齐（演示态也不许停在旧 5 维）',
+    NEW_DIMS.every((k) => petSrc.includes(k + ': { current')),
+    NEW_DIMS.map((k) => k + '=' + petSrc.includes(k + ': { current')).join(' '));
+  check('🔴 life-status 认知聚合覆盖全部 8 维',
+    all8.every((k) => mainSrc.includes("'" + k + "'")),
+    all8.filter((k) => !mainSrc.includes("'" + k + "'")).join(',') || '8/8');
+
+  const labelOf = (src, k) => {
+    const m = src.match(new RegExp(k + ":\\s*'([^']+)'"));
+    return m ? m[1] : null;
+  };
+  const drift = all8.filter((k) => labelOf(petSrc, k) !== labelOf(ssSrc, k));
+  check('🔴 中文定名两处逐键一致（pet.js 镜像不得漂移）',
+    drift.length === 0, drift.join(',') || '8/8 一致');
+  check('定名映射覆盖全部 8 维（只有未知键才允许回退原键）',
+    all8.every((k) => !!labelOf(petSrc, k)),
+    all8.map((k) => k + '=' + labelOf(petSrc, k)).join(' '));
+}
+
+console.log('');
 console.log('失败 ' + failures + ' 项');
 process.exitCode = failures ? 1 : 0;

@@ -1795,12 +1795,29 @@ function renderSubjectStateTab(state) {
   container.textContent = '';
 
   const traits = (state && state.traits) || {};
+  // 🔴 D-14 收口（2026-10）：展示层必须与 src/subject-state.js 的 ALLOWED_TRAITS 同步 8 维。
+  //   新增的三个「评价性自我关系」维度此前漏在此处（卡片只渲染 5 张）。
+  //   ⚠️ 中文定名的**单一事实源**是 subject-state.js 的 TRAIT_NAMES（她认知层在用的正典名），
+  //   这里只是展示镜像 —— test/d14 有「两处逐键一致」断言钉死漂移，改名两处一起改。
+  const TRAIT_LABELS = {
+    quiet_preference: '安静偏好',
+    social_initiative: '社交主动',
+    attachment_need: '依恋渴望',
+    vitality: '生命活力',
+    philosophical_curiosity: '哲学好奇',
+    self_continuity: '自我同一',
+    meaning_presence: '生命意义',
+    self_clarity: '自我清晰'
+  };
   const traitNames = [
     'quiet_preference',
     'social_initiative',
     'attachment_need',
     'vitality',
-    'philosophical_curiosity'
+    'philosophical_curiosity',
+    'self_continuity',
+    'meaning_presence',
+    'self_clarity'
   ];
 
   for (const tName of traitNames) {
@@ -1811,7 +1828,8 @@ function renderSubjectStateTab(state) {
 
     const titleEl = document.createElement('div');
     titleEl.className = 'r-trait-name';
-    titleEl.textContent = tName;
+    // 主显中文定名、次显程序键：她看到的不该是变量名（同 subject-state 定名教训），键留给对账
+    titleEl.textContent = (TRAIT_LABELS[tName] || tName) + ' (' + tName + ')';
 
     const valEl = document.createElement('div');
     valEl.className = 'r-trait-val';
@@ -2372,7 +2390,10 @@ function renderStateDemo() {
       social_initiative: { current: 118, previous: 110, latestDelta: 8 },
       attachment_need: { current: 205, previous: 205, latestDelta: 0 },
       vitality: { current: 421, previous: 400, latestDelta: 21 },
-      philosophical_curiosity: { current: 286, previous: 270, latestDelta: 16 }
+      philosophical_curiosity: { current: 286, previous: 270, latestDelta: 16 },
+      self_continuity: { current: 152, previous: 150, latestDelta: 2 },
+      meaning_presence: { current: 96, previous: 96, latestDelta: 0 },
+      self_clarity: { current: 131, previous: 122, latestDelta: 9 }
     }
   });
 }
