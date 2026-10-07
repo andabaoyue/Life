@@ -1414,6 +1414,16 @@ app.whenReady().then(() => {
   }, {
     transactionManager: agentTxn, txnDir: agentTxnDir,
     onExecuted: agentOnExecuted,   // 🔴 D-13：她写过的东西回流进她的意识（见上方注释）
+    // 🔴 D-18：把暂存内容的取用口注入给 agent-ipc。
+    //
+    //   漏了它的后果（实测抓到）：主进程自动执行时 `executeInternal` 取不到
+    //   `takeStashedContent` ⇒ effectiveContent 为空 ⇒ 执行器抛 CONTENT_REQUIRED
+    //   ⇒ **建案成功但永远落不了盘**。审计里只留一句 detail:"CONTENT_REQUIRED"。
+    //
+    //   ⚠️ 这条接线在 D-13 就该有：暂存表在 main.js、取用口在 agent-ipc，
+    //      「谁把口子递过去」当时漏了。之前没暴露是因为**没有主进程自动执行路径**
+    //      （用户点卡片时走通道，通道里另有 raw.content 兜底）。
+    takeStashedContent,
     // 🔴 D-9：动机来源求值器 —— 「她为什么想做这件事」。
     //
     //   **只读 trigger.selfIntent，不接线 _pendingAgentIntent。** 本轮只让动机可查，

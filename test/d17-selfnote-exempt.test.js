@@ -201,6 +201,45 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
       fallbackOk);
   }
 
+  // 🔴 D-18（实测抓到的真缺口）：暂存内容的取用口必须**真的注入给 agent-ipc**。
+  //   漏了它的表现：建案成功、执行器抛 CONTENT_REQUIRED ⇒ 永远落不了盘，
+  //   而审计里只留一句 detail:"CONTENT_REQUIRED"，极难反推。
+  //   ⚠️ 字符串断言不够 —— 这里**真的跑一遍主进程那条路径**（见下方行为断言）。
+  check('🔴 main.js 把 takeStashedContent 注入给 registerAgentIpc',
+    /takeStashedContent,\s*\r?\n\s*\/\/ 🔴 D-9/.test(mainSrc) ||
+    mainSrc.includes('    takeStashedContent,'));
+
+  // 🔴 行为断言：复刻 main.js 的真实接线，验证「暂存 → 直连执行 → 落盘」全通。
+  //   这是 D-18 的**唯一验收口径** —— 只看源码含不含某个名字，抓不住「注入了但没用」。
+  {
+    let chainOk = false, contentOk = false;
+    try {
+      const share = require('../src/agent-interfaces');
+      const Conf = require('../src/agent-confirmation');
+      const { WriteTransactionManager } = require('../src/agent-transaction');
+      const sb2 = fs.mkdtempSync(path.join(os.tmpdir(), 'd17-chain-'));
+      const txn2 = fs.mkdtempSync(path.join(os.tmpdir(), 'd17-chain-txn-'));
+      const stash = new Map();
+      const pol2 = new share.PermissionPolicy({ killSwitch: false, allowed: ['workspace.write'] });
+      pol2.setScopeRoots('workspace.write', [sb2]);
+      const api2 = registerAgentIpc(
+        { handle() {}, assertTrustedRenderer() {}, isTrustedRenderer: () => true },
+        { registry: new share.CapabilityRegistry(), policy: pol2, budget: new share.ExecutionBudget(),
+          auditLog: { list: () => [], append: () => {} }, confirmation: new Conf.UserConfirmationGate() },
+        { transactionManager: new WriteTransactionManager({ dir: txn2 }), txnDir: txn2,
+          takeStashedContent: (id) => { if (!stash.has(id)) return null; const v = stash.get(id); stash.delete(id); return v; } });
+      const p = api2.proposeInternal(
+        { capability: 'workspace.write', scope: path.join(sb2, 'chain.txt'), reason: 'r' }, 'main', 'selfNote');
+      stash.set(p.proposal.id, '链路验收内容');
+      const ex = api2.executeInternal({ proposalId: p.proposal.id });
+      chainOk = !!(ex && ex.ok === true);
+      contentOk = fs.existsSync(path.join(sb2, 'chain.txt'))
+        && fs.readFileSync(path.join(sb2, 'chain.txt'), 'utf8') === '链路验收内容';
+    } catch (e) { chainOk = false; contentOk = false; }
+    check('🔴 行为：暂存内容能经主进程直连执行落盘（D-18 的唯一验收口径）',
+      chainOk && contentOk, 'chainOk=' + chainOk + ' contentOk=' + contentOk);
+  }
+
   const execSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent-executor.js'), 'utf8');
   check('❌ 免确认判定在执行器内（不在通道层另开旁路）',
     execSrc.includes("proposal.proposalSource === 'selfNote'"));
