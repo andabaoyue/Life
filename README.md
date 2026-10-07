@@ -11,7 +11,7 @@
 ```
 
 <div align="center">
-  <img src="assets/character/base/base_pixel_chibi.png" alt="初澜（Chulan）64×80 像素正典立绘" width="128">
+  <img src="assets/character/stand/chulan_chibi_stand_64x80.png" alt="初澜（Chulan）64×80 像素立绘 · 默认白毛套装" width="128">
 </div>
 
 Life 桌面数字生命实验平台：接 DeepSeek 等大语言模型服务商（OpenAI 兼容接口），拥有长期记忆动力学、自我成长账本、逐字流式会话和分层换装系统。
