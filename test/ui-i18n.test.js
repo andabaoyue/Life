@@ -63,8 +63,9 @@ check('10 setLocale 双语切流（en 生效、zh-CN 回切）', (() => {
   const zhTitle = t('chat.title');
   setLocale('en');
   const enTitle = t('chat.title');
+  const enApprove = t('agent.action.approve');
   setLocale('zh-CN');
-  return zhTitle !== enTitle && enTitle === 'Chat' && t('chat.title') === zhTitle;
+  return zhTitle !== enTitle && enTitle === 'Chat' && enApprove === 'Approve' && t('chat.title') === zhTitle;
 })());
 check('11 getTimezoneStatus 锁定契约（locked 恒真 + 标签含 UTC）', (() => {
   const s = getTimezoneStatus();

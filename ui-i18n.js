@@ -10,6 +10,10 @@
  * 浏览器经 <script> 引入获得全局 t / formatDisplayTime；Node 经 require 可测（下方守卫）。
  */
 let UI_LOCALE = 'zh-CN';
+try {
+  const savedLocale = (typeof localStorage !== 'undefined' && localStorage && localStorage.getItem('uiLocale'));
+  if (savedLocale === 'en' || savedLocale === 'zh-CN') UI_LOCALE = savedLocale;
+} catch (e) {}
 
 const I18N = {
   'zh-CN': {
@@ -78,6 +82,26 @@ const I18N = {
     'conn.delete': '删除当前连接',
     'menu.pin': '固定在最前',
     'menu.unpin': '取消置顶',
+    'chat.send': '发送',
+    'chat.bedsideNote': '（她睡着时留的，当时没有回应）',
+    'tz.about': '约',
+    'agent.cap.read': '读取文件',
+    'agent.cap.write': '写入文件',
+    'agent.cap.exec': '执行命令',
+    'agent.cap.net': '网络请求（已封禁）',
+    'agent.danger.low': '低风险',
+    'agent.danger.medium': '中风险',
+    'agent.danger.high': '高风险',
+    'agent.danger.unknown': '未定级',
+    'agent.action.approve': '授权',
+    'agent.action.reject': '拒绝',
+    'agent.reason.empty': '（未说明理由）',
+    'agent.budget.tripped': '执行预算已耗尽，无法执行任何动作',
+    'agent.budget.remaining': '剩余可用动作：',
+    'agent.warn.highRisk': '这是高风险操作，请确认你要改动的确实是这个目标。',
+    'agent.label.scope': '目标',
+    'agent.label.reason': '理由',
+    'agent.label.budget': '预算',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
   'en': {
@@ -101,8 +125,8 @@ const I18N = {
     'tz.sync': 'Sync Status',
     'tz.synced': 'In sync with host',
     'tz.travelA': 'Host at',
-    'tz.travelC': 'offset',
-    'tz.travelD': 'her local time',
+    'tz.travelC': 'Time diff',
+    'tz.travelD': 'Her local time',
     'tz.hours': 'h',
     'preset.section': 'Provider Preset',
     'preset.deepseek': 'DEEPSEEK',
@@ -123,15 +147,15 @@ const I18N = {
     'preset.spark': 'SPARK',
     'preset.local': 'LOCAL',
     'preset.custom': 'CUSTOM',
-    'detect.suggest': 'Provider detected, click to apply:',
+    'detect.suggest': 'Suggested provider detected, click to apply:',
     'detect.apply': 'Apply',
     'detect.reason.tp': 'Xiaomi Token Plan subscription credential prefix detected',
     'detect.reason.mimo': 'Xiaomi MiMo credential prefix detected',
     'detect.reason.sk': 'Standard sk- prefix detected (DeepSeek official or compatible)',
-    'wardrobe.suggestPrefix': 'Suggested to complete the outfit: ',
+    'wardrobe.suggestPrefix': 'Complete the look: ',
     'wardrobe.applyComplete': 'Complete Outfit',
     'wardrobe.completeFailed': 'Completion failed: ',
-    'wardrobe.completeSuccess': 'Outfit completed and dressed~',
+    'wardrobe.completeSuccess': 'Outfit completed and applied~',
     'sec.conn': 'Connections',
     'sec.wardrobe': 'Wardrobe',
     'sec.dreams': 'Dreams',
@@ -146,6 +170,26 @@ const I18N = {
     'conn.delete': 'Delete Connection',
     'menu.pin': 'Pin on Top',
     'menu.unpin': 'Unpin',
+    'chat.send': 'Send',
+    'chat.bedsideNote': '(Left while she was asleep; not answered at the time)',
+    'tz.about': '~',
+    'agent.cap.read': 'Read File',
+    'agent.cap.write': 'Write File',
+    'agent.cap.exec': 'Execute Command',
+    'agent.cap.net': 'Network Request (Blocked)',
+    'agent.danger.low': 'Low Risk',
+    'agent.danger.medium': 'Medium Risk',
+    'agent.danger.high': 'High Risk',
+    'agent.danger.unknown': 'Unrated',
+    'agent.action.approve': 'Approve',
+    'agent.action.reject': 'Reject',
+    'agent.reason.empty': '(No reason provided)',
+    'agent.budget.tripped': 'Execution budget exhausted; actions halted.',
+    'agent.budget.remaining': 'Remaining actions: ',
+    'agent.warn.highRisk': 'High-risk operation. Please ensure this is the intended target.',
+    'agent.label.scope': 'Target',
+    'agent.label.reason': 'Reason',
+    'agent.label.budget': 'Budget',
   }
 };
 
@@ -199,7 +243,10 @@ function getTimezoneStatus() {
 }
 /** 语言切换（t() 调用方零改动） */
 function setLocale(loc) {
-  if (I18N[loc]) UI_LOCALE = loc;
+  if (I18N[loc]) {
+    UI_LOCALE = loc;
+    try { if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem('uiLocale', loc); } catch (e) {}
+  }
   return UI_LOCALE;
 }
 

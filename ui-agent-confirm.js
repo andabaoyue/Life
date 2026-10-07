@@ -176,6 +176,14 @@ function bind(el, onDecision, t) {
           : ''));
     set('[data-agent-field="warn"]',
       vm.warnHighRisk ? tr('agent.warn.highRisk', '这是高风险操作，请确认你要改动的确实是这个目标。') : '');
+    if (typeof el.querySelectorAll === 'function') {
+      const keys = el.querySelectorAll('.ac-key');
+      if (keys && keys.length >= 3) {
+        keys[0].textContent = tr('agent.label.scope', '目标');
+        keys[1].textContent = tr('agent.label.reason', '理由');
+        keys[2].textContent = tr('agent.label.budget', '预算');
+      }
+    }
 
     // 按钮按 vm.actions 动态生成 —— 熔断时 actions 为空，卡片就只有说明没有按钮。
     const box = el.querySelector('[data-agent-actions]');

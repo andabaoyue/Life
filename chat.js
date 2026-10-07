@@ -52,6 +52,8 @@ let busy = false;
 function applyTexts() {
   if (chatTitle) chatTitle.textContent = t('chat.title');
   if (chatHint) chatHint.textContent = t('panel.closeHint');   // 只留关闭提示（「拖到舒服的位置」是卡片时代措辞，已随卡片退役）
+  if (input) input.placeholder = t('chat.placeholder');
+  if (sendBtn) sendBtn.title = t('chat.send', '发送');
 }
 applyTexts();
 
@@ -75,7 +77,7 @@ function buildBubble(v, extraCls) {
   if (v.bedside) {
     const bd = document.createElement('div');
     bd.className = 'b-ts b-bedside-note';
-    bd.textContent = '（她睡着时留的，当时没有回应）';
+    bd.textContent = t('chat.bedsideNote', '（她睡着时留的，当时没有回应）');
     col.appendChild(bd);
   }
   if (v.ts !== null && v.ts !== undefined) {
