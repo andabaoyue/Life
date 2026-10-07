@@ -1,8 +1,8 @@
-# 初澜桌宠立绘与分层换装资产生成规范（Layered Sprite Stacking Guide）
+# Life 桌面数字生命立绘与分层换装资产生成规范（Layered Sprite Stacking Guide）
 
 ## 1. 核心定位：分层立绘叠放架构（Layered Sprite Stacking）
 
-本规范用于指导初澜桌宠所有视觉图层的绘制与 AI 图像生成。程序采用 **760×1000 px 统一画布、透明 RGBA 32-bit PNG、固定全局锚点、分层立绘叠放（Layered Sprite Stacking）** 的渲染方案。
+本规范用于指导 Life 桌面数字生命所有视觉图层的绘制与 AI 图像生成。程序采用 **760×1000 px 统一画布、透明 RGBA 32-bit PNG、固定全局锚点、分层立绘叠放（Layered Sprite Stacking）** 的渲染方案。
 
 只要每一张素材严格遵循本规范：
 - 渲染引擎无需单独针对单件素材调节 CSS offset、缩放或对齐位置；

@@ -19,6 +19,41 @@ npm install
 npm start
 ```
 
+## 快速开始：立绘资源准备（单图即可运行）
+
+> **极简启动原则**：Life 遵循「单图兜底绝不黑屏」的设计铁律。**你不需要准备任何复杂的发型、衣服等分层素材，单有一张透明立绘即可完美启动并体验全部功能！**
+
+### 1. 需要什么样的立绘？
+- **文件格式**：**PNG 格式**，必须包含 **Alpha 透明通道**（透明背景，不可为实色白底或黑底）。
+- **画风与类型**：任何二次元全身/半身立绘、Q 版角色、点阵像素图均可。
+- **推荐尺寸与比例**：
+  - 建议高度在 `600px ~ 1200px` 之间（例如常见的 `1015×1171` 或 `760×1000`）。
+  - 程序内置常量宽高比布局，会自动等比缩放并贴地居中，绝不拉伸变形。
+  - 建议立绘人物脚底贴近画布底部，头顶保留适度呼吸留白。
+- **放置路径**：将你的透明立绘重命名为 `pet.png`，直接放入 `assets/` 目录：
+  ```
+  assets/pet.png   ← 放入你的角色立绘（单图兜底）
+  ```
+
+### 2. 抠图工具支持（如果你只有纯色背景图）
+如果你手头的角色图带有纯色（如绿色、白色）背景，可以使用仓库内置的轻量去背景脚本：
+```bash
+# 安装轻量图像处理依赖
+pip install opencv-contrib-python numpy pillow
+
+# 一键抠图并自动裁切多余透明边缘
+python3 tools/chroma.py 你的角色原图.png assets/pet.png --trim
+```
+
+### 3. 分层衣柜系统完全可选
+- `assets/character/` 目录承载的是高级分层换装系统（发型、外套、饰品等）。
+- **如果这些分层部件不存在，Life 会自动优雅降级为 `assets/pet.png` 单图兜底模式**：
+  - 逐字流式打字与大语言模型对话 100% 完整可用；
+  - 长期记忆动力学、夜间睡眠整合与自主反思 100% 完整可用；
+  - 桌面底部闲逛漫步、贴边悬挂与戳戳/拖拽反馈 100% 完整可用；
+  - 系统托盘控制、设置面板与用量统计 100% 完整可用。
+- 只有当你后续想要体验多槽位自由换装时，才需要参考 [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md) 了解 760×1000 画布多图层规范。
+
 首次启动右键 → 设置 / 用量，填入 DeepSeek API Key 即可对话。
 也可以设环境变量 `DEEPSEEK_API_KEY`。环境变量只在当前进程使用，不会自动写入磁盘。
 也可以改配置文件：
@@ -48,7 +83,7 @@ npm start
 - 从一个表情换到另一个表情有衔接（一下微动 + 明暗渐变），不再是硬切；见「状态机 → 表情之间切换的衔接」
 - 无气泡、无输入、无聊天、未拖拽且未睡眠时，主进程会让桌宠在屏幕工作区底部缓慢闲逛；到左右边缘会短暂停留并表现为贴边悬挂。
 - 用户拖拽、打开输入框、聊天请求、气泡、记录/设置面板或睡眠状态都会立即停止自主运动。运动状态会进入真实环境感知块。
-- 记忆面板遵循 D-005 仅供只读观察，由记忆动力学自主演化；设置面板中的「重置成长档案」会显式二次确认，并让初澜以新的出生点重新开始。
+- 记忆面板遵循 D-005 仅供只读观察，由记忆动力学自主演化；设置面板中的「重置成长档案」会显式二次确认，并让桌面数字生命以新的出生点重新开始。
 - v0.9.1 只预留 Agent 能力、权限、行动提案和审计接口，默认拒绝，不连接 Codex、Shell、PowerShell 或全盘文件访问。
 
 ## 目录
@@ -130,9 +165,9 @@ Raw Experience Archive  本地 experiences.jsonl，Append-Only 原始实验底�
 ```
 
 - 每 `windowTurns`（默认 100）轮关一次窗口：执行「5×20 分段 + 窗口综合（Window Synthesis）」结构化归档，
-  严格区分「用户给予」与「初澜经历」双通道，提取 Provenance 强核验的状态证据，由确定性 Reducer 计算状态增量。
+  严格区分「用户给予」与「主体经历」双通道，提取 Provenance 强核验的状态证据，由确定性 Reducer 计算状态增量。
 - 关窗时旧原文安全归档，保留最近 `keepTailMessages`（6）条并标记为 `bridge: true`，作为下一窗口的缓存桥接，不计入下一窗口轮数，也不被重复总结。
-- 初澜首次初始化时创建固定 `birthAt`，只代表程序意义上的出生时刻，不伪造出生以前的人生。
+- 桌面数字生命首次初始化时创建固定 `birthAt`，只代表程序意义上的出生时刻，不伪造出生以前的人生。
 - Current Self 默认预算约 3000 token；它只表达出生以后形成的有限当前解释，并保留支持/反向证据。
 - `self-ledger.json` 采用版本 2，包含 `birthAt`、`sourceType`、窗口号、消息 ID、证据摘录和置信度。
 - 小结总长超过 `memoryCapTokens`（6000）时，把较旧的几条合并成一条
@@ -315,7 +350,7 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
 
 **提案走一圈回来，主进程不存 `pendingOffer`。** 陈旧提案会拿着上一次的 `at` 去记冷却；
 现在过期或伪造（`kind` 不认识、`at` 不是数字）一律 `{ok:false, declined:true}`，
-而渲染端遇 `declined` 时连那条空的「初澜：」记录节点都摘掉 —— 这一轮真的当没发生过。
+而渲染端遇 `declined` 时连那条空的「角色：」记录节点都摘掉 —— 这一轮真的当没发生过。
 
 **主动搭话作为 synthetic 消息落入 history 保卫前缀缓存，但严格排除于主体经历证据之外。** 触发理由是程序生成的瞬时感知，不是用户原话。为了在下一轮完整复用「主动触发 + 模型回复」的 DeepSeek 前缀缓存块，主动搭话以 `{ synthetic: true, source: 'proactive' }` 写入 history；但在关窗小结与主体经历归档中，`isEligibleSubjectEvent()` 与 `cleanContentForSummary()` 会将其明确标记或剥离，严防程序提示伪装为用户发言或主体经历证据。
 
@@ -557,7 +592,7 @@ pip install opencv-contrib-python numpy pillow
 - **Archive writer** 是单写者 API 边界：`experiences.jsonl` 的 append 不提供跨进程锁；检测到坏尾、断链、torn line 或非有限数字时 fail-closed，恢复审计写入隔离 sidecar，不续写损坏主链。调用方必须由 Electron single-instance/单 writer 生命周期保证无并发 append。
 - **全量测试套件与不可逆约束门禁**：本版本新增 5 套专用测试套件，共 132 项断言；当前测试文件以 `test/` 目录和 `npm test` 实际执行结果为准。
 
-**v0.9.6** — 《初澜数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：
+**v0.9.6** — 《数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：
 - **P0-01 ~ P0-04** (窗口边界与指标冻结)：确立 `turn_limit`、`token_limit`、`manual`、`recovery` 四大关窗触发原因（v0.9.9 P0 起增补 `turn_limit_delayed`：存在失败关窗史且轮次超标时如实标记补关，绝不把补关粉饰成顺利关窗）；在请求模型小结前由 `windowSnapshot()` 冻结 `snapshotTurnCount`、`targetTurnCount`、`actualTurnCount` 与 `closeReason`，彻底消除异步关窗期间并发对话导致的轮数指标漂移与坏账；Bridge 桥接消息不入小结并严格隔离。
 - **P0-05 ~ P0-07** (严格 5×20 小结契约与 Fail-Stop)：落实 `validateWindowSummary()` 结构契约校验；强制要求 5 个连续分段完整覆盖窗口轮次且无重叠遗漏；小结格式不合法时触发 Fail-Stop 熔断停机，绝对保留历史对话零丢字，零污染写入经历底座。
 - **P0-08 ~ P0-10** (Archive Canonical Schema v1 与哈希链溯源)：`experiences.jsonl` 全量升级为 Canonical Schema v1，引入全局自增单调 `archiveSeq`、强唯一性 `recordId`（`rec-{type}-{seq}-{rand}`）、SHA-256 前向哈希链（`prevHash` -> `recordHash`）与底层 `fsync` 真实物理持久化，实现全链路防篡改与可复盘验证。
@@ -584,7 +619,7 @@ pip install opencv-contrib-python numpy pillow
 
 **v0.9.4** — 实验完整性与可复盘性强化：落地经历三层分离架构规范（客观事实 Event、程序提炼模式 Observation、主体主观视角 Interpretation）；建立状态跃迁 StateChange 与因果解释 Explanation 结构化模型，严禁 LLM 越权直写主体状态；构建纯离线确定性 Replay v2 演化重放与状态一致性检测；完善 experiences.jsonl 与 subject-state.json 故障注入与容灾自愈机制。
 
-**v0.9.3** — 数字生命实验底座与可计算主体架构：落地《生物科学与数字生命的哲学范畴》实验架构规范；实现 5×20 分段归档与 Window Synthesis 双通道解耦（用户给予与初澜经历严格隔离）；程序签发不可伪造的 messageId 与 Bridge / Active Window 精确计账（消灭窗口衰减与尾部重复总结）；新增 `experiences.jsonl` Append-Only 原始实验永久底座；新增 `subject-state.json` 主体状态向量（[-999, 999] 刻度与确定性 Reducer 计算）；建立 Provenance 强核验防线（真实引用核验、幻觉拒绝）；窗口级冻结 State Snapshot 挂载于瞬时 user 尾部保卫 DeepSeek 显存 Prompt Cache 前缀稳定性；Prompt Memory 预算提升至 6000 tokens 并支持离线 Replay 演化轨迹重放。
+**v0.9.3** — 数字生命实验底座与可计算主体架构：落地《生物科学与数字生命的哲学范畴》实验架构规范；实现 5×20 分段归档与 Window Synthesis 双通道解耦（用户给予与主体经历严格隔离）；程序签发不可伪造的 messageId 与 Bridge / Active Window 精确计账（消灭窗口衰减与尾部重复总结）；新增 `experiences.jsonl` Append-Only 原始实验永久底座；新增 `subject-state.json` 主体状态向量（[-999, 999] 刻度与确定性 Reducer 计算）；建立 Provenance 强核验防线（真实引用核验、幻觉拒绝）；窗口级冻结 State Snapshot 挂载于瞬时 user 尾部保卫 DeepSeek 显存 Prompt Cache 前缀稳定性；Prompt Memory 预算提升至 6000 tokens 并支持离线 Replay 演化轨迹重放。
 
 **v0.9.2** — 稳定性收束与常驻资源优化：Motion 运动改按需自管循环与 SUSPENDED 挂起机制，消灭常驻 50ms 空转 tick；proactive 主动搭话改主进程事件驱动调度，消灭渲染端 45s 定时轮询与 IPC 往返；引入 `DeferredWriter` 实现脏标记与 3 秒防抖延迟合并写盘，关键状态（关窗小结、成长档案、重置、进程退出）立即强制 flush；建立通用 `migration.js` 数据版本迁移框架，Memory/Wardrobe/Config 增加 schemaVersion=1 并保留 self-ledger 的 version 字段与旧数据兼容；新增 `asset-check.js` 启动立绘资源完整性分级检查与预警下发。
 
@@ -796,23 +831,26 @@ pip install opencv-contrib-python numpy pillow
 **v0.4** — 三层记忆（窗口小结 + 长期记忆合并）、记忆可见可单条忘掉。
 **v0.3** — 前缀缓存改造、峰谷计价、用量面板。
 
-## 待办
+## 发展路线图与后续计划 (Roadmap)
 
-- 表情差分图与 `[state:]` 联动（差分图素材目前一张都没有，实测按状态拼出的路径 404）：
-  v0.8.1 做的是**过渡与衔接**（微动 + filter 渐变），没有凭空加一个不存在的图层。
-  真素材到位后要一并确认"脸不随换装漂移"——它是身份不是服饰。
-- `[face:]` / `[act:]` 两条通道：v0.8.0 明确**不做**，因为背后没有图层与动作资源；
-  等真图层到位再加，接了执行不了的标记就是让模型替程序撒谎
-- 真正的 760×1000 角色母版、表情差分和服装图层仍待用户按
-  `ASSET-GENERATION-GUIDE.md` 生成并导入；资源到位后要进行真实 UI 回归。
-- 换装第二阶段：按母版产出真图层替换占位图；扩充单品（每槽 3+ 件）；
-  发型/发饰出第二款以验证 `required` 槽位可换款式；衣柜导入导出
-- 联网查询（搜索工具调用）
-- 语音输入 / 朗读
-- 跨 Windows/macOS 的桌面图标扫描器：当前只完成可注入障碍物的 `icon_climbing` 状态机，
-  没有平台扫描器时安全降级；底部走动和贴边悬挂已经在 v0.8.4 完成
-- 开机自启、系统托盘
-- electron-builder 打包 exe
+Life 平台将持续围绕「桌面原生交互」、「通用数字生命架构」与「生态开放扩展」三大通用主线推进演化：
+
+### 1. 桌面原生通用交互演化 (Desktop Interaction)
+- 🎙️ **多模态流式语音交互 (TTS / STT)**：集成轻量级端侧或云端语音合成与流式语音输入，结合桌宠呼吸与动画状态机实现说话口型与音律共振。
+- 🎭 **通用表情差分槽位 (Emotion Differential Layer)**：完善 `[state:emotion]` 渲染桥接，提供标准化的通用差分表情贴图规范（喜悦、思索、困倦、委屈等），支持社区为任意角色注入生动差分。
+- 🧗 **真实桌面环境感知与避让 (Desktop Environment Sensing)**：在跨 Windows/macOS 平台接入真实桌面图标与活动窗口边界扫描适配器，为现有的 `desktop-motion.js` 注入物理障碍物，实现动态攀爬、贴窗悬挂与趣味避让。
+- 📥 **拖拽投喂与剪贴板感知 (Drag-and-Drop Intake)**：支持将文件、文本片段或图片直接拖入桌宠窗口，触发即时理解、总结归纳与长程记忆沉淀。
+- 🔍 **受控工具调用与搜索 (Controlled Tool Use)**：在安全预算与权限沙箱保护下，逐步拓展联网搜索与桌面轻量查询工具调用能力。
+
+### 2. 通用数字生命实验平台演化 (Digital Life Architecture)
+- 🌐 **多模型生态生产级接线 (Provider Fallback & Circuit Breaker)**：将已完成 35 项契约测试的 `src/provider-routing.js` 熔断降级与多端点路由接入主聊天链路，支持 DeepSeek、Claude、OpenAI、本地 Ollama 之间的零中断动态故障转移。
+- 🧠 **本地轻量向量联想图谱 (Semantic Associative Memory)**：在现有的艾宾浩斯幂律遗忘动力学上，引入纯本地轻量向量检索（Embedding），实现对话过程中的潜意识记忆自由联想与被动线索激活。
+- 🌙 **心智演化与睡眠整合看板 (Evolution Dashboard)**：提供直观的可视化面板，展现每日夜间睡眠整合、记忆突触修剪、特质向量演化轨迹与因果证据图谱。
+- 🧭 **环境驱动自决意志网络 (Self-Intent Network)**：深化 `trigger.js` 的自发意图机制，在严格前缀缓存不变式与零虚构原则下，让桌面生命基于系统活动与闲置节律自发产生有据可查的探索提案。
+
+### 3. 生态工具与分发工程 (Ecosystem & Distribution)
+- 📦 **社区角色与皮肤资产包规范 (`.lifepack`)**：制定统一的角色资产包格式，支持用户一键打包、分享和导入自定义角色立绘、衣柜组件与人设配置文件。
+- 🚀 **开机静默驻留与多平台便携打包**：完善 Windows / macOS 便携版（Portable Zip）构建流程与安装包自动构建，提供开机静默托盘自启动管理。
 
 ## DeepSeek 缓存策略
 
