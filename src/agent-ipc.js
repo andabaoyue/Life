@@ -327,6 +327,21 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //   records 里没有才说明「还没投过票」；有则无论批还是拒都不该再弹。
     if (confirmation.lookup(id)) return fail('ALREADY_DECIDED');
 
+    // 🔴 D-19：**已执行**的提案同样不该再展示。
+    //
+    //   上面那条只看 confirmation 的决策记录 —— 而**免确认路径（selfNote）
+    //   从不产生决策记录**，所以只靠它挡不住「已写完的提案又被当成待确认」。
+    //   （执行器成功时会 revoke(proposalId)，但对无记录的提案那是 NOT_CONFIRMED，
+    //    等于没兜住。）
+    //
+    //   ⚠️ 这是纵深防御：主因（D-19 的错广播）已修，但「展示层不得展示已执行的提案」
+    //     这条不变式本身就该独立成立，不该依赖上游「恰好没广播」。
+    //   用 executor.consumed 查 —— 那是执行器真实的消费记录，不是推断。
+    if (executor && executor.consumed && typeof executor.consumed.has === 'function'
+      && executor.consumed.has(id)) {
+      return fail('ALREADY_EXECUTED');
+    }
+
     const meta = registry.metaOf(tracked.capability) || {};
     const snapshot = Object.freeze({
       id: tracked.id,

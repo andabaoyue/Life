@@ -242,9 +242,19 @@ function maybeAskForSelfNote(selfIntent) {
             : null;
           if (exec && exec.ok) {
             console.log('[Agent] 她自己留下了一张纸条:', String(rawHint).slice(0, 60));
-            // 仍然广播一次：让 UI 知道盘上多了东西（用户可能正看着桌面）。
-            //   ⚠️ 这不是确认卡片 —— selfNote 免确认，广播只是知情通知。
-            deps.broadcastToWindows('agent-proposal-available', { proposalId: res.proposal.id });
+            // 🔴 D-19：**绝不广播 `agent-proposal-available`**。
+            //
+            //   实测事故：D-17 在这里广播了它，注释还写着「这不是确认卡片」。
+            //   **那句话是错的** —— 事件名本身就决定了它的语义是「有提案等你决定」，
+            //   渲染端 `pet.js` 的 onProposalAvailable 收到就无条件亮确认卡。
+            //   于是自发便签写成后，用户仍被弹了一张多余的授权卡；
+            //   用户点【授权】→ 执行器回 ALREADY_EXECUTED（白点）。
+            //
+            //   ⚠️ 语义铁律：**「已执行完」和「待你决定」是两件事，不能共用一个事件。**
+            //     免确认的路径本来就不该有任何待决状态可广播。
+            //   若将来确实要让 UI 知情（比如桌面上飘一句「我留了张纸条」），
+            //   必须另起一个语义明确的事件名（如 `agent-selfnote-written`），
+            //   绝不能复用 `-available`。
           } else {
             // 决策 4：写失败不告诉她，只记日志（审计里执行器已记了原因）。
             console.log('[Agent] 自发留条未落盘（按设计不告诉她）:', exec && exec.error);

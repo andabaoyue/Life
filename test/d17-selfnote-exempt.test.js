@@ -240,6 +240,54 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
       chainOk && contentOk, 'chainOk=' + chainOk + ' contentOk=' + contentOk);
   }
 
+  // 🔴 D-19（实测事故）：自发便签写成后**不得再亮确认卡**。
+  //
+  //   事故经过：D-17 在自动执行成功后仍广播了 `agent-proposal-available`，
+  //   注释还写「这不是确认卡片」—— **那句话是错的**。事件名本身决定语义是
+  //   「有提案等你决定」，渲染端 pet.js 收到就无条件亮卡。
+  //   后果：用户写了便签还被迫点一次授权，点了撞 ALREADY_EXECUTED。
+  check('🔴 自动执行成功后不得广播 agent-proposal-available（否则必亮多余卡片）',
+    !/executeInternal\(\{[^}]*proposalId[^}]*\}\)[\s\S]{0,900}?broadcastToWindows\('agent-proposal-available'/.test(mainSrc));
+
+  // 🔴 纵深防御：展示层不得展示**已执行**的提案。
+  //   只查 confirmation.lookup 挡不住 —— 免确认路径（selfNote）从不产生决策记录。
+  {
+    let beforeOk = false, afterBlocked = false, userStillOk = false;
+    try {
+      const IA2 = require('../src/agent-interfaces');
+      const Conf2 = require('../src/agent-confirmation');
+      const { WriteTransactionManager } = require('../src/agent-transaction');
+      const sb3 = fs.mkdtempSync(path.join(os.tmpdir(), 'd19-sb-'));
+      const txn3 = fs.mkdtempSync(path.join(os.tmpdir(), 'd19-txn-'));
+      const stash3 = new Map();
+      const pol3 = new IA2.PermissionPolicy({ killSwitch: false, allowed: ['workspace.write'] });
+      pol3.setScopeRoots('workspace.write', [sb3]);
+      const hs = {};
+      const api3 = registerAgentIpc(
+        { handle: (c, fn) => { hs[c] = fn; }, assertTrustedRenderer() {}, isTrustedRenderer: () => true },
+        { registry: new IA2.CapabilityRegistry(), policy: pol3, budget: new IA2.ExecutionBudget(),
+          auditLog: { list: () => [], append: () => {} }, confirmation: new Conf2.UserConfirmationGate() },
+        { transactionManager: new WriteTransactionManager({ dir: txn3 }), txnDir: txn3,
+          takeStashedContent: (id) => { if (!stash3.has(id)) return null; const v = stash3.get(id); stash3.delete(id); return v; } });
+      const ev3 = { sender: { id: 1 } };
+      const call3 = (ch, raw) => hs[ch](ev3, raw);
+      const p3 = api3.proposeInternal(
+        { capability: 'workspace.write', scope: path.join(sb3, 'note.txt'), reason: 'r' }, 'main', 'selfNote');
+      beforeOk = call3('agent:get-pending-proposal', { proposalId: p3.proposal.id }).ok === true;
+      stash3.set(p3.proposal.id, '内容');
+      api3.executeInternal({ proposalId: p3.proposal.id });
+      const after = call3('agent:get-pending-proposal', { proposalId: p3.proposal.id });
+      afterBlocked = after.ok === false && after.error === 'ALREADY_EXECUTED';
+      // 对照：普通未决策提案仍可获取（别把「待确认」一起挡掉）
+      const p4 = api3.proposeInternal(
+        { capability: 'workspace.write', scope: path.join(sb3, 'u.txt'), reason: 'r' }, 'main');
+      userStillOk = call3('agent:get-pending-proposal', { proposalId: p4.proposal.id }).ok === true;
+    } catch (e) { /* 失败即未通过 */ }
+    check('🔴 行为：已执行的自发便签不再被当成待确认（展示层纵深防御）', afterBlocked);
+    check('🔴 行为：执行前可获取 / 普通未决策提案仍可获取（对照未误伤）',
+      beforeOk && userStillOk);
+  }
+
   const execSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent-executor.js'), 'utf8');
   check('❌ 免确认判定在执行器内（不在通道层另开旁路）',
     execSrc.includes("proposal.proposalSource === 'selfNote'"));
