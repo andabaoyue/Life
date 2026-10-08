@@ -22,7 +22,8 @@
     "build:win": "electron-builder --win --x64"
   },
   "devDependencies": {
-    "electron": "^44.4.3"
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3"
   },
   "author": "andabaoyue",
   "license": "PolyForm-Noncommercial-1.0.0"
