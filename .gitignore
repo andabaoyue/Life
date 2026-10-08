@@ -23,6 +23,22 @@ life-key
 gpt-girl-config.json
 gpt-girl-key
 *.bak
+# 其余运行时状态（按设计写在 %APPDATA%\Life，库外；此处兜住「被拷进仓库/备份入库」的情形）
+userData/
+connections.json
+chat-window.json
+internal-regulation.json
+agent-write-txn.json
+.anchor.json
+.provenance.json
+.recovery-audit.json
+events.jsonl
+observations.jsonl
+interpretations.jsonl
+evidence.jsonl
+state-changes.jsonl
+state-history.json
+metadata.json
 
 # Logs and temp files
 logs/

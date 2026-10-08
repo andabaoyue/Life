@@ -16,3 +16,16 @@ Research archive: https://github.com/andabaoyue/Life-Chulan
 Licensed under the PolyForm Noncommercial License 1.0.0.
 See the LICENSE file for details.
 All rights reserved.
+
+---
+
+## Third-Party Notices
+
+Source distribution depends on Electron (MIT) and its transitive dependencies
+(their licenses ship with the npm packages and are listed in package-lock.json).
+If a packaged binary (installer / portable build) is distributed, it bundles
+Electron / Chromium and Node.js runtime binaries — the corresponding license
+texts (Electron MIT, Chromium BSD-style plus its third-party notices, Node.js
+licenses) must be shipped alongside that build.
+
+No third-party code is vendored into this repository's source tree.
