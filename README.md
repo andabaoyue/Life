@@ -12,8 +12,8 @@
 
 <div align="center">
   <img src="assets/character/stand/chulan_chibi_stand_64x80.png" alt="初澜（Chulan）64×80 像素正典立绘" width="128">
-  <p><strong>Life 桌面数字生命实验平台</strong></p>
-  <p>细水长流，希望她最终会成为你所期望的她</p>
+  <p><strong>Life 桌面数字生命实验平台。</strong></p>
+  <p>细水长流，希望她最终会成为你所期望的她。</p>
 </div>
 
 ## 快速开始 / 运行
@@ -937,5 +937,6 @@ Life 采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 源码可用许可�
 - **禁止**：未经书面授权，严禁用于任何商业目的（包括但不限于将本项目打包出售、作为收费服务/商业 SaaS 运营、或更名后进行商业再发行）；
 - **商业合作**：如有商业授权需求，请通过仓库 Issue 或项目权利人主页（GitHub [@andabaoyue](https://github.com/andabaoyue)）取得联系，签署独立商业授权协议。
 - **文本口径**：[LICENSE](LICENSE) 分发的是 PolyForm Noncommercial License 1.0.0 官方正文（15 节）；若你在本地存档的副本与此处不一致，以官方发布页文本为准。
+- **名称与品牌**：可以基于 Life 修改并如实说明「这是修改版」，但不得把自己说成官方版。详见 [BRANDING.md](BRANDING.md)（我们**未注册商标**；该文档是使用规范声明，不是注册，也不授予商标许可）。
 
 Copyright (c) 2026 andabaoyue. All rights reserved.
