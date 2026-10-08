@@ -7,11 +7,25 @@ directories:
   output: dist
   buildResources: assets
 
+# 生产文件闭包（v1.0 修正）：必须与 main.js/index.html/chat.html 的真实加载链一致 ——
+#   主进程 preload（两个窗口共用）、渲染页面、页面脚本（pet.js + 6 个 ui-*.js）缺一不可。
+#   历史上的 "renderer.js" 条目指向已不存在的旧入口，是一处「假入口」，已删除。
+#   ⚠️ 改动本段后必须重跑「ASAR 必需文件闭包检查」（tools/release-check.js 或 CI），
+#      因为 npm test 只验工作树，验不到最终产物。
 files:
   - "main.js"
+  - "preload.js"
   - "index.html"
+  - "chat.html"
   - "style.css"
-  - "renderer.js"
+  - "pet.js"
+  - "chat.js"
+  - "ui-i18n.js"
+  - "ui-chat-store.js"
+  - "ui-chat-render.js"
+  - "ui-provider-presets.js"
+  - "ui-outfit-complete.js"
+  - "ui-agent-confirm.js"
   - "src/**"
   - "assets/**"
   - "package.json"

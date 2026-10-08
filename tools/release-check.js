@@ -9,6 +9,7 @@
  * 6. package-lock.json 存在且与 package.json 依赖元数据一致
  * 7. 配置版本与默认配置完整性 (schemaVersion=1, configVersion="1.0.0")
  * 8. README.md 文档声明与测试集文件清单严格一致
+ * 9. electron-builder.yml 的 files 白名单覆盖全部真实运行入口（F-REL-001 回归门禁）
  *
  * 输出格式：结构化 (PASS / WARN / FAIL)
  */
@@ -314,6 +315,47 @@ function checkConfigDefaults() {
   }
 }
 
+/* 9. 发布白名单闭包检查（v1.0 审计 F-REL-001 回归门禁）
+ *
+ * 为什么必须有：npm test 与 ui_test.py 都在**工作树**里跑，验不到最终产物。
+ * 曾经 electron-builder.yml 的 files 白名单列着不存在的 renderer.js，
+ * 却漏掉 preload.js / pet.js / chat.html / chat.js / 6 个 ui-*.js ——
+ * 打出来的包主窗口拿不到 contextBridge、页面脚本全部 404，
+ * 而所有门禁仍然全绿。这里把「真实入口清单」钉死成断言。
+ */
+const RUNTIME_ENTRIES = [
+  'main.js', 'preload.js', 'index.html', 'chat.html', 'style.css',
+  'pet.js', 'chat.js',
+  'ui-i18n.js', 'ui-chat-store.js', 'ui-chat-render.js',
+  'ui-provider-presets.js', 'ui-outfit-complete.js', 'ui-agent-confirm.js',
+  'src/**', 'assets/**', 'package.json'
+];
+function checkBuilderClosure() {
+  const cfgPath = path.join(ROOT, 'electron-builder.yml');
+  if (!fs.existsSync(cfgPath)) { report('FAIL', '发布白名单', 'electron-builder.yml 不存在'); return; }
+  const raw = fs.readFileSync(cfgPath, 'utf8');
+  // 仅取 files: 段的条目（到下一个顶层键为止）
+  const lines = raw.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^files:\s*$/.test(l));
+  if (start < 0) { report('FAIL', '发布白名单', 'electron-builder.yml 未声明 files 段'); return; }
+  const entries = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^\s+-\s+"([^"]+)"\s*$/);
+    if (!m) { if (/^\S/.test(lines[i])) break; continue; }
+    entries.push(m[1]);
+  }
+  const has = (p) => entries.includes(p);
+  const missing = RUNTIME_ENTRIES.filter((e) => !has(e));
+  // 反向：白名单里指向不存在文件的死条目（renderer.js 那一类）
+  const dead = entries.filter((e) => !e.startsWith('!') && !e.includes('*')
+    && !fs.existsSync(path.join(ROOT, e)));
+  const problems = [];
+  if (missing.length) problems.push('缺少真实运行入口: ' + missing.join(', '));
+  if (dead.length) problems.push('指向不存在文件的死条目: ' + dead.join(', '));
+  if (problems.length) report('FAIL', '发布白名单闭包', problems.join(' | '));
+  else report('PASS', '发布白名单闭包', `${RUNTIME_ENTRIES.length} 个运行入口全部在 files 白名单内，且无死条目`);
+}
+
 /* 8. README 文档与测试集完整性 */
 function checkDocsAndTestSuites() {
   const readmePath = path.join(ROOT, 'README.md');
@@ -349,6 +391,7 @@ checkFallbackSprite();
 checkPackageLock();
 checkConfigDefaults();
 checkDocsAndTestSuites();
+checkBuilderClosure();
 
 console.log('\n====================================================');
 console.log(`检查完成: PASS ${totalPass} 项, WARN ${totalWarn} 项, FAIL ${totalFail} 项`);
