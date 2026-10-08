@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:   # 手动触发：需要单独验证发布产物闭包时用
 
 jobs:
   test:
@@ -46,6 +47,12 @@ jobs:
         run: npm ci
       - name: Dependency audit (high severity)
         run: npm audit --audit-level=high
+      # CONTRIBUTING 声明「PR 前必须过这两道门禁」，但此前 CI 从未执行 —— 声明与执行不一致
+      # 等于没有防线。两条都是秒级，不拖慢流水线。
+      - name: Static syntax check (tools/check.js)
+        run: node tools/check.js
+      - name: Release integrity check (tools/release-check.js)
+        run: node tools/release-check.js
       - name: Warm static UI asset cache
         run: |
           if [ -d assets ]; then
@@ -60,3 +67,30 @@ jobs:
             echo "npm test failed on attempt ${attempt}; retrying the complete suite"
           done
           exit 1
+
+  # 档 2：真构建 + 产物闭包断言。
+  # 用独立 job 是有意的 —— 它要下载 Electron（100MB+、2~4 分钟），
+  # 挂在每次 push 上会拖慢快速反馈；只在 PR 与手动触发时跑。
+  #
+  # ⚠️ 诚实边界：配置里只有 win 目标，在 Linux CI 上走 --dir --linux，
+  #    验证的是**文件闭包**（与平台无关），不是 Windows 安装包本身。
+  #    别把它当「Windows 打包验证」的替代。
+  package-closure:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build unpacked app (file closure only)
+        run: npm run build:dir:linux   # 走锁定依赖的脚本，不用 npx 现拉版本
+      - name: Assert ASAR runtime closure
+        run: node tools/asar-check.js
