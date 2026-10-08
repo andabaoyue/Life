@@ -34,6 +34,10 @@ files:
   - "!research/**"
   - "!**/*.md"
   - "!dist/**"
+  # 已淘汰资产（v1.0 像素换代后零引用）：研究库里按档案保留，但绝不进任何分发包。
+  # tools/asar-check.js 会断言它们不在 app.asar 里，这条排除是配套的第一道闸。
+  - "!assets/character-archive-760x1000/**"
+  - "!assets/character/base/base_legacy_full.png"
 
 win:
   target:
