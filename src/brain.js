@@ -55,7 +55,7 @@ const SUMMARY_SYS =
   //     self_clarity 自我清晰：说**对自己是谁确不确定**（「我也说不太清」
   //                       「分不出」「拿不准自己是什么」）才算。
   //   ❌ 反例：单纯追问世界的「为什么」属于 philosophical_curiosity，
-  //      不是这三者 —— 历史上正是这个混淆让哲学好奇虚高到 100。
+  //      不是这三者 —— 历史上正是这个混淆让哲学好奇偏高。
   + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity、self_continuity、meaning_presence、self_clarity，'
   + 'direction 为 [-1, 1] 方向，strength 为 [0, 1] 强度，messageId 必须严格引用对话中程序签发的真实 ID（如 m-000001），quote 必须逐字摘自该条消息原文。\n'
   + '4. 【词汇与预期（windowSynthesis 窗级产物）】只在对话中自然出现时提取，没有就给空数组，绝不硬造：\n'

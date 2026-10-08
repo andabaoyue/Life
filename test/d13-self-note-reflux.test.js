@@ -164,11 +164,11 @@ console.log('--- D-13 自述回流门禁 ---');
 /* ============ 8. 🔴 路径泄漏：绝对路径不许进她的意识 ============ */
 {
   const m = freshMem();
-  m.addSelfNote({ content: 'x', name: 'C:/Users/andab/Desktop/LifeSandbox/note.md' });
+  m.addSelfNote({ content: 'x', name: 'C:/Users/example/Desktop/LifeSandbox/note.md' });
   check('🔴 只保留 basename（完整绝对路径不进她的意识）',
     m.data.selfNotes[0].name === 'note.md', m.data.selfNotes[0].name);
   const m2 = freshMem();
-  m2.addSelfNote({ content: 'x', name: 'C:\\Users\\andab\\note.md' });
+  m2.addSelfNote({ content: 'x', name: 'C:\\Users\\example\\note.md' });
   check('🔴 反斜杠路径同样只留 basename', m2.data.selfNotes[0].name === 'note.md', m2.data.selfNotes[0].name);
   const out = withHistory(m).map((x) => String(x.content)).join('\n');
   check('🔴 注入文本里不含任何盘符/绝对路径',

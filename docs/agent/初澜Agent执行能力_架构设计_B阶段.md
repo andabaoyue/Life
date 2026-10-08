@@ -49,7 +49,7 @@ can(capability, scope) {
 }
 ```
 
-- `scope` 是**任意字符串即通过**。`scope: "*"`、`scope: "C:\\Users\\andab"` 全部放行。
+- `scope` 是**任意字符串即通过**。`scope: "*"`、`scope: "C:\\Users\\example"` 全部放行。
   → **没有任何路径约束概念**，这是最要命的一条。
 - `killSwitch` 默认 `true`（`opts.killSwitch !== false`），所以默认全拒——
   这个默认值是对的，但**只有布尔开关**，没有分级。

@@ -4,10 +4,10 @@
  * D-23 门禁：召回增强（Retrieval Enhancement）。
  *
  * ## 背景（真实数据实测）
- *   旧实现只认 DORMANT traces（S<0.35 且隔5窗），而她 5 段记忆零条 DORMANT
+ *   旧实现只认 DORMANT traces（S<0.35 且隔5窗），而她的现有记忆里零条 DORMANT
  *   ⇒ 整个强化系统空转。且 reactivate() 当场改 tier（破前缀缓存）。
  *   实测证伪两条：① FADING→ACTIVE 跳变 = prompt 突变 = 破缓存；
- *   ② 一句话可命中 4 段（全范围）= 洪泛。
+ *   ② 一句话可命中多段（全范围）= 洪泛。
  *
  * ## D-23 的三条改动
  *   ① 候选范围放开到全部 trace（含 ACTIVE —— 全范围参与）

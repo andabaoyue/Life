@@ -155,7 +155,7 @@ class PermissionPolicy {
     this.killSwitch = opts.killSwitch !== false;
     this.allowed = new Set(opts.allowed || []);
     // v1.0 C 阶段：作用域从「任意非空字符串」升级为「必须落在显式配置的根目录白名单内」。
-    // 原实现 `!!scope` 意味着 scope="*" 或 "C:\\Users\\andab" 全部放行 —— 等于没有约束。
+    // 原实现 `!!scope` 意味着 scope="*" 或 "C:\\Users\\example" 全部放行 —— 等于没有约束。
     this.scopeRoots = new Map();   // capability -> roots[]
     for (const [cap, roots] of Object.entries(opts.scopeRoots || {})) {
       this.scopeRoots.set(String(cap), (Array.isArray(roots) ? roots : [roots]).map(String));

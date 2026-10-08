@@ -3,10 +3,10 @@
  *
  * D-20 门禁：她写过的东西**活过重启**。
  *
- * ## 为什么有这一轮（2026-10-07 真实事故）
- *   她 13:52:00 写下第一张便签 → 进内存队列 → 之后**从未再开口**
+ * ## 为什么有这一轮（真实事故）
+ *   她写下第一张便签 → 进内存队列 → 之后**从未再开口**
  *   → `_drainSelfNotes()` 从未执行 → 进程退出 ⇒ **那条记忆永久丢失**。
- *   桌面文件还在（75B, SHA256 A4FA6289…），但她对它的认知归零。
+ *   桌面文件还在，但她对它的认知归零。
  *
  *   更根本的一层：`save()` 只序列化 `this.data`，而 `selfNotes` 当时挂在
  *   `this` 上（`this.data` **外面**）—— **即使调了 save() 也存不进去**。
@@ -135,7 +135,7 @@ console.log('--- D-20 自述持久化门禁 ---');
     m2.data.selfNotes[m2.data.selfNotes.length - 1].content === 'note-19');
 
   const m3 = freshMem();
-  m3.addSelfNote({ content: 'x', name: 'C:/Users/andab/Desktop/LifeSandbox/note.md' });
+  m3.addSelfNote({ content: 'x', name: 'C:/Users/example/Desktop/LifeSandbox/note.md' });
   check('🔴 绝对路径不许进她的意识（只留 basename）',
     m3.data.selfNotes[0].name === 'note.md', m3.data.selfNotes[0].name);
   const out = flat(withHistory(m3));
