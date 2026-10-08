@@ -3,9 +3,9 @@
  *
  * 检查项：
  * 1. JS 语法静态检查通过（node --check）
- * 3. 换装系统所需的 12 个 PNG 图层资源全部存在且符合 760x1000 规范
+ * 3. 换装系统所需的 PNG 图层资源全部存在且符合 64x80 像素规范（非标尺寸 WARN）
  * 4. 换装图层透明度与 Alpha 边界非破坏性审计 (P1-6: 识别全透明空图层并预警，绝不破坏/覆盖资产)
- * 5. 兜底皮套 assets/pet.png 存在且符合 1015x1171 比例规范
+ * 5. 兜底皮套 assets/pet.png 存在且为有效 PNG（像素换代后按 64x80 口径校验）
  * 6. package-lock.json 存在且与 package.json 依赖元数据一致
  * 7. 配置版本与默认配置完整性 (schemaVersion=1, configVersion="1.0.0")
  * 8. README.md 文档声明与测试集文件清单严格一致

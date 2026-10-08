@@ -48,9 +48,9 @@ console.log('--- D-5 Agent 沙盒门禁 ---');
 
 /* ---------- 1. 路径定位 ---------- */
 {
-  const p = sandboxPathFor('C:\\Users\\developer\\Desktop');
+  const p = sandboxPathFor('C:\\Users\\example\\Desktop');
   check('桌面路径正确落到 Desktop/LifeSandbox 子目录',
-    p === path.join('C:\\Users\\developer\\Desktop', 'LifeSandbox')
+    p === path.join('C:\\Users\\example\\Desktop', 'LifeSandbox')
     || p.endsWith(path.join('Desktop', SANDBOX_DIR_NAME)), p);
 
   check('沙盒目录名固定为 LifeSandbox', SANDBOX_DIR_NAME === 'LifeSandbox', SANDBOX_DIR_NAME);

@@ -76,7 +76,7 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
 
   check('C2 🔴 未配置根目录时一律拒绝（旧实现传任意非空字符串即放行）', (() => {
     const p = mkPolicy(null);
-    return p.authorize('workspace.read', 'C:\\Users\\developer').allowed === false
+    return p.authorize('workspace.read', 'C:\\Users\\example').allowed === false
       && p.authorize('workspace.read', '*').reason === 'scope_not_in_whitelist';
   })());
   check('C2 🔴 scope="*" 在配置了根目录后也不得放行', (() => {

@@ -300,7 +300,7 @@ class EngramTraceManager {
     //
     //   原实现在这里调 computeEngramDecay 并写回 tier —— 那会在**对话中途**
     //   改变 systemText（FADING→ACTIVE 跳变 = prompt 突变 = 破缓存）。
-    //   实测（真实数据）：跳变那一轮 systemText 变化 194 字，前缀缓存全失。
+    //   实测（真实数据）：跳变那一轮 systemText 出现变化，前缀缓存全失。
     //
     //   现在：retrievalCount / lastRetrievedWindow 是**账本**，不进 prompt；
     //   tier 的变化统一在关窗 decayAll() 时结算（那时 system 本来就要刷新）。
