@@ -615,13 +615,13 @@ const slotBox = document.getElementById('wdSlots');
   presetBox.textContent = '';
   slotBox.textContent = '';
   if (!api) {
-    slotBox.textContent = '预览模式，衣柜不可用';
+    slotBox.textContent = t('wd.preview');
     return;
   }
   let st;
   try { st = await api.wardrobeState(); } catch { st = null; }
   const cat = st && st.catalog;
-  if (!cat) { slotBox.textContent = '衣柜未初始化'; return; }
+  if (!cat) { slotBox.textContent = t('wd.notInit'); return; }
 
   setKnownWear(wearIdsFrom(cat));
 
@@ -720,7 +720,7 @@ const slotBox = document.getElementById('wdSlots');
     // 用 items.every(locked) 反推的话，第二款忘标 locked 就会冒出脱下按钮。
     if (!slot.required) {
       const off = document.createElement('button');
-      off.textContent = '脱下';
+      off.textContent = t('wd.off');
       off.className = 'wd-off' + (cur ? '' : ' on');
       off.addEventListener('click', async () => {
         wdAnchor = null;
@@ -864,20 +864,62 @@ function renderTimezonePanel() {
   }
 }
 
+function updateMenuI18n() {
+  const menuActs = {
+    talk: 'menu.talk',
+    wardrobe: 'menu.wardrobe',
+    panel: 'menu.panel',
+    research: 'menu.research',
+    outline: 'menu.outline',
+    quit: 'menu.quit'
+  };
+  for (const [act, key] of Object.entries(menuActs)) {
+    const el = document.querySelector(`#menu [data-act="${act}"]`);
+    if (el) el.textContent = t(key);
+  }
+  updatePinLabel();
+}
+
 function renderI18nPanel() {
   renderTimezonePanel();
   if (tzNote) tzNote.textContent = t('panel.tzLocked');
   if (i18nTitle) i18nTitle.textContent = t('panel.i18nTitle');
   if (langLabel) langLabel.textContent = t('panel.language');
   if (tzLabel) tzLabel.textContent = t('panel.timezone');
-  // v1.0 设置面板四分区文案（新文案一律入表，双语对称）
+  // v1.0 设置面板与右键菜单全量文案（新文案一律入表，双语对称）
   const setText = (id, key) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };
+  setText('panelTitle', 'panel.title');
   setText('secConn', 'sec.conn');
   setText('secMemory', 'sec.memory');
   setText('secTimezone', 'sec.timezone');
   setText('secDanger', 'sec.danger');
   setText('wardrobeTitle', 'sec.wardrobe');   // 衣橱面板标题
+  setText('wdHint', 'wd.hint');
 
+  // 连接区与用量
+  setText('connQuickTitle', 'conn.quick');
+  setText('keySave', 'conn.save');
+  setText('connAdvTitle', 'conn.advanced');
+  setText('connListLabel', 'conn.list');
+  setText('connNameLabel', 'conn.name');
+  setText('optAnthropicNative', 'conn.anthropicNative');
+  setText('connNew', 'conn.new');
+  setText('connSave', 'conn.save');
+  setText('connTest', 'conn.test');
+  setText('connActivate', 'conn.activate');
+  setText('openCfg', 'conn.openCfg');
+  setText('statsTitle', 'sec.stats');
+
+  // 输入框占位符
+  const connNameInput = document.getElementById('connName');
+  if (connNameInput) connNameInput.placeholder = t('conn.namePlaceholder');
+  const connKeyInput = document.getElementById('connKey');
+  if (connKeyInput) connKeyInput.placeholder = t('conn.keyPlaceholder');
+  const connModelInput = document.getElementById('connModel');
+  if (connModelInput) connModelInput.placeholder = t('conn.modelPlaceholder');
+
+  // 记忆与时区
+  setText('memTitle', 'mem.title');
   setText('dangerHint', 'sec.dangerHint');
   setText('tzCompassTitle', 'tz.compass');
   setText('tzKBirth', 'tz.birth');
@@ -886,6 +928,28 @@ function renderI18nPanel() {
   setText('tzKSync', 'tz.sync');
   setText('panelCloseHint', 'panel.closeHint');
   setText('connDelete', 'conn.delete');
+  setText('resetSelf', 'danger.resetSelf');
+
+  // 右键菜单
+  updateMenuI18n();
+
+  // 个体观测面板
+  setText('researchTitle', 'research.title');
+  setText('rRefreshBtn', 'research.refresh');
+  const rTabMap = {
+    state: 'research.tab.state',
+    dreams: 'research.tab.dreams',
+    provenance: 'research.tab.provenance',
+    replay: 'research.tab.replay',
+    windows: 'research.tab.windows',
+    export: 'research.tab.export'
+  };
+  for (const [tab, key] of Object.entries(rTabMap)) {
+    const el = document.querySelector(`.r-tab[data-rtab="${tab}"]`);
+    if (el) el.textContent = t(key);
+  }
+  setText('rFooterStatus', 'research.footer.status');
+  setText('rFooterHashes', 'research.footer.hashes');
 }
 
 /* ---------- 设置面板两栏导航（v1.0 用户设计） ----------
@@ -905,10 +969,13 @@ selectPanelSection((() => { try { return localStorage.getItem('panelSection'); }
 if (langSelect) {
   if (typeof UI_LOCALE !== 'undefined' && UI_LOCALE) langSelect.value = UI_LOCALE;
   langSelect.addEventListener('change', () => {
-  setLocale(langSelect.value);
-  renderI18nPanel();
-  renderProviderPanel();
-  if (chatTitle) chatTitle.textContent = t('chat.title');
+    setLocale(langSelect.value);
+    renderI18nPanel();
+    renderProviderPanel();
+    if (chatTitle) chatTitle.textContent = t('chat.title');
+    refreshMem();
+    refreshWardrobe();
+    refreshStats();
   });
 }
 renderI18nPanel();
@@ -1318,8 +1385,8 @@ function splitMemorySegments(text) {
   const parts = String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
   const her = [], you = [], other = [];
   for (const p of parts) {
-    if (/^用户事实[：:]/.test(p)) you.push(p.replace(/^用户事实[：:]\s*/, ''));
-    else if (/^初澜经历[：:]/.test(p)) her.push(p.replace(/^初澜经历[：:]\s*/, ''));
+    if (/^(?:用户事实|User facts?)[：:]/i.test(p)) you.push(p.replace(/^(?:用户事实|User facts?)[：:]\s*/i, ''));
+    else if (/^(?:初澜经历|Chulan(?:'s)? experiences?)[：:]/i.test(p)) her.push(p.replace(/^(?:初澜经历|Chulan(?:'s)? experiences?)[：:]\s*/i, ''));
     else other.push(p);
   }
   return { her, you, other };
@@ -1331,7 +1398,7 @@ async function refreshMem() {
   if (!api) {
     const p = document.createElement('div');
     p.className = 'empty';
-    p.textContent = '预览模式，无记忆数据';
+    p.textContent = t('mem.preview');
     box.appendChild(p);
     return;
   }
@@ -1340,7 +1407,7 @@ async function refreshMem() {
   if (!list.length) {
     const p = document.createElement('div');
     p.className = 'empty';
-    p.textContent = '还没有长期记忆（聊满一轮窗口后会生成小结）';
+    p.textContent = t('mem.empty');
     box.appendChild(p);
     return;
   }
@@ -1354,7 +1421,7 @@ async function refreshMem() {
       card.className = 'fgroup';
       const head = document.createElement('div');
       head.className = 'fg-title';
-      head.textContent = g ? ('窗口 #' + g) : '记忆';
+      head.textContent = g ? (t('mem.window') + ' #' + g) : t('mem.other');
       groupBody = document.createElement('div');
       card.append(head, groupBody);
       box.appendChild(card);
@@ -1365,7 +1432,7 @@ async function refreshMem() {
 
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = m.label;
+    tag.textContent = String(m.label || '').replace(/^窗口\s*#/, t('mem.window') + ' #');
 
     const body = document.createElement('div');
     body.className = 'mem-body';
@@ -1383,9 +1450,9 @@ async function refreshMem() {
       seg.append(h, b);
       body.appendChild(seg);
     };
-    pushSeg('her', '她的经历', segs.her);
-    pushSeg('you', '关于你', segs.you);
-    pushSeg('other', '记忆', segs.other);
+    pushSeg('her', t('mem.her'), segs.her);
+    pushSeg('you', t('mem.you'), segs.you);
+    pushSeg('other', t('mem.other'), segs.other);
 
     // v0.9.9 F-099-01 / D-005: 记忆面板只读观察 —— 「忘掉」按钮与代拟台词已拔除。
     // 记忆的淡出只归 MemoryDynamics 的可及性衰减管，任何人不得替她挖记忆、更不得替她说话。
@@ -1396,7 +1463,7 @@ async function refreshMem() {
 
 async function refreshStats() {
   const el = document.getElementById('stats');
-  if (!api) { el.textContent = '预览模式，无数据'; return; }
+  if (!api) { el.textContent = t('stats.preview'); return; }
   const r = await api.report();
   const g = await api.getConfig();
   if (!r) { el.textContent = '—'; return; }
@@ -1420,47 +1487,47 @@ async function refreshStats() {
   const br = () => document.createElement('br');
 
   // 第 1 行：请求次数与模型
-  el.append('请求 ', b(r.requests), ' 次　模型 ', span(r.model, '', 'stModel'));
+  el.append(t('stats.requests') + ' ', b(r.requests), (t('stats.times') ? ' ' + t('stats.times') : '') + '　' + t('stats.model') + ' ', span(r.model, '', 'stModel'));
   if (r.peak) {
-    el.append(' ', span('(高峰价)', 'warn'));
+    el.append(' ', span(t('stats.peak'), 'warn'));
   }
   el.appendChild(br());
 
   // 第 2 行：累计命中率
-  el.append('累计命中率 ', b(r.rate + '%'));
+  el.append(t('stats.rate') + ' ', b(r.rate + '%'));
   if (low) {
-    el.append(' ', span('(偏低)', 'warn'));
+    el.append(' ', span(t('stats.low'), 'warn'));
   }
   el.appendChild(br());
 
   // 第 3 行：上一次统计
-  el.append('上一次 ', b(r.lastRate + '%'), '　命中 ' + r.hit + ' / 未命中 ' + r.miss + ' tok');
+  el.append(t('stats.last') + ' ', b(r.lastRate + '%'), '　' + t('stats.hit') + ' ' + r.hit + ' / ' + t('stats.miss') + ' ' + r.miss + ' tok');
   el.appendChild(br());
 
   // 第 4 行：输出与开销
-  el.append('输出 ' + r.out + ' tok　花费 ', b('¥' + r.cost));
+  el.append(t('stats.output') + ' ' + r.out + ' tok　' + t('stats.cost') + ' ', b('¥' + r.cost));
   el.appendChild(br());
 
   // 第 5 行：窗口与轮数
   el.append(
-    '对话窗口 第' + r.windowNo + ' 段　',
+    t('stats.window') + r.windowNo + t('stats.windowSeg') + '　',
     b(r.windowTurns + '/' + r.windowTarget),
-    ' 轮　~' + r.historyTokens + ' tok　上下文 ~' + r.contextTokens + ' tok'
+    ' ' + t('stats.turns') + '　~' + r.historyTokens + ' tok　' + t('stats.context') + ' ~' + r.contextTokens + ' tok'
   );
   el.appendChild(br());
 
   // 第 6 行：记忆小结与合并
   el.append(
-    '记忆 ' + r.segments + ' 条小结　',
+    t('stats.memSummary') + ' ' + r.segments + ' ' + t('stats.memSummariesCount') + '　',
     b(r.memoryTokens + '/' + r.memoryCap),
-    ' tok　小结 ' + r.compressions + ' 次　合并 ' + r.merges + ' 次'
+    ' tok　' + t('stats.compressions') + ' ' + r.compressions + ' ' + t('stats.times') + '　' + t('stats.merges') + ' ' + r.merges + ' ' + t('stats.times')
   );
 
   document.getElementById('keyState').textContent =
     g.hasKey
-      ? (g.keyEncrypted ? '已配置 Key（磁盘上为加密存储）'
-                        : '已配置 Key（注意：本机不支持加密，Key 仍是明文存储）')
-      : '未配置 Key — 填一下才能对话';
+      ? (g.keyEncrypted ? t('conn.keyState.enc')
+                        : t('conn.keyState.plain'))
+      : t('conn.keyState.none');
 }
 
 /* v1.0：× 按钮退役（与设置/实验同语义）——ESC / 右键关闭 */
@@ -2606,6 +2673,7 @@ document.getElementById('rExpFullBundle')?.addEventListener('click', () => handl
    同理 left 那个 130 也是猜的。 */
 pet.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  updateMenuI18n();
   menu.classList.remove('hidden');           // 先显示，才量得到尺寸
 
   const clampMenuToViewport = () => {
