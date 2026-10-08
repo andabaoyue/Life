@@ -166,6 +166,28 @@ if (api && api.onChatHistoryChanged) {
   });
 }
 
+/* v1.0 B 方案（用户拍板 2026-10）：她被唤醒且枕边有未接留言 → 在对话窗留一行**客观注记**。
+ *
+ *   ## 为什么需要它
+ *   实测事故（2026-10-08 19:19）：她在睡 → 用户留了消息（bedside，不调 LLM）→ 15 秒后
+ *   被拖拽唤醒 → 整条唤醒链零次回话。用户看到的现象是「她醒了却装死，必须我再发一句
+ *   她才提起刚才的事」，体感极像丢消息。留言其实**已经稳稳躺在 history 里**
+ *   （她下次开口时上下文自会带上，见 memory._bedsideNote）—— 缺的只是「她醒了」这个
+ *   事实的可见性。
+ *
+ *   ## 边界（与 bedside 原设计一字不差）
+ *   · payload **只有条数**，没有正文：内容回查 history（单一事实源），不造第二份真相；
+ *   · 这里**不代拟她说任何话**、不写 history、不调 LLM —— 只呈现事实；
+ *   · 「接不接、怎么接」仍归她，所以文案是第三人称客观陈述，不催不劝。*/
+if (api && api.onBedsideUnreadOnWake) {
+  api.onBedsideUnreadOnWake((p) => {
+    const n = Number(p && p.count) || 0;
+    if (n <= 0) return;               // 没有未接 → 界面安静如常（默认路径）
+    chatNotice = t('chat.bedsideUnreadOnWake');
+    renderChat();
+  });
+}
+
 // 流式：临时气泡逐字上屏（遮蔽走 stripState），智能贴底不打断回看
 if (api && api.onDelta) {
   api.onDelta((d) => {

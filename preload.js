@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld('deskpet', {
   onChatBusy: (cb) => ipcRenderer.on('chat-busy', (e, p) => cb(p)),
   onChatHidden: (cb) => ipcRenderer.on('chat-window-hidden', () => cb()),
   onSleepState: (cb) => ipcRenderer.on('sleep-state', (e, p) => cb(p)),
+  // v1.0 B 方案：她被唤醒且枕边有未接留言时的**客观提示**（只给条数，不带内容）。
+  //   刻意不带正文：对话窗自己回查 history（单一事实源），payload 只当"该提示了"的信号。
+  onBedsideUnreadOnWake: (cb) => ipcRenderer.on('bedside-unread-on-wake', (e, p) => cb(p)),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
   selfTimezone: (clientTz) => ipcRenderer.invoke('self-timezone', clientTz || ''),
   lifeMechanisms: () => ipcRenderer.invoke('life-mechanisms'),

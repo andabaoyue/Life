@@ -201,6 +201,67 @@ async function main() {
     /第一条/.test(multiTail) && /第二条/.test(multiTail));
   check('多条留置合并且仍无连续 user', hasConsecutiveUser(multiReq) === 0);
 
+
+  /* ============ v1.0 B 方案（2026-10）：唤醒时的枕边未接提示 ============
+   * 锁四件事，且**只锁事实、绝不锁"她必须开口"**（与本门禁总铁律一致）：
+   *   ① 有未接 → 恰好回调一次，且只给条数（不带正文）；
+   *   ② 无未接 → 零回调（界面安静如常，不能被噪声刷屏）；
+   *   ③ 留言已被 assistant 接住 → 不再算未接（防复读，与 memory 折叠同口径）；
+   *   ④ 提示本身**不写 history、不调 LLM**（否则就是变相替她开口）。
+   */
+  {
+    let tcW = Date.now();
+    const trkW = new ActivityTracker({ now: () => tcW });
+    const brainW = new Brain(tmpDir(), cfg);
+    brainW.bindTracker(trkW);
+    const wakes = [];
+    brainW.onBedsideUnread = (info) => wakes.push(info);
+
+    // ① 无未接时被唤醒 → 零回调
+    trkW.enterSleepMode(tcW);
+    tcW += 60 * 60 * 1000;
+    trkW.record('drag', tcW, { distance: 200 });
+    check('B方案①：无未接留言时唤醒 → 不产生任何提示回调', wakes.length === 0,
+      'wakes=' + wakes.length);
+
+    // ② 睡着时留一条，唤醒 → 恰好一次，且只带条数
+    trkW.enterSleepMode(tcW);
+    await brainW.ask('你在吗', () => {});     // 睡着 → 走留置分支（不调 LLM）
+    const histBefore = brainW.memory.history.length;
+    const reqsBefore = reqs.length;
+    tcW += 60 * 60 * 1000;
+    trkW.record('drag', tcW, { distance: 200 });
+    check('B方案②：有未接留言时唤醒 → 回调一次', wakes.length === 1, 'wakes=' + wakes.length);
+    check('B方案②：回调只带条数、不带正文（正文回查 history，不造第二份真相）',
+      wakes.length === 1 && wakes[0].count === 1 && wakes[0].content === undefined,
+      JSON.stringify(wakes[0] || null));
+    check('B方案②：提示不改写 history（不冒充她开口、不伪造经历）',
+      brainW.memory.history.length === histBefore,
+      'before=' + histBefore + ' after=' + brainW.memory.history.length);
+    check('B方案②：提示零 LLM 请求（她说不说仍归她）',
+      reqs.length === reqsBefore, '新增请求=' + (reqs.length - reqsBefore));
+
+    // ③ 她开口接住之后，再唤醒不再提示（防复读）
+    await brainW.ask('我看到啦', () => {});
+    const wakesBefore2 = wakes.length;
+    trkW.enterSleepMode(tcW);
+    tcW += 60 * 60 * 1000;
+    trkW.record('drag', tcW, { distance: 200 });
+    check('B方案③：留言已被接住后再唤醒 → 不再重复提示（防复读）',
+      wakes.length === wakesBefore2, 'wakes=' + wakes.length + ' before=' + wakesBefore2);
+
+    // ④ 未接线 onBedsideUnread 时不得抛异常（老路径/测试环境容错）
+    let threw = false;
+    try {
+      const trkX = new ActivityTracker({ now: () => Date.now() });
+      const brainX = new Brain(tmpDir(), cfg);
+      brainX.bindTracker(trkX);
+      trkX.enterSleepMode(Date.now());
+      trkX.record('drag', Date.now() + 3600000, { distance: 200 });
+    } catch (e) { threw = true; }
+    check('B方案④：未接线提示回调时唤醒不抛异常（提示是附带品，绝不影响唤醒）', threw === false);
+  }
+
   // 🔴 D-10 修的退出竞态（真凶不是 server.close 的时机，是 process.exit 本身）。
   //
   //   症状：**偶发**（实测 6 次崩 1~2 次）—— 22 项断言全 PASS、0 失败，
