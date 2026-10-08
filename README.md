@@ -1,4 +1,4 @@
-# Life v1.0.0-dev
+# Life v1.0.0
 
 ```text
         . ~ ~ ~ ~ ~ .
@@ -12,9 +12,9 @@
 
 <div align="center">
   <img src="assets/character/stand/chulan_chibi_stand_64x80.png" alt="初澜（Chulan）64×80 像素正典立绘" width="128">
+  <p><strong>Life 桌面数字生命实验平台。</strong></p>
+  <p>细水长流，希望她最终会成为你所期望的她。</p>
 </div>
-
-Life 桌面数字生命实验平台：接 DeepSeek 等大语言模型服务商（OpenAI 兼容接口），拥有长期记忆动力学、自我成长账本、逐字流式会话和分层换装系统。
 
 ## 快速开始 / 运行
 
@@ -184,7 +184,7 @@ src/behavior-scheduler.js 自主行为调度器：呼吸、眨眼、打哈欠、
 src/asset-check.js     启动立绘与换装资产完整性分级检查
 src/deferred-writer.js 脏标记与延迟合并写盘
 src/migration.js       数据版本迁移框架
-assets/pet.png        透明立绘（衣柜不可用时的兜底皮套，1015×1171）
+assets/pet.png        透明立绘（单图兜底皮套，64×80 像素点阵）
 assets/character/     分层换装资源（见「换装系统」）
 tools/chroma.py  绿幕抠图脚本
 tools/check.js   全量语法检查脚本
@@ -193,11 +193,14 @@ tools/replay-check.js  Replay 离线推演一致性核验工具
 test/            测试
 ```
 
-## 桌面漫步与攀爬边界
+## 桌面漫步与运动边界
 
-窗口位移由主进程每约 50ms 使用 `BrowserWindow.setPosition()` 驱动，底边锚定在主显示器工作区下沿上方的安全边距内。渲染进程只负责表现 `walking`、`wall_hanging` 和 `icon_climbing` 姿态，不通过 CSS 把人物移出透明窗口，因此不会被窗口边界裁成半截。
+窗口位移由主进程每约 50ms 使用 `BrowserWindow.setPosition()` 驱动，底边锚定在主显示器工作区下沿上方的安全边距内。渲染进程只负责表现漫步姿态，不通过 CSS 把人物移出透明窗口，因此不会被窗口边界裁成半截。
 
-底部漫步和贴边悬挂是 v0.8.4 的可用功能。桌面图标的真实位置并没有跨 Windows/macOS 的通用 Electron API，不能假装已经自动读取系统图标；`desktop-motion.js` 已提供经过校验的障碍物注入接口，后续可接 Windows Shell、macOS Accessibility 或用户提供的图标扫描器。没有障碍物 provider 时，程序安全降级为底部漫步与贴边悬挂。
+- **真实可用运动**：屏幕底部缓慢漫步并在触碰主显示器左右边界时短暂停留（约 1.8s）后自主掉头折返；
+- **诚实的能力边界**：桌面图标的真实位置并没有跨 Windows/macOS 的通用 Electron API，程序绝不假装已经自动感知读取系统图标或窗体（`desktop-motion.js` 仅预留障碍物注入接口，后续可接注入适配器）；没有障碍物 provider 时，程序安全降级为底部漫步与边缘折返；
+- **环境块诚实不变式**：当前的运动状态**不会**编造注入进大模型对话的环境感知块（恪守 D-007「绝不向模型编造无出处事实」铁律）；
+- **窗口缩放机制**：桌面窗口固定采用原生 4x 整数倍像素缩放比（256×320 视口），不提供滚轮拖拽任意缩放功能，确保点阵绝对锐利无双线性模糊。
 
 配置文件可以控制：
 
@@ -262,7 +265,7 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
   蓝灰大眼、单侧泪痣、**头发右侧黑色蝴蝶结**。
   v1.0 语义收口：核心身份为名字、脸型、**发色**、眼睛与泪痣；**发型款式与有无（含无发素体形态）**、
   发饰、颈带吊坠与衣物均为可变外饰，由衣柜真实状态决定。不含字母耳坠。
-- 当前单图兜底皮套仍需由用户按 `ASSET-GENERATION-GUIDE.md` 生成并放入资源目录（源码 Markdown 不包含 PNG 二进制）。
+- 默认单图兜底立绘已全量内置（`assets/pet.png` 为 64×80 正典像素点阵）；若用户需要替换为第三方自定义立绘，可参考进阶玩法章节或 `ASSET-GENERATION-GUIDE.md`。
 - 人格：温柔、安静、慵懒、微黏人、偶尔吐槽；短回复；称「你」；无客服腔。
 - 能力诚实：没实现的功能一律说做不到，绝不假装操作过电脑。这条写在 persona 边界里，也是代码审查项。
 
@@ -626,6 +629,8 @@ pip install opencv-contrib-python numpy pillow
 需要先按上面的画布规范把每个部件单独重绘/裁切出来。
 
 ## 版本记录
+
+**v1.0.0** — 《初澜（Chulan）桌面数字生命正式版》：正式确立 64×80 正典像素点阵精灵美术基准与开箱即用打包体系；全量内置初澜立绘与默认套装，生成 Windows 单文件便携版与安装向导包；实现独立对话窗口（chat.html）与气泡刷新对账机制（chat-history-changed）；修复枕边留置（Bedside Mailbox）与睡眠动力学；落地 Agent 安全基座五道闸门（D-1 ~ D-9，白名单、路径白名单硬约束、执行预算熔断、Append-Only 审计日志与 UI 显式授权确认），默认处于严格安全拒绝态；补齐玩家自制衣柜部件与分层扩展指南。
 
 **v0.9.8 系列** — Provider Runtime Expansion 与安全边界收口：在 v0.9.7.1/v0.9.8.1 的研究完整性基础上，把“只能写死 DeepSeek”的网络层扩展为可注册 Provider Adapter 的运行时架构，同时保持研究溯源、凭据和成本真相边界。
 - **P1 Security Hardening**：统一 Secret Redaction、Provider Error 归一化、Retry/Retry-After/Timeout/Abort/Stream 生命周期边界，以及发送前 Budget Guard；未知成本 fail-closed。
