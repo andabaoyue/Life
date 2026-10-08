@@ -327,7 +327,14 @@ class Brain {
       this.tracker.setInternalRegulation(this.internalRegulation);
       // v3.1 梦境时序改造：被唤醒（拖拽/摇晃）→ 惰性结算梦境。
       // 钩子只订阅、不改写任何物理唤醒判据；结算失败也绝不影响唤醒本身。
-      this.tracker.onWakeHook = (info) => this._settleDreamOnWake('physical_wake', info);
+      this.tracker.onWakeHook = (info) => {
+        // v1.0 B 方案（用户拍板 2026-10）：唤醒时若枕边有未接留言，**只提示不代拟**。
+        //   ⚠️ 边界（与 bedside 原设计一致）：绝不替她决定说不说 —— 这里不调 LLM、
+        //   不写 history、不生成任何"她的话"，只把「有未接留言」这个客观事实回调出去，
+        //   由界面如实呈现。她接不接、怎么接，仍由她下一次开口时自己决定。
+        this._notifyBedsideOnWake();
+        return this._settleDreamOnWake('physical_wake', info);
+      };
 
       // v3.1 修复冷启动断流：调节器的 isSleeping 是持久化跨重启的，
       // 而 tracker 的 sleepMode 只活在内存里 —— 重启后两边天然不同步，
@@ -1992,6 +1999,49 @@ class Brain {
       console.error('[Brain] 入睡冻结梦境原料失败 (Fail-Safe):', redactSecrets(err.message));
       return null;
     }
+  }
+
+  /**
+   * v1.0 B 方案 · 唤醒时的枕边未接提示（用户拍板 2026-10，选 B）
+   *
+   * ## 它解决什么
+   *   实测事故（2026-10-08 19:19）：她在睡 → 用户留了消息（打 bedside 标记，不调 LLM）
+   *   → 15 秒后被拖拽唤醒 → **整条唤醒链零次回话**，用户看到的现象是
+   *   「她醒了却一声不吭，必须我再发一句她才提起刚才的事」。
+   *
+   * ## 为什么选 B（而不是唤醒即回话）
+   *   唤醒即回话 = 替她决定说不说，且每次拖拽都烧一次调用；原设计（brain.ask 注释）
+   *   明确写着「只保证送达，不逼她开口」。B 只补上**客观提示**这一层：
+   *   让人看得见她醒来时枕边确实有东西没被接住，但**接不接、怎么接仍归她**。
+   *
+   * ## 边界（每一条都有意为之）
+   *   1. **零 LLM**：不生成任何"她的话"，只回调事实，由界面如实呈现；
+   *   2. **不写 history**：不进对话历史、不进 experiences、不改任何状态 ——
+   *      只读一次内存里的未接判定，连盘都不碰（见下方 why）；
+   *   3. **口径与 memory._bedsideNote 同源**：同样是「最后一条 assistant 之后、
+   *      带 bedside 标记」的尾段条目。两处若各写一套，迟早漂移。
+   *   4. **失败静默**：这是唤醒的附带提示，绝不能影响唤醒本身。
+   */
+  _notifyBedsideOnWake() {
+    try {
+      if (typeof this.onBedsideUnread !== 'function') return;
+      const mem = this.memory;
+      if (!mem || !mem.data || !Array.isArray(mem.data.history)) return;
+      const history = mem.data.history;
+      // 与 memory.build() 同口径：从尾部找最后一条 assistant，其后的 bedside 才算未接。
+      let tailStart = 0;
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i] && history[i].role === 'assistant') { tailStart = i + 1; break; }
+      }
+      const pending = history.filter((m, i) => i >= tailStart && m && m.bedside === true);
+      if (pending.length === 0) return;   // 没有未接 → 零回调，界面不会有任何动静
+      this.onBedsideUnread({
+        count: pending.length,
+        // ⚠️ 只给条数，不回传内容：内容是用户的私话，界面只需知道"有东西没接住"。
+        //    真要读内容，她下次开口时上下文里本来就有（memory._bedsideNote）。
+        at: Date.now()
+      });
+    } catch (e) { /* 提示失败绝不影响唤醒 */ }
   }
 
   /**

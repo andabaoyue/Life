@@ -37,6 +37,18 @@ function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
+  // v1.0 B 方案（用户拍板 2026-10）：她被唤醒时若枕边有未接留言，向两个窗口广播一条
+  //   **客观提示**（不代拟、零 LLM）。界面收到后只在对话窗显示一行注记 —— 接不接归她。
+  //   为什么回调挂这里：bindBrainDeps 是唯一注入口（启动 + 热替换都走它），
+  //   挂两处就会重演「重建的 brain 带着旧回调」那类双出处问题。
+  brain.onBedsideUnread = (info) => {
+    try {
+      broadcastToWindows('bedside-unread-on-wake', {
+        count: Number(info && info.count) || 0,
+        at: Number(info && info.at) || Date.now()
+      });
+    } catch (e) { /* 提示失败绝不影响唤醒 */ }
+  };
   // v0.9.9 意志层：启动 / 热替换时用当前特质校准主动性权重（缺省中立 1.0，既有行为零变化）
   //
   // 🔴 D-8a：这三句注释锁的是一个反直觉的事实 —— **这里刷不到 traits。**
