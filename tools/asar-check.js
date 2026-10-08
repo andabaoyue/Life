@@ -81,6 +81,33 @@ function normalizeList(list) {
   return list.map((p) => String(p).replace(/\\/g, '/').replace(/^\/+/, ''));
 }
 
+/** 零依赖原生读取 ASAR 包头文件清单（内置兜底，确保无 @electron/asar 时亦可秒级运行） */
+function readAsarFileList(archivePath) {
+  const fd = fs.openSync(archivePath, 'r');
+  try {
+    const sizeBuf = Buffer.alloc(16);
+    fs.readSync(fd, sizeBuf, 0, 16, 0);
+    const headerSize = sizeBuf.readUInt32LE(12);
+    const headerBuf = Buffer.alloc(headerSize);
+    fs.readSync(fd, headerBuf, 0, headerSize, 16);
+    const header = JSON.parse(headerBuf.toString('utf8'));
+    const files = [];
+    function walk(node, curPath) {
+      if (node && node.files) {
+        for (const [name, child] of Object.entries(node.files)) {
+          walk(child, curPath ? curPath + '/' + name : name);
+        }
+      } else {
+        files.push(curPath);
+      }
+    }
+    walk(header, '');
+    return files;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function main() {
   console.log('====================================================');
   console.log('       Life 发布产物 ASAR 运行时闭包检查     ');
@@ -96,13 +123,21 @@ function main() {
   }
   console.log('产物: ' + path.relative(ROOT, asarPath) + '\n');
 
-  let asar;
-  try { asar = require('@electron/asar'); }
-  catch (e) { report('FAIL', '检查器依赖', '@electron/asar 不可用: ' + e.message); return finish(); }
-
   let entries;
-  try { entries = normalizeList(asar.listPackage(asarPath)); }
-  catch (e) { report('FAIL', '产物解析', 'app.asar 无法解析: ' + e.message); return finish(); }
+  try {
+    let asar = null;
+    try { asar = require('@electron/asar'); } catch {}
+    if (asar && typeof asar.listPackage === 'function') {
+      entries = normalizeList(asar.listPackage(asarPath));
+      report('PASS', '检查器依赖', '@electron/asar 已就绪');
+    } else {
+      entries = normalizeList(readAsarFileList(asarPath));
+      report('PASS', '检查器依赖', '零依赖内置 ASAR 解析器就绪');
+    }
+  } catch (e) {
+    report('FAIL', '产物解析', 'app.asar 无法解析: ' + e.message);
+    return finish();
+  }
   const set = new Set(entries);
 
   // 1. 必需运行入口
