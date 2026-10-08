@@ -609,13 +609,14 @@ Copyright © 2026 andabaoyue
 
 不采用“把某个 Logo 技术上锁死、让别人无法删除”的方式。
 
-正式公开时采用更清晰的权利结构：
+正式公开时采用更清晰的权利结构（✅ = 已落地，截至 2026-10）：
 
-- Copyright Notice
-- NOTICE
-- LICENSE
-- Branding / Trademark Policy
-- README 中的官方项目说明
+- Copyright Notice ✅（NOTICE / README 末尾 / LICENSE 三处一致）
+- NOTICE ✅（含第三方声明段）
+- LICENSE ✅（PolyForm Noncommercial 1.0.0 官方正文，15 节齐全）
+- Branding / Trademark Policy ✅（[BRANDING.md](../BRANDING.md)：名称使用规范；**未注册商标**，
+  该文档是声明而非注册，也不授予商标许可）
+- README 中的官方项目说明 ✅（「开源协议与使用规范」一节）
 
 源码中可以保留：
 
