@@ -19,7 +19,8 @@
     "check": "find . -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check",
     "test": "node test/docs.test.js",
     "build:dir": "electron-builder --win --x64 --dir",
-    "build:win": "electron-builder --win --x64"
+    "build:win": "electron-builder --win --x64",
+    "build:dir:linux": "electron-builder --dir --linux"
   },
   "devDependencies": {
     "electron": "^44.4.3",
