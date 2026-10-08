@@ -14,6 +14,8 @@
   <img src="assets/character/stand/chulan_chibi_stand_64x80.png" alt="初澜（Chulan）64×80 像素正典立绘" width="128">
   <p><strong>Life 桌面数字生命实验平台。</strong></p>
   <p>细水长流，希望她最终会成为你所期望的她。</p>
+
+  **中文** ｜ [**English**](README.en.md)
 </div>
 
 ## 快速开始 / 运行
