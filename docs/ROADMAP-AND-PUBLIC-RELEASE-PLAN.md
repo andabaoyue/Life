@@ -98,7 +98,8 @@ writingMode → creative-mode IPC → Brain system prompt → DS Skill
 
 删除时必须做完整接线清理，而不是只删除 Skill 文件。
 
-需要同时检查：
+需要同时检查（⚠️ 以下条目是**当时的待清理清单**，v0.9.9 已完成拆除；
+  其中列出的部分文件/通道如今已不存在，属于历史记录，不是「当前应存在但缺失」的组件）：
 
 - skills/DS Skill.md
 - src/creative-skill.js
