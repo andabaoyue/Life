@@ -39,7 +39,7 @@
 
     <!-- 设置 / 统计面板 -->
 <div id="panel" class="hidden">
-      <div class="p-title">设置</div>
+      <div class="p-title" id="panelTitle">设置</div>
       <!-- 两栏布局（v1.0 用户设计）：左栏四区点击切换 + 右侧详情；用量沉于「连接与模型」底部 -->
       <div class="panel-body">
         <div class="panel-nav">
@@ -53,7 +53,7 @@
           <div class="psec on" data-sec="conn">
             <!-- 快速连接（v1.0 方案 A：分组卡 + 两列栅格，分组要狠） -->
             <div class="fgroup">
-              <div class="fg-title">快速连接</div>
+              <div class="fg-title" id="connQuickTitle">快速连接</div>
               <div class="fg-row">
                 <div class="fg-cell"><label>API Key</label>
                   <div class="row">
@@ -69,9 +69,9 @@
 
             <!-- 连接（0.9.8 Z3：Provider Identity 与 Protocol 为两个独立字段，不猜品牌） -->
             <div class="fgroup">
-              <div class="fg-title">高级</div>
+              <div class="fg-title" id="connAdvTitle">高级</div>
               <div class="fg-row">
-                <div class="fg-cell"><label>连接列表</label>
+                <div class="fg-cell"><label id="connListLabel">连接列表</label>
                   <div class="row"><select id="connList"></select></div>
                 </div>
                 <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
@@ -101,7 +101,7 @@
                 </div>
               </div>
               <div class="row"><span class="hint" id="connActive"></span><div class="hint" id="presetHint"></div></div>
-              <label>连接名称</label>
+              <label id="connNameLabel">连接名称</label>
               <div class="row"><input id="connName" type="text" placeholder="给它起个名（比如：家用 / 公司）" spellcheck="false"></div>
               <div class="fg-row">
                 <div class="fg-cell"><label>Provider Identity</label>
@@ -117,7 +117,7 @@
                   <div class="row">
                     <select id="connProtocol">
                       <option value="openai-compatible">OpenAI-compatible</option>
-                      <option value="anthropic-native">Anthropic-native（未实现）</option>
+                      <option value="anthropic-native" id="optAnthropicNative">Anthropic-native（未实现）</option>
                     </select>
                   </div>
                 </div>
@@ -145,14 +145,14 @@
 
             <!-- 用量（拍板：排在连接区最下面） -->
             <div class="fgroup">
-              <div class="fg-title">用量</div>
+              <div class="fg-title" id="statsTitle">用量</div>
               <div id="stats" class="stats">—</div>
             </div>
           </div>
 
           <!-- ③ 记忆（v1.0 拆分：记忆与时区分家） -->
           <div class="psec" data-sec="memory">
-            <div class="p-title">我的记忆</div>
+            <div class="p-title" id="memTitle">我的记忆</div>
             <div id="memList" class="memlist">—</div>
           </div>
 
