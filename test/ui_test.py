@@ -4,7 +4,28 @@
 test/docs.test.js 会自己起一个并通过 DESKPET_URL 传进来。
 """
 import os
+import tempfile
+import atexit
 from playwright.sync_api import sync_playwright
+
+_temp_screenshots = []
+def _cleanup_screenshots():
+    for f in _temp_screenshots:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+        except Exception:
+            pass
+atexit.register(_cleanup_screenshots)
+
+def _get_screenshot_path(filename):
+    art_dir = os.environ.get("DESKPET_TEST_ARTIFACTS")
+    if art_dir:
+        os.makedirs(art_dir, exist_ok=True)
+        return os.path.join(art_dir, filename)
+    p = os.path.join(tempfile.gettempdir(), filename)
+    _temp_screenshots.append(p)
+    return p
 
 URL = os.environ.get("DESKPET_URL", "http://127.0.0.1:8000") + "/index.html"
 # 可用 DESKPET_CHROME 指定浏览器路径；不设则先试 /usr/bin/chromium，
@@ -298,7 +319,7 @@ with sync_playwright() as p:
             const w=a[0].clientWidth;
             return a.every(e => Math.abs(e.clientWidth-w)<1);})()"""))
 
-    pg2.screenshot(path="/tmp/pw_wardrobe_default.png")
+    pg2.screenshot(path=_get_screenshot_path("pw_wardrobe_default.png"))
 
     # 面板：预设按钮 + 槽位按钮 + 身份件不给「脱下」
     pg2.click("#pet", button="right")
@@ -381,7 +402,7 @@ with sync_playwright() as p:
     check("屏幕图层同步为 5 层（默认7 - 上装/下装/外套 + 连衣裙）", n2 == 5, "n=%s" % n2)
     check("换装客观汇报迁续：chat.js 承载客观事实行（chatNotice）",
           pg2.evaluate("fetch('chat.js').then(r => r.text()).then(t => t.includes('chatNotice'))"))
-    pg2.screenshot(path="/tmp/pw_wardrobe_gothic.png")
+    pg2.screenshot(path=_get_screenshot_path("pw_wardrobe_gothic.png"))
 
     # 状态回落 + 无标记泄漏
     check("换装回复里不含标记文本",
@@ -1041,7 +1062,7 @@ with sync_playwright() as p:
     pg.set_viewport_size({"width": 340, "height": 480})
     pg.wait_for_timeout(200)
 
-    pg.screenshot(path="/tmp/pw_final.png")
+    pg.screenshot(path=_get_screenshot_path("pw_final.png"))
     # ---- 流式半截标记必须逐帧藏住（Gemini #2：瞬态正则字符集不含 _ 和数字） ----
     # 以前只在"闭合之后"测（见上面「状态标记不会显示在气泡里」），
     # 而缺陷正好发生在闭合之前那几帧：模型吐到 [wear:gothic_ 时旧正则只允许
@@ -1191,7 +1212,7 @@ with sync_playwright() as p:
     pg.wait_for_timeout(100)
 
 
-    pg.screenshot(path="/tmp/pw_final.png")
+    pg.screenshot(path=_get_screenshot_path("pw_final.png"))
     check("收尾仍无 JS 报错", not errs, "; ".join(errs[:3]))
     b.close()
 
