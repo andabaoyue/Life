@@ -38,11 +38,18 @@ Life 平台的 64×80 Q 版点阵精灵正处于开源后社区协同精修阶�
    # 1. 静态语法校验
    node tools/check.js
 
-   # 2. 发布包资源与完整性检查
+   # 2. 发布包资源与完整性检查（含 electron-builder 白名单闭包断言）
    node tools/release-check.js
 
    # 3. 全量测试套件执行（test/ 下 117 个 node 测试文件 + 1 个真实 UI 测试 test/ui_test.py）
    npm test
+
+   # 4. 改了 electron-builder.yml / 打包相关内容时，追加产物闭包实测：
+   npm run build:dir
+   node tools/asar-check.js
+   #    （断言 app.asar 里 14 个运行入口齐全、源码专用目录与已淘汰资产未进包；
+   #      npm test 只验工作树，验不到最终产物，这一步才是产物级防线）
+   
    ```
 3. **保持最小 Diff**：
    - 保持现有 CommonJS 架构风格，避免引入庞大无必要的外部 npm 依赖包；
