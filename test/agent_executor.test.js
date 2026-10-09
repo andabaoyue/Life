@@ -26,7 +26,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const { ControlledAgentExecutor, EXECUTABLE_CAPABILITIES } = require('../src/agent-executor');
+const { ControlledAgentExecutor, EXECUTABLE_CAPABILITIES, resolveRealPath } = require('../src/agent-executor');
 const { WriteTransactionManager } = require('../src/agent-transaction');
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog,
@@ -975,6 +975,131 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
       && r.code === 'SYMLINK_ESCAPE'
       && auth.allowed === false
       && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC02-R6 真实目录联接（junction）跨边界逃逸读写双双被拦截并吊销授权（真实磁盘测）', (() => {
+    const e = env();
+    const linkDir = path.join(e.sandbox, 'real_junction_link');
+    try {
+      fs.symlinkSync(e.outside, linkDir, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return true; // 无法创建链接环境降级
+    }
+
+    // 1. 尝试通过 junction 读取沙盒外部敏感文件
+    const readTarget = path.join(linkDir, 'secret.txt');
+    const idRead = authorizeProposal(e, { capability: 'workspace.read', scope: readTarget });
+    const rRead = e.executor.execute({ proposalId: idRead });
+    const authRead = e.confirmation.isExecutionAllowed(idRead, Date.now());
+
+    // 2. 尝试通过 junction 向沙盒外部写入文件
+    const writeTarget = path.join(linkDir, 'pwned.txt');
+    const idWrite = authorizeProposal(e, { capability: 'workspace.write', scope: writeTarget, content: 'ATTACK' });
+    const rWrite = e.executor.execute({ proposalId: idWrite, content: 'ATTACK' });
+    const authWrite = e.confirmation.isExecutionAllowed(idWrite, Date.now());
+
+    const readBlocked = rRead.ok === false
+      && rRead.code === 'SYMLINK_ESCAPE'
+      && authRead.allowed === false
+      && authRead.reason === 'SYMLINK_ESCAPE'
+      && !rRead.result;
+
+    const writeBlocked = rWrite.ok === false
+      && rWrite.code === 'SYMLINK_ESCAPE'
+      && authWrite.allowed === false
+      && authWrite.reason === 'SYMLINK_ESCAPE'
+      && !fs.existsSync(path.join(e.outside, 'pwned.txt'))
+      && fs.readFileSync(path.join(e.outside, 'secret.txt'), 'utf8') === 'ORIGINAL-SECRET';
+
+    return readBlocked && writeBlocked;
+  })());
+
+  check('❌ SEC02-R7 根目录无法证明物理路径安全时失败关闭拦截（F3 fail-closed）', (() => {
+    const e = env();
+    const brokenRoot = path.join(e.root, 'broken_root');
+    fs.mkdirSync(brokenRoot);
+    const target = path.join(brokenRoot, 'file.txt');
+    fs.writeFileSync(target, 'data');
+    e.policy.setScopeRoots('workspace.read', [brokenRoot]);
+
+    // 注入 resolveRealPath：模拟根目录物理路径解析异常（EACCES / 损坏）
+    e.executor.resolveRealPath = (p, f) => {
+      if (path.resolve(p) === path.resolve(brokenRoot)) {
+        const err = new Error('EACCES');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return resolveRealPath(p, f);
+    };
+
+    const id = authorizeProposal(e, { capability: 'workspace.read', scope: target });
+    const r = e.executor.execute({ proposalId: id });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'SYMLINK_ESCAPE'
+      && auth.allowed === false
+      && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC02-R8 硬链接跨边界读写拦截与状态不可证失败关闭：返回 HARDLINK_DETECTED 并吊销授权不泄露内容（N3 & Q1 防御）', (() => {
+    const e = env();
+    const hardlinkFile = path.join(e.sandbox, 'hardlink.txt');
+    let hasHardlink = true;
+    try {
+      fs.linkSync(path.join(e.outside, 'secret.txt'), hardlinkFile);
+    } catch {
+      hasHardlink = false;
+    }
+
+    let readBlocked = true;
+    let writeBlocked = true;
+    if (hasHardlink) {
+      // 1. 尝试读取跨边界硬链接文件
+      const idRead = authorizeProposal(e, { capability: 'workspace.read', scope: hardlinkFile });
+      const rRead = e.executor.execute({ proposalId: idRead });
+      const authRead = e.confirmation.isExecutionAllowed(idRead, Date.now());
+
+      // 2. 尝试写入已存在的硬链接文件
+      const idWrite = authorizeProposal(e, { capability: 'workspace.write', scope: hardlinkFile, content: 'OVERWRITE' });
+      const rWrite = e.executor.execute({ proposalId: idWrite, content: 'OVERWRITE' });
+      const authWrite = e.confirmation.isExecutionAllowed(idWrite, Date.now());
+
+      readBlocked = rRead.ok === false
+        && rRead.code === 'HARDLINK_DETECTED'
+        && authRead.allowed === false
+        && authRead.reason === 'HARDLINK_DETECTED'
+        && !rRead.result;
+
+      writeBlocked = rWrite.ok === false
+        && rWrite.code === 'HARDLINK_DETECTED'
+        && authWrite.allowed === false
+        && authWrite.reason === 'HARDLINK_DETECTED'
+        && fs.readFileSync(path.join(e.outside, 'secret.txt'), 'utf8') === 'ORIGINAL-SECRET';
+    }
+
+    // 3. 无法证明目标文件状态时失败关闭（Q1 fail-closed 防御：EACCES 不得静默放行写盘）
+    const unprovableFile = path.join(e.sandbox, 'unprovable.txt');
+    fs.writeFileSync(unprovableFile, 'SAFE-DATA');
+    const fakeFs = Object.create(e.executor.fs);
+    fakeFs.statSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(unprovableFile)) {
+        const err = new Error('EACCES');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return e.executor.fs.statSync(p);
+    };
+    e.executor.fs = fakeFs;
+    const idUnprovable = authorizeProposal(e, { capability: 'workspace.write', scope: unprovableFile, content: 'MALICIOUS' });
+    const rUnprovable = e.executor.execute({ proposalId: idUnprovable, content: 'MALICIOUS' });
+    const authUnprovable = e.confirmation.isExecutionAllowed(idUnprovable, Date.now());
+    const unprovableBlocked = rUnprovable.ok === false
+      && rUnprovable.code === 'HARDLINK_DETECTED'
+      && authUnprovable.allowed === false
+      && authUnprovable.reason === 'HARDLINK_DETECTED'
+      && fs.readFileSync(unprovableFile, 'utf8') === 'SAFE-DATA';
+
+    return readBlocked && writeBlocked && unprovableBlocked;
   })());
 
   check('❌ SEC03-R1 非白名单扩展名硬拒绝 DISALLOWED_EXTENSION 且不落盘并作废授权', (() => {

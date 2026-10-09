@@ -40,7 +40,7 @@ const {
   createActionProposal, AuditLog, CAPABILITIES,
 } = require('./agent-interfaces');
 const { UserConfirmationGate } = require('./agent-confirmation');
-const { ControlledAgentExecutor } = require('./agent-executor');
+const { ControlledAgentExecutor, ALLOWED_WRITE_EXTENSIONS } = require('./agent-executor');
 
 /**
  * 允许注册的通道名单（白名单即设计约束，不多不少）。
@@ -210,6 +210,14 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //    这样 renderer 无法通过伪造 meta 洗白 hardDenied 能力（如 network.request）。
     const verdict = policy.authorize(capability, raw.scope);
     if (!verdict.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: verdict.reason, verdict };
+
+    // 🔴 F5：写扩展名白名单同源前置校验。建案期即拦截非法扩展名，不扣减用户动作预算。
+    if (capability === 'workspace.write') {
+      const ext = path.extname(raw.scope || '').toLowerCase();
+      if (!ALLOWED_WRITE_EXTENSIONS.has(ext)) {
+        return { code: 'DISALLOWED_EXTENSION', ok: false, ext: ext || 'none' };
+      }
+    }
 
     // ③ 预算熔断：熔断为终态，触发后不放行任何动作。
     //
@@ -451,6 +459,60 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //   ⚠️ 这里不做白名单校验（createActionProposal 内已兜底），
     //     但**必须只认这两个值** —— 未知值一律按 'user' 传下去。
     const proposalSource = src === 'main' && source === 'selfNote' ? 'selfNote' : 'user';
+
+    // 🔴 SEC-01 & F4：写能力权威内容快照强制绑定（P1 级安全防御 + 校验先于计费）
+    //   所有 workspace.write 提案必须在建案时取得有效字符串正文。
+    //   普通 IPC 提案必须提供 raw.content；selfNote 必须使用主进程可信的 trustedContent。
+    //   正文缺失、类型错误、空字符串或超限时，直接拒绝建案，不扣减用户动作预算，不得创建提案或授权记录。
+    let contentMeta = null;
+    let candidate = null;
+    if (raw && raw.capability === 'workspace.write') {
+      candidate = (src === 'main' && proposalSource === 'selfNote')
+        ? trustedContent
+        : (raw && raw.content);
+
+      if (typeof candidate !== 'string') {
+        auditLog.append({
+          channel: 'agent:propose-action',
+          outcome: 'rejected',
+          code: 'INVALID_PROPOSAL',
+          detail: 'CONTENT_REQUIRED',
+          capability: 'workspace.write',
+          via: src,
+        });
+        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_REQUIRED' });
+      }
+      if (candidate.length === 0) {
+        auditLog.append({
+          channel: 'agent:propose-action',
+          outcome: 'rejected',
+          code: 'INVALID_PROPOSAL',
+          detail: 'CONTENT_EMPTY',
+          capability: 'workspace.write',
+          via: src,
+        });
+        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_EMPTY' });
+      }
+      const byteLen = Buffer.byteLength(candidate, 'utf8');
+      if (byteLen > MAX_CONTENT_BYTES) {
+        auditLog.append({
+          channel: 'agent:propose-action',
+          outcome: 'rejected',
+          code: 'PAYLOAD_TOO_LARGE',
+          capability: 'workspace.write',
+          via: src,
+        });
+        return fail('PAYLOAD_TOO_LARGE');
+      }
+      const hash = crypto.createHash('sha256').update(candidate, 'utf8').digest('hex');
+      contentMeta = {
+        contentHash: hash,
+        contentBytes: byteLen,
+        contentPreview: candidate.slice(0, 300),
+        isTruncated: candidate.length > 300,
+      };
+    }
+
     const evaluated = evaluateProposal(raw);
     if (!evaluated.ok) {
       // 拒绝也要留痕 —— 审计的价值一半在这里。
@@ -468,37 +530,10 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       if (evaluated.code === 'AUTHORIZED_REJECTED') {
         return fail('AUTHORIZED_REJECTED', { reason: evaluated.reason });
       }
+      if (evaluated.code === 'DISALLOWED_EXTENSION') {
+        return fail('DISALLOWED_EXTENSION', { ext: evaluated.ext });
+      }
       return fail(evaluated.code);
-    }
-
-    // 🔴 SEC-01：写能力权威内容快照强制绑定（P1 级安全防御）
-    //   所有 workspace.write 提案必须在建案时取得有效字符串正文。
-    //   普通 IPC 提案必须提供 raw.content；selfNote 必须使用主进程可信的 trustedContent。
-    //   正文缺失、类型错误、空字符串或超限时，直接拒绝建案，不得创建提案或授权记录。
-    let contentMeta = null;
-    let candidate = null;
-    if (raw && raw.capability === 'workspace.write') {
-      candidate = (src === 'main' && proposalSource === 'selfNote')
-        ? trustedContent
-        : (raw && raw.content);
-
-      if (typeof candidate !== 'string') {
-        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_REQUIRED' });
-      }
-      if (candidate.length === 0) {
-        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_EMPTY' });
-      }
-      const byteLen = Buffer.byteLength(candidate, 'utf8');
-      if (byteLen > MAX_CONTENT_BYTES) {
-        return fail('PAYLOAD_TOO_LARGE');
-      }
-      const hash = crypto.createHash('sha256').update(candidate, 'utf8').digest('hex');
-      contentMeta = {
-        contentHash: hash,
-        contentBytes: byteLen,
-        contentPreview: candidate.slice(0, 300),
-        isTruncated: candidate.length > 300,
-      };
     }
 
     let proposal;

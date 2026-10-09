@@ -111,7 +111,9 @@ function harness(opts = {}) {
     // D-10：ok 现在是 {ok,evaluateProposal} 对象。registered 保持布尔语义
     //   （旧断言消费它），evaluateProposal 单独透出供新门禁断言。
     registered: !!(ok && ok.ok === true),
-    evaluateProposal: ok && ok.evaluateProposal };
+    evaluateProposal: ok && ok.evaluateProposal,
+    proposeInternal: ok && ok.proposeInternal,
+    api: ok };
 }
 
 console.log('--- D-1 Agent IPC 治理通道门禁 ---');
@@ -918,6 +920,70 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   check('UXSEC-IPC2 目标文件不存在或非写操作时 get-pending-proposal 快照返回 isOverwrite: false',
     snapNew.ok === true && snapNew.proposal.isOverwrite === false
     && snapRead.ok === true && snapRead.proposal.isOverwrite === false);
+}
+
+/* ================= 16. F4 & F5：建案前置校验与扩展名防御 ================= */
+{
+  const h = harness();
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+
+  // F4-1 写提案内容校验失败（缺失正文、空字符串、超限）不扣减用户 actions 预算（校验先于计费）
+  const statusBefore = h.call('agent:get-status', h.trustedEvent);
+  const actionsBefore = statusBefore.budget.remainingActions;
+
+  const badContentP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'f4-test1.txt'),
+  });
+  const statusAfter1 = h.call('agent:get-status', h.trustedEvent);
+
+  const emptyContentP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'f4-test2.txt'),
+    content: '',
+  });
+  const statusAfter2 = h.call('agent:get-status', h.trustedEvent);
+
+  check('F4-1 写提案内容校验失败（缺正文/空串）不消耗动作预算（校验先于计费）',
+    badContentP.ok === false && badContentP.error === 'INVALID_PROPOSAL'
+    && emptyContentP.ok === false && emptyContentP.error === 'INVALID_PROPOSAL'
+    && statusAfter1.budget.remainingActions === actionsBefore
+    && statusAfter2.budget.remainingActions === actionsBefore);
+
+  // F5-1 非白名单扩展名在建案期即被拒绝 DISALLOWED_EXTENSION，且不消耗动作预算
+  const badExtP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'hack.exe'),
+    content: 'evil content',
+  });
+  const statusAfter3 = h.call('agent:get-status', h.trustedEvent);
+
+  check('F5-1 非白名单扩展名在建案期即被硬拒绝 DISALLOWED_EXTENSION 且不消耗动作预算',
+    badExtP.ok === false && badExtP.error === 'DISALLOWED_EXTENSION'
+    && statusAfter3.budget.remainingActions === actionsBefore);
+
+  // N1-1 主进程 selfNote 路径彻底消除双扣（Q2 修复）：
+  // ① 源码级门禁：main.js 的 maybeAskForSelfNote 内不得调用 evaluateProposal（彻底消除预检+建案双扣）
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const selfNoteFnMatch = mainSrc.match(/function maybeAskForSelfNote\([\s\S]*?\n\}/);
+  const selfNoteFnBody = selfNoteFnMatch ? selfNoteFnMatch[0] : '';
+  const noRedundantEvaluate = selfNoteFnBody.length > 0 && !selfNoteFnBody.includes('evaluateProposal');
+
+  // ② 真实调用序列断言：模拟 main.js 侧发起 selfNote 建案，动作预算严格只扣减 1 次
+  const statusBeforeN1 = h.call('agent:get-status', h.trustedEvent);
+  const actionsBeforeN1 = statusBeforeN1.budget.remainingActions;
+  const selfNoteRes = h.api.proposeInternal(
+    { capability: 'workspace.write', scope: path.join(h.appDir, 'selfnote.txt'), reason: '想留下便签' },
+    'main',
+    'selfNote',
+    '初澜自发留下的文字'
+  );
+  const statusAfterN1 = h.call('agent:get-status', h.trustedEvent);
+
+  check('N1-1 主进程 selfNote 路径建案只扣减 1 次动作预算且 main.js 无冗余 evaluateProposal（消除双扣）',
+    noRedundantEvaluate
+    && selfNoteRes && selfNoteRes.ok === true
+    && statusAfterN1.budget.remainingActions === actionsBeforeN1 - 1);
 }
 
 console.log(failures === 0 ? '\nall agent_ipc tests passed' : `\n${failures} FAILED`);
