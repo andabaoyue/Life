@@ -33,6 +33,15 @@
       <div class="ac-row"><span class="ac-key">目标</span><span class="ac-val" data-agent-field="scope">—</span></div>
       <div class="ac-row"><span class="ac-key">理由</span><span class="ac-val" data-agent-field="reason">—</span></div>
       <div class="ac-row"><span class="ac-key">预算</span><span class="ac-val" data-agent-field="budget">—</span></div>
+      <div class="ac-row ac-meta-row hidden"><span class="ac-key">内容</span><span class="ac-val ac-content-meta"><span data-agent-field="content-bytes"></span><span data-agent-field="content-hash"></span></span></div>
+      <div class="ac-content-preview-box hidden">
+        <div class="ac-val ac-content-text" data-agent-field="content-preview"></div>
+        <div class="hint ac-trunc-hint" data-agent-field="content-truncated"></div>
+        <button type="button" class="ac-expand-btn hidden" data-agent-action="expand-content">查看完整正文</button>
+      </div>
+      <div class="ac-content-full-box hidden" data-agent-box="content-full">
+        <pre class="ac-content-full-text" data-agent-field="content-full"></pre>
+      </div>
       <div class="ac-warn hint" data-agent-field="warn"></div>
       <div class="ac-actions" data-agent-actions></div>
     </div>

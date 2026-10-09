@@ -276,7 +276,12 @@ const agentConfirmCard = (typeof window.AgentConfirm !== 'undefined' && window.A
         }
       }
     },
-    (k, f) => (typeof t === 'function' ? t(k, f) : f)
+    (k, f) => (typeof t === 'function' ? t(k, f) : f),
+    {
+      onFetchContent: (proposalId) => (api && api.agent && typeof api.agent.getProposalContent === 'function'
+        ? api.agent.getProposalContent(proposalId)
+        : null)
+    }
   )
   : null;
 

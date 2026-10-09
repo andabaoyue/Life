@@ -241,7 +241,8 @@ function maybeAskForSelfNote(selfIntent) {
           ? deps.agentIpc.proposeInternal(
             { capability: 'workspace.write', scope, reason: intent.reason },
             'main',
-            'selfNote'
+            'selfNote',
+            note.content
           )
           : null;
         if (res && res.ok && res.proposal) {

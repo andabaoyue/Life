@@ -39,6 +39,7 @@ process.on('exit', () => {
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog,
 } = require('../src/agent-interfaces');
+const { UserConfirmationGate } = require('../src/agent-confirmation');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -303,8 +304,13 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   //   **这不是把断言放宽**：数量从 6 改到 7，同时**加严**了第④条，
   //   并且第②条（禁进程/网络通道）与第③条（写唯一入口）逐字未动。
   //   若当初是「删掉这条断言」，那才是真的失去防线。
-  check('❌ 反例5 通道名单恰为 7 条且不含任何进程/网络通道（D-5 修订硬约束）',
-    names.length === 7
+  // 🔵 SEC-01 修订说明（原断言是「恰为 7 条」）：SEC-01 按安全审计修复新增了
+  //   agent:get-proposal-content —— 渲染端确认抽屉按需拉取可信正文展示，
+  //   避免在 get-pending-proposal 中暴露未截断大文本，且受 ALREADY_DECIDED 保护。
+  //   新增的是一条「受保护的只读正文查看」通道，不是执行通道。
+  //   数量从 7 改到 8，第②条（禁进程/网络通道）与第③条（写唯一入口）逐字未动。
+  check('❌ 反例5 通道名单恰为 8 条且不含任何进程/网络通道（SEC-01 修订硬约束）',
+    names.length === 8
     && !names.some((c) => /process|network|spawn|shell|http|fetch/i.test(c)),
     names.join(','));
 
@@ -335,7 +341,7 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
 
     check('❌ 反例5e 快照只含白名单字段，不是提案对象展开',
       Object.keys(snap.proposal).sort().join(',') ===
-      'capability,dangerLevel,id,reason,requiresConfirm,scope,status',
+      'capability,contentBytes,contentHash,contentPreview,dangerLevel,id,isTruncated,reason,requiresConfirm,scope,status',
       Object.keys(snap.proposal).sort().join(','));
 
     // 🔴 反例5f（2026-10-06 审核补的，**变异测试逼出来的**）：
@@ -454,6 +460,384 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   check('D1-11b main.js 已接线 registerAgentIpc 且仍经 ipcGuard',
     /registerAgentIpc\(ipcGuard,/.test(mainSrc) &&
     !/ipcMain\s*\.\s*(handle|on)\s*\(/.test(mainSrc));
+}
+
+/* ================= 12. SEC-01 权威快照强绑定与只读正文通道门禁 ================= */
+{
+  const h = harness();
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  const crypto = require('crypto');
+
+  // SEC01-1 写提案绑定权威快照与 SHA-256 哈希
+  const testContent = '初澜数字生命不可变便签内容测试';
+  const expectedHash = crypto.createHash('sha256').update(testContent, 'utf8').digest('hex');
+  const expectedBytes = Buffer.byteLength(testContent, 'utf8');
+
+  const p1 = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sec01-note.txt'),
+    content: testContent,
+    reason: '测试 SEC-01 快照绑定',
+  });
+
+  check('SEC01-1 写提案绑定权威快照、SHA-256 哈希与字节数',
+    p1 && p1.ok === true
+    && p1.proposal.contentHash === expectedHash
+    && p1.proposal.contentBytes === expectedBytes
+    && p1.proposal.contentPreview === testContent
+    && p1.proposal.isTruncated === false);
+
+  // SEC01-2 长文本写提案截断预览标记正确
+  const longContent = 'A'.repeat(400);
+  const pLong = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sec01-long.txt'),
+    content: longContent,
+    reason: '测试长文本截断',
+  });
+  check('SEC01-2 长文本写提案截断预览标记正确（300 字符预览）',
+    pLong && pLong.ok === true
+    && pLong.proposal.contentBytes === 400
+    && pLong.proposal.contentPreview.length === 300
+    && pLong.proposal.isTruncated === true);
+
+  // SEC01-3 走 agent:get-proposal-content 安全读取完整正文
+  const fetched = h.call('agent:get-proposal-content', h.trustedEvent, { proposalId: p1.proposal.id });
+  check('SEC01-3 走 agent:get-proposal-content 成功读取快照完整正文且哈希一致',
+    fetched && fetched.ok === true
+    && fetched.content === testContent
+    && fetched.contentHash === expectedHash
+    && fetched.contentBytes === expectedBytes);
+
+  // ❌ SEC01-R1 决策后（拒绝）agent:get-proposal-content 立即拦截
+  h.call('agent:confirm-action', h.trustedEvent, { proposalId: p1.proposal.id, decision: 'rejected' });
+  const fetchedAfter = h.call('agent:get-proposal-content', h.trustedEvent, { proposalId: p1.proposal.id });
+  check('❌ SEC01-R1 agent:get-proposal-content 拦截已拒绝提案（ALREADY_DECIDED）',
+    fetchedAfter && fetchedAfter.ok === false && fetchedAfter.error === 'ALREADY_DECIDED');
+
+  // ❌ SEC01-R2 不存在提案的 content 读取被拦截
+  const nonExist = h.call('agent:get-proposal-content', h.trustedEvent, { proposalId: 'p-not-found' });
+  check('❌ SEC01-R2 不存在提案读取正文返回 PROPOSAL_NOT_FOUND',
+    nonExist && nonExist.ok === false && nonExist.error === 'PROPOSAL_NOT_FOUND');
+
+  // ❌ SEC01-R3 畸形内容提案被硬拒（非字符串、空内容）
+  const badType = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sec01-bad.txt'),
+    content: 12345,
+  });
+  const badEmpty = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sec01-empty.txt'),
+    content: '',
+  });
+  check('❌ SEC01-R3 写入内容为非字符串或空字符串时提案直接被拒',
+    badType && badType.ok === false && badType.error === 'INVALID_PROPOSAL'
+    && badEmpty && badEmpty.ok === false && badEmpty.error === 'INVALID_PROPOSAL');
+
+  // ❌ SEC01-R4 超过 5 MiB 写入提案被拒（PAYLOAD_TOO_LARGE）
+  const huge = 'X'.repeat(5 * 1024 * 1024 + 1);
+  const tooLarge = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sec01-huge.txt'),
+    content: huge,
+  });
+  check('❌ SEC01-R4 超过 5 MiB 写入提案被拒（PAYLOAD_TOO_LARGE）',
+    tooLarge && tooLarge.ok === false && tooLarge.error === 'PAYLOAD_TOO_LARGE');
+}
+
+/* ================= 13. SEC-01 快照生命周期与授权管理门禁 ================= */
+{
+  // SEC01-L1 快照 TTL 过期
+  const proposalStore = new Map();
+  const contentSnapshotStore = new Map();
+  const confirmation = new UserConfirmationGate();
+  const h = harness({
+    options: { proposalStore, contentSnapshotStore, confirmation },
+  });
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+
+  const p = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sec01-ttl.txt'),
+    content: 'TTL 测试内容',
+  });
+
+  // 模拟时间推移超出 10 分钟 TTL (10 * 60 * 1000 + 1000)
+  const snap = contentSnapshotStore.get(p.proposal.id);
+  snap.createdAt = Date.now() - (11 * 60 * 1000);
+
+  const getAfterTTL = h.call('agent:get-proposal-content', h.trustedEvent, { proposalId: p.proposal.id });
+  h.call('agent:confirm-action', h.trustedEvent, { proposalId: p.proposal.id, decision: 'approved' });
+  const execAfterTTL = h.call('agent:execute', h.trustedEvent, { proposalId: p.proposal.id });
+  const authAfterTTL = confirmation.isExecutionAllowed(p.proposal.id, Date.now());
+
+  check('SEC01-L1 快照 TTL 过期后，读取正文与执行均返回 SNAPSHOT_EXPIRED 且授权被作废',
+    getAfterTTL.ok === false && getAfterTTL.error === 'SNAPSHOT_EXPIRED'
+    && execAfterTTL.ok === false && execAfterTTL.error === 'SNAPSHOT_EXPIRED'
+    && authAfterTTL.allowed === false && authAfterTTL.reason === 'SNAPSHOT_EXPIRED'
+    && !contentSnapshotStore.has(p.proposal.id));
+
+  // SEC01-L2 容量淘汰（200 个提案上限）
+  const store200 = new Map();
+  const snaps200 = new Map();
+  const conf200 = new UserConfirmationGate();
+  const h200 = harness({
+    options: { proposalStore: store200, contentSnapshotStore: snaps200, confirmation: conf200 },
+    budget: new ExecutionBudget({ maxActionsPerSession: 9999, maxWritesPerSession: 9999 }),
+  });
+  h200.policy.setScopeRoots('workspace.write', [h200.appDir]);
+
+  const pFirst = h200.call('agent:propose-action', h200.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h200.appDir, 'first.txt'),
+    content: '第一份提案内容',
+  });
+  conf200.confirm(pFirst.proposal.id, 'approved', { status: 'proposed' });
+
+  // 塞满并超出 200 个
+  for (let i = 0; i < 200; i++) {
+    h200.call('agent:propose-action', h200.trustedEvent, {
+      capability: 'workspace.write',
+      scope: path.join(h200.appDir, `batch-${i}.txt`),
+      content: `内容-${i}`,
+    });
+  }
+
+  const firstAllowed = conf200.isExecutionAllowed(pFirst.proposal.id, Date.now());
+  check('SEC01-L2 提案达到 200 容量上限时，最早提案及其快照被淘汰且授权被同步作废（PROPOSAL_EVICTED）',
+    !store200.has(pFirst.proposal.id)
+    && !snaps200.has(pFirst.proposal.id)
+    && firstAllowed.allowed === false && firstAllowed.reason === 'PROPOSAL_EVICTED');
+
+  // SEC01-L3 用户拒绝清理
+  const snapsRej = new Map();
+  const hRej = harness({ options: { contentSnapshotStore: snapsRej } });
+  hRej.policy.setScopeRoots('workspace.write', [hRej.appDir]);
+  const pRej = hRej.call('agent:propose-action', hRej.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hRej.appDir, 'rej.txt'),
+    content: '被拒提案内容',
+  });
+  const snapBeforeRej = snapsRej.has(pRej.proposal.id);
+  hRej.call('agent:confirm-action', hRej.trustedEvent, { proposalId: pRej.proposal.id, decision: 'rejected' });
+  const snapAfterRej = snapsRej.has(pRej.proposal.id);
+  const getRej = hRej.call('agent:get-proposal-content', hRej.trustedEvent, { proposalId: pRej.proposal.id });
+  const execRej = hRej.call('agent:execute', hRej.trustedEvent, { proposalId: pRej.proposal.id });
+
+  check('SEC01-L3 用户拒绝提案时快照立即被销毁，后续不可读取也不可执行',
+    snapBeforeRej === true
+    && snapAfterRej === false
+    && getRej.ok === false && getRej.error === 'ALREADY_DECIDED'
+    && execRej.ok === false && execRej.error === 'EXECUTION_NOT_ALLOWED');
+
+  // SEC01-L4 执行成功清理
+  const snapsSucc = new Map();
+  const hSucc = harness({ options: { contentSnapshotStore: snapsSucc } });
+  hSucc.policy.setScopeRoots('workspace.write', [hSucc.appDir]);
+  const pSucc = hSucc.call('agent:propose-action', hSucc.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hSucc.appDir, 'succ.txt'),
+    content: '成功写入正文',
+  });
+  hSucc.call('agent:confirm-action', hSucc.trustedEvent, { proposalId: pSucc.proposal.id, decision: 'approved' });
+  const execSucc = hSucc.call('agent:execute', hSucc.trustedEvent, { proposalId: pSucc.proposal.id });
+  const snapAfterSucc = snapsSucc.has(pSucc.proposal.id);
+  const execSecond = hSucc.call('agent:execute', hSucc.trustedEvent, { proposalId: pSucc.proposal.id });
+
+  check('SEC01-L4 执行成功后快照被立即销毁，二次执行被重放防线拦截（ALREADY_EXECUTED）',
+    execSucc.ok === true && execSucc.executed === true
+    && snapAfterSucc === false
+    && execSecond.ok === false && execSecond.error === 'ALREADY_EXECUTED');
+
+  // SEC01-L5 哈希防篡改与授权吊销
+  const snapsTamper = new Map();
+  const confTamper = new UserConfirmationGate();
+  const hTamper = harness({ options: { contentSnapshotStore: snapsTamper, confirmation: confTamper } });
+  hTamper.policy.setScopeRoots('workspace.write', [hTamper.appDir]);
+  const pTamper = hTamper.call('agent:propose-action', hTamper.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hTamper.appDir, 'tamper.txt'),
+    content: '原始内容',
+  });
+  hTamper.call('agent:confirm-action', hTamper.trustedEvent, { proposalId: pTamper.proposal.id, decision: 'approved' });
+  // 篡改快照内容
+  const snapT = snapsTamper.get(pTamper.proposal.id);
+  snapT.content = '篡改后的注入内容';
+  const execTamper = hTamper.call('agent:execute', hTamper.trustedEvent, { proposalId: pTamper.proposal.id });
+  const authTamper = confTamper.isExecutionAllowed(pTamper.proposal.id, Date.now());
+
+  check('SEC01-L5 快照内容被篡改或哈希不符时，执行被拒并彻底吊销授权（CONTENT_HASH_MISMATCH）',
+    execTamper.ok === false && execTamper.error === 'CONTENT_HASH_MISMATCH'
+    && authTamper.allowed === false && authTamper.reason === 'CONTENT_HASH_MISMATCH'
+    && !snapsTamper.has(pTamper.proposal.id));
+}
+
+/* ================= 14. SEC-01 失败回滚与重试状态机门禁 ================= */
+{
+  // SEC01-R5 纯 I/O 失败保留快照并允许重试 1 次，第 2 次成功完成
+  let ioFailCount = 1;
+  const mockTxn = {
+    begin(opts) { return { ...opts, id: 'tx-test' }; },
+    commit(tx) {
+      if (ioFailCount > 0) {
+        ioFailCount--;
+        const err = new Error('EBUSY: resource locked');
+        err.code = 'EBUSY';
+        throw err;
+      }
+      fs.writeFileSync(tx.target, tx.data, 'utf8');
+    },
+    rollback() {},
+  };
+
+  const snapsR5 = new Map();
+  const confR5 = new UserConfirmationGate();
+  const hR5 = harness({
+    options: {
+      contentSnapshotStore: snapsR5,
+      confirmation: confR5,
+      transactionManager: mockTxn,
+    },
+  });
+  hR5.policy.setScopeRoots('workspace.write', [hR5.appDir]);
+  const pR5 = hR5.call('agent:propose-action', hR5.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hR5.appDir, 'retry-success.txt'),
+    content: '重试成功写入文本',
+  });
+  hR5.call('agent:confirm-action', hR5.trustedEvent, { proposalId: pR5.proposal.id, decision: 'approved' });
+
+  // 第一次执行：抛 EBUSY，执行失败但回滚成功
+  const firstExec = hR5.call('agent:execute', hR5.trustedEvent, { proposalId: pR5.proposal.id });
+  const snapAfterFirst = snapsR5.get(pR5.proposal.id);
+  const authAfterFirst = confR5.isExecutionAllowed(pR5.proposal.id, Date.now());
+
+  // 第二次执行：ioFailCount 已为 0，成功写入
+  const secondExec = hR5.call('agent:execute', hR5.trustedEvent, { proposalId: pR5.proposal.id });
+  const fileContent = fs.readFileSync(path.join(hR5.appDir, 'retry-success.txt'), 'utf8');
+
+  check('SEC01-R5 纯 I/O 失败保留快照并允许重试 1 次，第 2 次成功完成',
+    firstExec.ok === false && firstExec.error === 'EXECUTION_FAILED' && firstExec.rollbackFailed === false
+    && snapAfterFirst && snapAfterFirst.retryCount === 1
+    && authAfterFirst.allowed === true
+    && secondExec.ok === true && secondExec.executed === true
+    && fileContent === '重试成功写入文本'
+    && !snapsR5.has(pR5.proposal.id));
+
+  // SEC01-R6 连续两次纯 I/O 失败耗尽重试次数
+  const alwaysFailTxn = {
+    begin(opts) { return { ...opts, id: 'tx-fail' }; },
+    commit() {
+      const err = new Error('EACCES: permission denied');
+      err.code = 'EACCES';
+      throw err;
+    },
+    rollback() {},
+  };
+  const snapsR6 = new Map();
+  const confR6 = new UserConfirmationGate();
+  const hR6 = harness({
+    options: {
+      contentSnapshotStore: snapsR6,
+      confirmation: confR6,
+      transactionManager: alwaysFailTxn,
+    },
+  });
+  hR6.policy.setScopeRoots('workspace.write', [hR6.appDir]);
+  const pR6 = hR6.call('agent:propose-action', hR6.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hR6.appDir, 'retry-exhausted.txt'),
+    content: '重试耗尽文本',
+  });
+  hR6.call('agent:confirm-action', hR6.trustedEvent, { proposalId: pR6.proposal.id, decision: 'approved' });
+
+  const r6First = hR6.call('agent:execute', hR6.trustedEvent, { proposalId: pR6.proposal.id });
+  const r6Second = hR6.call('agent:execute', hR6.trustedEvent, { proposalId: pR6.proposal.id });
+  const r6Third = hR6.call('agent:execute', hR6.trustedEvent, { proposalId: pR6.proposal.id });
+  const authR6 = confR6.isExecutionAllowed(pR6.proposal.id, Date.now());
+
+  check('SEC01-R6 连续两次纯 I/O 失败耗尽重试次数，快照被清理且授权永久撤销（RETRY_EXHAUSTED）',
+    r6First.ok === false && r6First.error === 'EXECUTION_FAILED'
+    && r6Second.ok === false && r6Second.error === 'EXECUTION_FAILED'
+    && !snapsR6.has(pR6.proposal.id)
+    && authR6.allowed === false && authR6.reason === 'RETRY_EXHAUSTED'
+    && r6Third.ok === false && r6Third.error === 'EXECUTION_NOT_ALLOWED');
+
+  // SEC01-R7 回滚失败零重试
+  const rollbackFailTxn = {
+    begin(opts) { return { ...opts, id: 'tx-rb-fail' }; },
+    commit() {
+      const err = new Error('Rollback integrity compromised');
+      err.code = 'ROLLBACK_HASH_MISMATCH';
+      throw err;
+    },
+    rollback() {},
+  };
+  const snapsR7 = new Map();
+  const confR7 = new UserConfirmationGate();
+  const hR7 = harness({
+    options: {
+      contentSnapshotStore: snapsR7,
+      confirmation: confR7,
+      transactionManager: rollbackFailTxn,
+    },
+  });
+  hR7.policy.setScopeRoots('workspace.write', [hR7.appDir]);
+  const pR7 = hR7.call('agent:propose-action', hR7.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hR7.appDir, 'rollback-fail.txt'),
+    content: '回滚失败文本',
+  });
+  hR7.call('agent:confirm-action', hR7.trustedEvent, { proposalId: pR7.proposal.id, decision: 'approved' });
+
+  const r7Exec = hR7.call('agent:execute', hR7.trustedEvent, { proposalId: pR7.proposal.id });
+  const authR7 = confR7.isExecutionAllowed(pR7.proposal.id, Date.now());
+  const r7Retry = hR7.call('agent:execute', hR7.trustedEvent, { proposalId: pR7.proposal.id });
+
+  check('SEC01-R7 写入失败且回滚失败时（rollbackFailed=true），快照立即销毁且授权立即撤销，零重试',
+    r7Exec.ok === false && r7Exec.error === 'ROLLBACK_FAILED' && r7Exec.rollbackFailed === true
+    && !snapsR7.has(pR7.proposal.id)
+    && authR7.allowed === false && authR7.reason === 'ROLLBACK_FAILED'
+    && r7Retry.ok === false && r7Retry.error === 'EXECUTION_NOT_ALLOWED');
+
+  // SEC01-R8 重试期间传入不同 content 被无视，始终使用原始不可变快照
+  let r8FailOnce = true;
+  const r8Txn = {
+    begin(opts) { return { ...opts, id: 'tx-r8' }; },
+    commit(tx) {
+      if (r8FailOnce) {
+        r8FailOnce = false;
+        const err = new Error('EBUSY');
+        err.code = 'EBUSY';
+        throw err;
+      }
+      fs.writeFileSync(tx.target, tx.data, 'utf8');
+    },
+    rollback() {},
+  };
+  const hR8 = harness({ options: { transactionManager: r8Txn } });
+  hR8.policy.setScopeRoots('workspace.write', [hR8.appDir]);
+  const targetR8 = path.join(hR8.appDir, 'retry-immutable.txt');
+  const pR8 = hR8.call('agent:propose-action', hR8.trustedEvent, {
+    capability: 'workspace.write',
+    scope: targetR8,
+    content: '原始快照正文',
+  });
+  hR8.call('agent:confirm-action', hR8.trustedEvent, { proposalId: pR8.proposal.id, decision: 'approved' });
+
+  // 第一次失败
+  hR8.call('agent:execute', hR8.trustedEvent, { proposalId: pR8.proposal.id });
+  // 第二次重试：调用方传入不同的恶意 content
+  const r8Retry = hR8.call('agent:execute', hR8.trustedEvent, {
+    proposalId: pR8.proposal.id,
+    content: '试图在重试时篡改的内容',
+  });
+  const finalContent = fs.readFileSync(targetR8, 'utf8');
+
+  check('SEC01-R8 重试期间传入不同 content 被无视，始终使用原始不可变快照落盘',
+    r8Retry.ok === true && r8Retry.executed === true
+    && finalContent === '原始快照正文');
 }
 
 console.log(failures === 0 ? '\nall agent_ipc tests passed' : `\n${failures} FAILED`);

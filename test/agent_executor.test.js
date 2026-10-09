@@ -682,6 +682,132 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   })());
 }
 
+/* ================= 12. SEC-01 权威内容快照与 SHA-256 强绑定执行门禁 ================= */
+{
+  check('SEC01-E1 提案绑定 contentHash 时，执行器验证内容 SHA-256 严格一致', (() => {
+    const e = env();
+    const crypto = require('crypto');
+    const target = path.join(e.sandbox, 'sec01-exact.txt');
+    const content = '正本内容：初澜生活日志';
+    const contentHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    const p = createActionProposal({
+      capability: 'workspace.write',
+      scope: target,
+      contentHash,
+      contentBytes,
+    });
+    e.proposalStore.set(p.id, p);
+    e.confirmation.confirm(p.id, 'approved', { status: p.status });
+    const r = e.executor.execute({ proposalId: p.id, content });
+    return r.ok === true && r.executed === true && fs.readFileSync(target, 'utf8') === content;
+  })());
+
+  check('❌ SEC01-R28 执行传入内容与提案 contentHash 不符时硬拒 CONTENT_HASH_MISMATCH 且作废授权', (() => {
+    const e = env();
+    const crypto = require('crypto');
+    const target = path.join(e.sandbox, 'sec01-tamper.txt');
+    const originalContent = '原本承诺写入的内容';
+    const tamperedContent = '恶意篡改后的注入内容';
+    const contentHash = crypto.createHash('sha256').update(originalContent, 'utf8').digest('hex');
+    const contentBytes = Buffer.byteLength(originalContent, 'utf8');
+    const p = createActionProposal({
+      capability: 'workspace.write',
+      scope: target,
+      contentHash,
+      contentBytes,
+    });
+    e.proposalStore.set(p.id, p);
+    e.confirmation.confirm(p.id, 'approved', { status: p.status });
+    const r = e.executor.execute({ proposalId: p.id, content: tamperedContent });
+    // 授权必须被即时作废
+    const isStillAllowed = e.confirmation.isExecutionAllowed(p.id, Date.now()).allowed;
+    return r.ok === false
+      && r.code === 'CONTENT_HASH_MISMATCH'
+      && !fs.existsSync(target)
+      && isStillAllowed === false;
+  })());
+
+  check('❌ SEC01-R29 执行传入字节数与提案 contentBytes 不符时硬拒 CONTENT_BYTES_MISMATCH', (() => {
+    const e = env();
+    const crypto = require('crypto');
+    const target = path.join(e.sandbox, 'sec01-bytes.txt');
+    const content = 'hello';
+    const contentHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+    const p = createActionProposal({
+      capability: 'workspace.write',
+      scope: target,
+      contentHash,
+      contentBytes: 999, // 故意伪造/不匹配的字节数
+    });
+    e.proposalStore.set(p.id, p);
+    e.confirmation.confirm(p.id, 'approved', { status: p.status });
+    const r = e.executor.execute({ proposalId: p.id, content });
+    return r.ok === false && r.code === 'CONTENT_BYTES_MISMATCH' && !fs.existsSync(target);
+  })());
+
+  check('SEC01-E2 通道层全链路：建案带 content 快照 → 确认 → 执行（不传 content 取快照）→ 成功写盘', (() => {
+    const h = channelHarness();
+    const target = path.join(h.sandbox, 'sec01-chain.txt');
+    const content = '通道层权威快照链路落盘内容';
+    const p = h.call('agent:propose-action', {
+      capability: 'workspace.write',
+      scope: target,
+      content,
+      reason: '快照链路测试',
+    });
+    const c = h.call('agent:confirm-action', { proposalId: p.proposal.id, decision: 'approved' });
+    // 执行时不传 content，执行层权威取回私有快照执行
+    const x = h.call('agent:execute', { proposalId: p.proposal.id });
+    return p.ok === true
+      && c.ok === true
+      && x.ok === true
+      && x.executed === true
+      && fs.readFileSync(target, 'utf8') === content;
+  })());
+
+  check('SEC01-E3 通道层防篡改：调用方在 execute 时传入不同 content，执行器仍严格以快照为准', (() => {
+    const h = channelHarness();
+    const target = path.join(h.sandbox, 'sec01-tamper-attempt.txt');
+    const snapshotContent = '权威快照里的安全内容';
+    const p = h.call('agent:propose-action', {
+      capability: 'workspace.write',
+      scope: target,
+      content: snapshotContent,
+      reason: '防篡改测试',
+    });
+    h.call('agent:confirm-action', { proposalId: p.proposal.id, decision: 'approved' });
+    // 调用方试图传入恶意 content
+    const x = h.call('agent:execute', { proposalId: p.proposal.id, content: '试图覆盖的恶意输入' });
+    return p.ok === true
+      && x.ok === true
+      && fs.readFileSync(target, 'utf8') === snapshotContent; // 落盘的是快照内容，不是调用方传入的内容
+  })());
+
+  check('❌ SEC01-R30 执行器底层回滚失败时（ROLLBACK_FAILED），授权被作废且标记 rollbackFailed', (() => {
+    const e = env();
+    const rollbackFailTxn = {
+      begin(opts) { return { ...opts, id: 'tx-fail-rb' }; },
+      commit() {
+        const err = new Error('Rollback failure simulation');
+        err.code = 'ROLLBACK_HASH_MISMATCH';
+        throw err;
+      },
+      rollback() {},
+    };
+    e.executor.txn = rollbackFailTxn;
+    const target = path.join(e.sandbox, 'sec01-rb-fail.txt');
+    const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+    const r = e.executor.execute({ proposalId: id, content: 'rollback fail test' });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'ROLLBACK_FAILED'
+      && r.rollbackFailed === true
+      && auth.allowed === false
+      && auth.reason === 'ROLLBACK_FAILED';
+  })());
+}
+
 /* ================= 汇总 ================= */
 console.log('--- D-4 受控执行器门禁结束---');
 if (failures > 0) {
