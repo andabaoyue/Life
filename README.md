@@ -24,8 +24,11 @@
 
 ### 方式一：普通玩家（零门槛开箱即玩）
 
-1. 前往 **[Releases](https://github.com/Andabaoyue/Life/releases)** 下载最新的 Windows 绿色便携版或安装包（产物名取自 `package.json` 的版本号，形如 `Life-<version>-win-x64-portable.zip`；当前开发版为 `1.0.0-dev`，正式发布时统一为 `1.0.0`）；
-2. 解压到任意目录，**双击 `Life.exe` 即可在桌面唤醒初澜**（无需安装 Node.js、Python 或任何编程运行环境）；
+1. 前往 **[Releases](https://github.com/Andabaoyue/Life/releases)** 下载对应版本的 Windows 发布产物：
+   - `Life-1.0.0-win-x64-portable.exe`（单文件绿色便携版，双击直接运行）；
+   - `Life-1.0.0-win-x64.zip`（绿色免安装压缩包，解压后双击 `Life.exe` 运行）；
+   - `Life-1.0.0-Setup.exe`（标准 Windows 安装程序）；
+2. 运行后**即可在桌面唤醒初澜**（无需安装 Node.js、Python 或任何编程运行环境）；
 3. **首次对话配置**：在角色身上点击右键 → 选择「设置」，在「API Key」处填入您的 DeepSeek API Key 即可畅快对话。
 
 ### 方式二：开发者 / 源码运行

@@ -288,12 +288,24 @@ function checkPackageLock() {
       const { getAppVersion } = require('../src/research-export');
       const appVer = getAppVersion();
       if (appVer === pkg.version) {
-        report('PASS', '版本唯一来源', `research-export.getAppVersion() 与 package.json (${pkg.version}) 一致，无旧版本硬编码`);
+        report('PASS', '版本唯一来源', `research-export.getAppVersion() 与 package.json (${pkg.version}) 一致`);
       } else {
         report('FAIL', '版本唯一来源', `research-export.getAppVersion() (${appVer}) ≠ package.json (${pkg.version})，存在旧版本硬编码`);
       }
     } catch (e) {
       report('FAIL', '版本唯一来源检查错误', e.message);
+    }
+    // 门面文档版本一致性检查：README.en.md 首行应严格对齐 package.json 版本（防 -dev / -rc 后缀残留）
+    const enReadmePath = path.join(ROOT, 'README.en.md');
+    if (fs.existsSync(enReadmePath)) {
+      const enFirstLine = fs.readFileSync(enReadmePath, 'utf8').split(/\r?\n/)[0] || '';
+      const V = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const facadeOk = new RegExp('^# Life v' + V + '(?:\\s+|$)').test(enFirstLine);
+      if (facadeOk) {
+        report('PASS', '门面版本对齐', `README.en.md 首行已对齐至 v${pkg.version}`);
+      } else {
+        report('FAIL', '门面版本对齐', `README.en.md 首行未对齐至 v${pkg.version}: "${enFirstLine.trim()}"`);
+      }
     }
   } catch (e) {
     report('FAIL', '环境锁定解析错误', e.message);
