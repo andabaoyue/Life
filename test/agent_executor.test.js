@@ -489,6 +489,25 @@ check('❌ D4-R18 确认过期（TTL 越界）后执行必须拒', (() => {
   return r.ok === false && r.code === 'EXECUTION_NOT_ALLOWED' && !fs.existsSync(target);
 })());
 
+check('❌ D4-R18b 提案端到端生命周期超时（超10分钟）执行必须拒', (() => {
+  const e = env();
+  const target = path.join(e.sandbox, 'expired.txt');
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'x' });
+  const p = e.proposalStore.get(id);
+
+  // 1. 缺失/非法时间戳拦截：返回 PROPOSAL_INVALID_TIMESTAMP
+  const invalidP = Object.freeze({ ...p, createdAt: NaN });
+  e.proposalStore.set(id, invalidP);
+  const rInvalid = e.executor.execute({ proposalId: id, content: 'x' });
+  const invalidBlocked = rInvalid.ok === false && rInvalid.code === 'PROPOSAL_INVALID_TIMESTAMP';
+
+  // 2. 把提案 createdAt 拨回 11 分钟前（端到端时限 10 分钟）：返回 PROPOSAL_EXPIRED
+  const aged = Object.freeze({ ...p, createdAt: Date.now() - 11 * 60 * 1000 });
+  e.proposalStore.set(id, aged);
+  const r = e.executor.execute({ proposalId: id, content: 'x' });
+  return invalidBlocked && r.ok === false && r.code === 'PROPOSAL_EXPIRED' && !fs.existsSync(target);
+})());
+
 /* ================= 7. 事务联动 ================= */
 check('D4-19 写失败不留半截文件，且 WAL 记终态', (() => {
   const e = env();

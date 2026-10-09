@@ -110,7 +110,7 @@ function validateConnection(conn) {
   if (!urlOk) {
     errors.push('BASEURL_INVALID');
   } else if (typeof conn.providerId === 'string' && conn.providerId.trim()) {
-    const credentialType = conn.providerId.trim().toLowerCase() === 'deepseek' ? 'deepseek-api-key' : 'apiKey';
+    const credentialType = credentialTypeFromRef(conn.credentialRef);
     const policy = validateCredentialTarget({
       provider: conn.providerId.trim(),
       baseURL: conn.baseURL.trim(),
@@ -429,6 +429,14 @@ function migrateLegacyConfig(dir, flatCfg = {}) {
   return { ok: true, migrated: true, store: saved.store };
 }
 
+/** P0-1 (S1)：由 credentialRef 的 namespace 归属权威推导凭据类型（单一事实来源，防篡改 providerId 越界） */
+function credentialTypeFromRef(credentialRef) {
+  const parsed = parseCredentialRef(credentialRef);
+  const key = (parsed && (parsed.key || parsed.namespaceKey)) || '';
+  const ns = String(key).trim().toLowerCase();
+  return ns === 'deepseek' ? 'deepseek-api-key' : 'apiKey';
+}
+
 /** Z2-A：credentialType 归属（与 config.sanitize 同规则：DeepSeek 官方 key 类型独立） */
 function credentialTypeFor(providerId) {
   return String(providerId == null ? '' : providerId).trim().toLowerCase() === 'deepseek'
@@ -474,7 +482,7 @@ function resolveRuntimeCfg(connection, opts = {}) {
     cfg: {
       provider: connection.providerId,
       baseURL: connection.baseURL,
-      credentialType: credentialTypeFor(connection.providerId),
+      credentialType: credentialTypeFromRef(connection.credentialRef),
       model: connection.activeModel,
       apiKey
     }
@@ -500,6 +508,7 @@ module.exports = {
   migrateLegacyConfig,
   capabilitySnapshotFor,
   credentialTypeFor,
+  credentialTypeFromRef,
   getActiveConnection,
   resolveRuntimeCfg
 };

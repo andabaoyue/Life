@@ -197,12 +197,11 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
     const after = b.state().consecutiveErrors;
     return after === 0 && b.consume() === true;
   })());
-  check('C3 墙钟超时限熔断', (() => {
-    const b = new ExecutionBudget({ maxActionsPerSession: 99, maxWritesPerSession: 99, maxConsecutiveErrors: 99, maxWallClockMs: 1000 });
-    const t0 = b.startedAt;
-    const ok = b.consume(false, t0);
-    const late = b.consume(false, t0 + 5000);
-    return ok === true && late === false && b.state().tripReason === 'wall_clock_exceeded';
+  check('C3 会话墙钟不因常驻时间熔断（由单次提案时限承载）', (() => {
+    const b = new ExecutionBudget({ maxActionsPerSession: 99, maxWritesPerSession: 99, maxConsecutiveErrors: 99, maxWallClockMs: 600000 });
+    b.startedAt = Date.now() - 11 * 60 * 1000;
+    const ok = b.consume(false);
+    return ok === true && b.state().tripped === false;
   })());
   check('C3 熔断后不得再放行（不得静默重试）', (() => {
     const b = new ExecutionBudget({ maxActionsPerSession: 1, maxWritesPerSession: 99, maxConsecutiveErrors: 99, maxWallClockMs: 0 });
