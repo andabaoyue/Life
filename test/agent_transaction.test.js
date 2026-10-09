@@ -226,6 +226,38 @@ console.log('--- D-2 单文件写事务 + WAL 门禁 ---');
     err && err.code === 'ROLLBACK_HASH_MISMATCH', err && err.code);
 }
 
+/* ================= 8.5 ❌ 反例 G：commit WAL 失败时不误回滚已提交数据（M2） ================= */
+{
+  const { dataDir, workDir, mgr } = scenario();
+  const f = path.join(workDir, 'commit-fail.txt');
+  fs.writeFileSync(f, 'ORIGINAL');
+
+  const tx = mgr.begin({ target: f, data: 'NEW_DATA' });
+  // 注入：让 commit 时的 _appendWal 抛错（模拟写 committed WAL 时磁盘满）
+  const origAppend = mgr._appendWal;
+  mgr._appendWal = function (record) {
+    if (record.status === 'committed') throw new Error('WAL_APPEND_FAILED');
+    return origAppend.call(this, record);
+  };
+
+  let commitErr = null;
+  try {
+    mgr.commit(tx);
+  } catch (err) {
+    commitErr = err;
+  }
+  check('❌ 反例G commit WAL 失败时抛错且备份文件被安全删除',
+    commitErr !== null && commitErr.message === 'WAL_APPEND_FAILED' &&
+    !fs.existsSync(tx.backupPath) && fs.readFileSync(f, 'utf8') === 'NEW_DATA');
+
+  // 模拟重启恢复：断言不会把已提交的 NEW_DATA 误回滚成 ORIGINAL
+  const mgr2 = new WriteTransactionManager({ dir: dataDir });
+  const rec = mgr2.recoverPendingTransactions();
+  check('❌ 反例G 重启恢复不把新内容误回滚掉（报 BACKUP_MISSING 预期残留）',
+    fs.readFileSync(f, 'utf8') === 'NEW_DATA' && rec.recovered === 0 &&
+    rec.failed.length === 1 && /BACKUP_MISSING/.test(rec.failed[0].error));
+}
+
 /* ================= 9. 输入校验 ================= */
 {
   const { workDir, mgr } = scenario();
