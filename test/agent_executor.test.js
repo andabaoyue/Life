@@ -1103,13 +1103,19 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   })());
 
   check('❌ SEC03-R1 非白名单扩展名硬拒绝 DISALLOWED_EXTENSION 且不落盘并作废授权', (() => {
-    const e = env();
+    const e = env({ budget: { maxWritesPerSession: 30, maxActionsPerSession: 40 } });
     const badTargets = [
       path.join(e.sandbox, 'bad.exe'),
       path.join(e.sandbox, 'hack.bat'),
       path.join(e.sandbox, 'shell.sh'),
       path.join(e.sandbox, 'script.ps1'),
       path.join(e.sandbox, 'noext'),
+      path.join(e.sandbox, 'note.txt:stream'),
+      path.join(e.sandbox, 'note.txt.'),
+      path.join(e.sandbox, 'note.txt '),
+      path.join(e.sandbox, 'CON.txt'),
+      path.join(e.sandbox, 'NUL.json'),
+      path.join(e.sandbox, 'sub:dir', 'file.txt'),
     ];
     let allBlocked = true;
     for (const target of badTargets) {
@@ -1121,7 +1127,18 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
         break;
       }
     }
-    return allBlocked;
+
+    // 读路径 NTFS ADS 冒号同样被拦截
+    const adsReadTarget = path.join(e.sandbox, 'doc.txt:stream');
+    const idAdsRead = authorizeProposal(e, { capability: 'workspace.read', scope: adsReadTarget });
+    const rAdsRead = e.executor.execute({ proposalId: idAdsRead });
+    const authAdsRead = e.confirmation.isExecutionAllowed(idAdsRead, Date.now());
+    const adsReadBlocked = rAdsRead.ok === false
+      && rAdsRead.code === 'DISALLOWED_EXTENSION'
+      && authAdsRead.allowed === false
+      && authAdsRead.reason === 'DISALLOWED_EXTENSION';
+
+    return allBlocked && adsReadBlocked;
   })());
 
   check('SEC03-R2 白名单扩展名（.txt/.md/.json/.log）及大小写变体（.TXT/.MD）正常落盘', (() => {

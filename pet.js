@@ -867,6 +867,23 @@ function renderTimezonePanel() {
   } else {
     setV('tzSync', '● ' + t('tz.synced'));
   }
+  renderSandboxPanel();
+}
+
+async function renderSandboxPanel() {
+  const setV = (id, s) => { const el = document.getElementById(id); if (el) el.textContent = s; };
+  if (!api || !api.agent || typeof api.agent.getStatus !== 'function') return;
+  try {
+    const res = await api.agent.getStatus();
+    const roots = res && res.policy && res.policy.sandboxRoots;
+    if (Array.isArray(roots) && roots.length > 0 && roots[0]) {
+      setV('sandboxPath', roots[0]);
+    } else {
+      setV('sandboxPath', '—');
+    }
+  } catch {
+    setV('sandboxPath', '—');
+  }
 }
 
 function updateMenuI18n() {
@@ -931,6 +948,9 @@ function renderI18nPanel() {
   setText('tzKZone', 'tz.zone');
   setText('tzKUptime', 'tz.uptime');
   setText('tzKSync', 'tz.sync');
+  setText('sandboxTitle', 'panel.sandboxTitle');
+  setText('sandboxPathLabel', 'panel.sandboxPathLabel');
+  setText('sandboxWarning', 'panel.sandboxWarning');
   setText('panelCloseHint', 'panel.closeHint');
   setText('connDelete', 'conn.delete');
   setText('resetSelf', 'danger.resetSelf');
@@ -1380,6 +1400,7 @@ function openPanel() {
   refreshStats();
   refreshMem();
   refreshWardrobe();
+  renderSandboxPanel();
 }
 
 /* 长期记忆可视化。文本一律用 textContent 写入 ——

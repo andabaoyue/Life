@@ -950,17 +950,60 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
     && statusAfter1.budget.remainingActions === actionsBefore
     && statusAfter2.budget.remainingActions === actionsBefore);
 
-  // F5-1 非白名单扩展名在建案期即被拒绝 DISALLOWED_EXTENSION，且不消耗动作预算
+  // F5-1 非白名单扩展名与 Windows ADS 畸形文件名在建案期即被拒绝 DISALLOWED_EXTENSION，且不消耗动作预算
   const badExtP = h.call('agent:propose-action', h.trustedEvent, {
     capability: 'workspace.write',
     scope: path.join(h.appDir, 'hack.exe'),
     content: 'evil content',
   });
+  const badAdsP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'note.txt:stream'),
+    content: 'ads stream',
+  });
+  const badDotP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'note.txt.'),
+    content: 'trailing dot',
+  });
+  const badSpaceP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'note.txt '),
+    content: 'trailing space',
+  });
+  const badConP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'CON.txt'),
+    content: 'reserved device name',
+  });
+  const badNulP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'NUL.json'),
+    content: 'reserved device name',
+  });
+  const badSubP = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(h.appDir, 'sub:dir', 'file.txt'),
+    content: 'colon in directory segment',
+  });
   const statusAfter3 = h.call('agent:get-status', h.trustedEvent);
 
-  check('F5-1 非白名单扩展名在建案期即被硬拒绝 DISALLOWED_EXTENSION 且不消耗动作预算',
+  // R1 防御：验证 sandboxRoots 返回独立副本，修改返回值不得污染真实策略
+  statusAfter3.policy.sandboxRoots.push('C:\\EVIL-INJECTED');
+  const statusCheckR1 = h.call('agent:get-status', h.trustedEvent);
+  const isSandboxRootsIsolated = !statusCheckR1.policy.sandboxRoots.includes('C:\\EVIL-INJECTED');
+
+  check('F5-1 非白名单扩展名与 Windows ADS 畸形名在建案期硬拒绝 DISALLOWED_EXTENSION 且不消耗动作预算',
     badExtP.ok === false && badExtP.error === 'DISALLOWED_EXTENSION'
-    && statusAfter3.budget.remainingActions === actionsBefore);
+    && badAdsP.ok === false && badAdsP.error === 'DISALLOWED_EXTENSION'
+    && badDotP.ok === false && badDotP.error === 'DISALLOWED_EXTENSION'
+    && badSpaceP.ok === false && badSpaceP.error === 'DISALLOWED_EXTENSION'
+    && badConP.ok === false && badConP.error === 'DISALLOWED_EXTENSION'
+    && badNulP.ok === false && badNulP.error === 'DISALLOWED_EXTENSION'
+    && badSubP.ok === false && badSubP.error === 'DISALLOWED_EXTENSION'
+    && statusAfter3.budget.remainingActions === actionsBefore
+    && Array.isArray(statusAfter3.policy.sandboxRoots)
+    && isSandboxRootsIsolated);
 
   // N1-1 主进程 selfNote 路径彻底消除双扣（Q2 修复）：
   // ① 源码级门禁：main.js 的 maybeAskForSelfNote 内不得调用 evaluateProposal（彻底消除预检+建案双扣）

@@ -226,6 +226,7 @@ function maybeAskForSelfNote(selfIntent) {
         if (rawHint === '.' || rawHint === '..') return;
         if (/\.\./.test(rawHint)) return;
         if (rawHint.length > 200) return;
+        if (rawHint.includes(':') || rawHint.endsWith('.') || rawHint.endsWith(' ') || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(rawHint.split('.')[0])) return;
 
         const scope = path.join(deps.agentSandbox, rawHint);
 

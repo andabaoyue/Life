@@ -59,6 +59,29 @@ const DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024;
 /** 默认单次写最大字节，与 WriteTransactionManager 的5MB 对齐（这里取更严的一侧）。 */
 const DEFAULT_MAX_WRITE_BYTES = 5 * 1024 * 1024;
 
+/** 🔴 SEC-03：Windows 保留设备名正则（不区分大小写，支持 CON/PRN/AUX/NUL/COM1-9/LPT1-9）。 */
+const WINDOWS_RESERVED_NAMES = Object.freeze(/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i);
+
+/**
+ * 判定路径是否包含 Windows 畸形文件名、ADS 备用数据流冒号或保留设备名。
+ * @param {string} p 目标路径
+ * @returns {boolean} true 表示畸形/非法路径
+ */
+function isMalformedWindowsPath(p) {
+  if (typeof p !== 'string' || !p) return false;
+  // 去除 Windows 盘符前缀（如 C: 或 c:）后，不应含有冒号（防 NTFS ADS 及非法冒号，涵盖目录段冒号）
+  const withoutDrive = p.replace(/^[A-Za-z]:/, '');
+  if (withoutDrive.includes(':')) return true;
+  // 分解各路径段，检查保留名、末尾点号与末尾空格（排除 . 与 .. 相对目录跳转）
+  const segments = withoutDrive.split(/[\\/]/).filter(Boolean);
+  for (const seg of segments) {
+    if (seg !== '.' && seg !== '..' && (seg.endsWith('.') || seg.endsWith(' '))) return true;
+    const stem = seg.split('.')[0];
+    if (WINDOWS_RESERVED_NAMES.test(stem)) return true;
+  }
+  return false;
+}
+
 function fail(code, extra = {}) {
   return { ok: false, code, ...extra };
 }
@@ -480,6 +503,10 @@ class ControlledAgentExecutor {
 
   _readFile(proposal, resolvedPath) {
     const target = resolvedPath || path.resolve(proposal.scope);
+    // 🔴 SEC-03 深度防御：拦截读路径中的 NTFS ADS 备用数据流冒号 (:) 与 Windows 畸形文件名/保留名
+    if (isMalformedWindowsPath(proposal && proposal.scope) || isMalformedWindowsPath(target)) {
+      throw Object.assign(new Error('MALFORMED_WINDOWS_FILENAME'), { code: 'DISALLOWED_EXTENSION' });
+    }
     const stat = this.fs.statSync(target);
     if (!stat.isFile()) throw new Error('NOT_A_FILE');
     // 🔴 SEC-02 延伸防御（N3）：拦截多重硬链接文件读取（防硬链接穿透与跨边界泄漏）
@@ -508,6 +535,11 @@ class ControlledAgentExecutor {
     const targetExt = path.extname(target || '').toLowerCase();
     if (!ALLOWED_WRITE_EXTENSIONS.has(ext) || !ALLOWED_WRITE_EXTENSIONS.has(targetExt)) {
       throw Object.assign(new Error(`DISALLOWED_EXTENSION: ${ext || 'none'}`), { code: 'DISALLOWED_EXTENSION' });
+    }
+
+    // 🔴 SEC-03 深度防御：NTFS ADS 备用数据流冒号 (:)、Windows 保留设备名与末尾点号/空格畸形文件名拦截
+    if (isMalformedWindowsPath(proposal && proposal.scope) || isMalformedWindowsPath(target)) {
+      throw Object.assign(new Error('MALFORMED_WINDOWS_FILENAME'), { code: 'DISALLOWED_EXTENSION' });
     }
 
     // 🔴 SEC-02 延伸防御（N3 & Q1）：若目标已存在且为多重硬链接，拒绝覆写（防硬链接目标污染）；
@@ -563,6 +595,7 @@ module.exports = {
   ControlledAgentExecutor,
   EXECUTABLE_CAPABILITIES,
   ALLOWED_WRITE_EXTENSIONS,
+  isMalformedWindowsPath,
   resolveRealPath,
   realpathBestEffort,
   DEFAULT_MAX_READ_BYTES,

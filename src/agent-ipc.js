@@ -40,7 +40,7 @@ const {
   createActionProposal, AuditLog, CAPABILITIES,
 } = require('./agent-interfaces');
 const { UserConfirmationGate } = require('./agent-confirmation');
-const { ControlledAgentExecutor, ALLOWED_WRITE_EXTENSIONS } = require('./agent-executor');
+const { ControlledAgentExecutor, ALLOWED_WRITE_EXTENSIONS, isMalformedWindowsPath } = require('./agent-executor');
 
 /**
  * 允许注册的通道名单（白名单即设计约束，不多不少）。
@@ -211,10 +211,10 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     const verdict = policy.authorize(capability, raw.scope);
     if (!verdict.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: verdict.reason, verdict };
 
-    // 🔴 F5：写扩展名白名单同源前置校验。建案期即拦截非法扩展名，不扣减用户动作预算。
+    // 🔴 F5 & SEC-03：写扩展名白名单同源前置校验与 Windows 畸形文件名/保留名防御。建案期即拦截，不扣减用户动作预算。
     if (capability === 'workspace.write') {
       const ext = path.extname(raw.scope || '').toLowerCase();
-      if (!ALLOWED_WRITE_EXTENSIONS.has(ext)) {
+      if (isMalformedWindowsPath(raw.scope) || !ALLOWED_WRITE_EXTENSIONS.has(ext)) {
         return { code: 'DISALLOWED_EXTENSION', ok: false, ext: ext || 'none' };
       }
     }
@@ -287,6 +287,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       policy: {
         killSwitch: policy.killSwitch,
         grantedCapabilities: [...policy.allowed],
+        sandboxRoots: policy && policy.scopeRoots && typeof policy.scopeRoots.get === 'function'
+          ? [...(policy.scopeRoots.get('workspace.write') || [])]
+          : [],
       },
       registeredCapabilities: registry.list(),
       auditCount: auditLog.list().length,
