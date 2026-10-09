@@ -114,6 +114,12 @@ function buildViewModel(proposal, opts = {}) {
     scope: truncate(proposal.scope, SCOPE_MAX),
     scopeTruncated: String(proposal.scope || '').length > SCOPE_MAX,
     reason: truncate(proposal.reason || t('agent.reason.empty', '（未说明理由）'), 200),
+    // 🔴 UX-SEC-01：沙盒覆写风险提示
+    isOverwrite: Boolean(proposal.isOverwrite),
+    warnOverwrite: Boolean(proposal.isOverwrite) && capability === 'workspace.write',
+    overwriteLabel: Boolean(proposal.isOverwrite) && capability === 'workspace.write'
+      ? t('agent.warn.overwrite', '⚠️ 将覆盖沙盒内已存在的同名文件')
+      : '',
     // 🔴 SEC-01：内容哈希与只读预览元数据
     contentHash: proposal.contentHash ? String(proposal.contentHash) : null,
     contentBytes: Number.isFinite(proposal.contentBytes) ? proposal.contentBytes : null,
@@ -245,8 +251,15 @@ function bind(el, onDecision, t, bindOpts = {}) {
         : (typeof vm.budget.remainingActions === 'number'
           ? tr('agent.budget.remaining', '剩余可用动作：') + vm.budget.remainingActions
           : ''));
-    set('[data-agent-field="warn"]',
-      vm.warnHighRisk ? tr('agent.warn.highRisk', '这是高风险操作，请确认你要改动的确实是这个目标。') : '');
+    let warnText = '';
+    if (vm.warnOverwrite) {
+      warnText = vm.overwriteLabel || tr('agent.warn.overwrite', '⚠️ 将覆盖沙盒内已存在的同名文件');
+    }
+    if (vm.warnHighRisk) {
+      const hrText = tr('agent.warn.highRisk', '这是高风险操作，请确认你要改动的确实是这个目标。');
+      warnText = warnText ? `${warnText} ${hrText}` : hrText;
+    }
+    set('[data-agent-field="warn"]', warnText);
     // 🔴 SEC-01：安全渲染内容元数据（纯 textContent，严禁 innerHTML 解释）
     set('[data-agent-field="content-preview"]', vm.contentPreview || '');
     set('[data-agent-field="content-hash"]', vm.contentHash ? `SHA-256: ${vm.contentHash.slice(0, 16)}…` : '');

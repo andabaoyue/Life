@@ -342,7 +342,7 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
 
     check('❌ 反例5e 快照只含白名单字段，不是提案对象展开',
       Object.keys(snap.proposal).sort().join(',') ===
-      'capability,contentBytes,contentHash,contentPreview,dangerLevel,id,isTruncated,reason,requiresConfirm,scope,status',
+      'capability,contentBytes,contentHash,contentPreview,dangerLevel,id,isOverwrite,isTruncated,reason,requiresConfirm,scope,status',
       Object.keys(snap.proposal).sort().join(','));
 
     // 🔴 反例5f（2026-10-06 审核补的，**变异测试逼出来的**）：
@@ -878,6 +878,46 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   const noSnapTarget = path.join(hCounter.appDir, 'sec01-no-snap.txt');
   check('❌ SEC01-R10 专项反例：缺失权威快照时 execute 绝不回退读取 raw.content，硬拒 SNAPSHOT_MISSING 且不落盘',
     execNoSnap.ok === false && execNoSnap.error === 'SNAPSHOT_MISSING' && !fs.existsSync(noSnapTarget));
+}
+
+/* ================= 15. UX-SEC-01 覆写状态权威检测与快照传递 ================= */
+{
+  const h = harness();
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  h.policy.setScopeRoots('workspace.read', [h.appDir]);
+
+  // 1. 已存在文件覆写测试
+  const existingFile = path.join(h.appDir, 'ux-overwrite-target.txt');
+  fs.writeFileSync(existingFile, '旧数据');
+  const pExist = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: existingFile,
+    content: '新数据',
+  });
+  const snapExist = h.call('agent:get-pending-proposal', h.trustedEvent, { proposalId: pExist.proposal.id });
+
+  // 2. 新文件测试
+  const nonExistingFile = path.join(h.appDir, 'ux-new-target.txt');
+  const pNew = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: nonExistingFile,
+    content: '新文件数据',
+  });
+  const snapNew = h.call('agent:get-pending-proposal', h.trustedEvent, { proposalId: pNew.proposal.id });
+
+  // 3. 非写操作测试
+  const pRead = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.read',
+    scope: existingFile,
+  });
+  const snapRead = h.call('agent:get-pending-proposal', h.trustedEvent, { proposalId: pRead.proposal.id });
+
+  check('UXSEC-IPC1 目标文件已存在时 get-pending-proposal 快照返回 isOverwrite: true',
+    snapExist.ok === true && snapExist.proposal.isOverwrite === true);
+
+  check('UXSEC-IPC2 目标文件不存在或非写操作时 get-pending-proposal 快照返回 isOverwrite: false',
+    snapNew.ok === true && snapNew.proposal.isOverwrite === false
+    && snapRead.ok === true && snapRead.proposal.isOverwrite === false);
 }
 
 console.log(failures === 0 ? '\nall agent_ipc tests passed' : `\n${failures} FAILED`);

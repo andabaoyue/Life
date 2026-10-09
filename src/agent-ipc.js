@@ -32,6 +32,8 @@
  * ipcGuard / ipcMain 对象均由调用方注入 —— 本模块不 require electron，可在纯 Node 测试。
  */
 
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget,
@@ -361,6 +363,16 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       return fail('ALREADY_EXECUTED');
     }
 
+    let isOverwrite = false;
+    if (tracked.capability === 'workspace.write' && typeof tracked.scope === 'string' && tracked.scope) {
+      try {
+        const fsImpl = options.fs || fs;
+        isOverwrite = fsImpl.existsSync(path.resolve(tracked.scope));
+      } catch {
+        isOverwrite = false;
+      }
+    }
+
     const meta = registry.metaOf(tracked.capability) || {};
     const snapshot = Object.freeze({
       id: tracked.id,
@@ -370,6 +382,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       status: String(tracked.status || ''),
       dangerLevel: meta.dangerLevel || 'unknown',
       requiresConfirm: meta.requiresConfirm !== false,
+      // 🔴 UX-SEC-01：沙盒覆写风险标记（主进程权威检测，供确认卡片渲染展示）
+      isOverwrite: Boolean(isOverwrite),
       // 🔴 SEC-01：展示层安全元数据白名单透出（杜绝未授权暴露完整正文）
       contentHash: tracked.contentHash || null,
       contentBytes: Number.isFinite(tracked.contentBytes) ? tracked.contentBytes : null,

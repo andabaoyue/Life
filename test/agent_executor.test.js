@@ -835,6 +835,194 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   })());
 }
 
+/* ================= 10. SEC-02 & SEC-03 门禁：符号链接穿透防逃逸与扩展名下沉 ================= */
+{
+  check('❌ SEC02-R1 文件符号链接逃逸被读拦截：返回 SYMLINK_ESCAPE、不泄露敏感内容并吊销授权（注入测）', (() => {
+    const e = env();
+    const fakeFs = Object.create(fs);
+    const linkPath = path.join(e.sandbox, 'link_secret.txt');
+    const realTarget = path.join(e.outside, 'secret.txt');
+    fakeFs.lstatSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(linkPath)) {
+        return { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
+      }
+      return fs.lstatSync(p);
+    };
+    fakeFs.realpathSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(linkPath)) {
+        return realTarget;
+      }
+      return fs.realpathSync(p);
+    };
+    e.executor.fs = fakeFs;
+    const id = authorizeProposal(e, { capability: 'workspace.read', scope: linkPath });
+    const r = e.executor.execute({ proposalId: id });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'SYMLINK_ESCAPE'
+      && r.content === undefined
+      && auth.allowed === false
+      && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC02-R2 文件符号链接逃逸被写拦截：返回 SYMLINK_ESCAPE、外部原文件字节不变并吊销授权（注入测）', (() => {
+    const e = env();
+    const fakeFs = Object.create(fs);
+    const linkPath = path.join(e.sandbox, 'link_write.txt');
+    const realTarget = path.join(e.outside, 'secret.txt');
+    fakeFs.lstatSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(linkPath)) {
+        return { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
+      }
+      return fs.lstatSync(p);
+    };
+    fakeFs.realpathSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(linkPath)) {
+        return realTarget;
+      }
+      return fs.realpathSync(p);
+    };
+    e.executor.fs = fakeFs;
+    const id = authorizeProposal(e, { capability: 'workspace.write', scope: linkPath, content: 'PWNED-OVERWRITE' });
+    const r = e.executor.execute({ proposalId: id, content: 'PWNED-OVERWRITE' });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'SYMLINK_ESCAPE'
+      && fs.readFileSync(path.join(e.outside, 'secret.txt'), 'utf8') === 'ORIGINAL-SECRET'
+      && auth.allowed === false
+      && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC02-R3 悬空符号链接无法证明安全失败关闭：返回 SYMLINK_ESCAPE 并吊销授权（注入测）', (() => {
+    const e = env();
+    const danglingFs = Object.create(fs);
+    const dangPath = path.join(e.sandbox, 'dangling.txt');
+    danglingFs.lstatSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(dangPath)) {
+        return { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
+      }
+      return fs.lstatSync(p);
+    };
+    danglingFs.realpathSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(dangPath)) {
+        const err = new Error('ENOENT: no such file or directory');
+        err.code = 'ENOENT';
+        throw err;
+      }
+      return fs.realpathSync(p);
+    };
+    e.executor.fs = danglingFs;
+    const id = authorizeProposal(e, { capability: 'workspace.write', scope: dangPath, content: 'dangling content' });
+    const r = e.executor.execute({ proposalId: id, content: 'dangling content' });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'SYMLINK_ESCAPE'
+      && auth.allowed === false
+      && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC02-R4 循环符号链接 ELOOP 失败关闭：返回 SYMLINK_ESCAPE 并吊销授权（注入测）', (() => {
+    const e = env();
+    const loopFs = Object.create(fs);
+    const loopPath = path.join(e.sandbox, 'loop.txt');
+    loopFs.lstatSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(loopPath)) {
+        return { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
+      }
+      return fs.lstatSync(p);
+    };
+    loopFs.realpathSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(loopPath)) {
+        const err = new Error('ELOOP: too many symbolic links encountered');
+        err.code = 'ELOOP';
+        throw err;
+      }
+      return fs.realpathSync(p);
+    };
+    e.executor.fs = loopFs;
+    const id = authorizeProposal(e, { capability: 'workspace.read', scope: loopPath });
+    const r = e.executor.execute({ proposalId: id });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'SYMLINK_ESCAPE'
+      && auth.allowed === false
+      && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC02-R5 followSymlink 开启时依然受物理沙盒根强约束拦截并吊销授权（注入测）', (() => {
+    const e = env();
+    const fakeFs = Object.create(fs);
+    const linkPath = path.join(e.sandbox, 'bypass.txt');
+    const realTarget = path.join(e.outside, 'secret.txt');
+    fakeFs.lstatSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(linkPath)) {
+        return { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
+      }
+      return fs.lstatSync(p);
+    };
+    fakeFs.realpathSync = (p) => {
+      if (path.resolve(String(p)) === path.resolve(linkPath)) {
+        return realTarget;
+      }
+      return fs.realpathSync(p);
+    };
+    e.executor.fs = fakeFs;
+    e.policy.followSymlink = true; // 显式放开策略开关
+    const id = authorizeProposal(e, { capability: 'workspace.read', scope: linkPath });
+    const r = e.executor.execute({ proposalId: id });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false
+      && r.code === 'SYMLINK_ESCAPE'
+      && auth.allowed === false
+      && auth.reason === 'SYMLINK_ESCAPE';
+  })());
+
+  check('❌ SEC03-R1 非白名单扩展名硬拒绝 DISALLOWED_EXTENSION 且不落盘并作废授权', (() => {
+    const e = env();
+    const badTargets = [
+      path.join(e.sandbox, 'bad.exe'),
+      path.join(e.sandbox, 'hack.bat'),
+      path.join(e.sandbox, 'shell.sh'),
+      path.join(e.sandbox, 'script.ps1'),
+      path.join(e.sandbox, 'noext'),
+    ];
+    let allBlocked = true;
+    for (const target of badTargets) {
+      const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'evil content' });
+      const r = e.executor.execute({ proposalId: id, content: 'evil content' });
+      const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+      if (r.ok !== false || r.code !== 'DISALLOWED_EXTENSION' || fs.existsSync(target) || auth.allowed !== false || auth.reason !== 'DISALLOWED_EXTENSION') {
+        allBlocked = false;
+        break;
+      }
+    }
+    return allBlocked;
+  })());
+
+  check('SEC03-R2 白名单扩展名（.txt/.md/.json/.log）及大小写变体（.TXT/.MD）正常落盘', (() => {
+    const e = env({ budget: { maxWritesPerSession: 20 } });
+    const goodTargets = [
+      { name: 'doc.txt', content: 'hello txt' },
+      { name: 'notes.md', content: 'hello md' },
+      { name: 'data.json', content: '{"ok":true}' },
+      { name: 'run.log', content: 'line 1' },
+      { name: 'BIG.TXT', content: 'uppercase' },
+      { name: 'CAP.MD', content: 'uppercase md' },
+    ];
+    let allPassed = true;
+    for (const item of goodTargets) {
+      const target = path.join(e.sandbox, item.name);
+      const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: item.content });
+      const r = e.executor.execute({ proposalId: id, content: item.content });
+      if (r.ok !== true || !fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== item.content) {
+        allPassed = false;
+        break;
+      }
+    }
+    return allPassed;
+  })());
+}
+
 /* ================= 汇总 ================= */
 console.log('--- D-4 受控执行器门禁结束---');
 if (failures > 0) {

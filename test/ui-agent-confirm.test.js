@@ -434,6 +434,69 @@ check('SEC01-U6 hide() 时重置展开抽屉状态与正文内容', async () => 
     && expandBtn.disabled === false;
 });
 
+/* ================= 13. UX-SEC-01 覆写风险警示模型与渲染 ================= */
+check('UXSEC-U1 buildViewModel 在 isOverwrite: true 且写操作时生成覆写警告与文案', (() => {
+  const overwriteProposal = {
+    ...goodProposal,
+    capability: 'workspace.write',
+    isOverwrite: true,
+  };
+  const vm = buildViewModel(overwriteProposal, {});
+  return vm.isOverwrite === true
+    && vm.warnOverwrite === true
+    && vm.overwriteLabel === '⚠️ 将覆盖沙盒内已存在的同名文件';
+})());
+
+check('UXSEC-U2 buildViewModel 在 isOverwrite: false 或非写操作时不产生覆写警告', (() => {
+  const newProposal = {
+    ...goodProposal,
+    capability: 'workspace.write',
+    isOverwrite: false,
+  };
+  const vmNew = buildViewModel(newProposal, {});
+
+  const readProposal = {
+    ...goodProposal,
+    capability: 'workspace.read',
+    isOverwrite: true,
+  };
+  const vmRead = buildViewModel(readProposal, {});
+
+  return vmNew.isOverwrite === false
+    && vmNew.warnOverwrite === false
+    && vmNew.overwriteLabel === ''
+    && vmRead.isOverwrite === true
+    && vmRead.warnOverwrite === false
+    && vmRead.overwriteLabel === '';
+})());
+
+check('UXSEC-U3 show() 将覆写警告安全渲染至 warn 字段（纯 textContent，与高风险警示安全拼接）', (() => {
+  const f = fakeEl();
+  const c = bind(f.root, () => {});
+  const proposal = {
+    ...goodProposal,
+    capability: 'workspace.write',
+    isOverwrite: true,
+  };
+  // 覆写 + 高风险
+  c.show(proposal, { dangerLevel: 'high' });
+  const warnEl = f.nodes['[data-agent-field="warn"]'];
+  const doubleWarn = warnEl.textContent;
+  const hasHighRisk = doubleWarn.includes('这是高风险操作');
+  const hasOverwrite = doubleWarn.includes('⚠️ 将覆盖沙盒内已存在的同名文件');
+
+  // 仅覆写（无高风险）
+  c.show(proposal, { dangerLevel: 'low' });
+  const singleWarn = warnEl.textContent;
+  const onlyOverwrite = singleWarn === '⚠️ 将覆盖沙盒内已存在的同名文件';
+
+  // 既无覆写也无高风险
+  c.show({ ...proposal, isOverwrite: false }, { dangerLevel: 'low' });
+  const noWarn = warnEl.textContent === '';
+
+  return hasHighRisk && hasOverwrite && onlyOverwrite && noWarn;
+})());
+
 if (origDoc === undefined) delete global.document; else global.document = origDoc;
 
 console.log(failures === 0 ? '\nall ui-agent-confirm tests passed' : `\n${failures} FAILED`);
