@@ -289,7 +289,11 @@ class ControlledAgentExecutor {
       // 执行失败要记连续错误（防「一直失败一直重试」），并把授权作废：
       // 失败的提案不该能被原样再执行一次。
       if (this.budget && typeof this.budget.recordError === 'function') this.budget.recordError();
-      const isSecurityViolation = err && (err.code === 'CONTENT_HASH_MISMATCH' || err.code === 'CONTENT_BYTES_MISMATCH');
+      const isSecurityViolation = err && (
+        err.code === 'CONTENT_HASH_MISMATCH'
+        || err.code === 'CONTENT_BYTES_MISMATCH'
+        || err.code === 'CONTENT_HASH_REQUIRED'
+      );
       const isRollbackFailure = err && (err.code === 'ROLLBACK_HASH_MISMATCH' || err.code === 'BACKUP_MISSING' || /ROLLBACK/i.test(err.code || ''));
       const code = isSecurityViolation ? err.code : (isRollbackFailure ? 'ROLLBACK_FAILED' : 'EXECUTION_FAILED');
       this._audit({
@@ -345,6 +349,11 @@ class ControlledAgentExecutor {
   }
 
   _writeFile(proposal, content) {
+    // 🔴 SEC-01：对正式写入路径强制要求有效的内容哈希和 UTF-8 字节数绑定；缺少绑定时失败关闭。
+    if (!proposal || !proposal.contentHash || typeof proposal.contentHash !== 'string' || !Number.isFinite(proposal.contentBytes)) {
+      throw Object.assign(new Error('CONTENT_HASH_REQUIRED'), { code: 'CONTENT_HASH_REQUIRED' });
+    }
+
     // 🔴 content 只接受字符串。**不解析 JSON、不接受对象** ——
     //   若接受对象再序列化成 JSON，等于给了「用类型混淆绕过字符串校验」的面。
     if (typeof content !== 'string') {
@@ -365,18 +374,13 @@ class ControlledAgentExecutor {
       throw Object.assign(new Error('PAYLOAD_TOO_LARGE'), { code: 'PAYLOAD_TOO_LARGE' });
     }
     // 🔴 SEC-01：权威哈希强绑定断言
-    //   若提案绑定了 contentHash，执行器必须对传入文本重新计算 SHA-256 并验证完全一致。
-    //   任何内容不符即视为篡改，抛出 CONTENT_HASH_MISMATCH。
-    if (proposal && proposal.contentHash) {
-      const actualHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
-      if (actualHash !== proposal.contentHash) {
-        throw Object.assign(new Error('CONTENT_HASH_MISMATCH'), { code: 'CONTENT_HASH_MISMATCH' });
-      }
+    //   执行器必须对传入文本重新计算 SHA-256 并验证与提案完全一致。
+    const actualHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+    if (actualHash !== proposal.contentHash) {
+      throw Object.assign(new Error('CONTENT_HASH_MISMATCH'), { code: 'CONTENT_HASH_MISMATCH' });
     }
-    if (proposal && Number.isFinite(proposal.contentBytes)) {
-      if (Buffer.byteLength(content, 'utf8') !== proposal.contentBytes) {
-        throw Object.assign(new Error('CONTENT_BYTES_MISMATCH'), { code: 'CONTENT_BYTES_MISMATCH' });
-      }
+    if (Buffer.byteLength(content, 'utf8') !== proposal.contentBytes) {
+      throw Object.assign(new Error('CONTENT_BYTES_MISMATCH'), { code: 'CONTENT_BYTES_MISMATCH' });
     }
     const target = path.resolve(proposal.scope);
     // 第五道闸门真正生效处：begin →写盘 → commit，任一步失败即 rollback。

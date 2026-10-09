@@ -457,35 +457,34 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       return fail(evaluated.code);
     }
 
-    // 🔴 SEC-01：写能力权威内容快照生成
-    //   普通提案捕获本次请求内容；自发便签由主进程传入可信第四参数 trustedContent。
-    //   在此严格校验类型、非空与 5 MiB 上限，计算 SHA-256 并生成预览元数据。
+    // 🔴 SEC-01：写能力权威内容快照强制绑定（P1 级安全防御）
+    //   所有 workspace.write 提案必须在建案时取得有效字符串正文。
+    //   普通 IPC 提案必须提供 raw.content；selfNote 必须使用主进程可信的 trustedContent。
+    //   正文缺失、类型错误、空字符串或超限时，直接拒绝建案，不得创建提案或授权记录。
     let contentMeta = null;
     let candidate = null;
     if (raw && raw.capability === 'workspace.write') {
       candidate = (src === 'main' && proposalSource === 'selfNote')
-        ? (trustedContent !== undefined ? trustedContent : (raw && raw.content))
+        ? trustedContent
         : (raw && raw.content);
 
-      if (candidate !== undefined && candidate !== null) {
-        if (typeof candidate !== 'string') {
-          return fail('INVALID_PROPOSAL', { detail: 'CONTENT_MUST_BE_STRING' });
-        }
-        if (candidate.length === 0) {
-          return fail('INVALID_PROPOSAL', { detail: 'CONTENT_EMPTY' });
-        }
-        const byteLen = Buffer.byteLength(candidate, 'utf8');
-        if (byteLen > MAX_CONTENT_BYTES) {
-          return fail('PAYLOAD_TOO_LARGE');
-        }
-        const hash = crypto.createHash('sha256').update(candidate, 'utf8').digest('hex');
-        contentMeta = {
-          contentHash: hash,
-          contentBytes: byteLen,
-          contentPreview: candidate.slice(0, 300),
-          isTruncated: candidate.length > 300,
-        };
+      if (typeof candidate !== 'string') {
+        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_REQUIRED' });
       }
+      if (candidate.length === 0) {
+        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_EMPTY' });
+      }
+      const byteLen = Buffer.byteLength(candidate, 'utf8');
+      if (byteLen > MAX_CONTENT_BYTES) {
+        return fail('PAYLOAD_TOO_LARGE');
+      }
+      const hash = crypto.createHash('sha256').update(candidate, 'utf8').digest('hex');
+      contentMeta = {
+        contentHash: hash,
+        contentBytes: byteLen,
+        contentPreview: candidate.slice(0, 300),
+        isTruncated: candidate.length > 300,
+      };
     }
 
     let proposal;
@@ -688,77 +687,84 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     const proposalId = String(raw.proposalId || '').trim();
     const trackedProposal = proposalStore.get(proposalId);
     const snap = contentSnapshotStore.get(proposalId);
+    const isWrite = trackedProposal && trackedProposal.capability === 'workspace.write';
 
-    if (snap) {
-      if (Date.now() - snap.createdAt > SNAPSHOT_TTL_MS) {
-        contentSnapshotStore.delete(proposalId);
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'SNAPSHOT_EXPIRED');
+    if (isWrite) {
+      if (!snap) {
+        const allowed = confirmation && typeof confirmation.isExecutionAllowed === 'function'
+          ? confirmation.isExecutionAllowed(proposalId)
+          : null;
+        if (allowed && allowed.allowed === false) {
+          // 让下游执行器如实返回确切决策原因（如 REJECTED_BY_USER、NOT_CONFIRMED 等）
+        } else {
+          const code = (trackedProposal && trackedProposal.contentHash) ? 'SNAPSHOT_EXPIRED' : 'SNAPSHOT_MISSING';
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, code);
+          }
+          return fail(code);
         }
-        return fail('SNAPSHOT_EXPIRED');
-      }
-      // 🔴 SEC-01：不可变权威快照强核验（四道硬校验）
-      //   1. snapshot.content 是有效字符串
-      //   2. 重算 SHA-256 必须与快照自身记录一致
-      //   3. 快照哈希必须与不可变提案上冻结的 proposal.contentHash 一致
-      //   4. 实际 UTF-8 字节数与 proposal.contentBytes 一致，且不超过 5 MiB
-      if (typeof snap.content !== 'string') {
-        contentSnapshotStore.delete(proposalId);
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
-        }
-        return fail('CONTENT_HASH_MISMATCH', { detail: 'SNAPSHOT_CONTENT_INVALID' });
-      }
-      const recomputedHash = crypto.createHash('sha256').update(snap.content, 'utf8').digest('hex');
-      if (recomputedHash !== snap.contentHash) {
-        contentSnapshotStore.delete(proposalId);
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
-        }
-        return fail('CONTENT_HASH_MISMATCH', { detail: 'SNAPSHOT_TAMPERED' });
-      }
-      if (trackedProposal && trackedProposal.contentHash && snap.contentHash !== trackedProposal.contentHash) {
-        contentSnapshotStore.delete(proposalId);
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
-        }
-        return fail('CONTENT_HASH_MISMATCH', { detail: 'PROPOSAL_HASH_MISMATCH' });
-      }
-      const actualBytes = Buffer.byteLength(snap.content, 'utf8');
-      if (trackedProposal && Number.isFinite(trackedProposal.contentBytes) && actualBytes !== trackedProposal.contentBytes) {
-        contentSnapshotStore.delete(proposalId);
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'CONTENT_BYTES_MISMATCH');
-        }
-        return fail('CONTENT_BYTES_MISMATCH', { detail: 'PROPOSAL_BYTES_MISMATCH' });
-      }
-      if (actualBytes > MAX_CONTENT_BYTES) {
-        contentSnapshotStore.delete(proposalId);
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'PAYLOAD_TOO_LARGE');
-        }
-        return fail('PAYLOAD_TOO_LARGE');
-      }
-    } else if (trackedProposal && trackedProposal.contentHash) {
-      const allowed = confirmation && typeof confirmation.isExecutionAllowed === 'function'
-        ? confirmation.isExecutionAllowed(proposalId)
-        : null;
-      if (allowed && allowed.allowed === false) {
-        // 让下游执行器如实返回确切决策原因（如 REJECTED_BY_USER、NOT_CONFIRMED 等）
       } else {
-        if (confirmation && typeof confirmation.revoke === 'function') {
-          confirmation.revoke(proposalId, 'SNAPSHOT_EXPIRED');
+        if (Date.now() - snap.createdAt > SNAPSHOT_TTL_MS) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'SNAPSHOT_EXPIRED');
+          }
+          return fail('SNAPSHOT_EXPIRED');
         }
-        return fail('SNAPSHOT_EXPIRED');
+        // 🔴 SEC-01：不可变权威快照强核验（四道硬校验）
+        //   1. snapshot.content 是有效字符串
+        //   2. 重算 SHA-256 必须与快照自身记录一致
+        //   3. 快照哈希必须与不可变提案上冻结的 proposal.contentHash 一致
+        //   4. 实际 UTF-8 字节数与 proposal.contentBytes 一致，且不超过 5 MiB
+        if (typeof snap.content !== 'string') {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
+          }
+          return fail('CONTENT_HASH_MISMATCH', { detail: 'SNAPSHOT_CONTENT_INVALID' });
+        }
+        const recomputedHash = crypto.createHash('sha256').update(snap.content, 'utf8').digest('hex');
+        if (recomputedHash !== snap.contentHash) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
+          }
+          return fail('CONTENT_HASH_MISMATCH', { detail: 'SNAPSHOT_TAMPERED' });
+        }
+        if (trackedProposal && trackedProposal.contentHash && snap.contentHash !== trackedProposal.contentHash) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
+          }
+          return fail('CONTENT_HASH_MISMATCH', { detail: 'PROPOSAL_HASH_MISMATCH' });
+        }
+        const actualBytes = Buffer.byteLength(snap.content, 'utf8');
+        if (trackedProposal && Number.isFinite(trackedProposal.contentBytes) && actualBytes !== trackedProposal.contentBytes) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_BYTES_MISMATCH');
+          }
+          return fail('CONTENT_BYTES_MISMATCH', { detail: 'PROPOSAL_BYTES_MISMATCH' });
+        }
+        if (actualBytes > MAX_CONTENT_BYTES) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'PAYLOAD_TOO_LARGE');
+          }
+          return fail('PAYLOAD_TOO_LARGE');
+        }
       }
     }
 
+    // 🔵 D-11 / 🔴 SEC-01: 若主进程注入了自发便签暂存取用器，优先取用暂存内容
+    // （自发便签内容由主进程内部产出，不经渲染端中转，防篡改）。
+    // 在 SEC-01 下，写入正文绝不允许回退使用 raw.content，必须且只能来自已核验的权威快照 snap.content。
     const stashed = typeof takeStashedContent === 'function'
       ? takeStashedContent(proposalId)
       : null;
     const effectiveContent = stashed !== null && stashed !== undefined
-      ? stashed
-      : (snap ? snap.content : raw.content);
+      ? (snap ? snap.content : undefined)
+      : (isWrite ? (snap ? snap.content : undefined) : undefined);
 
     const result = executor.execute({
       proposalId: raw.proposalId,

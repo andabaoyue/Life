@@ -21,6 +21,7 @@ const assert = require('assert');
 
 const { registerAgentIpc, AGENT_CHANNELS } = require('../src/agent-ipc');
 const { createIpcGuard } = require('../src/ipc-guard');
+const { createActionProposal } = require('../src/agent-interfaces');
 
 // [D-8a] 临时目录清理：本文件此前 0 处清理，单次跑净留 24 个 %TEMP% 沙盒。
 // 手法是包住 fs.mkdtempSync 本身（不逐个改调用点：形态太杂，且新增调用点会自动被覆盖）。
@@ -838,6 +839,45 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   check('SEC01-R8 重试期间传入不同 content 被无视，始终使用原始不可变快照落盘',
     r8Retry.ok === true && r8Retry.executed === true
     && finalContent === '原始快照正文');
+
+  // SEC01-R9 & SEC01-R10 专项反例
+  const pStoreCounter = new Map();
+  const snapStoreCounter = new Map();
+  const confCounter = new UserConfirmationGate();
+  const hCounter = harness({
+    options: { proposalStore: pStoreCounter, contentSnapshotStore: snapStoreCounter, confirmation: confCounter },
+  });
+  hCounter.policy.setScopeRoots('workspace.write', [hCounter.appDir]);
+
+  // ❌ SEC01-R9 专项反例：提交不带 content 但伪造预览元数据的写入提案，建案期即硬拒 INVALID_PROPOSAL
+  const forgedProposal = hCounter.call('agent:propose-action', hCounter.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(hCounter.appDir, 'sec01-forged.txt'),
+    contentHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    contentBytes: 100,
+    contentPreview: '伪造的预览文本',
+    isTruncated: false,
+  });
+  const forgedTarget = path.join(hCounter.appDir, 'sec01-forged.txt');
+  const forgedExec = hCounter.call('agent:execute', hCounter.trustedEvent, {
+    proposalId: 'non-existent-or-forged-id',
+    content: '恶意后注入正文',
+  });
+  check('❌ SEC01-R9 专项反例：伪造元数据但缺正文的写入提案在建案期硬拒，且执行时无法落盘',
+    forgedProposal.ok === false && forgedProposal.error === 'INVALID_PROPOSAL'
+    && forgedExec.ok === false && !fs.existsSync(forgedTarget));
+
+  // ❌ SEC01-R10 专项反例：写操作执行时若权威快照缺失，绝不回退读取 raw.content，硬拒 SNAPSHOT_MISSING
+  const fakeP = createActionProposal({ capability: 'workspace.write', scope: path.join(hCounter.appDir, 'sec01-no-snap.txt') });
+  pStoreCounter.set(fakeP.id, fakeP);
+  confCounter.confirm(fakeP.id, 'approved', { status: fakeP.status });
+  const execNoSnap = hCounter.call('agent:execute', hCounter.trustedEvent, {
+    proposalId: fakeP.id,
+    content: '试图通过 raw.content 注入的正文',
+  });
+  const noSnapTarget = path.join(hCounter.appDir, 'sec01-no-snap.txt');
+  check('❌ SEC01-R10 专项反例：缺失权威快照时 execute 绝不回退读取 raw.content，硬拒 SNAPSHOT_MISSING 且不落盘',
+    execNoSnap.ok === false && execNoSnap.error === 'SNAPSHOT_MISSING' && !fs.existsSync(noSnapTarget));
 }
 
 console.log(failures === 0 ? '\nall agent_ipc tests passed' : `\n${failures} FAILED`);

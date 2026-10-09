@@ -77,14 +77,14 @@ console.log('--- D-10 建案路径门禁 ---');
     typeof h.api.evaluateProposal === 'function' && typeof h.api.proposeInternal === 'function');
 
   const scope = path.join(h.sandbox, 'note.md');
-  const viaMain = h.api.proposeInternal({ capability: 'workspace.write', scope, reason: 'r' }, 'main');
+  const viaMain = h.api.proposeInternal({ capability: 'workspace.write', scope, reason: 'r', content: '测试写入正文' }, 'main');
   check('主进程路径能建案（via=main）',
     viaMain && viaMain.ok === true && !!viaMain.proposal, JSON.stringify(viaMain && viaMain.error));
   check('❌ 建案后提案必须进注册表（confirm/execute 靠它做存在性核对）',
     viaMain && viaMain.ok === true && h.api.evaluateProposal({ capability: 'workspace.write', scope }) !== null);
 
   // 同一条路径 ⇒ 同样是主进程发起，第二次应因预算正常扣减而非被拒
-  const viaIpc = h.api.proposeInternal({ capability: 'workspace.write', scope: path.join(h.sandbox, 'b.md'), reason: 'r' }, 'ipc');
+  const viaIpc = h.api.proposeInternal({ capability: 'workspace.write', scope: path.join(h.sandbox, 'b.md'), reason: 'r', content: '测试写入正文' }, 'ipc');
   check('❌ 通道路径与主进程路径共用同一份逻辑（两处判定会漂移）',
     viaIpc && viaIpc.ok === true);
 }

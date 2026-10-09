@@ -95,7 +95,18 @@ function env(opts = {}) {
 
 /** 走完整路径建案+ 确认，返回一个「已授权可执行」的 proposalId。 */
 function authorizeProposal(e, { capability = 'workspace.write', scope, content = null, decision = 'approved' } = {}) {
-  const p = createActionProposal({ capability, scope });
+  const crypto = require('crypto');
+  let contentMeta = null;
+  if (capability === 'workspace.write') {
+    const rawContent = typeof content === 'string' ? content : '你好，初澜。';
+    contentMeta = {
+      contentHash: crypto.createHash('sha256').update(rawContent, 'utf8').digest('hex'),
+      contentBytes: Buffer.byteLength(rawContent, 'utf8'),
+      contentPreview: rawContent.slice(0, 300),
+      isTruncated: rawContent.length > 300,
+    };
+  }
+  const p = createActionProposal({ capability, scope }, null, 'user', contentMeta);
   e.proposalStore.set(p.id, p);
   if (decision) e.confirmation.confirm(p.id, decision, { status: 'proposed' });
   return p.id;
@@ -271,7 +282,7 @@ check('❌ D4-R7 目录符号链接逃逸被 realpath 拦下（注入测，本�
 check('❌ D4-R8 同一提案重放被拒，且第二次不覆盖第一次的结果', (() => {
   const e = env();
   const target = path.join(e.sandbox, 'once.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: '第一次' });
   const first = e.executor.execute({ proposalId: id, content: '第一次' });
   const second = e.executor.execute({ proposalId: id, content: '第二次' });
   return first.ok === true
@@ -282,7 +293,7 @@ check('❌ D4-R8 同一提案重放被拒，且第二次不覆盖第一次的结
 check('❌ D4-R8b 执行成功后授权被作废（不能拿旧授权去执行新提案）', (() => {
   const e = env();
   const target = path.join(e.sandbox, 'revoked.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'x' });
   e.executor.execute({ proposalId: id, content: 'x' });
   const gate = e.confirmation.isExecutionAllowed(id);
   return gate.allowed === false && gate.reason === 'ALREADY_EXECUTED';
@@ -345,7 +356,7 @@ check('❌ D6-R1b 空串被拒后提案**未被消费**（用户可换个内容�
   // 变异测试要旨：若守卫缺失，文件会落盘且提案被消费，这条会红。
   const e = env();
   const target = path.join(e.sandbox, 'retry.md');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: '真实内容' });
   const bad = e.executor.execute({ proposalId: id, content: '' });
   const gateAfterFail = e.confirmation.isExecutionAllowed(id);
   // 修复前：提案已消费 → gate.allowed === false / reason 'ALREADY_EXECUTED'
@@ -379,7 +390,7 @@ check('📌 D6-R1c 纯空白内容**允许**落盘（已裁决：空白是合法
   //   本条锁住现状：日后若裁决改为「该拒」，改本条为断言拒绝 + 实现改一行即可。
   const e = env();
   const target = path.join(e.sandbox, 'blank.md');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: '   ' });
   const r = e.executor.execute({ proposalId: id, content: '   ' });
   return r.ok === true && fs.existsSync(target);
 })());
@@ -388,7 +399,7 @@ check('❌ D4-R10 执行通道不接受调用方自带的路径（路径只认�
   const e = env();
   const legit = path.join(e.sandbox, 'legit.txt');
   const evil = path.join(e.sandbox, '..', 'outside', 'secret.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: legit });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: legit, content: 'x' });
   // 调用方额外塞 scope 试图改写目标
   const r = e.executor.execute({ proposalId: id, content: 'x', scope: evil, target: evil });
   return r.ok === true
@@ -400,8 +411,9 @@ check('❌ D4-R10 执行通道不接受调用方自带的路径（路径只认�
 check('❌ D4-R11 超大写入被拒（不落盘、不半写）', (() => {
   const e = env({ maxWriteBytes: 1024 });
   const target = path.join(e.sandbox, 'big.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
-  const r = e.executor.execute({ proposalId: id, content: 'x'.repeat(2000) });
+  const bigContent = 'x'.repeat(2000);
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: bigContent });
+  const r = e.executor.execute({ proposalId: id, content: bigContent });
   return r.ok === false && !fs.existsSync(target);
 })());
 
@@ -483,7 +495,7 @@ check('D4-19 写失败不留半截文件，且 WAL 记终态', (() => {
   const target = path.join(e.sandbox, 'txn.txt');
   // 覆盖写：先造一个原文件
   fs.writeFileSync(target, 'ORIGINAL');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'NEW' });
   const r = e.executor.execute({ proposalId: id, content: 'NEW' });
   return r.ok === true && fs.readFileSync(target, 'utf8') === 'NEW';
 })());
@@ -506,7 +518,7 @@ check('❌ D4-R20 执行器抛异常时不得穿透（统一信封，绝不把�
 check('D4-21 每次执行（含被拒）都留审计，且不记文件内容', (() => {
   const e = env();
   const target = path.join(e.sandbox, 'audit.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: '机密内容不应出现在审计里' });
   e.executor.execute({ proposalId: id, content: '机密内容不应出现在审计里' });
   e.executor.execute({ proposalId: 'p-nope', content: 'x' });
   const ev = e.auditLog.list();
@@ -527,7 +539,7 @@ check('❌ D4-R21b 审计写入失败不得让执行崩给渲染端（审计不�
     transactionManager: new WriteTransactionManager({ dir: e.dataDir }),
   });
   const target = path.join(e.sandbox, 'broken-audit.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'x' });
   const r = ex.execute({ proposalId: id, content: 'x' });
   return r.ok === true && fs.existsSync(target);
 })());
@@ -536,7 +548,7 @@ check('❌ D4-R21b 审计写入失败不得让执行崩给渲染端（审计不�
 check('D4-22 loadConsumed 能恢复重放防线（进程重启后不归零）', (() => {
   const e = env();
   const target = path.join(e.sandbox, 'persist.txt');
-  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+  const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: '第一次' });
   const first = e.executor.execute({ proposalId: id, content: '第一次' });
   // 模拟重启：新执行器 + 同一张 proposalStore + 恢复已消费集
   const fresh = new ControlledAgentExecutor({
@@ -608,9 +620,9 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   check('D4-25 通道层全链路：建案 → 确认 → 执行 → 真落盘', (() => {
     const h = channelHarness();
     const target = path.join(h.sandbox, 'chain.txt');
-    const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: target, reason: '链路' });
+    const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: target, reason: '链路', content: '链路内容' });
     const c = h.call('agent:confirm-action', { proposalId: p.proposal.id, decision: 'approved' });
-    const x = h.call('agent:execute', { proposalId: p.proposal.id, content: '链路内容' });
+    const x = h.call('agent:execute', { proposalId: p.proposal.id });
     return p.ok === true
       && c.ok === true && c.executed === false          // 确认阶段仍恒不执行
       && x.ok === true && x.executed === true
@@ -651,18 +663,18 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
     const h = channelHarness();
     const target = path.join(h.sandbox, 'nocontent.txt');
     const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: target });
-    h.call('agent:confirm-action', { proposalId: p.proposal.id, decision: 'approved' });
-    const r = h.call('agent:execute', { proposalId: p.proposal.id });
-    return r.ok === false && !fs.existsSync(target);
+    h.call('agent:confirm-action', { proposalId: p.proposal && p.proposal.id, decision: 'approved' });
+    const r = h.call('agent:execute', { proposalId: p.proposal && p.proposal.id });
+    return (p.ok === false || r.ok === false) && !fs.existsSync(target);
   })());
 
   check('❌ D4-R26 通道层重放：同一 id 第二次执行必须被拒', (() => {
     const h = channelHarness();
     const target = path.join(h.sandbox, 'replay.txt');
-    const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: target });
+    const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: target, content: '第一次' });
     h.call('agent:confirm-action', { proposalId: p.proposal.id, decision: 'approved' });
-    const first = h.call('agent:execute', { proposalId: p.proposal.id, content: '第一次' });
-    const second = h.call('agent:execute', { proposalId: p.proposal.id, content: '第二次' });
+    const first = h.call('agent:execute', { proposalId: p.proposal.id });
+    const second = h.call('agent:execute', { proposalId: p.proposal.id });
     return first.ok === true
       && second.ok === false && second.error === 'ALREADY_EXECUTED'
       && fs.readFileSync(target, 'utf8') === '第一次';
@@ -671,10 +683,10 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   check('❌ D4-R27 通道层不接受调用方自带的 scope 顶替提案路径', (() => {
     const h = channelHarness();
     const legit = path.join(h.sandbox, 'legit2.txt');
-    const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: legit });
+    const p = h.call('agent:propose-action', { capability: 'workspace.write', scope: legit, content: 'x' });
     h.call('agent:confirm-action', { proposalId: p.proposal.id, decision: 'approved' });
     const r = h.call('agent:execute', {
-      proposalId: p.proposal.id, content: 'x', scope: path.join(h.sandbox, 'other.txt'),
+      proposalId: p.proposal.id, scope: path.join(h.sandbox, 'other.txt'),
     });
     return r.ok === true
       && fs.existsSync(legit)
@@ -691,12 +703,12 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
     const content = '正本内容：初澜生活日志';
     const contentHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
     const contentBytes = Buffer.byteLength(content, 'utf8');
-    const p = createActionProposal({
-      capability: 'workspace.write',
-      scope: target,
-      contentHash,
-      contentBytes,
-    });
+    const p = createActionProposal(
+      { capability: 'workspace.write', scope: target },
+      null,
+      'user',
+      { contentHash, contentBytes, contentPreview: content.slice(0, 300), isTruncated: false }
+    );
     e.proposalStore.set(p.id, p);
     e.confirmation.confirm(p.id, 'approved', { status: p.status });
     const r = e.executor.execute({ proposalId: p.id, content });
@@ -711,12 +723,12 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
     const tamperedContent = '恶意篡改后的注入内容';
     const contentHash = crypto.createHash('sha256').update(originalContent, 'utf8').digest('hex');
     const contentBytes = Buffer.byteLength(originalContent, 'utf8');
-    const p = createActionProposal({
-      capability: 'workspace.write',
-      scope: target,
-      contentHash,
-      contentBytes,
-    });
+    const p = createActionProposal(
+      { capability: 'workspace.write', scope: target },
+      null,
+      'user',
+      { contentHash, contentBytes, contentPreview: originalContent.slice(0, 300), isTruncated: false }
+    );
     e.proposalStore.set(p.id, p);
     e.confirmation.confirm(p.id, 'approved', { status: p.status });
     const r = e.executor.execute({ proposalId: p.id, content: tamperedContent });
@@ -734,12 +746,12 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
     const target = path.join(e.sandbox, 'sec01-bytes.txt');
     const content = 'hello';
     const contentHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
-    const p = createActionProposal({
-      capability: 'workspace.write',
-      scope: target,
-      contentHash,
-      contentBytes: 999, // 故意伪造/不匹配的字节数
-    });
+    const p = createActionProposal(
+      { capability: 'workspace.write', scope: target },
+      null,
+      'user',
+      { contentHash, contentBytes: 999, contentPreview: content, isTruncated: false }
+    );
     e.proposalStore.set(p.id, p);
     e.confirmation.confirm(p.id, 'approved', { status: p.status });
     const r = e.executor.execute({ proposalId: p.id, content });
@@ -797,7 +809,7 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
     };
     e.executor.txn = rollbackFailTxn;
     const target = path.join(e.sandbox, 'sec01-rb-fail.txt');
-    const id = authorizeProposal(e, { capability: 'workspace.write', scope: target });
+    const id = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'rollback fail test' });
     const r = e.executor.execute({ proposalId: id, content: 'rollback fail test' });
     const auth = e.confirmation.isExecutionAllowed(id, Date.now());
     return r.ok === false
@@ -805,6 +817,21 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
       && r.rollbackFailed === true
       && auth.allowed === false
       && auth.reason === 'ROLLBACK_FAILED';
+  })());
+
+  check('❌ SEC01-R31 执行器级反例：未绑定有效 contentHash 的写入提案被硬拒 CONTENT_HASH_REQUIRED 且作废授权', (() => {
+    const e = env();
+    const target = path.join(e.sandbox, 'sec01-no-hash.txt');
+    const p = createActionProposal({ capability: 'workspace.write', scope: target });
+    e.proposalStore.set(p.id, p);
+    e.confirmation.confirm(p.id, 'approved', { status: p.status });
+    const r = e.executor.execute({ proposalId: p.id, content: '任意待注入内容' });
+    const auth = e.confirmation.isExecutionAllowed(p.id, Date.now());
+    return r.ok === false
+      && r.code === 'CONTENT_HASH_REQUIRED'
+      && !fs.existsSync(target)
+      && auth.allowed === false
+      && auth.reason === 'CONTENT_HASH_REQUIRED';
   })());
 }
 

@@ -534,11 +534,11 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
     intentOrigin: motive.intentOrigin,
     // 🔴 SEC-01：权威内容快照绑定字段（只读不可变）。
     //   写能力必须绑定 contentHash (SHA-256)、contentBytes、contentPreview 与 isTruncated。
-    //   优先取主进程权威第四参数 contentMeta，杜绝调用方单向伪造。
-    contentHash: contentMeta && contentMeta.contentHash ? String(contentMeta.contentHash) : (input.contentHash ? String(input.contentHash) : null),
-    contentBytes: contentMeta && Number.isFinite(contentMeta.contentBytes) ? contentMeta.contentBytes : (Number.isFinite(input.contentBytes) ? input.contentBytes : null),
-    contentPreview: contentMeta && typeof contentMeta.contentPreview === 'string' ? contentMeta.contentPreview : (typeof input.contentPreview === 'string' ? input.contentPreview : null),
-    isTruncated: Boolean(contentMeta ? contentMeta.isTruncated : input.isTruncated),
+    //   严格只能来自主进程权威第四参数 contentMeta，禁止回退读取渲染端 input，杜绝伪造。
+    contentHash: contentMeta && contentMeta.contentHash ? String(contentMeta.contentHash) : null,
+    contentBytes: contentMeta && Number.isFinite(contentMeta.contentBytes) ? contentMeta.contentBytes : null,
+    contentPreview: contentMeta && typeof contentMeta.contentPreview === 'string' ? contentMeta.contentPreview : null,
+    isTruncated: Boolean(contentMeta && contentMeta.isTruncated),
   });
 }
 
