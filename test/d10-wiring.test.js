@@ -30,6 +30,19 @@ const { UserConfirmationGate } = require('../src/agent-confirmation');
 const os = require('os');
 const fs = require('fs');
 
+// [D-8a 手法] 临时目录卫生：包住 fs.mkdtempSync 登记 + process.on('exit') 统一清。
+const _d10Dirs = [];
+const _d10OrigMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _d10OrigMkdtemp.apply(fs, a);
+  _d10Dirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _d10Dirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _d10OrigMkdtemp;
+});
+
 let failures = 0;
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));

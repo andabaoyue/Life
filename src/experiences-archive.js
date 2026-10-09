@@ -42,7 +42,7 @@ class ExperiencesArchive {
         const validation = validateArchiveRecord(normalized, { allowLegacy: true });
         if (!validation.valid) return { valid: false, reason: `ARCHIVE_LEGACY_PREFIX_INVALID:${validation.reason}` };
       }
-      return { valid: true, last: null, legacyPrefix: true };
+      return { valid: true, last: null, legacyPrefix: true, legacyPrefixCount: records.length };
     }
     // P0-01: 现代记录缺链字段（无论是否混排）→ fail closed
     for (const record of records) {
@@ -51,11 +51,39 @@ class ExperiencesArchive {
         return { valid: false, reason: 'ARCHIVE_MODERN_RECORD_MISSING_CHAIN_FIELDS' };
       }
     }
-    if (records.some(r => r.archiveSeq === undefined || r.recordHash === undefined)) {
+
+    // P1-1 (S6): 首次进入现代链时建立显式迁移边界，封存 legacy 前段，
+    // 此后只验证迁移锚点与后续现代链。保留原记录（只追加），严格守住防伪造防线。
+    const firstModernIdx = records.findIndex(r => r && (r.archiveSeq !== undefined || r.recordHash !== undefined));
+    if (firstModernIdx > 0) {
+      // 1. 验证封存的 legacy 前缀段：必须全部为合法 legacy 适配记录
+      for (let i = 0; i < firstModernIdx; i++) {
+        const norm = normalizeArchiveRecord(records[i]) || records[i];
+        if (!isLegacyAdaptedRecord(norm)) {
+          return { valid: false, reason: 'ARCHIVE_MODERN_RECORD_MISSING_CHAIN_FIELDS' };
+        }
+        const validation = validateArchiveRecord(norm, { allowLegacy: true });
+        if (!validation.valid) return { valid: false, reason: `ARCHIVE_LEGACY_PREFIX_INVALID:${validation.reason}` };
+      }
+      // 2. 迁移锚点检验：anchor 已存在说明归档此前已进入现代链，若有 legacy 前缀则必须具备合法 legacyMigration 记录且数量严格对齐；
+      //    无迁移记录说明前缀系后天非法注入（R-S6 防线回退修复）。
+      const anchorState = this._readTailAnchor();
+      if (anchorState.present && !anchorState.corrupt) {
+        const mig = anchorState.anchor && anchorState.anchor.legacyMigration;
+        if (!mig || mig.legacyPrefixCount !== firstModernIdx) {
+          return { valid: false, reason: 'ARCHIVE_ANCHOR_MISMATCH' };
+        }
+      }
+    }
+
+    // 现代链段（若是纯现代链则为全部 records；若有 legacy 前缀则为从 firstModernIdx 开始的切片）
+    const chainedRecords = firstModernIdx > 0 ? records.slice(firstModernIdx) : records;
+    if (chainedRecords.some(r => r.archiveSeq === undefined || r.recordHash === undefined || isLegacyAdaptedRecord(r))) {
       return { valid: false, reason: 'ARCHIVE_TAIL_MIXED_LEGACY_AND_CHAINED' };
     }
+
     let previous = null;
-    for (const record of records) {
+    for (const record of chainedRecords) {
       const validation = validateArchiveRecord(record, { allowLegacy: true });
       if (!validation.valid) {
         return { valid: false, reason: `ARCHIVE_TAIL_SCHEMA_INVALID:${validation.reason}` };
@@ -92,7 +120,7 @@ class ExperiencesArchive {
       // v0.9.7.1 P0-02: 若存在 Genesis Anchor，头部也必须与原始首记录一致。
       // 缺失旧版 Genesis Anchor 时允许继续追加，但该归档保持 UNCERTIFIED，
       // 绝不把当前首记录重新声明成“原始首记录”。
-      const firstSequenced = records.find(r => Number.isInteger(r.archiveSeq) && r.archiveSeq >= 1);
+      const firstSequenced = chainedRecords.find(r => Number.isInteger(r.archiveSeq) && r.archiveSeq >= 1);
       if (a.genesis && firstSequenced &&
           (a.genesis.archiveSeq !== firstSequenced.archiveSeq ||
            a.genesis.recordId !== firstSequenced.recordId ||
@@ -100,7 +128,7 @@ class ExperiencesArchive {
         return { valid: false, reason: 'ARCHIVE_GENESIS_ANCHOR_MISMATCH' };
       }
     }
-    return { valid: true, last: previous };
+    return { valid: true, last: previous, legacyPrefix: firstModernIdx > 0, legacyPrefixCount: firstModernIdx };
   }
 
   /** P0-02: 读取链外尾部锚点 (experiences.jsonl.anchor.json) */
@@ -119,7 +147,7 @@ class ExperiencesArchive {
    * v0.9.7.1：同一锚点首次创建时同时固定 Genesis；后续更新只移动 Tail。
    * anchor 不参与 record hash chain，避免循环依赖。
    */
-  _updateTailAnchor(entry) {
+  _updateTailAnchor(entry, opts = {}) {
     const anchorPath = this.path + '.anchor.json';
     let existing = null;
     if (fs.existsSync(anchorPath)) {
@@ -147,6 +175,20 @@ class ExperiencesArchive {
         recordId: entry.recordId,
         recordHash: entry.recordHash,
         recordedAt: Date.now()
+      };
+    }
+
+    // P1-1 (S6): 方案①显式迁移锚点——若存在 legacy 前缀，首条现代记录创建时写入显式迁移边界
+    const prefixCount = Number.isInteger(opts.legacyPrefixCount) && opts.legacyPrefixCount > 0
+      ? opts.legacyPrefixCount
+      : (existing && existing.legacyMigration ? existing.legacyMigration.legacyPrefixCount : 0);
+    if (!anchor.legacyMigration && prefixCount > 0) {
+      anchor.legacyMigration = {
+        schemaVersion: 1,
+        legacyPrefixCount: prefixCount,
+        migratedAt: Date.now(),
+        genesisRecordId: (anchor.genesis && anchor.genesis.recordId) || entry.recordId,
+        genesisRecordHash: (anchor.genesis && anchor.genesis.recordHash) || entry.recordHash
       };
     }
 
@@ -261,7 +303,7 @@ class ExperiencesArchive {
       // P0-02: 归档写入成功后更新链外 Tail Anchor 并 fsync。
       // anchor 更新失败绝不伪装成完整成功：不反向覆盖 archive，
       // 由 checkArchive 判定 ANCHOR_STALE/UNCOMMITTED_TAIL 进入 UNCERTIFIED/recovery 状态。
-      if (!this._updateTailAnchor(entry)) {
+      if (!this._updateTailAnchor(entry, { legacyPrefixCount: appendState.legacyPrefixCount || 0 })) {
         console.error('[ExperiencesArchive] append: archive 已落盘但 tail anchor 更新失败，进入 UNCERTIFIED/recovery 状态（绝不伪装成功）');
         return false;
       }
@@ -460,7 +502,8 @@ class ExperiencesArchive {
       windowNo,
       targetTurnCount: typeof data.targetTurnCount === 'number' ? data.targetTurnCount : 100,
       actualTurnCount: (typeof data.actualTurnCount === 'number' && !isNaN(data.actualTurnCount)) ? data.actualTurnCount : ((typeof data.turns === 'number' && !isNaN(data.turns)) ? data.turns : 0),
-      closeReason: data.closeReason || 'turn_limit',
+      // M9: 缺失保持 null（未记录），绝不补默认值冒充事实（与 epoch 保持同一诚实口径）
+      closeReason: typeof data.closeReason === 'string' && data.closeReason ? data.closeReason : null,
       turns: (typeof data.turns === 'number' && !isNaN(data.turns)) ? data.turns : 0,
       messageCount: (typeof data.messageCount === 'number' && !isNaN(data.messageCount)) ? data.messageCount : 0,
       events: Array.isArray(data.events) ? data.events : [],

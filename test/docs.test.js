@@ -42,6 +42,21 @@ const claims = [...block[1].matchAll(
   .map(m => ({ cmd: m[1].trim(), file: m[2], n: +m[3] }));
 check('README 为每个测试文件标了项数', claims.length >= 3, '抓到 ' + claims.length + ' 条');
 
+// 🔴 S5 修复：test/ 目录独立枚举与 README bash 块清单双向差集（杜绝循环依赖与漏列）
+const diskTestFiles = fs.readdirSync(path.join(ROOT, 'test')).filter(f => /\.(js|py)$/.test(f));
+const blockTestFiles = [...block[1].matchAll(/(?:node|python3)\s+test\/([\w.-]+)/g)].map(m => m[1]);
+const inDiskNotInBlock = diskTestFiles.filter(f => !blockTestFiles.includes(f));
+const inBlockNotInDisk = blockTestFiles.filter(f => !diskTestFiles.includes(f));
+check('test/ 目录与 README 测试清单双向差集为空',
+  inDiskNotInBlock.length === 0 && inBlockNotInDisk.length === 0,
+  inDiskNotInBlock.length ? '磁盘有但清单漏: ' + inDiskNotInBlock.join(', ') : (inBlockNotInDisk.length ? '清单有但磁盘无: ' + inBlockNotInDisk.join(', ') : ''));
+
+// 验证除自检/门禁自身外每个测试都有项数声明
+const exemptNumbered = new Set(['docs.test.js', 'gate-selfcheck.test.js']);
+const claimedFiles = new Set(claims.map(c => path.basename(c.file)));
+const unnumbered = diskTestFiles.filter(f => !exemptNumbered.has(f) && !claimedFiles.has(f));
+check('除自检/门禁自身外全部测试文件均有项数声明', unnumbered.length === 0, unnumbered.length ? '缺少项数: ' + unnumbered.join(', ') : '');
+
 /* 2. 实际跑一遍，数 PASS */
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -209,9 +224,22 @@ async function runOne(file, env) {
 }
 
 function countPass(out) {
+  // 🔴 S4: 结构化断言摘要（优先读取机器可读摘要 ASSERT total=N passed=M failed=K，未提供时平滑回退文本行匹配）
+  const structured = out.match(/(?:ASSERT|SUMMARY)[\s:]+total=(\d+)\s+passed=(\d+)(?:\s+failed=(\d+))?/i);
+  if (structured) {
+    const total = parseInt(structured[1], 10);
+    const passed = parseInt(structured[2], 10);
+    const failed = structured[3] !== undefined ? parseInt(structured[3], 10) : (total - passed);
+    return {
+      pass: passed,
+      fail: failed,
+      structured: true,
+    };
+  }
   return {
     pass: (out.match(/^PASS/gm) || []).length,
     fail: (out.match(/^FAIL/gm) || []).length,
+    structured: false,
   };
 }
 
@@ -295,11 +323,11 @@ function countPass(out) {
   const missing = [...mentioned].filter(f => !fs.existsSync(path.join(ROOT, f)));
   check('README 点名的文件都真实存在', missing.length === 0, missing.join(', '));
 
-  /* 4. 测试目录里的文件都得在 README 出现过 —— 不然等于没写文档 */
-  const listed = fs.readdirSync(path.join(ROOT, 'test'))
-    .filter(f => /\.(js|py)$/.test(f) && f !== path.basename(__filename))
-    .filter(f => !readme.includes(f));
-  check('test/ 下每个测试都在 README 里被点名', listed.length === 0, listed.join(', '));
+  /* 4. 测试目录里的文件都得在 README 测试块被点名 —— 锚定 bash 块 */
+  const unlisted = diskTestFiles
+    .filter(f => f !== path.basename(__filename))
+    .filter(f => !blockTestFiles.includes(f));
+  check('test/ 下每个测试都在 README 测试块被点名', unlisted.length === 0, unlisted.join(', '));
 
   if (srv) srv.kill();
   if (skipped) {

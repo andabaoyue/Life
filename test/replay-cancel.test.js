@@ -111,16 +111,11 @@ function tmpDir(prefix = 'replay-cancel-test-') {
   const taskMid = service.startReplayTask({});
   // 让出一次让其进入 replaying 阶段
   await new Promise(r => setImmediate(r));
-  if (taskMid.status === 'running') {
-    const cancelMidOk = service.cancelReplayTask(taskMid.taskId);
-    check('中途取消运行中任务返回 true', cancelMidOk === true);
-    await new Promise(r => setTimeout(r, 40));
-    const stMid = service.getReplayTaskStatus(taskMid.taskId);
-    check('中途取消后任务状态为 cancelled', stMid && stMid.status === 'cancelled');
-  } else {
-    check('中途取消运行中任务返回 true', true);
-    check('中途取消后任务状态为 cancelled', true);
-  }
+  const cancelMidOk = service.cancelReplayTask(taskMid.taskId);
+  check('中途取消运行中任务返回 true', taskMid.status === 'running' && cancelMidOk === true);
+  await new Promise(r => setTimeout(r, 40));
+  const stMid = service.getReplayTaskStatus(taskMid.taskId);
+  check('中途取消后任务状态为 cancelled', stMid && stMid.status === 'cancelled');
 
   // 3. 测试事件循环并发活跃性与完整执行 (3000 条大样本)
   let tickCount = 0;
@@ -154,6 +149,9 @@ function tmpDir(prefix = 'replay-cancel-test-') {
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 
+  const total = 13;
+  const passed = total - failures;
+  console.log(`ASSERT total=${total} passed=${passed} failed=${failures}`);
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();

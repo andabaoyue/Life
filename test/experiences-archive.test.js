@@ -27,10 +27,13 @@ process.on('exit', () => {
   fs.mkdtempSync = _d8aOrigMkdtemp;
 });
 
+let total = 0;
+let passed = 0;
 let failures = 0;
 function check(name, cond, extra) {
+  total++;
+  if (cond) passed++; else failures++;
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
-  if (!cond) failures++;
 }
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'archive-test-')); }
@@ -121,5 +124,108 @@ check('底层文件每行均为独立合法 JSON', rawLines.length === 251 && ra
 // 7. 异常容错
 check('append 传入非法参数不崩溃', !archive.append(null) && !archive.append(undefined));
 
+// 8. P1-1 (S6): Legacy 归档显式迁移边界与多次追加完整性
+{
+  const legacyDir = tmpDir();
+  const legacyFile = path.join(legacyDir, 'experiences.jsonl');
+  const legacy1 = {
+    compatibilityAdapter: 'LegacySchemaAdapter',
+    sourceSchema: 'legacy-v0.9.4',
+    recordType: 'window_summary',
+    payload: { rawSummaryText: '旧经历1' },
+    timestamp: 1000
+  };
+  const legacy2 = {
+    compatibilityAdapter: 'LegacySchemaAdapter',
+    sourceSchema: 'legacy-v0.9.4',
+    recordType: 'window_summary',
+    payload: { rawSummaryText: '旧经历2' },
+    timestamp: 2000
+  };
+  fs.writeFileSync(legacyFile, JSON.stringify(legacy1) + '\n' + JSON.stringify(legacy2) + '\n', 'utf8');
+  const legArchive = new ExperiencesArchive(legacyDir);
+
+  const r1 = legArchive.appendRecord('window_summary', 1, { rawSummaryText: '新经历1' });
+  const r2 = legArchive.appendRecord('window_summary', 2, { rawSummaryText: '新经历2' });
+  const r3 = legArchive.appendRecord('window_summary', 3, { rawSummaryText: '新经历3' });
+  const recs = legArchive.readAll();
+  const chainOk = r1 === true && r2 === true && r3 === true &&
+    recs.length === 5 &&
+    recs[2].archiveSeq === 1 && recs[2].prevHash === 'GENESIS' &&
+    recs[3].archiveSeq === 2 && recs[3].prevHash === recs[2].recordHash &&
+    recs[4].archiveSeq === 3 && recs[4].prevHash === recs[3].recordHash;
+  check('S6: 合法 Legacy 前缀下多次连续追加现代记录成功且因果链自洽', chainOk);
+
+  // 锚点与 Genesis 锚点检验
+  const anchorPath = legacyFile + '.anchor.json';
+  let anchorValid = false;
+  try {
+    const anchor = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
+    anchorValid = !!anchor && anchor.archiveSeq === 3 &&
+      anchor.recordHash === recs[4].recordHash &&
+      anchor.genesis && anchor.genesis.archiveSeq === 1 &&
+      anchor.genesis.recordHash === recs[2].recordHash &&
+      anchor.legacyMigration && anchor.legacyMigration.legacyPrefixCount === 2;
+  } catch {}
+  check('S6: 成功生成包含 legacyMigration 显式边界与 Genesis 的尾部锚点', anchorValid);
+
+  // 反向守卫 A：伪造/非 legacy 标记缺链记录被严格拦截
+  const fakeDir = tmpDir();
+  const fakeFile = path.join(fakeDir, 'experiences.jsonl');
+  const forged = {
+    schemaVersion: 1,
+    recordType: 'window_summary',
+    recordId: 'rec-forged-p11',
+    timestamp: Date.now(),
+    windowNo: 1,
+    payload: { rawSummaryText: '伪造记录' },
+    sourceSchema: 'legacy-v0.9.4'
+  };
+  fs.writeFileSync(fakeFile, JSON.stringify(forged) + '\n', 'utf8');
+  const fakeArchive = new ExperiencesArchive(fakeDir);
+  const fakeAppended = fakeArchive.appendRecord('window_summary', 1, { rawSummaryText: '伪造后追加' });
+  check('S6 反向守卫 A: 伪造 sourceSchema 缺链记录被 fail-closed 拦截', fakeAppended === false);
+
+  // 反向守卫 B: 现代链开启后尾部又混入 legacy 记录被拦截
+  const mixedDir = tmpDir();
+  const mixedFile = path.join(mixedDir, 'experiences.jsonl');
+  const mixedArchive = new ExperiencesArchive(mixedDir);
+  mixedArchive.appendRecord('window_summary', 1, { rawSummaryText: '现代1' });
+  fs.appendFileSync(mixedFile, JSON.stringify(legacy1) + '\n', 'utf8');
+  const mixedAppended = mixedArchive.appendRecord('window_summary', 2, { rawSummaryText: '现代2' });
+  check('S6 反向守卫 B: 现代链尾部混入 legacy 记录被 fail-closed 拦截', mixedAppended === false);
+
+  // 反向守卫 C: 篡改 legacy 前缀数量导致与 anchor.legacyMigration 不匹配被拦截
+  const tamperDir = tmpDir();
+  const tamperFile = path.join(tamperDir, 'experiences.jsonl');
+  fs.writeFileSync(tamperFile, JSON.stringify(legacy1) + '\n' + JSON.stringify(legacy2) + '\n', 'utf8');
+  const tamperArchive = new ExperiencesArchive(tamperDir);
+  tamperArchive.appendRecord('window_summary', 1, { rawSummaryText: '新经历1' });
+  const curContent = fs.readFileSync(tamperFile, 'utf8');
+  fs.writeFileSync(tamperFile, JSON.stringify(legacy1) + '\n' + curContent, 'utf8');
+  const tamperAppended = tamperArchive.appendRecord('window_summary', 2, { rawSummaryText: '新经历2' });
+  check('S6 反向守卫 C: 篡改 legacy 前缀导致与迁移锚点失配被 fail-closed 拦截', tamperAppended === false);
+
+  // 反向守卫 D (R-S6): 纯现代归档（anchor 无 legacyMigration）头部被注入 legacy 记录必须被拦截
+  const modernInjectDir = tmpDir();
+  const modernInjectFile = path.join(modernInjectDir, 'experiences.jsonl');
+  const modernArchive = new ExperiencesArchive(modernInjectDir);
+  modernArchive.appendRecord('window_summary', 1, { rawSummaryText: '纯现代1' });
+  modernArchive.appendRecord('window_summary', 2, { rawSummaryText: '纯现代2' });
+  const rawModern = fs.readFileSync(modernInjectFile, 'utf8');
+  fs.writeFileSync(modernInjectFile, JSON.stringify(legacy1) + '\n' + rawModern, 'utf8');
+  const injectAppended = modernArchive.appendRecord('window_summary', 3, { rawSummaryText: '纯现代3' });
+  check('R-S6 反向守卫 D: 纯现代归档头部注入 legacy 记录被 fail-closed 拦截', injectAppended === false);
+
+  // M9: 归档窗口摘要时，未提供 closeReason 保持 null（不凭空伪造为 turn_limit）
+  const m9Dir = tmpDir();
+  const m9Archive = new ExperiencesArchive(m9Dir);
+  const ok = m9Archive.appendWindowArchive({ windowNo: 1, rawSummaryText: '无关闭原因摘要' });
+  const records = m9Archive.readAll();
+  check('M9: closeReason 缺失时如实为 null（不伪造 turn_limit）',
+    ok === true && records.length === 1 && records[0].payload && records[0].payload.closeReason === null);
+}
+
+console.log(`ASSERT total=${total} passed=${passed} failed=${failures}`);
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
