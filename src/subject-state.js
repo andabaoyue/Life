@@ -232,6 +232,10 @@ class SubjectState {
             values: { ...DEFAULT_TRAITS, ...replayReport.finalState },
             history: replayReport.windowStates.map(w => ({
               windowNo: w.windowNo,
+              // 此处的 Date.now() 属于兼顾两类来源的兜底保底：
+              // 1. 新建记录未带明确时间戳；
+              // 2. legacy 归档中 timestamp 为 null 的记录（在 replay 聚合的 record.timestamp || 0 处被折叠为 0，经由 w.timestamp 传出为 falsy）。
+              // 排序键与语义键解耦单独立项推进，此处保持 Date.now() 兜底。
               at: w.timestamp || Date.now(),
               deltas: w.deltas,
               evidenceCount: w.evidenceCount
@@ -505,6 +509,10 @@ class SubjectState {
       this.data.updatedAt = Date.now();
       this.data.history = replayReport.windowStates.map(w => ({
         windowNo: w.windowNo,
+        // 此处的 Date.now() 属于兼顾两类来源的兜底保底：
+        // 1. 新建记录未带明确时间戳；
+        // 2. legacy 归档中 timestamp 为 null 的记录（在 replay 聚合的 record.timestamp || 0 处被折叠为 0，经由 w.timestamp 传出为 falsy）。
+        // 排序键与语义键解耦单独立项推进，此处保持 Date.now() 兜底。
         at: w.timestamp || Date.now(),
         deltas: w.deltas,
         evidenceCount: w.evidenceCount
