@@ -398,10 +398,10 @@ function checkDocsAndTestSuites() {
 /* 10. 开发机私有绝对路径与隐私泄露扫描 */
 function checkDeveloperPathLeaks() {
   const leaks = [];
-  const huihuaPat = new RegExp(['D:', 'software', ['hui', 'hua'].join('')].join('[\\\\/]'), 'i');
+  const leakToolsPat = new RegExp(['D:', 'software', ['hui', 'hua'].join('')].join('[\\\\/]'), 'i');
   const lifePat = new RegExp(['D:', 'GAME', ['LI', 'FE'].join('')].join('[\\\\/]'), 'i');
   const userPat = new RegExp(['Users', ['an', 'dab'].join('')].join('[\\\\/]'), 'i');
-  const leakPatterns = [huihuaPat, lifePat, userPat];
+  const leakPatterns = [leakToolsPat, lifePat, userPat];
 
   const targetDirs = ['src', 'test', 'docs', 'tools'];
   function scan(dir) {
