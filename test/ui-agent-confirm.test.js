@@ -33,7 +33,7 @@ const { DECISIONS: BACKEND_DECISIONS } = require(path.join(ROOT, 'src/agent-conf
 const goodProposal = {
   id: 'proposal-1',
   capability: 'workspace.write',
-  scope: 'D:/GAME/LIFE/workspace/notes.md',
+  scope: 'C:/workspace/notes.md',
   reason: '把会议纪要整理成表格',
 };
 

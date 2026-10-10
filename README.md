@@ -489,7 +489,7 @@ node test/lexicon-expectations.test.js  # 28 项：v1.0 生命机制门槛（词
 node test/nonhuman-framework-prompt.test.js # 36 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话、A 方案后日历红线由日期锚点边界约束接管）
 node test/wardrobe.test.js       # 72 项：槽位/资源存在、互斥、发型自由脱下、可拆卸发饰、非法输入、持久化、脏文件降级、人格隔离、主体特质偏好与自决换装提案、项圈立项重回存档、无发素体形态标注、v3.1 WIP套装收敛回归（堵对话换装漏洞）
 node test/secure.test.js         # 44 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚、显式 clearKey 与空 key 防误删守卫、往返校验防坏密文遮蔽、回退明文不谎报已加密
-node test/atomic.test.js         # 20 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出
+node test/atomic.test.js         # 21 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出、main.js 生产持久化原子写审计
 node test/config.test.js         # 31 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离、budgetMaxOutputTokens 从配置生效且默认不设限
 node test/deepseek.test.js       # 32 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离、预先abort与headers后abort
 node test/layout.test.js         # 16 项：宽高比为常量、来回缩放收得回、下边缘钉住、main.js 不许再用量出来的比例

@@ -53,7 +53,7 @@ function sandboxPathFor(desktopPath) {
   //   原实现先 `String(desktopPath || '')` **再**查 typeof，
   //   于是 `sandboxPathFor(123)` 会把数字转成 '123' 拼进路径，
   //   `path.resolve('123')` 解析成 **当前工作目录**下的 '123'。
-  //   实测曾产出 `D:\GAME\LIFE\123\LifeSandbox` ——
+  //   实测曾产出 `<project-root>\123\LifeSandbox` ——
   //   也就是说「桌面路径异常」时会静默把工作目录当成沙盒根。
   //   （`[]` 因为空数组 falsy 被挡住，纯属侥幸。）
   //   正确顺序：**先查类型再取值**，非字符串一律拒。

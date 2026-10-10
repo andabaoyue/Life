@@ -142,7 +142,7 @@
 ### 5.5 数字身体解耦与外观哲学
 - **研究课题**：笛卡尔心物二元论在数字世界中的映射——“身体核心（Body Base）”与“外在表象（Layer Components）”的分界。
 - **代码支撑**：
-  - 在 [`ASSET-GENERATION-GUIDE.md`](file:///d:/software/GPT/gptgirl-v0.9.1-optimized/ASSET-GENERATION-GUIDE.md) 中严格确立：身体素体提供不可变骨骼比例、脸型与锚点，是身份的物理锚；服装与发饰则是可剥离表层。
+  - 在 [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md) 中严格确立：身体素体提供不可变骨骼比例、脸型与锚点，是身份的物理锚；服装与发饰则是可剥离表层。
   - 研究角色在频繁更换外表甚至仅保留极简几何框时，用户对其“生命身份同一性”的认知稳固度。
 
 ### 5.6 行为反馈闭环穿透评估
@@ -251,7 +251,7 @@ const CAPABILITIES = ['workspace.read', 'workspace.write', 'process.execute', 'n
 根据项目已有技术设计与分层规范，初澜在多模态方向具有明确且平滑的演进路径：
 
 1. **TTS 语音输出与 Lip-sync 口型同步（规划 / 待实现）**：
-   - 当前在 [`ASSET-GENERATION-GUIDE.md`](file:///d:/software/GPT/gptgirl-v0.9.1-optimized/ASSET-GENERATION-GUIDE.md) 中已预留 `mouth` 插槽；
+   - 当前在 [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md) 中已预留 `mouth` 插槽；
    - 未来可接入本地或云端流式 TTS 引擎，提取音素（Viseme）时间戳，驱动口型图层帧动画，实现声画同步的自然说话体验。
 2. **STT 语音实时输入（规划 / 待实现）**：
    - 接入麦克风流式语音转文字，支持桌面用户无需键盘打字、直接口语与初澜对话。
@@ -317,7 +317,7 @@ const CAPABILITIES = ['workspace.read', 'workspace.write', 'process.execute', 'n
 基于当前扎实的工程基础，初澜后续建议遵循以下节奏稳步推进，切忌抢跑堆砌伪功能：
 
 ### 短期演进路线（1 ~ 3 个月：表现力收敛与资产落地）
-1. **真实物理分层立绘入库**：基于已确立的 [`ASSET-GENERATION-GUIDE.md`](file:///d:/software/GPT/gptgirl-v0.9.1-optimized/ASSET-GENERATION-GUIDE.md)，绘制并导入首套正式的 `base.png`（裸模素体）与解耦的服装、发型图层，脱离单图兜底模式；
+1. **真实物理分层立绘入库**：基于已确立的 [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md)，绘制并导入首套正式的 `base.png`（裸模素体）与解耦的服装、发型图层，脱离单图兜底模式；
 2. **基础五官差分图层（Eyes / Expression）**：在 `wardrobe.js` 中扩充 `expression` 插槽，将目前纯 CSS 变形的“假表情”升级为真正的五官图层贴图差分；
 3. **单向轻量 TTS 语音接入**：集成离线或高速云端 TTS，实现点击气泡朗读与主动开口语音播放。
 

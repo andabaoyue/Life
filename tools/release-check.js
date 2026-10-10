@@ -395,6 +395,58 @@ function checkDocsAndTestSuites() {
   }
 }
 
+/* 10. 开发机私有绝对路径与隐私泄露扫描 */
+function checkDeveloperPathLeaks() {
+  const leaks = [];
+  const huihuaPat = new RegExp(['D:', 'software', 'huihua'].join('[\\\\/]'), 'i');
+  const lifePat = new RegExp(['D:', 'GAME', 'LIFE'].join('[\\\\/]'), 'i');
+  const userPat = new RegExp(['Users', 'andab'].join('[\\\\/]'), 'i');
+  const leakPatterns = [huihuaPat, lifePat, userPat];
+
+  const targetDirs = ['src', 'test', 'docs', 'tools'];
+  function scan(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        scan(full);
+      } else if (/\.(js|json|md|html|css)$/i.test(e.name)) {
+        if (full === path.join(ROOT, 'tools', 'release-check.js')) continue;
+        const content = fs.readFileSync(full, 'utf8');
+        content.split('\n').forEach((l, idx) => {
+          for (const pat of leakPatterns) {
+            if (pat.test(l)) {
+              leaks.push(`${path.relative(ROOT, full)}:${idx + 1}`);
+              break;
+            }
+          }
+        });
+      }
+    }
+  }
+  for (const d of targetDirs) scan(path.join(ROOT, d));
+  // 检查根目录全部公开与门面文件（含全部 .md 文档、入口脚本与配置）
+  for (const ent of fs.readdirSync(ROOT, { withFileTypes: true })) {
+    if (ent.isDirectory()) continue;
+    if (ent.name.startsWith('_') || ent.name.startsWith('V1.') || ent.name.startsWith('chulan_')) continue;
+    if (/\.(js|json|md|html|css|py|yml|yaml)$/i.test(ent.name)) {
+      const full = path.join(ROOT, ent.name);
+      const content = fs.readFileSync(full, 'utf8');
+      content.split('\n').forEach((l, idx) => {
+        for (const pat of leakPatterns) {
+          if (pat.test(l)) leaks.push(`${ent.name}:${idx + 1}`);
+        }
+      });
+    }
+  }
+
+  if (leaks.length > 0) {
+    report('FAIL', '开发机私有绝对路径扫描', `发现 ${leaks.length} 处开发机绝对路径残留: ${leaks.slice(0, 5).join(', ')}`);
+  } else {
+    report('PASS', '开发机私有绝对路径扫描', '生产/文档/测试目录严格零开发机绝对路径残留 (0 处泄露)');
+  }
+}
+
 /* 执行检查 */
 checkJsSyntax();
 checkWardrobeAssets();
@@ -403,6 +455,7 @@ checkFallbackSprite();
 checkPackageLock();
 checkConfigDefaults();
 checkDocsAndTestSuites();
+checkDeveloperPathLeaks();
 checkBuilderClosure();
 
 console.log('\n====================================================');

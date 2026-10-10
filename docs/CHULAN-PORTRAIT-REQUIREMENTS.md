@@ -240,15 +240,15 @@
 
 ### 8.1 本地专业像素软件协同
 为保证点阵精度与图层管理，已建立本地化离线工具流：
-- **精修与单帧绘制**：`D:\software\huihua\LibreSprite\libresprite.exe`（LibreSprite 便携版）
-- **分层与多图层合成**：`D:\software\huihua\Pixelorama-Windows-64bit\Pixelorama.exe`（Pixelorama 便携版）
+- **精修与单帧绘制**：`<path-to-tools>\LibreSprite\libresprite.exe`（LibreSprite 便携版）
+- **分层与多图层合成**：`<path-to-tools>\Pixelorama-Windows-64bit\Pixelorama.exe`（Pixelorama 便携版）
 - **统一调色板载入**：
-  - Pixelorama 专用：`D:\software\huihua\Pixelorama-Windows-64bit\pixelorama_data\Palettes\Chulan 24.json`
-  - GPL 标准色板：`D:\software\huihua\prototypes\chulan_palette.gpl`
+  - Pixelorama 专用：`<path-to-tools>\Pixelorama-Windows-64bit\pixelorama_data\Palettes\Chulan 24.json`
+  - GPL 标准色板：`<path-to-tools>\prototypes\chulan_palette.gpl`
 
 ### 8.2 机器自动化质量门禁（Hermes 11 项检测标准）
 所有产出精灵帧，必须通过自动化门禁脚本：
-`python D:\software\huihua\hermes_coaching\audit_pixel_art.py <sprite_file.png>`
+`python <path-to-scripts>\audit_pixel_art.py <sprite_file.png>`
 
 | 检查项 | 检测指标 | 合格阈值 | 说明 |
 |:---:|---|---|---|
