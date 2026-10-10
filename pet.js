@@ -790,10 +790,10 @@ async function refreshLifeMechanisms() {
       (r.lexicon || []).forEach((x) => {
         const row = document.createElement('div');
         row.textContent = '[' + x.status + '] ' + x.word + (x.gloss ? ' — ' + x.gloss : '')
-          + '（' + x.kind + ' · 引证 ' + x.messageId + '）';
+          + t('research.lexicon.citeMeta', '（{kind} · 引证 {id}）', { kind: x.kind, id: x.messageId });
         lx.appendChild(row);
       });
-      if (!lx.children.length) lx.textContent = '（暂无 —— 词汇表零先验，等她自己长词）';
+      if (!lx.children.length) lx.textContent = t('research.lexicon.empty', '（暂无 —— 词汇表零先验，等她自己长词）');
     }
     const ex = document.getElementById('rExpectList');
     if (ex) {
@@ -801,38 +801,42 @@ async function refreshLifeMechanisms() {
       (r.expectations || []).forEach((x) => {
         const row = document.createElement('div');
         row.textContent = '[' + x.status + '] ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')
-          + ' · ' + x.kind + ' · 引证 ' + x.messageId;
+          + t('research.expect.citeMeta', ' · {kind} · 引证 {id}', { kind: x.kind, id: x.messageId });
         ex.appendChild(row);
       });
-      if (!ex.children.length) ex.textContent = '（暂无）';
+      if (!ex.children.length) ex.textContent = t('research.expect.empty', '（暂无）');
     }
     // 生命看板（v1.0 §4.7 方向一+三）：真数据直读 + 真算术派生；null 出破折号，绝不造数
     const setLines = (id, lines) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.textContent = '';
-      lines.forEach((t) => { const row = document.createElement('div'); row.textContent = t; el.appendChild(row); });
+      lines.forEach((line) => { const row = document.createElement('div'); row.textContent = line; el.appendChild(row); });
     };
     const v = r.vitals;
     setLines('rVitalsList', v ? [
-      '精力 ' + Math.round(v.energy) + ' / 疲惫压力 ' + Math.round(v.restPressure) + ' / 觉醒度 ' + Math.round(v.arousal),
-      '相位：' + (v.isSleeping ? '深度休眠' : (v.restPressure >= 70 ? '倦怠' : '清醒'))
+      t('research.vitals.line1', '精力 {energy} / 疲惫压力 {pressure} / 觉醒度 {arousal}', {
+        energy: Math.round(v.energy),
+        pressure: Math.round(v.restPressure),
+        arousal: Math.round(v.arousal)
+      }),
+      t('research.vitals.phasePrefix', '相位：') + (v.isSleeping ? t('research.vitals.deepSleep', '深度休眠') : (v.restPressure >= 70 ? t('research.vitals.weary', '倦怠') : t('research.vitals.awake', '清醒')))
     ] : ['—']);
     const dv = r.development;
     setLines('rDevList', dv ? [
-      '可塑性 ' + (Number(dv.plasticity)).toFixed(2),
-      '阶段：' + dv.stage
+      t('research.dev.plasticity', '可塑性 {val}', { val: (Number(dv.plasticity)).toFixed(2) }),
+      t('research.dev.stage', '阶段：{stage}', { stage: dv.stage })
     ] : ['—']);
     const cg = r.cognition;
     setLines('rCogList', cg ? [
-      '自我确信度 ' + (Number(cg.confidence)).toFixed(2),
-      '反思压力 ' + (Number(cg.revisionPressure)).toFixed(4)
+      t('research.cog.confidence', '自我确信度 {val}', { val: (Number(cg.confidence)).toFixed(2) }),
+      t('research.cog.revisionPressure', '反思压力 {val}', { val: (Number(cg.revisionPressure)).toFixed(4) })
     ] : ['—']);
     const rel = r.relations || {};
     setLines('rRelList', [
-      '守信契约 ' + (rel.promiseFidelity == null ? '—（暂无约定结算）' : Math.round(rel.promiseFidelity * 100) + '%'),
-      '语言指纹 ' + (rel.words || 0) + ' 词（复用 ' + (rel.reusedWords || 0) + '）',
-      '经历链 ' + (rel.archiveChain || 0) + ' 拍'
+      t('research.rel.promise', '守信契约 {val}', { val: (rel.promiseFidelity == null ? t('research.rel.noPromise', '—（暂无约定结算）') : Math.round(rel.promiseFidelity * 100) + '%') }),
+      t('research.rel.fingerprint', '语言指纹 {words} 词（复用 {reused}）', { words: rel.words || 0, reused: rel.reusedWords || 0 }),
+      t('research.rel.archiveChain', '经历链 {chain} 拍', { chain: rel.archiveChain || 0 })
     ]);
   } catch (e) { /* 只读渲染失败不影响面板其余部分 */ }
 }
@@ -1199,7 +1203,7 @@ async function runChat(text, opts) {
 
   try {
     if (!api) {                              // 浏览器预览：假回复，验证逐字渲染
-      const demo = '（预览模式）我还没接上 API，正式运行时这里会逐字回复你~';
+      const demo = t('chat.demoBubble', '（预览模式）我还没接上 API，正式运行时这里会逐字回复你~');
       for (let i = 1; i <= demo.length; i++) {
         await new Promise(r => setTimeout(r, 40));
         show(demo.slice(0, i));
@@ -1232,16 +1236,16 @@ async function runChat(text, opts) {
         clearTimeout(bubbleTimer);
         bubbleTimer = setTimeout(hideBubble, 6000);
       } else if (res.needKey) {
-        finish('(还没填 API Key，右键 → 设置 / 用量)');
+        finish(t('chat.needKeyBubble', '(还没填 API Key，右键 → 设置 / 用量)'));
         openPanel();
       } else if (res.aborted) {
-        finish('(已取消)');
+        finish(t('chat.abortedBubble', '(已取消)'));
       } else {
-        finish('(出错了：' + res.error + ')');
+        finish(t('chat.errorBubble', '(出错了：{error})', { error: res.error }));
       }
     }
   } catch (e) {
-    finish('(异常：' + e.message + ')');
+    finish(t('chat.exceptionBubble', '(异常：{error})', { error: e.message }));
   } finally {
     streaming = false;
     busy = false;
@@ -1658,26 +1662,31 @@ async function refreshDreams() {
   if (!api || !api.dreamList) { box.textContent = '—'; return; }
   try {
     const r = await api.dreamList();
-    if (!r || !r.ok) { box.textContent = '（读取失败）'; return; }
+    if (!r || !r.ok) { box.textContent = t('dreams.readFailed', '（读取失败）'); return; }
     const list = r.dreams || [];   // 升序：第一次、第二次、第三次……
-    if (!list.length) { box.textContent = '（暂无 —— 还没有做过梦）'; return; }
+    if (!list.length) { box.textContent = t('dreams.empty', '（暂无 —— 还没有做过梦）'); return; }
     list.forEach((d, i) => {
       const card = document.createElement('div');
       card.className = 'dream-card';
       const h = document.createElement('div');
       h.className = 'dream-no';
       const when = d.generatedAt ? new Date(d.generatedAt).toLocaleString() : '';
-      h.textContent = '第 ' + (i + 1) + ' 次' + (when ? ' · ' + when : '');
+      h.textContent = t('dreams.count', '第 {count} 次', { count: i + 1 }) + (when ? ' · ' + when : '');
       const body = document.createElement('div');
       body.className = 'dream-body';
-      body.textContent = d.text || '（无文本）';
+      body.textContent = d.text || t('dreams.noText', '（无文本）');
       const meta = document.createElement('div');
       meta.className = 'dream-meta';
-      meta.textContent = '窗口 #' + (d.windowNo || '?') + ' · ' + (d.epistemicStatus || '') + '（离线重组，非亲历）';
+      const statusPart = d.epistemicStatus ? d.epistemicStatus + ' · ' : '';
+      meta.textContent = t('dreams.metaPattern', '窗口 #{win} · {status}{recon}', {
+        win: d.windowNo || '?',
+        status: statusPart,
+        recon: t('dreams.reconstructed', '（离线重组，非亲历）')
+      });
       card.append(h, body, meta);
       box.appendChild(card);
     });
-  } catch (e) { box.textContent = '（读取异常）'; }
+  } catch (e) { box.textContent = t('dreams.readException', '（读取异常）'); }
 }
 
 document.getElementById('keySave').addEventListener('click', async () => {
@@ -1685,11 +1694,11 @@ document.getElementById('keySave').addEventListener('click', async () => {
   if (!v) return;
   if (api) {
     const r = await api.setKey(v);
-    if (r && r.ok === false) return say('保存 Key 失败：' + r.error);
+    if (r && r.ok === false) return say(t('say.saveKeyFailed', '保存 Key 失败：') + r.error);
     document.getElementById('keyInput').value = '';
   }
   refreshStats();   // 存储状态（加密/明文）由它按主进程返回值刷新，别在这里下结论
-  say('好啦，现在能跟我说话了~');
+  say(t('say.nowCanTalk', '好啦，现在能跟我说话了~'));
 });
 
 /* ---------------- Connection 管理（0.9.8 Z3） ----------------
@@ -1715,14 +1724,14 @@ function fillConnEditor(connectionId) {
   document.getElementById('connUrl').value = c.baseURL || '';
   document.getElementById('connModel').value = c.activeModel || '';
   document.getElementById('connKey').value = ''; // 绝不回填 secret
-  connSay('凭据：' + (c.hasCredential ? (c.keyEncrypted ? '已加密存储' : '明文降级存储') : '未配置') +
-    '；测试状态：' + ((c.testState && c.testState.status) || 'unverified'));
+  connSay(t('conn.credentialPrefix', '凭据：') + (c.hasCredential ? (c.keyEncrypted ? t('conn.encrypted', '已加密存储') : t('conn.plain', '明文降级存储')) : t('conn.unconfigured', '未配置')) +
+    t('conn.testStatusPrefix', '；测试状态：') + ((c.testState && c.testState.status) || 'unverified'));
 }
 
 async function refreshConnections() {
   if (!api || !api.connections) return;
   const r = await api.connections.list();
-  if (!r || r.ok === false) return connSay('连接列表读取失败：' + ((r && r.error) || '未知错误'));
+  if (!r || r.ok === false) return connSay(t('conn.listReadFailed', '连接列表读取失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
   connItems = Array.isArray(r.items) ? r.items : [];
   const sel = document.getElementById('connList');
   sel.textContent = '';
@@ -1730,7 +1739,7 @@ async function refreshConnections() {
     const opt = document.createElement('option');
     opt.value = c.connectionId;
     opt.textContent = c.displayName + '（' + c.providerId + ' / ' + c.protocol + '）' +
-      (c.connectionId === r.activeConnectionId ? ' ★当前' : '');
+      (c.connectionId === r.activeConnectionId ? t('conn.activeMarker', ' ★当前') : '');
     sel.appendChild(opt);
   }
   const act = document.getElementById('connActive');
@@ -1742,7 +1751,7 @@ async function refreshConnections() {
     sel.value = pick;
     fillConnEditor(pick);
   } else {
-    connSay('尚无连接');
+    connSay(t('conn.none', '尚无连接'));
   }
 }
 
@@ -1762,9 +1771,9 @@ document.getElementById('connNew').addEventListener('click', async () => {
   if (!api || !api.connections) return;
   const key = document.getElementById('connKey').value;
   const r = await api.connections.create({ ...connEditorFields(), credential: key || undefined });
-  if (!r || r.ok === false) return connSay('新建失败：' + ((r && r.error) || '未知错误'));
+  if (!r || r.ok === false) return connSay(t('conn.createFailedPrefix', '新建失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
   document.getElementById('connKey').value = '';
-  connSay('已新建连接（credential 仅写入，不回显）');
+  connSay(t('conn.created', '已新建连接（credential 仅写入，不回显）'));
   await refreshConnections();
 });
 
@@ -1784,16 +1793,16 @@ document.getElementById('connTest').addEventListener('click', async () => {
   const r = await api.connections.test(connSelectedId);
   if (!r || r.ok === false) return connSay(t('conn.testFailedPrefix', '测试失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
   if (r.status === 'verified') connSay(t('conn.verifiedPrefix', '已验证成功（') + r.phase + '）');
-  else if (r.status === 'failed') connSay('验证失败（' + r.phase + '）：' + (r.reason || ''));
-  else connSay('未验证（证据不足）：' + (r.reason || r.phase));
+  else if (r.status === 'failed') connSay(t('conn.verifiedFailed', '验证失败（{phase}）：{reason}', { phase: r.phase, reason: r.reason || '' }));
+  else connSay(t('conn.unverified', '未验证（证据不足）：{detail}', { detail: r.reason || r.phase }));
   await refreshConnections();
 });
 
 document.getElementById('connActivate').addEventListener('click', async () => {
   if (!api || !api.connections || !connSelectedId) return;
   const r = await api.connections.activate(connSelectedId);
-  if (!r || r.ok === false) return connSay('切换失败（保持原连接）：' + ((r && r.error) || '未知错误'));
-  connSay(r.swapped ? '已切换到该连接' : '该连接已是当前活动连接');
+  if (!r || r.ok === false) return connSay(t('conn.switchFailedPrefix', '切换失败（保持原连接）：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
+  connSay(r.swapped ? t('conn.switched', '已切换到该连接') : t('conn.alreadyActive', '该连接已是当前活动连接'));
   await refreshConnections();
   refreshStats();
 });
@@ -1844,11 +1853,11 @@ function armDangerButton(btn, onFire) {
 
 async function doDeleteConnection() {
   if (!api || !api.connections || !connSelectedId) return;
-  const ok = window.confirm('此操作将删除该 Connection，并在该凭据属于 exclusive credential 时删除对应凭据（legacy-mapped 凭据只删除 Connection，不删除 legacy 凭据）。确定继续吗？');
+  const ok = window.confirm(t('conn.deleteConfirm', '此操作将删除该 Connection，并在该凭据属于 exclusive credential 时删除对应凭据（legacy-mapped 凭据只删除 Connection，不删除 legacy 凭据）。确定继续吗？'));
   if (!ok) return;
   const r = await api.connections.delete(connSelectedId, true);
-  if (!r || r.ok === false) return connSay('删除失败：' + ((r && r.error) || '未知错误'));
-  connSay(r.credentialDeleted ? '连接及其独占凭据已删除' : '连接已删除（凭据保留：' + (r.credentialNote || '未删除') + '）');
+  if (!r || r.ok === false) return connSay(t('conn.deleteFailedPrefix', '删除失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
+  connSay(r.credentialDeleted ? t('conn.deletedExclusive', '连接及其独占凭据已删除') : t('conn.deletedKeepCred', '连接已删除（凭据保留：{note}）', { note: r.credentialNote || t('chat.wearUnexecuted', '未删除') }));
   await refreshConnections();
 }
 armDangerButton(document.getElementById('connDelete'), doDeleteConnection);
@@ -1859,13 +1868,13 @@ document.getElementById('openCfg').addEventListener('click', () => api && api.op
 
 async function doResetSelf() {
   if (!api || !api.resetSelfLedger) return;
-  const ok = window.confirm('这会删除初澜出生以来的成长档案，并把她视为一次新的出生。确定继续吗？');
+  const ok = window.confirm(t('danger.resetConfirm', '这会删除初澜出生以来的成长档案，并把她视为一次新的出生。确定继续吗？'));
   if (!ok) return;
   // confirm: true 携带上方 window.confirm 的用户明确确认（N-08：未确认的 reset 请求会被主进程拒绝）
   const res = await api.resetSelfLedger(true);
-  if (!res || !res.ok) return say('成长档案重置失败：' + ((res && res.error) || '未知错误'));
+  if (!res || !res.ok) return say(t('say.resetFailed', '成长档案重置失败：') + ((res && res.error) || t('conn.unknownErr', '未知错误')));
   refreshStats();
-  say('好，我们从现在重新认识。');
+  say(t('say.reacquaint', '好，我们从现在重新认识。'));
 }
 armDangerButton(document.getElementById('resetSelf'), doResetSelf);
 
@@ -1926,7 +1935,7 @@ async function closeResearchPanel() {
       const chk = await api.research.verifyIntegrity(currentResearchHashes);
       if (!chk.ok) {
         console.error('[Research] 违规写操作检测:', chk.error);
-        alert('警告：检测到实验数据发生变更！\n' + chk.error);
+        alert(t('research.integrityAlert', '警告：检测到实验数据发生变更！\n') + chk.error);
       }
     } catch (e) {
       console.error('[Research] 完整性校验异常:', e.message);
@@ -1936,10 +1945,10 @@ async function closeResearchPanel() {
 
 async function loadResearchData() {
   const statusEl = document.getElementById('rFooterStatus');
-  if (statusEl) statusEl.textContent = 'Snapshot: 正在加载数据...';
+  if (statusEl) statusEl.textContent = t('research.snapshot.loading', 'Snapshot: 正在加载数据...');
 
   if (!api || !api.research) {
-    if (statusEl) statusEl.textContent = 'Snapshot: 预览模式 (降级演示)';
+    if (statusEl) statusEl.textContent = t('research.snapshot.preview', 'Snapshot: 预览模式 (降级演示)');
     renderStateDemo();
     return;
   }
@@ -1948,13 +1957,13 @@ async function loadResearchData() {
     const snap = await api.research.refresh();
     if (statusEl) {
       const d = snap && snap.snapshotTimestamp ? new Date(snap.snapshotTimestamp).toLocaleTimeString() : '';
-      statusEl.textContent = `Snapshot: ${d} | 观察层只读受控`;
+      statusEl.textContent = t('research.snapshot.status', 'Snapshot: {time} | 观察层只读受控', { time: d });
     }
     const state = (snap && snap.state) || (await api.research.getState());
     renderSubjectStateTab(state);
     await loadWindowsTab();
   } catch (err) {
-    if (statusEl) statusEl.textContent = 'Snapshot 加载失败: ' + err.message;
+    if (statusEl) statusEl.textContent = t('research.snapshot.loadFailedPrefix', 'Snapshot 加载失败: ') + err.message;
   }
 }
 
@@ -1998,7 +2007,7 @@ function renderSubjectStateTab(state) {
     const titleEl = document.createElement('div');
     titleEl.className = 'r-trait-name';
     // 主显中文定名、次显程序键：她看到的不该是变量名（同 subject-state 定名教训），键留给对账
-    titleEl.textContent = (TRAIT_LABELS[tName] || tName) + ' (' + tName + ')';
+    titleEl.textContent = t('trait.' + tName, TRAIT_LABELS[tName] || tName) + ' (' + tName + ')';
 
     const valEl = document.createElement('div');
     valEl.className = 'r-trait-val';
@@ -2011,7 +2020,7 @@ function renderSubjectStateTab(state) {
     const deltaCls = delta > 0 ? 'r-delta-pos' : (delta < 0 ? 'r-delta-neg' : 'r-delta-zero');
 
     metaEl.append(
-      '前值: ' + (info.previous ?? 0) + ' | 增量: ',
+      t('research.state.prevMeta', '前值: {prev} | 增量: ', { prev: info.previous ?? 0 }),
       (() => { const s = document.createElement('span'); s.className = deltaCls; s.textContent = deltaStr; return s; })()
     );
 
@@ -2058,7 +2067,7 @@ async function loadTraitHistory(trait) {
   box.textContent = '';
 
   if (!api || !api.research) {
-    box.textContent = `[${trait}] 预览历史：Window #1: 0 → +15 (Δ+15)`;
+    box.textContent = t('research.state.previewHistory', '[{trait}] 预览历史：Window #1: 0 → +15 (Δ+15)', { trait });
     return;
   }
 
@@ -2066,7 +2075,7 @@ async function loadTraitHistory(trait) {
     const res = await api.research.getStateChanges({ trait, limit: 100 });
     const items = (res && res.items) || [];
     if (!items.length) {
-      box.textContent = `特质 [${trait}] 暂无状态跃迁历史`;
+      box.textContent = t('research.state.noHistory', '特质 [{trait}] 暂无状态跃迁历史', { trait });
       return;
     }
 
@@ -2084,7 +2093,7 @@ async function loadTraitHistory(trait) {
 
       row.append(left, right);
       row.style.cursor = 'pointer';
-      row.title = '点击跳转至溯源';
+      row.title = t('research.state.clickToTrace', '点击跳转至溯源');
       row.addEventListener('click', () => {
         switchResearchTab('provenance');
         const scInput = document.getElementById('rScInput');
@@ -2095,7 +2104,7 @@ async function loadTraitHistory(trait) {
       box.appendChild(row);
     }
   } catch (e) {
-    box.textContent = '加载历史失败: ' + e.message;
+    box.textContent = t('research.state.loadHistoryFailedPrefix', '加载历史失败: ') + e.message;
   }
 }
 
@@ -2119,14 +2128,14 @@ async function loadWindowsTab() {
     if (!windows.length) {
       const opt = document.createElement('option');
       opt.value = '1';
-      opt.textContent = 'Window #1 (初始)';
+      opt.textContent = t('research.windows.initialOpt', 'Window #1 (初始)');
       sel.appendChild(opt);
     } else {
       for (const w of windows) {
         const opt = document.createElement('option');
         opt.value = String(w.windowNo);
-        const turnStr = (w.turns !== null && w.turns !== undefined) ? `${w.turns} 轮` : '轮次未知';
-        const msgStr = (w.messageCount !== null && w.messageCount !== undefined) ? `${w.messageCount} 条` : '条数未知';
+        const turnStr = (w.turns !== null && w.turns !== undefined) ? t('research.windows.turnsCount', '{turns} 轮', { turns: w.turns }) : t('research.windows.turnsUnknown', '轮次未知');
+        const msgStr = (w.messageCount !== null && w.messageCount !== undefined) ? t('research.windows.msgsCount', '{count} 条', { count: w.messageCount }) : t('research.windows.msgsUnknown', '条数未知');
         opt.textContent = `Window #${w.windowNo} (${turnStr} / ${msgStr})`;
         sel.appendChild(opt);
       }
@@ -2141,7 +2150,7 @@ async function loadWindowsTab() {
 async function loadWindowDetail(windowNo) {
   const card = document.getElementById('rWindowSummaryCard');
   if (!card) return;
-  card.textContent = '正在读取窗口数据...';
+  card.textContent = t('research.windows.readingData', '正在读取窗口数据...');
 
   if (!api || !api.research) {
     renderWindowDetailDemo(windowNo);
@@ -2151,7 +2160,7 @@ async function loadWindowDetail(windowNo) {
   try {
     const detail = await api.research.getWindow({ windowNo });
     if (!detail) {
-      card.textContent = `Window #${windowNo} 尚无经历归档数据`;
+      card.textContent = t('research.windows.noArchiveData', 'Window #{win} 尚无经历归档数据', { win: windowNo });
       return;
     }
 
@@ -2159,20 +2168,20 @@ async function loadWindowDetail(windowNo) {
     const b = (t) => { const el = document.createElement('b'); el.textContent = String(t); return el; };
     const br = () => document.createElement('br');
 
-    const turnsDisplay = (detail.turns !== null && detail.turns !== undefined) ? detail.turns : '未知';
-    const msgCountDisplay = (detail.messageCount !== null && detail.messageCount !== undefined) ? detail.messageCount : '未知';
+    const turnsDisplay = (detail.turns !== null && detail.turns !== undefined) ? detail.turns : t('research.windows.valUnknown', '未知');
+    const msgCountDisplay = (detail.messageCount !== null && detail.messageCount !== undefined) ? detail.messageCount : t('research.windows.valUnknown', '未知');
 
     card.append(
-      '窗口 No: ', b(detail.windowNo), ' | 轮次: ', b(turnsDisplay),
-      ' | 消息总计: ', b(msgCountDisplay),
+      t('research.windows.detailWinNo', '窗口 No: '), b(detail.windowNo), t('research.windows.detailTurns', ' | 轮次: '), b(turnsDisplay),
+      t('research.windows.detailMsgCount', ' | 消息总计: '), b(msgCountDisplay),
       br(),
       'Events: ', b(detail.events ? detail.events.length : 0),
       ' | Observations: ', b(detail.observations ? detail.observations.length : 0),
       ' | Interpretations: ', b(detail.interpretations ? detail.interpretations.length : 0),
       br(),
-      '接受证据: ', b(detail.verifiedEvidence ? detail.verifiedEvidence.length : 0),
-      ' | 拒绝证据: ', b(detail.rejectedEvidence ? detail.rejectedEvidence.length : 0),
-      ' | 状态变动: ', b(detail.stateChanges ? detail.stateChanges.length : 0)
+      t('research.windows.detailAccepted', '接受证据: '), b(detail.verifiedEvidence ? detail.verifiedEvidence.length : 0),
+      t('research.windows.detailRejected', ' | 拒绝证据: '), b(detail.rejectedEvidence ? detail.rejectedEvidence.length : 0),
+      t('research.windows.detailStateChanges', ' | 状态变动: '), b(detail.stateChanges ? detail.stateChanges.length : 0)
     );
 
     const ib = document.getElementById('rWindowIntegrityBadge');
@@ -2188,7 +2197,7 @@ async function loadWindowDetail(windowNo) {
 
     await loadRounds(windowNo, currentSelectedSegIndex);
   } catch (e) {
-    card.textContent = '读取窗口详情失败: ' + e.message;
+    card.textContent = t('research.windows.readDetailFailedPrefix', '读取窗口详情失败: ') + e.message;
   }
 }
 
@@ -2205,7 +2214,7 @@ async function loadRounds(windowNo, segmentIndex) {
   try {
     const rounds = await api.research.getWindowRounds({ windowNo, segmentIndex });
     if (!Array.isArray(rounds) || !rounds.length) {
-      box.textContent = `分段 ${segmentIndex} 暂无消息轮次`;
+      box.textContent = t('research.windows.noSegRounds', '分段 {seg} 暂无消息轮次', { seg: segmentIndex });
       return;
     }
 
@@ -2228,16 +2237,16 @@ async function loadRounds(windowNo, segmentIndex) {
       badge.className = 'r-badge ' + badgeClass;
       badge.textContent = rd.tag || rd.status || (rd.bridge ? 'BRIDGE' : (rd.bridge === false ? 'ACTIVE' : 'UNRESOLVED'));
 
-      const statusDesc = rd.status === 'NOT_RECORDED' ? '未记录交互'
-        : (rd.status === 'UNRESOLVED' ? '无法确定：证据不完整'
-        : (rd.status === 'CORRUPTED' ? '记录损坏'
-        : (rd.status === 'MISSING' ? '记录缺失' : (rd.status || '未记录交互'))));
+      const statusDesc = rd.status === 'NOT_RECORDED' ? t('research.rounds.notRecorded', '未记录交互')
+        : (rd.status === 'UNRESOLVED' ? t('research.rounds.unresolved', '无法确定：证据不完整')
+        : (rd.status === 'CORRUPTED' ? t('research.rounds.corrupted', '记录损坏')
+        : (rd.status === 'MISSING' ? t('research.rounds.missing', '记录缺失') : (rd.status || t('research.rounds.notRecorded', '未记录交互')))));
 
       // v1.0 占比修正（用户反馈）：空轮次压成一行 —— 未记录的壳不再占满三行
       if (!hasU && !hasA) {
         item.className = 'r-round-item compact';
         const left = document.createElement('span');
-        left.textContent = (typeof rd.roundNo === 'number' ? `第 ${rd.roundNo} 轮` : '[未确定轮次]')
+        left.textContent = (typeof rd.roundNo === 'number' ? t('research.rounds.roundNum', '第 {num} 轮', { num: rd.roundNo }) : t('research.rounds.roundUndetermined', '[未确定轮次]'))
           + ' · ' + statusDesc;
         item.append(left, badge);
         box.appendChild(item);
@@ -2249,7 +2258,7 @@ async function loadRounds(windowNo, segmentIndex) {
       head.className = 'r-round-head';
       const rTitle = document.createElement('span');
       rTitle.className = 'r-round-no';
-      rTitle.textContent = typeof rd.roundNo === 'number' ? `第 ${rd.roundNo} 轮` : '[未确定轮次]';
+      rTitle.textContent = typeof rd.roundNo === 'number' ? t('research.rounds.roundNum', '第 {num} 轮', { num: rd.roundNo }) : t('research.rounds.roundUndetermined', '[未确定轮次]');
       head.append(rTitle, badge);
 
       // 消息分层：ID 淡化章 + 角色章 + 正文（占比归位，长文自己成段）
@@ -2274,33 +2283,33 @@ async function loadRounds(windowNo, segmentIndex) {
         return wrap;
       };
 
-      item.append(head, mkMsg(rd.userMessage, '用户', 'u'), mkMsg(rd.assistantMessage, '初澜', 'a'));
+      item.append(head, mkMsg(rd.userMessage, t('research.rounds.roleUser', '用户'), 'u'), mkMsg(rd.assistantMessage, t('research.rounds.roleChulan', '初澜'), 'a'));
       box.appendChild(item);
     }
   } catch (e) {
-    box.textContent = '加载轮次失败: ' + e.message;
+    box.textContent = t('research.rounds.loadFailedPrefix', '加载轮次失败: ') + e.message;
   }
 }
 
 async function runTraceProvenance(stateChangeId) {
   const box = document.getElementById('rProvResult');
   if (!box) return;
-  box.textContent = '正在反查溯源链...';
+  box.textContent = t('research.prov.tracing', '正在反查溯源链...');
 
   if (!stateChangeId) {
-    box.textContent = '请输入或选择 StateChange ID';
+    box.textContent = t('research.prov.enterScId', '请输入或选择 StateChange ID');
     return;
   }
 
   if (!api || !api.research) {
-    box.textContent = `[演示] ${stateChangeId} -> EV-000001 (quiet_preference +1) -> M-000101 -> “今天看了一本关于数字生命的书”`;
+    box.textContent = t('research.prov.demoTrace', '[演示] {id} -> EV-000001 (quiet_preference +1) -> M-000101 -> “今天看了一本关于数字生命的书”', { id: stateChangeId });
     return;
   }
 
   try {
     const res = await api.research.getProvenance(stateChangeId);
     if (!res || !res.found) {
-      box.textContent = `未找到状态跃迁记录: ${stateChangeId}`;
+      box.textContent = t('research.prov.notFound', '未找到状态跃迁记录: {id}', { id: stateChangeId });
       return;
     }
 
@@ -2309,13 +2318,20 @@ async function runTraceProvenance(stateChangeId) {
     const title = document.createElement('div');
     title.style.color = '#70a1ff';
     title.style.fontWeight = 'bold';
-    title.textContent = `StateChange [${sc.stateChangeId}] | Window #${sc.windowNo} | 特质: ${sc.trait} (${sc.previousValue} → ${sc.newValue}, Δ${sc.delta})`;
+    title.textContent = t('research.prov.scTitle', 'StateChange [{id}] | Window #{win} | 特质: {trait} ({prev} → {newVal}, Δ{delta})', {
+      id: sc.stateChangeId,
+      win: sc.windowNo,
+      trait: sc.trait,
+      prev: sc.previousValue,
+      newVal: sc.newValue,
+      delta: sc.delta
+    });
     box.appendChild(title);
 
     if (!res.chain || !res.chain.length) {
       const emptyTip = document.createElement('div');
       emptyTip.style.color = '#7d8aa8';
-      emptyTip.textContent = '  └─ 无关联的 Evidence 记录';
+      emptyTip.textContent = t('research.prov.noEvidence', '  └─ 无关联的 Evidence 记录');
       box.appendChild(emptyTip);
       return;
     }
@@ -2330,18 +2346,18 @@ async function runTraceProvenance(stateChangeId) {
       evBadge.textContent = c.status ? c.status.toUpperCase() : 'VERIFIED';
 
       evNode.append(
-        '  ├─ Evidence: ', evBadge, ` [${c.evidenceId}] (方向: ${c.direction > 0 ? '+1' : '-1'}, 强度: ${c.strength})`
+        '  ├─ Evidence: ', evBadge, ` [${c.evidenceId}]` + t('research.prov.directionStrength', ' (方向: {dir}, 强度: {strength})', { dir: c.direction > 0 ? '+1' : '-1', strength: c.strength })
       );
 
       const msgNode = document.createElement('div');
       msgNode.style.margin = '2px 0 4px 24px';
       msgNode.style.color = '#d0daf2';
       msgNode.append(
-        `  └─ Message: [${c.messageId}] (${c.messageRole}) 原文: “${c.messageContent}”\n`,
+        t('research.prov.messageOriginal', '  └─ Message: [{id}] ({role}) 原文: “{content}”\n', { id: c.messageId, role: c.messageRole, content: c.messageContent }),
         (() => {
           const q = document.createElement('span');
           q.style.color = '#8fe0a8';
-          q.textContent = `     引用摘录: “${c.quote}” (完全匹配核验证实)`;
+          q.textContent = t('research.prov.quoteVerified', '     引用摘录: “{quote}” (完全匹配核验证实)', { quote: c.quote });
           return q;
         })()
       );
@@ -2349,29 +2365,29 @@ async function runTraceProvenance(stateChangeId) {
       box.append(evNode, msgNode);
     }
   } catch (e) {
-    box.textContent = '溯源失败: ' + e.message;
+    box.textContent = t('research.prov.traceFailedPrefix', '溯源失败: ') + e.message;
   }
 }
 
 async function runTraceEOI(id) {
   const box = document.getElementById('rEoiResult');
   if (!box) return;
-  box.textContent = '正在追溯 EOI 三层事实...';
+  box.textContent = t('research.eoi.tracing', '正在追溯 EOI 三层事实...');
 
   if (!id) {
-    box.textContent = '请输入 Event/Observation/Interpretation ID';
+    box.textContent = t('research.eoi.enterId', '请输入 Event/Observation/Interpretation ID');
     return;
   }
 
   if (!api || !api.research) {
-    box.textContent = `[演示] ${id} 包含完整的 Interpretation -> Observation -> Event -> Message 链接`;
+    box.textContent = t('research.eoi.demoTrace', '[演示] {id} 包含完整的 Interpretation -> Observation -> Event -> Message 链接', { id });
     return;
   }
 
   try {
     const res = await api.research.getEOI(id);
     if (!res || res.found === false) {
-      box.textContent = `未检索到实体: ${id}`;
+      box.textContent = t('research.eoi.notFound', '未检索到实体: {id}', { id });
       return;
     }
 
@@ -2379,7 +2395,7 @@ async function runTraceEOI(id) {
     const root = document.createElement('div');
     root.style.fontWeight = 'bold';
     root.style.color = '#f0e6ff';
-    root.textContent = `EOI 根节点 [${res.type}]: ${id}`;
+    root.textContent = t('research.eoi.rootNode', 'EOI 根节点 [{type}]: {id}', { type: res.type, id });
     box.appendChild(root);
 
     if (res.observations) {
@@ -2387,7 +2403,7 @@ async function runTraceEOI(id) {
         const obsEl = document.createElement('div');
         obsEl.style.marginLeft = '10px';
         obsEl.style.color = '#82cbff';
-        obsEl.textContent = `  ├─ Observation [${o.observationId}]: ${o.content} (置信度: ${o.confidence})`;
+        obsEl.textContent = t('research.eoi.obsNode', '  ├─ Observation [{id}]: {content} (置信度: {conf})', { id: o.observationId, content: o.content, conf: o.confidence });
         box.appendChild(obsEl);
       }
     }
@@ -2397,22 +2413,22 @@ async function runTraceEOI(id) {
         const evtEl = document.createElement('div');
         evtEl.style.marginLeft = '20px';
         evtEl.style.color = '#8fe0a8';
-        evtEl.textContent = `  └─ Event [${e.eventId}] (type: ${e.type}, msg: ${e.messageId}): ${e.payload ? (e.payload.content || '') : ''}`;
+        evtEl.textContent = t('research.eoi.evtNode', '  └─ Event [{id}] (type: {type}, msg: {msg}): {payload}', { id: e.eventId, type: e.type, msg: e.messageId, payload: e.payload ? (e.payload.content || '') : '' });
         box.appendChild(evtEl);
       }
     }
   } catch (e) {
-    box.textContent = 'EOI 追溯失败: ' + e.message;
+    box.textContent = t('research.eoi.traceFailedPrefix', 'EOI 追溯失败: ') + e.message;
   }
 }
 
 async function loadRejectedEvidence() {
   const box = document.getElementById('rRejectedList');
   if (!box) return;
-  box.textContent = '正在读取被拒绝证据...';
+  box.textContent = t('research.rejected.reading', '正在读取被拒绝证据...');
 
   if (!api || !api.research) {
-    box.textContent = '预览模式：暂无被拒证据';
+    box.textContent = t('research.rejected.preview', '预览模式：暂无被拒证据');
     return;
   }
 
@@ -2420,7 +2436,7 @@ async function loadRejectedEvidence() {
     const res = await api.research.getEvidence({ status: 'rejected', limit: 100 });
     const items = (res && res.items) || [];
     if (!items.length) {
-      box.textContent = '暂无被拒绝证据记录 (所有模型提案证据均合法证实或未有非法请求)';
+      box.textContent = t('research.rejected.none', '暂无被拒绝证据记录 (所有模型提案证据均合法证实或未有非法请求)');
       return;
     }
 
@@ -2444,7 +2460,7 @@ async function loadRejectedEvidence() {
       traitRow.className = 'r-ev-row';
       const traitK = document.createElement('span');
       traitK.className = 'r-ev-k';
-      traitK.textContent = '特质';
+      traitK.textContent = t('research.rejected.traitKey', '特质');
       const traitV = document.createElement('span');
       traitV.className = 'r-ev-v';
       traitV.textContent = ev.trait || 'UNKNOWN';
@@ -2454,7 +2470,7 @@ async function loadRejectedEvidence() {
       msgRow.className = 'r-ev-row';
       const msgK = document.createElement('span');
       msgK.className = 'r-ev-k';
-      msgK.textContent = '消息';
+      msgK.textContent = t('research.rejected.msgKey', '消息');
       const msgV = document.createElement('span');
       msgV.className = 'r-ev-v';
       msgV.textContent = ev.messageId || 'N/A';
@@ -2464,7 +2480,7 @@ async function loadRejectedEvidence() {
       box.appendChild(row);
     }
   } catch (e) {
-    box.textContent = '读取被拒证据失败: ' + e.message;
+    box.textContent = t('research.rejected.readFailedPrefix', '读取被拒证据失败: ') + e.message;
   }
 }
 
@@ -2488,7 +2504,7 @@ function switchResearchTab(tabName) {
 
 async function startReplay(opts = {}) {
   if (!api || !api.research) {
-    alert('预览模式不支持真实 Replay 推演');
+    alert(t('research.replay.previewAlert', '预览模式不支持真实 Replay 推演'));
     return;
   }
   const fill = document.getElementById('rProgressBarFill');
@@ -2499,13 +2515,13 @@ async function startReplay(opts = {}) {
 
   if (cancelBtn) cancelBtn.disabled = false;
   if (fill) fill.style.width = '0%';
-  if (card) card.textContent = '正在启动 Replay 任务...';
+  if (card) card.textContent = t('research.replay.starting', '正在启动 Replay 任务...');
 
   try {
     const startRes = await api.research.replayStart(opts);
     const taskId = startRes && startRes.taskId;
     if (!taskId) {
-      if (card) card.textContent = '启动 Replay 失败';
+      if (card) card.textContent = t('research.replay.startFailed', '启动 Replay 失败');
       return;
     }
 
@@ -2523,11 +2539,11 @@ async function startReplay(opts = {}) {
         if (cancelBtn) cancelBtn.disabled = true;
 
         if (st.status === 'cancelled') {
-          if (card) card.textContent = 'Replay 已由用户取消。';
+          if (card) card.textContent = t('research.replay.cancelled', 'Replay 已由用户取消。');
           return;
         }
         if (st.status === 'failed') {
-          if (card) card.textContent = 'Replay 异常失败: ' + st.error;
+          if (card) card.textContent = t('research.replay.failedPrefix', 'Replay 异常失败: ') + st.error;
           return;
         }
 
@@ -2537,11 +2553,11 @@ async function startReplay(opts = {}) {
         const br = () => document.createElement('br');
 
         card.append(
-          '推演结果: ', b(res.replayStatus ? res.replayStatus.toUpperCase() : 'COMPLETE'),
-          ' | 完整性认证: ', b(res.integrity ? res.integrity.toUpperCase() : 'CERTIFIED'),
+          t('research.replay.resultLabel', '推演结果: '), b(res.replayStatus ? res.replayStatus.toUpperCase() : 'COMPLETE'),
+          t('research.replay.integrityLabel', ' | 完整性认证: '), b(res.integrity ? res.integrity.toUpperCase() : 'CERTIFIED'),
           br(),
-          '状态跃迁总计: ', b(res.stateChanges ? res.stateChanges.length : 0), ' 次',
-          ' | 接受证据: ', b(res.acceptedEvidenceCount || 0), ' 条',
+          t('research.replay.scCountLabel', '状态跃迁总计: '), b(res.stateChanges ? res.stateChanges.length : 0), t('research.replay.scTimes', ' 次'),
+          t('research.replay.acceptedEvLabel', ' | 接受证据: '), b(res.acceptedEvidenceCount || 0), t('research.replay.evCount', ' 条'),
           br()
         );
 
@@ -2549,13 +2565,13 @@ async function startReplay(opts = {}) {
           const failSpan = document.createElement('div');
           failSpan.style.color = '#ff6b81';
           failSpan.style.marginTop = '4px';
-          failSpan.textContent = `Fail-Stop 熔断: 第 ${res.failure.line} 行数据损坏 (${res.failure.reason})，推演已冻结在第 ${res.lastValidRecord} 行`;
+          failSpan.textContent = t('research.replay.fuseBlown', 'Fail-Stop 熔断: 第 {line} 行数据损坏 ({reason})，推演已冻结在第 {last} 行', { line: res.failure.line, reason: res.failure.reason, last: res.lastValidRecord });
           card.appendChild(failSpan);
         } else {
           const okSpan = document.createElement('div');
           okSpan.style.color = '#2ecc71';
           okSpan.style.marginTop = '4px';
-          okSpan.textContent = 'Replay 推演与当前主体状态完全一致 (Certified)';
+          okSpan.textContent = t('research.replay.certifiedOk', 'Replay 推演与当前主体状态完全一致 (Certified)');
           card.appendChild(okSpan);
         }
       }
@@ -2567,7 +2583,7 @@ async function startReplay(opts = {}) {
       };
     }
   } catch (err) {
-    if (card) card.textContent = 'Replay 异常: ' + err.message;
+    if (card) card.textContent = t('research.replay.exceptionPrefix', 'Replay 异常: ') + err.message;
     if (cancelBtn) cancelBtn.disabled = true;
   }
 }
@@ -2590,7 +2606,7 @@ function renderStateDemo() {
 function renderWindowDetailDemo(wNo) {
   const card = document.getElementById('rWindowSummaryCard');
   if (card) {
-    card.textContent = `[演示] Window #${wNo} | 100 轮 | 200 条消息 | 5 分段 | 状态完整认证`;
+    card.textContent = t('research.windows.demoSummary', '[演示] Window #{win} | 100 轮 | 200 条消息 | 5 分段 | 状态完整认证', { win: wNo });
   }
   renderRoundsDemo(1);
 }
@@ -2602,7 +2618,7 @@ function renderRoundsDemo(segIdx) {
   for (let r = (segIdx - 1) * 20 + 1; r <= segIdx * 20; r++) {
     const item = document.createElement('div');
     item.className = 'r-round-item';
-    item.textContent = `第 ${r} 轮 (UNRESOLVED): [演示环境未连接后端]`;
+    item.textContent = t('research.rounds.demoRound', '第 {r} 轮 (UNRESOLVED): [演示环境未连接后端]', { r });
     box.appendChild(item);
   }
 }
@@ -2672,7 +2688,7 @@ document.getElementById('rReplayAllBtn')?.addEventListener('click', () => startR
 document.getElementById('rReplayUntilBtn')?.addEventListener('click', () => {
   const w = Number(document.getElementById('rReplayUntilWin')?.value);
   if (w > 0) startReplay({ untilWindow: w });
-  else alert('请输入有效的目标窗口号');
+  else alert(t('research.replay.validWinPrompt', '请输入有效的目标窗口号'));
 });
 
 // 绑定导出事件
@@ -2693,9 +2709,9 @@ async function handleExport(opts) {
     out.value = text;
     updateExportMeta();
   };
-  setOut('正在生成导出数据...');
+  setOut(t('research.export.generating', '正在生成导出数据...'));
   if (!api || !api.research) {
-    setOut(JSON.stringify({ note: '预览模式模拟导出', opts }, null, 2));
+    setOut(JSON.stringify({ note: t('research.export.previewSim', '预览模式模拟导出'), opts }, null, 2));
     return;
   }
   try {
@@ -2706,7 +2722,7 @@ async function handleExport(opts) {
       setOut(JSON.stringify(res, null, 2));
     }
   } catch (err) {
-    setOut('导出失败: ' + err.message);
+    setOut(t('research.export.failedPrefix', '导出失败: ') + err.message);
   }
 }
 
@@ -2717,10 +2733,10 @@ function updateExportMeta() {
   if (!meta || !out) return;
   const v = String(out.value || '');
   const head = v.trimStart();
-  if (!head) { meta.textContent = '尚未生成'; return; }
-  if (head === '正在生成导出数据...') { meta.textContent = '生成中…'; return; }
-  const kind = (head.startsWith('{') || head.startsWith('[')) ? 'JSON' : 'CSV / 文本';
-  meta.textContent = kind + ' · ' + v.split('\n').length + ' 行 · ' + formatDisplayTime(Date.now());
+  if (!head) { meta.textContent = t('research.export.metaEmpty', '尚未生成'); return; }
+  if (head === t('research.export.generating', '正在生成导出数据...')) { meta.textContent = t('research.export.generatingShort', '生成中…'); return; }
+  const kind = (head.startsWith('{') || head.startsWith('[')) ? 'JSON' : t('research.export.kindCsvText', 'CSV / 文本');
+  meta.textContent = t('research.export.metaPattern', '{kind} · {lines} 行 · {time}', { kind, lines: v.split('\n').length, time: formatDisplayTime(Date.now()) });
 }
 /* v1.0 保存为文件（复制之外的第二出口）——文件名带时间戳，类型随内容 */
 document.getElementById('rExportSave')?.addEventListener('click', () => {
@@ -2809,10 +2825,10 @@ if (act === 'wardrobe') return toggleWardrobe();   // v1.0：衣橱自设置独�
   if (act === 'panel') return (panel && !panel.classList.contains('hidden')) ? closePanel() : openPanel();   // v1.0 toggle：再点即收
   if (act === 'research') return (researchPanel && !researchPanel.classList.contains('hidden')) ? closeResearchPanel() : openResearchPanel();   // v1.0 toggle：再点即收
   if (act === 'pin') {
-    if (!api) return say('预览模式没有窗口可固定');
+    if (!api) return say(t('say.pinPreview', '预览模式没有窗口可固定'));
     api.togglePin().then((on) => {
       updatePinLabel();   // 拨完立刻同步文案
-      say(on ? '好啦，一直浮在最前面~' : '取消置顶了，会被别的窗口盖住哦');
+      say(on ? t('say.pinOn', '好啦，一直浮在最前面~') : t('say.pinOff', '取消置顶了，会被别的窗口盖住哦'));
     });
     return;
   }
@@ -2969,7 +2985,7 @@ function notePokeAndMaybeAsk() {
 if (api && api.onAssetWarning) {
   api.onAssetWarning((report) => {
     if (!report.hasFallback && !report.hasLayers) {
-      say('立绘资源未就绪，请按 ASSET-GENERATION-GUIDE.md 生成立绘放入 assets/', 10000);
+      say(t('say.assetNotReady', '立绘资源未就绪，请按 ASSET-GENERATION-GUIDE.md 生成立绘放入 assets/'), 10000);
     }
   });
 }
