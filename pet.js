@@ -584,7 +584,7 @@ function updateOutfitSuggest(cat) {
   const plan = desired ? planOutfit(cat.equip, desired) : [];
   const names = plan
     .filter(p => !p.itemId.startsWith('off_'))
-    .map(p => (lookup[p.itemId] && lookup[p.itemId].name) || p.itemId);
+    .map(p => t('wardrobe.item.' + p.itemId, (lookup[p.itemId] && lookup[p.itemId].name) || p.itemId));
   if (!plan.length || !names.length) return hide();
   wdPendingPlan = plan;
   wdSuggestText.textContent = t('wardrobe.suggestPrefix') + names.join(' + ');
@@ -645,7 +645,7 @@ const slotBox = document.getElementById('wdSlots');
       if (!id) continue;
       const chip = document.createElement('span');
       chip.className = 'wd-now-chip';
-      chip.textContent = (nameOf[id] || id);
+      chip.textContent = t('wardrobe.item.' + id, (nameOf[id] || id));
       nowBox.appendChild(chip);
     }
   }
@@ -653,19 +653,20 @@ const slotBox = document.getElementById('wdSlots');
   for (const [pid, pname] of Object.entries(cat.presets)) {
     const b = document.createElement('button');
     const isWip = (pid === 'casual' || pid === 'gothic');
-    b.textContent = isWip ? pname + ' (待制作)' : pname;
+    const localizedPname = t('wardrobe.preset.' + pid, pname);
+    b.textContent = isWip ? localizedPname + t('wardrobe.wipSuffix', ' (待制作)') : localizedPname;
     b.className = 'wd-preset' + (cat.preset === pid ? ' on' : '') + (isWip ? ' wd-wip' : '');
     if (isWip) {
-      b.title = '点阵元素重构中，晚上台式机制作';
+      b.title = t('wardrobe.wipTitle', '点阵元素重构中，晚上台式机制作');
     }
     b.addEventListener('click', async () => {
       wdAnchor = null;
       if (isWip) {
-        say('这两套衣服里面的点阵元素正在重做中，晚上换上~');
+        say(t('wardrobe.wipHint', '这两套衣服里面的点阵元素正在重做中，晚上换上~'));
         return;
       }
       const r = await api.wardrobePreset(pid);
-      if (!r.ok) say('这套我换不上：' + r.error);
+      if (!r.ok) say(t('wardrobe.wearFailed', '这套我换不上：') + r.error);
       refreshWardrobe();
     });
     presetBox.appendChild(b);
@@ -678,14 +679,15 @@ const slotBox = document.getElementById('wdSlots');
     row.className = 'wd-row';
     const label = document.createElement('span');
     label.className = 'wd-slot';
-    label.textContent = slot.name;
+    label.textContent = t('wardrobe.slot.' + slot.id, slot.name);
     row.appendChild(label);
 
     const cur = cat.equip[slot.id];
     for (const it of items) {
       const b = document.createElement('button');
       b.className = 'wd-item' + (cur === it.id ? ' on' : '');
-      b.title = it.name + '（' + it.id + '）';
+      const itemName = t('wardrobe.item.' + it.id, it.name);
+      b.title = itemName + '（' + it.id + '）';
       // v1.0 缩略图：切片即预览（图就是那件衣服）；无 file 的旧数据/mocked 自动降级纯文字
       if (it.file) {
         const im = document.createElement('img');
@@ -694,14 +696,14 @@ const slotBox = document.getElementById('wdSlots');
         b.appendChild(im);
       }
       const nm = document.createElement('span');
-      nm.textContent = it.name;
+      nm.textContent = itemName;
       b.appendChild(nm);
       b.addEventListener('click', async () => {
         // 实机反馈：点已穿的单品 = 脱下（身份槽除外）；互斥槽自动解绑后落子，不再报错卡死
         if (!slot.required && cur === it.id) {
           wdAnchor = null;
           const ro = await api.wardrobeSet(slot.id, null);
-          if (!ro.ok) say('这件脱不掉：' + ro.error);
+          if (!ro.ok) say(t('wardrobe.offFailed', '这件脱不掉：') + ro.error);
           refreshWardrobe();
           return;
         }
@@ -715,7 +717,7 @@ const slotBox = document.getElementById('wdSlots');
           r = await api.wardrobeSet(op.slot, op.itemId.startsWith('off_') ? null : op.itemId);
           if (!r.ok) break;
         }
-        if (!r.ok) say('这件穿不上：' + r.error);
+        if (!r.ok) say(t('wardrobe.putOnFailed', '这件穿不上：') + r.error);
         refreshWardrobe();
       });
       row.appendChild(b);
@@ -730,7 +732,7 @@ const slotBox = document.getElementById('wdSlots');
       off.addEventListener('click', async () => {
         wdAnchor = null;
         const r = await api.wardrobeSet(slot.id, null);
-        if (!r.ok) say('这件脱不掉：' + r.error);
+        if (!r.ok) say(t('wardrobe.offFailed', '这件脱不掉：') + r.error);
         refreshWardrobe();
       });
       row.appendChild(off);
@@ -910,6 +912,7 @@ function renderI18nPanel() {
   if (tzLabel) tzLabel.textContent = t('panel.timezone');
   // v1.0 设置面板与右键菜单全量文案（新文案一律入表，双语对称）
   const setText = (id, key) => { const el = document.getElementById(id); if (el) el.textContent = t(key); };
+  const setPlaceholder = (id, key) => { const el = document.getElementById(id); if (el) el.placeholder = t(key); };
   setText('panelTitle', 'panel.title');
   setText('secConn', 'sec.conn');
   setText('secMemory', 'sec.memory');
@@ -917,6 +920,16 @@ function renderI18nPanel() {
   setText('secDanger', 'sec.danger');
   setText('wardrobeTitle', 'sec.wardrobe');   // 衣橱面板标题
   setText('wdHint', 'wd.hint');
+  setText('wdSuggestBtn', 'wardrobe.applyComplete');
+  setText('wdCloseHint', 'panel.closeHint');
+  setText('presetLabel', 'preset.section');
+
+  // Agent 确认卡片
+  setText('acLabelScope', 'agent.label.scope');
+  setText('acLabelReason', 'agent.label.reason');
+  setText('acLabelBudget', 'agent.label.budget');
+  setText('acLabelContent', 'agent.label.content');
+  setText('acExpandBtn', 'agent.content.expand');
 
   // 连接区与用量
   setText('connQuickTitle', 'conn.quick');
@@ -933,12 +946,9 @@ function renderI18nPanel() {
   setText('statsTitle', 'sec.stats');
 
   // 输入框占位符
-  const connNameInput = document.getElementById('connName');
-  if (connNameInput) connNameInput.placeholder = t('conn.namePlaceholder');
-  const connKeyInput = document.getElementById('connKey');
-  if (connKeyInput) connKeyInput.placeholder = t('conn.keyPlaceholder');
-  const connModelInput = document.getElementById('connModel');
-  if (connModelInput) connModelInput.placeholder = t('conn.modelPlaceholder');
+  setPlaceholder('connName', 'conn.namePlaceholder');
+  setPlaceholder('connKey', 'conn.keyPlaceholder');
+  setPlaceholder('connModel', 'conn.modelPlaceholder');
 
   // 记忆与时区
   setText('memTitle', 'mem.title');
@@ -975,6 +985,70 @@ function renderI18nPanel() {
   }
   setText('rFooterStatus', 'research.footer.status');
   setText('rFooterHashes', 'research.footer.hashes');
+
+  // 个体观测面板子标题与静态区
+  setText('rDreamsTitle', 'research.dreams.title');
+  setText('rStateTitle', 'research.state.title');
+  setText('rVitalsTitle', 'research.state.vitals');
+  setText('rDevTitle', 'research.state.dev');
+  setText('rCogTitle', 'research.state.cog');
+  setText('rRelTitle', 'research.state.rel');
+  setText('rLexiconTitle', 'research.state.lexicon');
+  setText('rExpectTitle', 'research.state.expect');
+  setText('rHistoryTitle', 'research.state.history');
+  setText('rWindowSelectLabel', 'research.windows.selectLabel');
+  document.querySelectorAll('.r-seg-btn').forEach(b => {
+    const seg = b.dataset.seg;
+    if (seg) b.textContent = t('research.windows.seg', '分段 ') + seg;
+  });
+
+  // 归因与 EOI 溯源
+  const subProv = document.querySelector('.r-subtab[data-subtab="prov"]');
+  if (subProv) subProv.textContent = t('research.prov.tabProv');
+  const subEoi = document.querySelector('.r-subtab[data-subtab="eoi"]');
+  if (subEoi) subEoi.textContent = t('research.prov.tabEoi');
+  const subRej = document.querySelector('.r-subtab[data-subtab="rejected"]');
+  if (subRej) subRej.textContent = t('research.prov.tabRejected');
+  setPlaceholder('rScInput', 'research.prov.scPlaceholder');
+  setText('rTraceBtn', 'research.prov.traceBtn');
+  const rProvRes = document.getElementById('rProvResult');
+  if (rProvRes && (!rProvRes.dataset.hasResult || rProvRes.dataset.hasResult === 'false') && rProvRes.children.length === 0) {
+    rProvRes.textContent = t('research.prov.resultEmpty');
+  }
+  setPlaceholder('rEoiInput', 'research.prov.eoiPlaceholder');
+  setText('rTraceEoiBtn', 'research.prov.traceEoiBtn');
+  const rEoiRes = document.getElementById('rEoiResult');
+  if (rEoiRes && (!rEoiRes.dataset.hasResult || rEoiRes.dataset.hasResult === 'false') && rEoiRes.children.length === 0) {
+    rEoiRes.textContent = t('research.prov.eoiEmpty');
+  }
+
+  // Replay 实验室
+  setText('rReplayTitle', 'research.replay.title');
+  setText('rReplayAllBtn', 'research.replay.allBtn');
+  setText('rReplayCancelBtn', 'research.replay.cancelBtn');
+  setPlaceholder('rReplayUntilWin', 'research.replay.untilPlaceholder');
+  setText('rReplayUntilBtn', 'research.replay.untilBtn');
+  const rProgStage = document.getElementById('rProgressStage');
+  if (rProgStage && (!rProgStage.dataset.running || rProgStage.dataset.running === 'false')) {
+    rProgStage.textContent = t('research.replay.ready');
+  }
+
+  // 数据导出
+  setText('rExportTitle', 'research.export.title');
+  setText('rExpGroupState', 'research.export.groupState');
+  setText('rExpTrajJson', 'research.export.trajJson');
+  setText('rExpTrajCsv', 'research.export.trajCsv');
+  setText('rExpScCsv', 'research.export.scCsv');
+  setText('rExpGroupEvidence', 'research.export.groupEvidence');
+  setText('rExpEvCsv', 'research.export.evCsv');
+  setText('rExpFullBundle', 'research.export.fullBundle');
+  const rExpMeta = document.getElementById('rExportMeta');
+  if (rExpMeta && (!rExpMeta.dataset.generated || rExpMeta.dataset.generated === 'false')) {
+    rExpMeta.textContent = t('research.export.metaEmpty');
+  }
+  setText('rExportCopy', 'research.export.copyBtn');
+  setText('rExportSave', 'research.export.saveBtn');
+  setPlaceholder('rExportOutput', 'research.export.previewPlaceholder');
 }
 
 /* ---------- 设置面板两栏导航（v1.0 用户设计） ----------
@@ -1698,18 +1772,18 @@ document.getElementById('connSave').addEventListener('click', async () => {
   if (!api || !api.connections || !connSelectedId) return;
   const key = document.getElementById('connKey').value;
   const r = await api.connections.update(connSelectedId, connEditorFields(), key || undefined);
-  if (!r || r.ok === false) return connSay('保存失败：' + ((r && r.error) || '未知错误'));
+  if (!r || r.ok === false) return connSay(t('conn.saveFailedPrefix', '保存失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
   document.getElementById('connKey').value = '';
-  connSay('已保存');
+  connSay(t('conn.saved', '已保存'));
   await refreshConnections();
 });
 
 document.getElementById('connTest').addEventListener('click', async () => {
   if (!api || !api.connections || !connSelectedId) return;
-  connSay('测试中…（可能发起一次极小计费请求）');
+  connSay(t('conn.testing', '测试中…（可能发起一次极小计费请求）'));
   const r = await api.connections.test(connSelectedId);
-  if (!r || r.ok === false) return connSay('测试失败：' + ((r && r.error) || '未知错误'));
-  if (r.status === 'verified') connSay('已验证成功（' + r.phase + '）');
+  if (!r || r.ok === false) return connSay(t('conn.testFailedPrefix', '测试失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
+  if (r.status === 'verified') connSay(t('conn.verifiedPrefix', '已验证成功（') + r.phase + '）');
   else if (r.status === 'failed') connSay('验证失败（' + r.phase + '）：' + (r.reason || ''));
   else connSay('未验证（证据不足）：' + (r.reason || r.phase));
   await refreshConnections();
@@ -2665,9 +2739,9 @@ document.getElementById('rExportSave')?.addEventListener('click', () => {
     a.download = fname;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    btn.textContent = '已保存 ✓';
+    btn.textContent = t('status.savedCheck', '已保存 ✓');
   } catch (e) {
-    btn.textContent = '保存失败';
+    btn.textContent = t('status.saveFailed', '保存失败');
   }
 });
 
@@ -2679,9 +2753,9 @@ document.getElementById('rExportCopy')?.addEventListener('click', async () => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(out.value || '');
     }
-    btn.textContent = '已复制 ✓';
+    btn.textContent = t('status.copiedCheck', '已复制 ✓');
   } catch (e) {
-    btn.textContent = '复制失败';
+    btn.textContent = t('status.copyFailed', '复制失败');
   }
 });
 
@@ -2806,8 +2880,8 @@ if (api && api.onMotionState) {
     } catch { /* 降级：单图皮套 */ }
   } else hasKey = false;
 
-  if (hasKey) say('嗨，我是初澜~', 4200);
-  else say('先右键 → 设置，填上 API Key 哦', 6000);
+  if (hasKey) say(t('chulan.greeting', '嗨，我是初澜~'), 4200);
+  else say(t('chulan.noKeyHint', '先右键 → 设置，填上 API Key 哦'), 6000);
 })();
 
 // 随机眨眼（若 animController 已接管则由其动力学自主调度，否则降级使用旧计时器）
@@ -2916,8 +2990,13 @@ if (!api) {
   setInterval(() => {
     if (!politeToSpeak('idle')) return;
     if (Math.random() < 0.25) {
-      let line = FALLBACK[Math.floor(Math.random() * FALLBACK.length)];
-      if (line === lastAuto) line = FALLBACK[(FALLBACK.indexOf(line) + 1) % FALLBACK.length];
+      const pool = [
+        t('chulan.idle1', FALLBACK[0]),
+        t('chulan.idle2', FALLBACK[1]),
+        t('chulan.idle3', FALLBACK[2])
+      ];
+      let line = pool[Math.floor(Math.random() * pool.length)];
+      if (line === lastAuto) line = pool[(pool.indexOf(line) + 1) % pool.length];
       lastAuto = line;
       say(line);
     }
