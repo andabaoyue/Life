@@ -340,6 +340,51 @@ function sseRes(chunks) {
       persistCfg: (c) => okCalls.push(c)
     });
     check('hot-swap 成功路径：candidate 采纳、旧 Brain 关闭', res2.ok === true && res2.brain === fresh && oldBrain.shut === true);
+
+    // M11: 顺序契约断言 —— 完整 Brain 由 shutdown 统一收尾，swapBrain 绝不在 shutdown 之前提前调 flushAll
+    const order = [];
+    const orderOldBrain = {
+      abort() { order.push('abort'); },
+      shutdown() { order.push('abort'); order.push('flush'); },
+      flushAll() { order.push('premature_flush'); }
+    };
+    swapBrain({
+      oldBrain: orderOldBrain,
+      oldCfg: { provider: 'deepseek' },
+      nextCfg: { provider: 'generic' },
+      createCandidate: () => ({ shutdown() {} }),
+      bindCandidate: () => {},
+      persistCfg: () => {}
+    });
+    check('M11 hot-swap 停机顺序：shutdown 接管收尾，禁止提前 flushAll', order.length === 2 && order[0] === 'abort' && order[1] === 'flush');
+
+    // M11: 退化形态契约 —— 无 shutdown 时先 abort 后 flushAll 兜底
+    const degradedOrder = [];
+    const degradedOldBrain = {
+      abort() { degradedOrder.push('abort'); },
+      flushAll() { degradedOrder.push('flush'); }
+    };
+    swapBrain({
+      oldBrain: degradedOldBrain,
+      oldCfg: { provider: 'deepseek' },
+      nextCfg: { provider: 'generic' },
+      createCandidate: () => ({ shutdown() {} }),
+      bindCandidate: () => {},
+      persistCfg: () => {}
+    });
+    check('M11 hot-swap 退化形态：无 shutdown 时先 abort 再 flushAll', degradedOrder.length === 2 && degradedOrder[0] === 'abort' && degradedOrder[1] === 'flush');
+
+    // M11: 仅 flushAll 退化形态 —— 兜底刷盘依然被调用不丢失
+    let onlyFlushed = false;
+    swapBrain({
+      oldBrain: { flushAll() { onlyFlushed = true; } },
+      oldCfg: { provider: 'deepseek' },
+      nextCfg: { provider: 'generic' },
+      createCandidate: () => ({ shutdown() {} }),
+      bindCandidate: () => {},
+      persistCfg: () => {}
+    });
+    check('M11 hot-swap 仅 flushAll 退化形态兜底仍被执行', onlyFlushed === true);
   }
 
   /* ===== P5-B-01: Generic complete 全生命周期 timeout ===== */

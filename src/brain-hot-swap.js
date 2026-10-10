@@ -69,12 +69,16 @@ function swapBrain({
     };
   }
 
-  // 3. 成功：flush / 关闭旧 Brain（非致命异常不阻断切换）
+  // 3. 成功：关闭 / 刷盘旧 Brain（非致命异常不阻断切换）
+  // 消除强杀窗口不自洽：若存在 shutdown 由其内部按 abort -> flushAll 顺序收尾；
+  // 无 shutdown 的退化形态亦维持先叫停、再兜底刷盘（保持与 shutdown 内部同序）。
   try {
     if (oldBrain) {
-      if (typeof oldBrain.flushAll === 'function') oldBrain.flushAll();
       if (typeof oldBrain.shutdown === 'function') oldBrain.shutdown();
-      else if (typeof oldBrain.abort === 'function') oldBrain.abort();
+      else {
+        if (typeof oldBrain.abort === 'function') oldBrain.abort();
+        if (typeof oldBrain.flushAll === 'function') oldBrain.flushAll();
+      }
     }
   } catch (err) {
     console.warn('[Brain] 旧 Brain 关闭异常（非致命）:', err.message);

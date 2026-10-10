@@ -64,7 +64,7 @@ class FakeBrain {
     this.birthAt = 111111; // Subject identity 哨兵：切换绝不可改
   }
   flushAll() { this.flushed = true; }
-  shutdown() { this.shutdownCalled = true; }
+  shutdown() { this.shutdownCalled = true; this.abort(); this.flushAll(); }
   abort() {}
 }
 FakeBrain.failNext = false;
