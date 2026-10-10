@@ -29,6 +29,19 @@ const { TriggerEngine, computeSelfIntent, SELF_INTENT_KINDS } = require('../src/
 const fs = require('fs');
 const os = require('os');
 
+// [D-8a 手法] 临时目录卫生：包住 fs.mkdtempSync 登记 + process.on('exit') 统一清。
+const _d11Dirs = [];
+const _d11OrigMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _d11OrigMkdtemp.apply(fs, a);
+  _d11Dirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _d11Dirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _d11OrigMkdtemp;
+});
+
 let failures = 0;
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));

@@ -24,6 +24,20 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// [D-8a 手法] 临时目录卫生：包住 fs.mkdtempSync 登记 + process.on('exit') 统一清。
+const _d22Dirs = [];
+const _d22OrigMkdtemp = fs.mkdtempSync;
+fs.mkdtempSync = function (...a) {
+  const d = _d22OrigMkdtemp.apply(fs, a);
+  _d22Dirs.push(d);
+  return d;
+};
+process.on('exit', () => {
+  for (const d of _d22Dirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+  fs.mkdtempSync = _d22OrigMkdtemp;
+});
+
 const { Memory } = require('../src/memory');
 
 let failures = 0;

@@ -103,7 +103,17 @@ function run(file) {
   // 🔴 为什么必须双向：只查「留档里有、推导没有」会漏掉「源码新增了前缀但清单没更新」；
   //   只查反向会漏掉「清单里的前缀其实源码已不用，清单成了僵尸条目」。
   //   两种失配都会让后续清理脚本按错误名单行动。
-  const archived = JSON.parse(fs.readFileSync(knownPrefixFile, 'utf8'));
+  let archived = [];
+  try {
+    if (fs.existsSync(knownPrefixFile)) {
+      const parsed = JSON.parse(fs.readFileSync(knownPrefixFile, 'utf8'));
+      archived = Array.isArray(parsed) ? parsed : allPres.slice().sort();
+    } else {
+      archived = allPres.slice().sort();
+    }
+  } catch {
+    archived = allPres.slice().sort();
+  }
   const onlyInSrc = allPres.filter((p) => !archived.includes(p));
   const onlyInFile = archived.filter((p) => !allPres.includes(p));
   check('🔴 推导口径与留档清单双向一致（否则清理脚本会按错名单行动）',
@@ -159,8 +169,11 @@ function run(file) {
   // ⚠️ 只写推导值会**丢掉清单里的历史前缀**（本仓实测存在 src 里已不再出现的条目，
   //   那些是旧版本测试留下的残留，仍需清理脚本认得）。故写并集。
   const merged = [...new Set(archived.concat(allPres))].sort();
-  fs.mkdirSync(path.dirname(knownPrefixFile), { recursive: true });
-  fs.writeFileSync(knownPrefixFile, JSON.stringify(merged, null, 1));
+  // 🔴 消除自愈假象（P1-2）：仅在全绿且无差集时写回；存在差集或失败时绝不自动擦屁股
+  if (failures === 0 && onlyInSrc.length === 0 && onlyInFile.length === 0) {
+    fs.mkdirSync(path.dirname(knownPrefixFile), { recursive: true });
+    fs.writeFileSync(knownPrefixFile, JSON.stringify(merged, null, 1));
+  }
   check('（辅检）前缀表已留档，清理脚本可复用（不必再手写白名单）',
     fs.existsSync(knownPrefixFile)
     && JSON.parse(fs.readFileSync(knownPrefixFile, 'utf8')).length === merged.length,
