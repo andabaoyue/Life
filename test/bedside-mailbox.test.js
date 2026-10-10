@@ -260,6 +260,21 @@ async function main() {
       trkX.record('drag', Date.now() + 3600000, { distance: 200 });
     } catch (e) { threw = true; }
     check('B方案④：未接线提示回调时唤醒不抛异常（提示是附带品，绝不影响唤醒）', threw === false);
+
+    // ⑤ M3：留置记账失败时如实报错（ok: false, note 提示留言未能留置，不崩溃）
+    trkW.enterSleepMode(tcW);
+    const origAppend = brainW.memory.append;
+    brainW.memory.append = () => { throw new Error('DISK_FULL'); };
+    let resFail = null;
+    try {
+      resFail = await brainW.ask('留置失败测试', () => {});
+    } finally {
+      brainW.memory.append = origAppend;
+    }
+    check('M3：留置记账抛错时如实返回 ok: false 且 note 提示留言未能留置',
+      resFail && resFail.ok === false && resFail.note === '[初澜沉睡中，留言未能留置]');
+    check('M3：记账抛错时 messageId 为 null 且 slept 标记保留',
+      resFail && resFail.messageId === null && resFail.slept === true);
   }
 
   // 🔴 D-10 修的退出竞态（真凶不是 server.close 的时机，是 process.exit 本身）。

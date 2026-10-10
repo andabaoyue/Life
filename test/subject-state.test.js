@@ -29,10 +29,13 @@ process.on('exit', () => {
   fs.mkdtempSync = _d8aOrigMkdtemp;
 });
 
+let total = 0;
+let passed = 0;
 let failures = 0;
 function check(name, cond, extra) {
+  total++;
+  if (cond) passed++; else failures++;
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
-  if (!cond) failures++;
 }
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'subject-state-test-')); }
@@ -314,5 +317,59 @@ check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成�
   }
 }
 
+// 11. M1: subject-state.json 缺失 values 字段视同损坏并触发从归档重建
+{
+  const { ExperiencesArchive } = require('../src/experiences-archive');
+  const dirM1 = tmpDir();
+  const arcM1 = new ExperiencesArchive(dirM1);
+  arcM1.appendWindowArchive({
+    windowNo: 1,
+    turns: 10,
+    windowSynthesis: { stableUserFacts: ['事实1'] },
+    verifiedEvidence: [
+      { evidenceId: 'ev-m1-001', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-1', quote: '安静' }
+    ],
+    stateChanges: [
+      { stateChangeId: 'sc-m1-001', trait: 'quiet_preference', delta: 10, previousValue: 0, newValue: 10, evidenceIds: ['ev-m1-001'] }
+    ]
+  });
+  // 写入损坏文件（缺 values）
+  fs.writeFileSync(path.join(dirM1, 'subject-state.json'), JSON.stringify({ windowNo: 1, history: [] }), 'utf8');
+  const stM1 = new SubjectState(dirM1);
+  check('M1: 缺 values 视同损坏并触发从经历归档重建（不静默归零）',
+    stM1.data.values.quiet_preference === 10 && stM1.data.windowNo === 2);
+}
+
+// 12. M7: 持久化 stateChanges 达到 500 条截断时对账对齐
+{
+  const persisted = {
+    values: { quiet_preference: 10 },
+    windowNo: 601,
+    stateChanges: []
+  };
+  // 模拟经历 500 条截断后，persisted 保留最新的 500 条（101..600）
+  for (let i = 101; i <= 600; i++) {
+    persisted.stateChanges.push({
+      stateChangeId: `sc-${i}`, windowNo: i, trait: 'quiet_preference',
+      delta: 1, previousValue: i - 1, newValue: i, evidenceIds: [`ev-${i}`], reducer: 'linear'
+    });
+  }
+  const replayReport = {
+    finalState: { quiet_preference: 10 },
+    nextWindowNo: 601,
+    stateChanges: []
+  };
+  // 完整 Replay 包含全量历史（1..600 共 600 条）
+  for (let i = 1; i <= 600; i++) {
+    replayReport.stateChanges.push({
+      stateChangeId: `sc-${i}`, windowNo: i, trait: 'quiet_preference',
+      delta: 1, previousValue: i - 1, newValue: i, evidenceIds: [`ev-${i}`], reducer: 'linear'
+    });
+  }
+  const resM7 = SubjectState.checkConsistency(persisted, replayReport);
+  check('M7: 持久化变更截断为 500 时与 Replay 最新 500 条成功对账', resM7.match === true);
+}
+
+console.log(`ASSERT total=${total} passed=${passed} failed=${failures}`);
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

@@ -151,6 +151,8 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('main 把穿着块同步给 brain（模型答穿着时看的是真实状态）',
     brain.memory.wardrobe.includes('【当前穿着】')
     && brain.memory.wardrobe.includes('哥特黑连衣裙'));
+  check('M10: 换装成功后主进程同步标记 brain.pendingCacheBreakReason 为 wardrobe_change',
+    brain.pendingCacheBreakReason === 'wardrobe_change');
 
   /* ============ 3. 缩放：常量比例 + 下边缘钉住 ============ */
   const layout = require(path.join(ROOT, 'src/layout.js'));

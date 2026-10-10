@@ -121,6 +121,10 @@ function sseRes(frames) {
     const obj = redactSecrets({ headers: { Authorization: 'Bearer zzz8888' }, model: 'm', nested: { api_key: 'sk-abc-123456' } });
     check('object 输入保持普通字段结构', obj.model === 'm' && obj.headers && obj.nested);
     check('object 敏感键名/键值被清理', obj.headers.Authorization === '[REDACTED]' && obj.nested.api_key === '[REDACTED]');
+    // M8: JSON 引号键名、pwd 键名及裸 Basic 方案脱敏
+    check('JSON 引号键名被脱敏且不泄露 secret', redactSecrets('{"api_key": "top-secret-token-123"}') === '{"api_key": "[REDACTED]"}');
+    check('pwd 键名被脱敏且不泄露密码', redactSecrets('pwd=hunter2') === 'pwd=[REDACTED]');
+    check('裸 Basic 认证被脱敏且保留 Basic 事实类型', redactSecrets('Basic dXNlcjpwYXNzLXRva2Vu') === 'Basic [REDACTED]');
     check('redactSecrets 对任意输入不抛异常', (() => {
       try {
         redactSecrets(undefined); redactSecrets(123); redactSecrets({ a: { b: [KEY] } }); redactSecrets(Symbol ? 'x' : 'x');

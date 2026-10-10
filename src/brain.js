@@ -891,6 +891,7 @@ class Brain {
   //   接不接由她。沉默也是合法回答，如实留痕即可（见 memory.append 的 bedside 标记）。
   if (tr && tr.sleepMode && !proactive) {
     let bedsideId = null;
+    let failed = false;
     try {
       // bedside 标记只标注「这条是睡着时留的」，**不改变它的角色**：
       // 仍是 user 发言，仍进历史，仍出现在对话窗（用户要看得见自己发了什么）。
@@ -898,11 +899,14 @@ class Brain {
       const rec = this.memory.append('user', userText, { bedside: true });
       bedsideId = rec && rec.messageId ? rec.messageId : null;
       this.memory.save(true);
-    } catch (e) { /* 记账失败不崩溃，如实返回留置失败 */ }
+    } catch (e) {
+      /* M3: 记账失败不崩溃，如实返回留置失败 */
+      failed = true;
+    }
     return {
-      ok: true,
+      ok: !failed,
       slept: true,
-      note: '[初澜沉睡中，消息已留置在侧]',
+      note: failed ? '[初澜沉睡中，留言未能留置]' : '[初澜沉睡中，消息已留置在侧]',
       messageId: bedsideId
     };
   }

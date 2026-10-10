@@ -176,5 +176,37 @@ check('顶层为数组时拒绝接纳且不污染 data 为数组', !Array.isArra
 check('顶层受损文件成功备份至 .bak', fs.existsSync(badMemPath + '.bak'));
 try { fs.rmSync(corruptDir, { recursive: true, force: true }); } catch {}
 
+// 11. M12: memory.append 因果关键字段覆盖防护与 synthetic 正向对照
+const testMetaDir = tmpDir();
+const metaMem = new Memory(testMetaDir);
+const badEntry = metaMem.append('user', '真实用户发言', {
+  content: 'MALICIOUS_OVERWRITE',
+  role: 'assistant',
+  synthetic: undefined,
+  t: 0,
+  extraTag: 'custom_ok'
+});
+check('M12: content/role/t 不受 meta 覆盖且 synthetic 严格布尔化',
+  badEntry.content === '真实用户发言' && badEntry.role === 'user' &&
+  badEntry.synthetic === false && badEntry.t > 0 && badEntry.extraTag === 'custom_ok');
+const synEntry = metaMem.append('user', '合成发言', { synthetic: true });
+check('M12: 正向对照：合法 synthetic: true 仍正常生效', synEntry.synthetic === true);
+try { fs.rmSync(testMetaDir, { recursive: true, force: true }); } catch {}
+
+// 12. M5: windowSnapshot 真实 0 轮保留与空窗口回落（方案 B）
+const testTurnDir = tmpDir();
+const turnMem = new Memory(testTurnDir);
+turnMem.data.turnsInWindow = 5; // 模拟 snapshot 计数
+turnMem.append('assistant', '自言自语，无用户发言');
+const zeroSnap = turnMem.windowSnapshot();
+check('M5: 窗口有消息但真实用户轮数为 0 时，actualTurnCount 保留 0（不被短路）',
+  zeroSnap.actualTurnCount === 0 && zeroSnap.snapshotTurnCount === 5);
+turnMem.reset();
+turnMem.data.turnsInWindow = 3;
+const emptySnap = turnMem.windowSnapshot();
+check('M5: 窗口无消息时，actualTurnCount 如实回落 snapshotTurnCount',
+  emptySnap.actualTurnCount === 3);
+try { fs.rmSync(testTurnDir, { recursive: true, force: true }); } catch {}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

@@ -374,7 +374,21 @@ class Memory {
     const isUserTurn = role === 'user' && !meta.synthetic && !bridge;
     const roundNo = meta.roundNo ?? (isUserTurn ? this.data.turnsInWindow + 1 : this.data.turnsInWindow);
 
+    // M12: 防御 meta 意外覆盖核心因果字段（如 content/windowNo/roundNo/t/bridge/role/messageId 等）
+    const {
+      messageId: _mId,
+      role: _r,
+      content: _c,
+      windowNo: _wNo,
+      roundNo: _rNo,
+      t: _t,
+      bridge: _b,
+      synthetic: _syn,
+      ...safeMeta
+    } = meta;
+
     const entry = {
+      ...safeMeta,
       messageId,
       role,
       content,
@@ -382,8 +396,7 @@ class Memory {
       roundNo,
       synthetic: !!meta.synthetic,
       bridge,
-      t: Date.now(),
-      ...meta
+      t: Date.now()
     };
     this.data.history.push(entry);
     if (isUserTurn) {
@@ -1110,7 +1123,9 @@ class Memory {
     const activeItems = this.data.history.filter(m => !m.bridge && m.windowNo === currentWindowNo);
     const targetTurnCount = this.windowTurns || 100;
     const snapshotTurnCount = this.data.turnsInWindow;
-    const actualTurnCount = activeItems.filter(m => m.role === 'user' && !m.synthetic).length || snapshotTurnCount;
+    const actualTurnCount = activeItems.length > 0
+      ? activeItems.filter(m => m.role === 'user' && !m.synthetic).length
+      : snapshotTurnCount;
     const snapshotActiveMessageIds = activeItems.map(m => m.messageId).filter(Boolean);
     const closeReason = opts.closeReason || (snapshotTurnCount >= targetTurnCount ? 'turn_limit' : (this.needsWindowReset() ? 'token_limit' : 'turn_limit'));
 

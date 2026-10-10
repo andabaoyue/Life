@@ -9,6 +9,9 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const {
   createAttempt,
   markOutputYielded,
@@ -146,6 +149,27 @@ function check(name, cond, extra) {
   const s = cb.getState();
   const provKeys = ['observedModel', 'provenanceStatus', 'usageSource', 'runtimeEvidence', 'identitySource', 'attempts', 'semanticKey'];
   check('breaker 状态不含 provenance 字段（真值隔离）', provKeys.every(k => !(k in s)));
+}
+
+/* ============ INT-01: 预留阶段源码门禁（零生产引用） ============ */
+{
+  const srcDir = path.join(__dirname, '..', 'src');
+  const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.js'));
+  const targetModules = ['circuit-breaker', 'provider-routing', 'generation-attempt'];
+  let productionReferences = 0;
+  for (const file of files) {
+    if (targetModules.some(m => file === `${m}.js`)) continue;
+    const raw = fs.readFileSync(path.join(srcDir, file), 'utf8');
+    // 剥离注释后检索（复用 wardrobe.test.js 先例），防注释说明误伤，同时捕获 require 与 import
+    const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    for (const mod of targetModules) {
+      const re = new RegExp(`(?:require|import)\\s*\\([\'"].*${mod}[\'"]`);
+      if (re.test(code)) {
+        productionReferences++;
+      }
+    }
+  }
+  check('INT-01 源码门禁：src/ 对三大预留模块的生产引用数恒为 0（架构储备未接主生产链路）', productionReferences === 0);
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

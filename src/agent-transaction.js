@@ -174,11 +174,21 @@ class WriteTransactionManager {
     }
     tx.status = 'committed';
     tx.committed = true;
-    this._appendWal({
-      txId: tx.txId, target: tx.target, status: 'committed', at: Date.now(),
-    });
+    let walErr = null;
+    try {
+      this._appendWal({
+        txId: tx.txId, target: tx.target, status: 'committed', at: Date.now(),
+      });
+    } catch (err) {
+      walErr = err;
+    }
     if (tx.backupPath && tx.persist) {
       try { fs.unlinkSync(tx.backupPath); } catch { /* 备份清理失败不掩盖提交成功 */ }
+    }
+    if (walErr) {
+      // M2: commit WAL 写失败时仍删除备份文件，防下次启动 recover 误将已写入的新数据回滚掉；
+      // 重启恢复时会报 BACKUP_MISSING，属 fail-safe 预期残留，不代表数据损坏。
+      throw walErr;
     }
     return true;
   }

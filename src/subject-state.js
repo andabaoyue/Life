@@ -183,8 +183,13 @@ class SubjectState {
 
           // P0-01: 检查是否存在未决的 Archive 记录导致 Persisted State 落后于 Archive (Recovery Pending)
           this.checkAndAutoRecoverConsistency();
-        } else if (corruptDetected) {
-          // P0-09: 文件损坏时，优先从 experiences.jsonl 执行离线 Replay 重建
+        } else if (corruptDetected || (raw && typeof raw === 'object' && (!raw.values || typeof raw.values !== 'object'))) {
+          // P0-09 / M1: 文件损坏或合法 JSON 但缺失 values 时，优先从 experiences.jsonl 执行离线 Replay 重建，严禁静默归零
+          if (!corruptDetected) {
+            console.warn('[SubjectState] subject-state.json 缺失 values 字段，视同损坏，正在备份并尝试从经历归档重建');
+            const corruptBackup = this.path + '.corrupt.' + Date.now();
+            try { fs.copyFileSync(this.path, corruptBackup); } catch {}
+          }
           this.rebuildFromArchiveOrFallback();
         }
       } else {
@@ -1412,7 +1417,12 @@ class SubjectState {
     const stateChangeDiffs = [];
     if (Array.isArray(pChanges) && replayReport && Array.isArray(replayReport.stateChanges)) {
       const pCanon = pChanges.map(canonicalizeStateChange);
-      const rCanon = replayReport.stateChanges.map(canonicalizeStateChange);
+      // M7: 若持久化 stateChanges 达到 500 条发生硬截断，Replay 报告包含完整归档历史；
+      // 对账限定在同一截断窗口内（比对最近 pCanon.length 条），防止 500 条后对账永久失配。
+      const rSource = (pCanon.length === 500 && replayReport.stateChanges.length > 500)
+        ? replayReport.stateChanges.slice(replayReport.stateChanges.length - 500)
+        : replayReport.stateChanges;
+      const rCanon = rSource.map(canonicalizeStateChange);
       if (pCanon.length !== rCanon.length) {
         stateChangesMatch = false;
         stateChangeDiffs.push({ index: -1, reason: 'LENGTH_MISMATCH', persisted: pCanon.length, replayed: rCanon.length });

@@ -1037,7 +1037,10 @@ ipcGuard.handle('internal-regulation-get', () => (brain && brain.internalRegulat
 function pushWardrobe(r) {
   if (r && !(r.ok && r.changed)) return;
   if (!win || win.isDestroyed() || !wardrobe) return;
-  if (brain) brain.memory.wardrobe = wardrobe.promptBlock(brain.subjectState ? brain.subjectState.values : null);
+  if (brain) {
+    brain.memory.wardrobe = wardrobe.promptBlock(brain.subjectState ? brain.subjectState.values : null);
+    brain.pendingCacheBreakReason = 'wardrobe_change';
+  }
   win.webContents.send('wardrobe-changed', wardrobe.layers());
 }
 
