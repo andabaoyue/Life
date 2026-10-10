@@ -226,12 +226,9 @@ function maybeAskForSelfNote(selfIntent) {
         if (rawHint === '.' || rawHint === '..') return;
         if (/\.\./.test(rawHint)) return;
         if (rawHint.length > 200) return;
+        if (rawHint.includes(':') || rawHint.endsWith('.') || rawHint.endsWith(' ') || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(rawHint.split('.')[0])) return;
 
         const scope = path.join(deps.agentSandbox, rawHint);
-        const evaluated = deps.agentIpc && typeof deps.agentIpc.evaluateProposal === 'function'
-          ? deps.agentIpc.evaluateProposal({ capability: 'workspace.write', scope, reason: intent.reason })
-          : { ok: false, code: 'EVALUATOR_UNAVAILABLE' };
-        if (!evaluated || evaluated.ok !== true) return;
 
         // 🔴 D-17（用户拍板 C1）：自发愿望**盖 selfNote 戳** ⇒ 执行器闸门 4 免逐次确认。
         //   为什么：留便签的本质是「趁你不在时悄悄写下」；若要弹卡片等你回来才授权，
@@ -241,7 +238,8 @@ function maybeAskForSelfNote(selfIntent) {
           ? deps.agentIpc.proposeInternal(
             { capability: 'workspace.write', scope, reason: intent.reason },
             'main',
-            'selfNote'
+            'selfNote',
+            note.content
           )
           : null;
         if (res && res.ok && res.proposal) {

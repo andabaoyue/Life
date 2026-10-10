@@ -114,6 +114,17 @@ function buildViewModel(proposal, opts = {}) {
     scope: truncate(proposal.scope, SCOPE_MAX),
     scopeTruncated: String(proposal.scope || '').length > SCOPE_MAX,
     reason: truncate(proposal.reason || t('agent.reason.empty', '（未说明理由）'), 200),
+    // 🔴 UX-SEC-01：沙盒覆写风险提示
+    isOverwrite: Boolean(proposal.isOverwrite),
+    warnOverwrite: Boolean(proposal.isOverwrite) && capability === 'workspace.write',
+    overwriteLabel: Boolean(proposal.isOverwrite) && capability === 'workspace.write'
+      ? t('agent.warn.overwrite', '⚠️ 将覆盖沙盒内已存在的同名文件')
+      : '',
+    // 🔴 SEC-01：内容哈希与只读预览元数据
+    contentHash: proposal.contentHash ? String(proposal.contentHash) : null,
+    contentBytes: Number.isFinite(proposal.contentBytes) ? proposal.contentBytes : null,
+    contentPreview: typeof proposal.contentPreview === 'string' ? proposal.contentPreview : null,
+    isTruncated: Boolean(proposal.isTruncated),
     budget: {
       tripped,
       tripReason: reason,
@@ -137,7 +148,7 @@ function buildViewModel(proposal, opts = {}) {
  * @param {function} onDecision (decision, proposalId) => void|Promise
  * @param {function} t     i18n
  */
-function bind(el, onDecision, t) {
+function bind(el, onDecision, t, bindOpts = {}) {
   if (!el) return { show() { return false; }, hide() {}, isVisible() { return false; } };
 
   // 🔴 t 可能不传（调用方疏忽、测试替身、单测里只想验 DOM 行为）。
@@ -148,17 +159,83 @@ function bind(el, onDecision, t) {
 
   let current = null;          // 当前展示的 viewModel
   let busy = false;            // 决策上报中：防连点导致重复确认
+  let fetchingContent = false; // 正在拉取完整正文中
+
+  const expandBtn = el.querySelector('[data-agent-action="expand-content"]');
+  const fullBox = el.querySelector('[data-agent-box="content-full"]');
+  const fullTextEl = el.querySelector('[data-agent-field="content-full"]');
+  const metaRow = el.querySelector('.ac-meta-row');
+  const previewBox = el.querySelector('.ac-content-preview-box');
+
+  function resetContentDrawer() {
+    fetchingContent = false;
+    if (fullBox) fullBox.classList.add('hidden');
+    if (fullTextEl) fullTextEl.textContent = '';
+    if (expandBtn) {
+      expandBtn.classList.add('hidden');
+      expandBtn.disabled = false;
+      expandBtn.textContent = tr('agent.content.expand', '查看完整正文');
+    }
+  }
 
   function hide() {
     current = null;
+    resetContentDrawer();
     el.classList.add('hidden');
     el.setAttribute('aria-hidden', 'true');
+  }
+
+  // 🔴 SEC-01：展开按钮单次绑定（纯 textContent 渲染防 XSS，带加载态与错误回退）
+  if (expandBtn) {
+    expandBtn.addEventListener('click', async () => {
+      if (!current || !current.proposalId || fetchingContent) return;
+      fetchingContent = true;
+      expandBtn.disabled = true;
+      expandBtn.textContent = tr('agent.content.loading', '正在获取完整正文…');
+      try {
+        const fetchFn = (typeof current._onFetchContent === 'function')
+          ? current._onFetchContent
+          : ((bindOpts && typeof bindOpts.onFetchContent === 'function')
+            ? bindOpts.onFetchContent
+            : ((typeof window !== 'undefined' && window.deskpet && window.deskpet.agent && typeof window.deskpet.agent.getProposalContent === 'function')
+              ? (id) => window.deskpet.agent.getProposalContent(id)
+              : null));
+        if (typeof fetchFn !== 'function') throw new Error('NO_FETCH_HANDLER');
+        const res = await fetchFn(current.proposalId);
+        let text = null;
+        if (typeof res === 'string') {
+          text = res;
+        } else if (res && res.ok && typeof res.content === 'string') {
+          text = res.content;
+        } else {
+          throw new Error((res && res.error) || 'FETCH_FAILED');
+        }
+        // 🔴 纯 textContent 渲染，严禁 innerHTML 解释（防 XSS 注入）
+        if (fullTextEl && fullBox) {
+          fullTextEl.textContent = text;
+          fullBox.classList.remove('hidden');
+        }
+        expandBtn.classList.add('hidden');
+      } catch (err) {
+        if (fullTextEl && fullBox) {
+          fullTextEl.textContent = tr('agent.content.fetch_error', '（无法加载完整正文，请谨慎授权）');
+          fullBox.classList.remove('hidden');
+        }
+        expandBtn.disabled = false;
+        expandBtn.textContent = tr('agent.content.retry_fetch', '重新获取正文');
+      } finally {
+        fetchingContent = false;
+      }
+    });
   }
 
   function show(proposal, opts = {}) {
     const vm = buildViewModel(proposal, Object.assign({ t: tr }, opts));
     if (!vm.visible) { hide(); return false; }
     current = vm;
+    current._onFetchContent = (opts && typeof opts.onFetchContent === 'function') ? opts.onFetchContent : null;
+
+    resetContentDrawer();
 
     const set = (sel, text) => {
       const n = el.querySelector(sel);
@@ -174,8 +251,38 @@ function bind(el, onDecision, t) {
         : (typeof vm.budget.remainingActions === 'number'
           ? tr('agent.budget.remaining', '剩余可用动作：') + vm.budget.remainingActions
           : ''));
-    set('[data-agent-field="warn"]',
-      vm.warnHighRisk ? tr('agent.warn.highRisk', '这是高风险操作，请确认你要改动的确实是这个目标。') : '');
+    let warnText = '';
+    if (vm.warnOverwrite) {
+      warnText = vm.overwriteLabel || tr('agent.warn.overwrite', '⚠️ 将覆盖沙盒内已存在的同名文件');
+    }
+    if (vm.warnHighRisk) {
+      const hrText = tr('agent.warn.highRisk', '这是高风险操作，请确认你要改动的确实是这个目标。');
+      warnText = warnText ? `${warnText} ${hrText}` : hrText;
+    }
+    set('[data-agent-field="warn"]', warnText);
+    // 🔴 SEC-01：安全渲染内容元数据（纯 textContent，严禁 innerHTML 解释）
+    set('[data-agent-field="content-preview"]', vm.contentPreview || '');
+    set('[data-agent-field="content-hash"]', vm.contentHash ? `SHA-256: ${vm.contentHash.slice(0, 16)}…` : '');
+    set('[data-agent-field="content-bytes"]', Number.isFinite(vm.contentBytes) ? `${vm.contentBytes} B` : '');
+    set('[data-agent-field="content-truncated"]',
+      vm.isTruncated ? tr('agent.content.truncated', '（内容较长，已截断显示前 300 字符）') : '');
+
+    const hasContent = Boolean(vm.contentHash || vm.contentBytes !== null || vm.contentPreview);
+    if (metaRow) {
+      if (hasContent) metaRow.classList.remove('hidden'); else metaRow.classList.add('hidden');
+    }
+    if (previewBox) {
+      if (hasContent) previewBox.classList.remove('hidden'); else previewBox.classList.add('hidden');
+    }
+    if (expandBtn) {
+      if (vm.isTruncated) {
+        expandBtn.classList.remove('hidden');
+        expandBtn.disabled = false;
+        expandBtn.textContent = tr('agent.content.expand', '查看完整正文');
+      } else {
+        expandBtn.classList.add('hidden');
+      }
+    }
     if (typeof el.querySelectorAll === 'function') {
       const keys = el.querySelectorAll('.ac-key');
       if (keys && keys.length >= 3) {

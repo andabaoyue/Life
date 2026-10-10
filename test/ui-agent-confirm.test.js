@@ -178,6 +178,10 @@ function fakeEl() {
   ['[data-agent-field="capability"]', '[data-agent-field="danger"]',
     '[data-agent-field="scope"]', '[data-agent-field="reason"]',
     '[data-agent-field="budget"]', '[data-agent-field="warn"]',
+    '[data-agent-field="content-preview"]', '[data-agent-field="content-hash"]',
+    '[data-agent-field="content-bytes"]', '[data-agent-field="content-truncated"]',
+    '[data-agent-action="expand-content"]', '[data-agent-box="content-full"]',
+    '[data-agent-field="content-full"]', '.ac-meta-row', '.ac-content-preview-box',
     '[data-agent-actions]'].forEach((s) => { nodes[s] = mk(s); });
   const root = mk('root');
   root._cls.add('hidden');
@@ -186,7 +190,9 @@ function fakeEl() {
 }
 
 const origDoc = global.document;
-global.document = { createElement: () => fakeEl().root };check('❌ 反例7 无提案时 show() 返回 false 且卡片保持 hidden', (() => {
+global.document = { createElement: () => fakeEl().root };
+
+check('❌ 反例7 无提案时 show() 返回 false 且卡片保持 hidden', (() => {
   const f = fakeEl();
   const c = bind(f.root, () => {});
   const shown = c.show(null, {});
@@ -306,6 +312,190 @@ check('D3U-11c index.html 加载了 ui-agent-confirm.js', () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   return /<script src="ui-agent-confirm\.js"><\/script>/.test(html);
 });
+
+/* ================= 12. SEC-01 内容安全元数据模型与渲染 ================= */
+check('SEC01-U1 buildViewModel 正确透传 contentHash / contentBytes / contentPreview / isTruncated', () => {
+  const proposalWithMeta = {
+    ...goodProposal,
+    contentHash: 'a1b2c3d4e5f6',
+    contentBytes: 120,
+    contentPreview: '预览正文内容',
+    isTruncated: false,
+  };
+  const vm = buildViewModel(proposalWithMeta, {});
+  return vm.contentHash === 'a1b2c3d4e5f6'
+    && vm.contentBytes === 120
+    && vm.contentPreview === '预览正文内容'
+    && vm.isTruncated === false;
+});
+
+check('SEC01-U2 缺省内容元数据时安全回退（不产生 undefined 字符串）', () => {
+  const vm = buildViewModel(goodProposal, {});
+  return vm.contentHash === null
+    && vm.contentBytes === null
+    && vm.contentPreview === null
+    && vm.isTruncated === false;
+});
+
+check('SEC01-U3 截断文本展示「查看完整正文」按钮，非截断时隐藏', () => {
+  const f = fakeEl();
+  const c = bind(f.root, () => {});
+  const truncatedProposal = {
+    ...goodProposal,
+    contentPreview: 'A'.repeat(300),
+    isTruncated: true,
+  };
+  c.show(truncatedProposal, {});
+  const btnTrunc = f.nodes['[data-agent-action="expand-content"]'];
+  const isShown = !btnTrunc.classList.contains('hidden');
+
+  const shortProposal = {
+    ...goodProposal,
+    contentPreview: '短文本',
+    isTruncated: false,
+  };
+  c.show(shortProposal, {});
+  const btnShort = f.nodes['[data-agent-action="expand-content"]'];
+  const isHidden = btnShort.classList.contains('hidden');
+
+  return isShown && isHidden;
+});
+
+check('SEC01-U4 点击展开按钮获取并展示完整正文（纯 textContent，防 XSS 注入）', async () => {
+  const f = fakeEl();
+  let fetchedId = null;
+  const xssPayload = '<img src=x onerror=alert(1)> & <script>dangerous()</script>';
+  const c = bind(f.root, () => {}, null, {
+    onFetchContent: async (id) => {
+      fetchedId = id;
+      return { ok: true, content: xssPayload };
+    },
+  });
+  const truncatedProposal = {
+    ...goodProposal,
+    contentPreview: '前缀...',
+    isTruncated: true,
+  };
+  c.show(truncatedProposal, {});
+  const expandBtn = f.nodes['[data-agent-action="expand-content"]'];
+  const fullBox = f.nodes['[data-agent-box="content-full"]'];
+  const fullText = f.nodes['[data-agent-field="content-full"]'];
+
+  await expandBtn._h.click();
+
+  return fetchedId === 'proposal-1'
+    && fullText.textContent === xssPayload
+    && !fullBox.classList.contains('hidden')
+    && expandBtn.classList.contains('hidden');
+});
+
+check('SEC01-U5 展开正文失败时友好提示并不崩溃，按钮可重试', async () => {
+  const f = fakeEl();
+  let calls = 0;
+  const c = bind(f.root, () => {}, null, {
+    onFetchContent: async () => {
+      calls++;
+      throw new Error('NETWORK_TIMEOUT');
+    },
+  });
+  const truncatedProposal = {
+    ...goodProposal,
+    contentPreview: '前缀...',
+    isTruncated: true,
+  };
+  c.show(truncatedProposal, {});
+  const expandBtn = f.nodes['[data-agent-action="expand-content"]'];
+  const fullText = f.nodes['[data-agent-field="content-full"]'];
+
+  await expandBtn._h.click();
+
+  return calls === 1
+    && fullText.textContent.includes('无法加载完整正文')
+    && expandBtn.disabled === false
+    && expandBtn.textContent === '重新获取正文';
+});
+
+check('SEC01-U6 hide() 时重置展开抽屉状态与正文内容', async () => {
+  const f = fakeEl();
+  const c = bind(f.root, () => {}, null, {
+    onFetchContent: async () => ({ ok: true, content: '完整正文' }),
+  });
+  c.show({ ...goodProposal, isTruncated: true }, {});
+  const expandBtn = f.nodes['[data-agent-action="expand-content"]'];
+  const fullBox = f.nodes['[data-agent-box="content-full"]'];
+  const fullText = f.nodes['[data-agent-field="content-full"]'];
+
+  await expandBtn._h.click();
+  c.hide();
+
+  return fullBox.classList.contains('hidden')
+    && fullText.textContent === ''
+    && expandBtn.classList.contains('hidden')
+    && expandBtn.disabled === false;
+});
+
+/* ================= 13. UX-SEC-01 覆写风险警示模型与渲染 ================= */
+check('UXSEC-U1 buildViewModel 在 isOverwrite: true 且写操作时生成覆写警告与文案', (() => {
+  const overwriteProposal = {
+    ...goodProposal,
+    capability: 'workspace.write',
+    isOverwrite: true,
+  };
+  const vm = buildViewModel(overwriteProposal, {});
+  return vm.isOverwrite === true
+    && vm.warnOverwrite === true
+    && vm.overwriteLabel === '⚠️ 将覆盖沙盒内已存在的同名文件';
+})());
+
+check('UXSEC-U2 buildViewModel 在 isOverwrite: false 或非写操作时不产生覆写警告', (() => {
+  const newProposal = {
+    ...goodProposal,
+    capability: 'workspace.write',
+    isOverwrite: false,
+  };
+  const vmNew = buildViewModel(newProposal, {});
+
+  const readProposal = {
+    ...goodProposal,
+    capability: 'workspace.read',
+    isOverwrite: true,
+  };
+  const vmRead = buildViewModel(readProposal, {});
+
+  return vmNew.isOverwrite === false
+    && vmNew.warnOverwrite === false
+    && vmNew.overwriteLabel === ''
+    && vmRead.isOverwrite === true
+    && vmRead.warnOverwrite === false
+    && vmRead.overwriteLabel === '';
+})());
+
+check('UXSEC-U3 show() 将覆写警告安全渲染至 warn 字段（纯 textContent，与高风险警示安全拼接）', (() => {
+  const f = fakeEl();
+  const c = bind(f.root, () => {});
+  const proposal = {
+    ...goodProposal,
+    capability: 'workspace.write',
+    isOverwrite: true,
+  };
+  // 覆写 + 高风险
+  c.show(proposal, { dangerLevel: 'high' });
+  const warnEl = f.nodes['[data-agent-field="warn"]'];
+  const doubleWarn = warnEl.textContent;
+  const hasHighRisk = doubleWarn.includes('这是高风险操作');
+  const hasOverwrite = doubleWarn.includes('⚠️ 将覆盖沙盒内已存在的同名文件');
+
+  // 仅覆写（无高风险）
+  c.show(proposal, { dangerLevel: 'low' });
+  const singleWarn = warnEl.textContent;
+  const onlyOverwrite = singleWarn === '⚠️ 将覆盖沙盒内已存在的同名文件';
+
+  // 既无覆写也无高风险
+  c.show({ ...proposal, isOverwrite: false }, { dangerLevel: 'low' });
+  const noWarn = warnEl.textContent === '';
+
+  return hasHighRisk && hasOverwrite && onlyOverwrite && noWarn;
+})());
 
 if (origDoc === undefined) delete global.document; else global.document = origDoc;
 

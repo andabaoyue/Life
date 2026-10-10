@@ -44,7 +44,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { WriteTransactionManager } = require('./agent-transaction');
+
+/** 🔴 SEC-03：执行器底层写入文件扩展名硬白名单（小写匹配）。 */
+const ALLOWED_WRITE_EXTENSIONS = Object.freeze(new Set(['.txt', '.md', '.json', '.log']));
 
 /** D-4 允许真正执行的能力白名单。process.execute 不在其中，且下方另有硬拒。 */
 const EXECUTABLE_CAPABILITIES = Object.freeze(['workspace.read', 'workspace.write']);
@@ -55,38 +59,169 @@ const DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024;
 /** 默认单次写最大字节，与 WriteTransactionManager 的5MB 对齐（这里取更严的一侧）。 */
 const DEFAULT_MAX_WRITE_BYTES = 5 * 1024 * 1024;
 
+/** 🔴 SEC-03：Windows 保留设备名正则（不区分大小写，支持 CON/PRN/AUX/NUL/COM1-9/LPT1-9）。 */
+const WINDOWS_RESERVED_NAMES = Object.freeze(/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i);
+
+/**
+ * 判定路径是否包含 Windows 畸形文件名、ADS 备用数据流冒号或保留设备名。
+ * @param {string} p 目标路径
+ * @returns {boolean} true 表示畸形/非法路径
+ */
+function isMalformedWindowsPath(p) {
+  if (typeof p !== 'string' || !p) return false;
+  // 去除 Windows 盘符前缀（如 C: 或 c:）后，不应含有冒号（防 NTFS ADS 及非法冒号，涵盖目录段冒号）
+  const withoutDrive = p.replace(/^[A-Za-z]:/, '');
+  if (withoutDrive.includes(':')) return true;
+  // 分解各路径段，检查保留名、末尾点号与末尾空格（排除 . 与 .. 相对目录跳转）
+  const segments = withoutDrive.split(/[\\/]/).filter(Boolean);
+  for (const seg of segments) {
+    if (seg !== '.' && seg !== '..' && (seg.endsWith('.') || seg.endsWith(' '))) return true;
+    const stem = seg.split('.')[0];
+    if (WINDOWS_RESERVED_NAMES.test(stem)) return true;
+  }
+  return false;
+}
+
 function fail(code, extra = {}) {
   return { ok: false, code, ...extra };
 }
 
 /**
- * realpath 归一化。目标不存在时逐级向上找到第一个存在的祖先，
- * 用它的 realpath 再把剩余段拼回去。
- *
- * 🔴 2026-10-06 修掉一个自查发现的真bug：原实现 `i === 0 ? realDir : join(realDir, base)`
- *   在第一次就成功时**丢掉了 base**。后果实测（test D4-R13 曾因此报SYMLINK_ESCAPE）：
- *   文件不存在时 dir=sandbox 已存在 → 返回 sandbox 本身而不是 sandbox/ghost.txt。
- *   更危险的是：若父目录正是符号链接，逃逸检测会**只看父目录**而彻底失效。
- *   现在统一 `join(realDir, base)`，不再有特例分支。
- *
- * @returns {string} 真实绝对路径（尽力而为，彻底失败则返回 resolve 结果）
+ * 判定 targetPath 是否严格位于 rootPath 根目录内部（大小写语义对齐平台规范）。
  */
-function realpathBestEffort(p, fsImpl) {
+function isPathInsideRoot(targetPath, rootPath) {
+  if (!targetPath || !rootPath) return false;
+  const t = process.platform === 'win32' ? targetPath.toLowerCase() : targetPath;
+  const r = process.platform === 'win32' ? rootPath.toLowerCase() : rootPath;
+  const rel = path.relative(r, t);
+  if (!rel) return true; // 路径恰为根目录本身
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * 规范化 Windows 扩展长路径前缀（\\?\ 或 \\?\UNC\）
+ */
+function normalizePathPrefix(p) {
+  if (typeof p !== 'string') return p;
+  if (process.platform === 'win32') {
+    if (p.startsWith('\\\\?\\UNC\\')) {
+      return '\\\\' + p.slice(8);
+    }
+    if (p.startsWith('\\\\?\\')) {
+      return p.slice(4);
+    }
+  }
+  return p;
+}
+
+/**
+ * 取得最佳 realpath 同步函数。
+ * 🔴 F1 修复：Windows 下纯 JS 的 realpathSync 无法稳定穿透目录联接（junction），
+ *   必须优先使用 fs.realpathSync.native (libuv 原生 GetFinalPathNameByHandleW)。
+ *   同时兼顾测试替身 fs 显式覆盖 realpathSync 的情况。
+ */
+function getRealPathSyncFn(f) {
+  const targetFs = f || fs;
+  if (f && Object.prototype.hasOwnProperty.call(f, 'realpathSync') && !Object.prototype.hasOwnProperty.call(f.realpathSync, 'native')) {
+    return (p) => normalizePathPrefix(f.realpathSync(p));
+  }
+  if (targetFs && targetFs.realpathSync && typeof targetFs.realpathSync.native === 'function') {
+    return (p) => normalizePathPrefix(targetFs.realpathSync.native(p));
+  }
+  if (targetFs && typeof targetFs.realpathSync === 'function') {
+    return (p) => normalizePathPrefix(targetFs.realpathSync(p));
+  }
+  if (typeof fs.realpathSync.native === 'function') {
+    return (p) => normalizePathPrefix(fs.realpathSync.native(p));
+  }
+  return (p) => normalizePathPrefix(fs.realpathSync(p));
+}
+
+/**
+ * 完整穿透解析真实物理路径（fail-closed 失败关闭）。
+ *
+ * SEC-02 规约：
+ *   1. 使用 lstatSync 检查目标条目本身（区别符号链接条目与普通文件）。
+ *   2. 若目标条目本身存在（无论是文件、目录还是符号链接条目）：
+ *      - 若为符号链接：必须成功穿透解析出真实物理目标 realpathSync.native(target)。
+ *        若为悬空链接（目标不存在/ENOENT）、循环链接（ELOOP）或权限异常，一律失败关闭（返回 null），
+ *        绝不退回或当作普通新建文件处理！
+ *      - 若非符号链接：调用 realpathSync 确保中间各级祖先目录的软链接/junction 也被穿透解析。
+ *   3. 只有当目标条目本身确实不存在（lstatSync 抛出 ENOENT）时，才按新建文件规则逐级向上寻找真实已存在的祖先目录并拼回相对路径：
+ *      - 向上遍历最多 8 层；
+ *      - 祖先目录调用 realpathSync：若祖先也是坏软链接，失败关闭（返回 null）；
+ *      - 顶到根目录仍全部不存在，失败关闭（返回 null）。
+ *   4. 任何无法证明路径安全的异常或无法解析情况，一律返回 null（失败关闭）。
+ *
+ * @param {string} p 目标路径
+ * @param {object} [fsImpl] fs 实例（支持注入）
+ * @returns {?string} 成功解析的绝对物理路径；解析失败或不安全链接返回 null
+ */
+function resolveRealPath(p, fsImpl) {
   const f = fsImpl || fs;
-  let dir = path.dirname(p);
-  let base = path.basename(p);
-  // 最多向上找 8 层：既能处理新建文件，也能处理新建目录
+  let target;
+  try {
+    target = path.resolve(p);
+  } catch {
+    return null;
+  }
+
+  const realpathFn = getRealPathSyncFn(f);
+
+  // 1. 探测目标条目本身
+  let targetEntryExists = false;
+  if (typeof f.lstatSync === 'function') {
+    try {
+      f.lstatSync(target);
+      targetEntryExists = true;
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') {
+        // 权限不足 (EACCES/EPERM) 或其它 I/O 异常：无法证明安全，失败关闭
+        return null;
+      }
+    }
+  }
+
+  // 目标条目本身已存在（普通文件/目录或符号链接条目）
+  if (targetEntryExists) {
+    try {
+      return realpathFn(target);
+    } catch {
+      // 目标条目已存在，但 realpath 失败（悬空链接、循环链接、权限异常等）：
+      // 绝不进入新建文件回溯逻辑，一律失败关闭！
+      return null;
+    }
+  }
+
+  // 2. 目标条目确实不存在（新建文件），逐级向上寻找真实存在的祖先目录
+  let dir = path.dirname(target);
+  let base = path.basename(target);
   for (let i = 0; i <= 8; i++) {
     try {
-      return path.join(f.realpathSync(dir), base);
-    } catch {
+      const realDir = realpathFn(dir);
+      return path.join(realDir, base);
+    } catch (err) {
+      // 若祖先本身是个坏符号链接，失败关闭
+      if (typeof f.lstatSync === 'function') {
+        try {
+          const st = f.lstatSync(dir);
+          if (st && typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) {
+            return null;
+          }
+        } catch { /* 忽略，继续向上探查 */ }
+      }
       const parent = path.dirname(dir);
-      if (parent === dir) return p;          // 顶到盘符了，放弃
+      if (parent === dir) return null; // 顶到文件系统根仍不存在
       base = path.basename(dir) + (base ? path.sep + base : '');
       dir = parent;
     }
   }
-  return p;
+
+  return null;
+}
+
+function realpathBestEffort(p, fsImpl) {
+  return resolveRealPath(p, fsImpl);
 }
 
 /**
@@ -106,6 +241,7 @@ class ControlledAgentExecutor {
     this.txn = deps.transactionManager || new WriteTransactionManager({ dir: deps.txnDir || null });
     this.maxReadBytes = Number.isFinite(deps.maxReadBytes) ? deps.maxReadBytes : DEFAULT_MAX_READ_BYTES;
     this.maxWriteBytes = Number.isFinite(deps.maxWriteBytes) ? deps.maxWriteBytes : DEFAULT_MAX_WRITE_BYTES;
+    this.resolveRealPath = deps.resolveRealPath || resolveRealPath;
     //已消费提案的终态集合。执行成功后写入，重放时查。
     //用 Set 而非改proposal.status：提案对象是 Object.freeze 的，改不动。
     this.consumed = new Set();
@@ -212,19 +348,47 @@ class ControlledAgentExecutor {
       return fail('AUTHORIZED_REJECTED', { reason: verdict && verdict.reason });
     }
 
-    // ── 不变式 3：realpath 纵深防御（挡目录符号链接逃逸）
-    const real = realpathBestEffort(path.resolve(proposal.scope), this.fs);
-    if (this.policy && typeof this.policy._scopeAllowed === 'function') {
-      const stillInside = this.policy._scopeAllowed(proposal.capability, real);
-      if (!stillInside) {
-        this._audit({
-          outcome: 'rejected',
-          code: 'SYMLINK_ESCAPE',
-          capability: proposal.capability,
-          proposalId: proposalId.slice(0, 120),
-        }, proposal);
-        return fail('SYMLINK_ESCAPE');
+    // ── 不变式 3：realpath 物理沙盒边界强制校验（SEC-02：无论 policy.followSymlink 为何，物理路径必须锁在沙盒内）
+    const real = (this.resolveRealPath || resolveRealPath)(proposal.scope, this.fs);
+    let symlinkEscape = false;
+    if (!real) {
+      // 悬空符号链接、循环符号链接或无法安全证明的物理路径：失败关闭
+      symlinkEscape = true;
+    } else {
+      // 获取当前 capability 配置的全部合法根目录（或 matchedRoot）
+      const roots = (this.policy && typeof this.policy.getScopeRoots === 'function')
+        ? this.policy.getScopeRoots(proposal.capability)
+        : (verdict.matchedRoot ? [verdict.matchedRoot] : []);
+      if (!roots || roots.length === 0) {
+        symlinkEscape = true;
+      } else {
+        const insideAnyRoot = roots.some((root) => {
+          let realRoot = null;
+          try {
+            realRoot = (this.resolveRealPath || resolveRealPath)(root, this.fs);
+          } catch {
+            realRoot = null;
+          }
+          if (!realRoot) return false;
+          return isPathInsideRoot(real, realRoot);
+        });
+        if (!insideAnyRoot) {
+          symlinkEscape = true;
+        }
       }
+    }
+
+    if (symlinkEscape) {
+      if (this.confirmation && typeof this.confirmation.revoke === 'function') {
+        this.confirmation.revoke(proposalId, 'SYMLINK_ESCAPE');
+      }
+      this._audit({
+        outcome: 'rejected',
+        code: 'SYMLINK_ESCAPE',
+        capability: proposal.capability,
+        proposalId: proposalId.slice(0, 120),
+      }, proposal);
+      return fail('SYMLINK_ESCAPE');
     }
 
     // ── 闸门 3：预算（执行也要计费，不能是免费动作）
@@ -282,21 +446,34 @@ class ControlledAgentExecutor {
     let result;
     try {
       result = isWrite
-        ? this._writeFile(proposal, input.content)
-        : this._readFile(proposal);
+        ? this._writeFile(proposal, input.content, real)
+        : this._readFile(proposal, real);
     } catch (err) {
       // 执行失败要记连续错误（防「一直失败一直重试」），并把授权作废：
       // 失败的提案不该能被原样再执行一次。
       if (this.budget && typeof this.budget.recordError === 'function') this.budget.recordError();
+      const isSecurityViolation = err && (
+        err.code === 'CONTENT_HASH_MISMATCH'
+        || err.code === 'CONTENT_BYTES_MISMATCH'
+        || err.code === 'CONTENT_HASH_REQUIRED'
+        || err.code === 'DISALLOWED_EXTENSION'
+        || err.code === 'HARDLINK_DETECTED'
+      );
+      const isRollbackFailure = err && (err.code === 'ROLLBACK_HASH_MISMATCH' || err.code === 'BACKUP_MISSING' || /ROLLBACK/i.test(err.code || ''));
+      const code = isSecurityViolation ? err.code : (isRollbackFailure ? 'ROLLBACK_FAILED' : 'EXECUTION_FAILED');
       this._audit({
         outcome: 'failed',
-        code: 'EXECUTION_FAILED',
+        code,
         capability: proposal.capability,
         detail: String((err && err.message) || '').slice(0, 200),
         proposalId: proposalId.slice(0, 120),
       }, proposal);
-      return fail('EXECUTION_FAILED', {
+      if ((isSecurityViolation || isRollbackFailure) && this.confirmation && typeof this.confirmation.revoke === 'function') {
+        this.confirmation.revoke(proposalId, code);
+      }
+      return fail(code, {
         detail: String((err && err.message) || '').slice(0, 200),
+        rollbackFailed: Boolean(isRollbackFailure),
       });
     }
 
@@ -324,10 +501,18 @@ class ControlledAgentExecutor {
     return { ok: true, executed: true, proposalId, result, budget: this.budget.state(), proposalSource: (proposal && proposal.proposalSource) || 'user' };
   }
 
-  _readFile(proposal) {
-    const target = path.resolve(proposal.scope);
+  _readFile(proposal, resolvedPath) {
+    const target = resolvedPath || path.resolve(proposal.scope);
+    // 🔴 SEC-03 深度防御：拦截读路径中的 NTFS ADS 备用数据流冒号 (:) 与 Windows 畸形文件名/保留名
+    if (isMalformedWindowsPath(proposal && proposal.scope) || isMalformedWindowsPath(target)) {
+      throw Object.assign(new Error('MALFORMED_WINDOWS_FILENAME'), { code: 'DISALLOWED_EXTENSION' });
+    }
     const stat = this.fs.statSync(target);
     if (!stat.isFile()) throw new Error('NOT_A_FILE');
+    // 🔴 SEC-02 延伸防御（N3）：拦截多重硬链接文件读取（防硬链接穿透与跨边界泄漏）
+    if (typeof stat.nlink === 'number' && stat.nlink > 1) {
+      throw Object.assign(new Error('HARDLINK_DETECTED'), { code: 'HARDLINK_DETECTED' });
+    }
     if (stat.size > this.maxReadBytes) {
       throw Object.assign(new Error('READ_TOO_LARGE'), { code: 'READ_TOO_LARGE' });
     }
@@ -336,7 +521,41 @@ class ControlledAgentExecutor {
     return { bytes: stat.size, content: this.fs.readFileSync(target, 'utf8') };
   }
 
-  _writeFile(proposal, content) {
+  _writeFile(proposal, content, resolvedPath) {
+    // 🔴 SEC-01：对正式写入路径强制要求有效的内容哈希和 UTF-8 字节数绑定；缺少绑定时失败关闭。
+    if (!proposal || !proposal.contentHash || typeof proposal.contentHash !== 'string' || !Number.isFinite(proposal.contentBytes)) {
+      throw Object.assign(new Error('CONTENT_HASH_REQUIRED'), { code: 'CONTENT_HASH_REQUIRED' });
+    }
+
+    // 🔴 SEC-03：执行器底层扩展名白名单强校验（.txt, .md, .json, .log）。
+    //   大小写不敏感（.TXT / .Md 均放行）；无扩展名或非法扩展名（.exe, .bat, .sh 等）硬拒绝。
+    const rawExt = path.extname(proposal.scope || '');
+    const ext = rawExt.toLowerCase();
+    const target = resolvedPath || path.resolve(proposal.scope);
+    const targetExt = path.extname(target || '').toLowerCase();
+    if (!ALLOWED_WRITE_EXTENSIONS.has(ext) || !ALLOWED_WRITE_EXTENSIONS.has(targetExt)) {
+      throw Object.assign(new Error(`DISALLOWED_EXTENSION: ${ext || 'none'}`), { code: 'DISALLOWED_EXTENSION' });
+    }
+
+    // 🔴 SEC-03 深度防御：NTFS ADS 备用数据流冒号 (:)、Windows 保留设备名与末尾点号/空格畸形文件名拦截
+    if (isMalformedWindowsPath(proposal && proposal.scope) || isMalformedWindowsPath(target)) {
+      throw Object.assign(new Error('MALFORMED_WINDOWS_FILENAME'), { code: 'DISALLOWED_EXTENSION' });
+    }
+
+    // 🔴 SEC-02 延伸防御（N3 & Q1）：若目标已存在且为多重硬链接，拒绝覆写（防硬链接目标污染）；
+    //   无法证明目标文件状态时一律失败关闭（除新建文件的 ENOENT 外均拒绝）。
+    let existingStat = null;
+    try {
+      existingStat = this.fs.statSync(target);
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') {
+        throw Object.assign(new Error('HARDLINK_UNVERIFIABLE'), { code: 'HARDLINK_DETECTED' });
+      }
+    }
+    if (existingStat && typeof existingStat.nlink === 'number' && existingStat.nlink > 1) {
+      throw Object.assign(new Error('HARDLINK_DETECTED'), { code: 'HARDLINK_DETECTED' });
+    }
+
     // 🔴 content 只接受字符串。**不解析 JSON、不接受对象** ——
     //   若接受对象再序列化成 JSON，等于给了「用类型混淆绕过字符串校验」的面。
     if (typeof content !== 'string') {
@@ -356,17 +575,28 @@ class ControlledAgentExecutor {
     if (Buffer.byteLength(content, 'utf8') > this.maxWriteBytes) {
       throw Object.assign(new Error('PAYLOAD_TOO_LARGE'), { code: 'PAYLOAD_TOO_LARGE' });
     }
-    const target = path.resolve(proposal.scope);
+    // 🔴 SEC-01：权威哈希强绑定断言
+    //   执行器必须对传入文本重新计算 SHA-256 并验证与提案完全一致。
+    const actualHash = crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+    if (actualHash !== proposal.contentHash) {
+      throw Object.assign(new Error('CONTENT_HASH_MISMATCH'), { code: 'CONTENT_HASH_MISMATCH' });
+    }
+    if (Buffer.byteLength(content, 'utf8') !== proposal.contentBytes) {
+      throw Object.assign(new Error('CONTENT_BYTES_MISMATCH'), { code: 'CONTENT_BYTES_MISMATCH' });
+    }
     // 第五道闸门真正生效处：begin →写盘 → commit，任一步失败即 rollback。
     const tx = this.txn.begin({ target, data: content });
     this.txn.commit(tx);
-    return { bytes: Buffer.byteLength(content, 'utf8'), target: path.basename(target) };
+    return { bytes: Buffer.byteLength(content, 'utf8'), target: path.basename(proposal.scope || target) };
   }
 }
 
 module.exports = {
   ControlledAgentExecutor,
   EXECUTABLE_CAPABILITIES,
+  ALLOWED_WRITE_EXTENSIONS,
+  isMalformedWindowsPath,
+  resolveRealPath,
   realpathBestEffort,
   DEFAULT_MAX_READ_BYTES,
   DEFAULT_MAX_WRITE_BYTES,

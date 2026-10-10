@@ -349,6 +349,31 @@ body.talking #inputBar { display: flex; }
 #agentConfirm .ac-val {
   flex: 1; min-width: 0; color: #d8e4ff; word-break: break-all; line-height: 1.45;
 }
+#agentConfirm .ac-content-meta { display: flex; gap: 8px; font-size: 11px; color: #87aaf5; }
+#agentConfirm .ac-content-preview-box {
+  background: rgba(15, 18, 30, .6); border-radius: 6px; padding: 6px 8px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+#agentConfirm .ac-content-text {
+  font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all;
+  max-height: 80px; overflow-y: auto; color: #d8e4ff;
+}
+#agentConfirm .ac-trunc-hint { font-size: 10px; color: #ffcf8b; }
+#agentConfirm .ac-trunc-hint:empty { display: none; }
+#agentConfirm .ac-expand-btn {
+  align-self: flex-start; font-size: 11px; padding: 2px 8px; margin-top: 2px;
+  background: rgba(69, 97, 145, .4); color: #87aaf5; border: 1px solid rgba(135, 170, 245, .3);
+  border-radius: 5px; cursor: pointer; transition: all .15s;
+}
+#agentConfirm .ac-expand-btn:hover { background: rgba(90, 122, 180, .6); color: #fff; }
+#agentConfirm .ac-content-full-box {
+  background: rgba(10, 12, 22, .9); border: 1px solid rgba(135, 170, 245, .25);
+  border-radius: 6px; padding: 6px 8px; max-height: 120px; overflow-y: auto;
+}
+#agentConfirm .ac-content-full-text {
+  margin: 0; font-family: monospace; font-size: 11px; white-space: pre-wrap;
+  word-break: break-all; color: #e8f0fe;
+}
 #agentConfirm .ac-warn { color: #ffcf8b; font-size: 11px; line-height: 1.45; }
 #agentConfirm .ac-warn:empty { display: none; }
 #agentConfirm .ac-actions { display: flex; gap: 8px; margin-top: 4px; }

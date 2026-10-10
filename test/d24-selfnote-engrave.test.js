@@ -280,13 +280,24 @@ console.log('--- D-24 便签入传门禁 ---');
       fs,
     });
 
-    const pSelf = createActionProposal({ capability: 'workspace.write', scope: path.join(sandbox, 'n.md') }, null, 'selfNote');
+    const crypto = require('crypto');
+    const contentSelf = '她自发写下的字';
+    const metaSelf = {
+      contentHash: crypto.createHash('sha256').update(contentSelf, 'utf8').digest('hex'),
+      contentBytes: Buffer.byteLength(contentSelf, 'utf8'),
+    };
+    const pSelf = createActionProposal({ capability: 'workspace.write', scope: path.join(sandbox, 'n.md') }, null, 'selfNote', metaSelf);
     proposalStore.set(pSelf.id, pSelf);
-    const rSelf = executor.execute({ proposalId: pSelf.id, content: '她自发写下的字' });
+    const rSelf = executor.execute({ proposalId: pSelf.id, content: contentSelf });
     check('E2E：真实执行器回执带 selfNote 来源戳', rSelf.ok === true && rSelf.proposalSource === 'selfNote',
       'src=' + (rSelf && rSelf.proposalSource));
 
-    const pUser = createActionProposal({ capability: 'workspace.write', scope: path.join(sandbox, 'u.md') });
+    const contentUser = '受托写的';
+    const metaUser = {
+      contentHash: crypto.createHash('sha256').update(contentUser, 'utf8').digest('hex'),
+      contentBytes: Buffer.byteLength(contentUser, 'utf8'),
+    };
+    const pUser = createActionProposal({ capability: 'workspace.write', scope: path.join(sandbox, 'u.md') }, null, 'user', metaUser);
     proposalStore.set(pUser.id, pUser);
     const gate2 = new UserConfirmationGate();
     const executor2 = new ControlledAgentExecutor({
@@ -299,7 +310,7 @@ console.log('--- D-24 便签入传门禁 ---');
       fs,
     });
     gate2.confirm(pUser.id, 'approved', { status: 'proposed' });
-    const rUser = executor2.execute({ proposalId: pUser.id, content: '受托写的' });
+    const rUser = executor2.execute({ proposalId: pUser.id, content: contentUser });
     check('E2E：用户提案回执来源戳恒为 user（不可冒充自发）', rUser.ok === true && rUser.proposalSource === 'user');
 
     const forged = createActionProposal({ capability: 'workspace.write', scope: path.join(sandbox, 'f.md'), proposalSource: 'selfNote' });

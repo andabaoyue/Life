@@ -33,6 +33,15 @@
       <div class="ac-row"><span class="ac-key">目标</span><span class="ac-val" data-agent-field="scope">—</span></div>
       <div class="ac-row"><span class="ac-key">理由</span><span class="ac-val" data-agent-field="reason">—</span></div>
       <div class="ac-row"><span class="ac-key">预算</span><span class="ac-val" data-agent-field="budget">—</span></div>
+      <div class="ac-row ac-meta-row hidden"><span class="ac-key">内容</span><span class="ac-val ac-content-meta"><span data-agent-field="content-bytes"></span><span data-agent-field="content-hash"></span></span></div>
+      <div class="ac-content-preview-box hidden">
+        <div class="ac-val ac-content-text" data-agent-field="content-preview"></div>
+        <div class="hint ac-trunc-hint" data-agent-field="content-truncated"></div>
+        <button type="button" class="ac-expand-btn hidden" data-agent-action="expand-content">查看完整正文</button>
+      </div>
+      <div class="ac-content-full-box hidden" data-agent-box="content-full">
+        <pre class="ac-content-full-text" data-agent-field="content-full"></pre>
+      </div>
       <div class="ac-warn hint" data-agent-field="warn"></div>
       <div class="ac-actions" data-agent-actions></div>
     </div>
@@ -171,6 +180,13 @@
               <div class="tz-row"><span class="tz-k" id="tzKSync">时空同步</span><span class="tz-v" id="tzSync">—</span></div>
             </div>
             <div class="hint" id="tzNote">创世已锚定，不可修改</div>
+
+            <!-- Agent 数据沙盒（UX-SEC-01 第一层：常驻与首启感知） -->
+            <div class="fgroup" id="sandboxFgroup">
+              <div class="fg-title" id="sandboxTitle">Agent 数据沙盒</div>
+              <div class="tz-row"><span class="tz-k" id="sandboxPathLabel">沙盒路径</span><span class="tz-v" id="sandboxPath" style="word-break: break-all; font-size: 11px;">—</span></div>
+              <div class="hint" id="sandboxWarning" style="color: #e09f3e; margin-top: 6px;">沙盒内文件一律视为可被 Agent 覆写，请勿存放重要或不可替代的数据。</div>
+            </div>
           </div>
 
           <!-- ④ 危险区（操作不可逆，与常规操作彻底隔离） -->

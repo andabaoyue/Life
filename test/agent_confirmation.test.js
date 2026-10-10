@@ -462,6 +462,28 @@ check('D3-14b main.js 注入 confirmation 且仍经 ipcGuard 注册', (() => {
       && !/ipcMain\s*\.\s*(handle|on)\s*\(/.test(src);
 })());
 
+check('D3-14c preload 暴露 getProposalContent 且严格仅透传 proposalId 并对接 IPC', (() => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const block = src.slice(src.indexOf('agent: {'), src.indexOf('// 实验观测'));
+  const code = block.replace(/\/\/[^\n]*/g, '');
+  const getCall = (code.match(/getProposalContent:[\s\S]*?\}\)/) || [''])[0];
+  const onlyProposalId = (/proposalId:\s*proposalId\b/.test(getCall) || /\{\s*proposalId\s*\}/.test(getCall))
+    && !/payload\s*(,|\})/.test(getCall.replace(/\{\s*proposalId\s*\}/g, ''));
+  const correctIpc = /ipcRenderer\.invoke\('agent:get-proposal-content'/.test(getCall);
+
+  const h = harness();
+  h.policy.allowed.add('workspace.write');
+  const writeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentcnf-write-'));
+  h.policy.setScopeRoots('workspace.write', [writeDir]);
+  const p = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: path.join(writeDir, 'note.md'),
+    content: 'Preload verified content',
+  });
+  const res = h.call('agent:get-proposal-content', h.trustedEvent, { proposalId: p.proposal.id });
+  return onlyProposalId && correctIpc && res.ok === true && res.content === 'Preload verified content';
+})());
+
 /* ================= 15. 向后兼容 ================= */
 
 check('D3-15 DECISIONS 只含 approved/rejected（无 executed —— 确认与执行是两件事）', (() => {

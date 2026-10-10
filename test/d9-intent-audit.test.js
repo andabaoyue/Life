@@ -123,7 +123,10 @@ function env(opts = {}) {
   function propose(raw) {
     const fn = handlers.get('agent:propose-action');
     if (!fn) throw new Error('通道未注册');
-    return fn(trustedEvent, raw);
+    const enriched = (raw && raw.capability === 'workspace.write' && raw.content === undefined)
+      ? { content: 'd9测试写入正文', ...raw }
+      : raw;
+    return fn(trustedEvent, enriched);
   }
 
   function call(channel, arg) {
@@ -134,11 +137,14 @@ function env(opts = {}) {
 
   /** 建案 → 确认 → 执行，返回执行信封。 */
   function proposeConfirmExecute(raw, content) {
-    const r = propose(raw);
+    const enriched = (raw && raw.capability === 'workspace.write')
+      ? { content: content || 'd9测试写入正文', ...raw }
+      : raw;
+    const r = propose(enriched);
     if (!r.ok) return { proposeRes: r, execRes: null };
     const id = r.proposal.id;
     call('agent:confirm-action', { proposalId: id, decision: 'approved' });
-    const execRes = call('agent:execute', { proposalId: id, content });
+    const execRes = call('agent:execute', { proposalId: id });
     return { proposeRes: r, execRes };
   }
 

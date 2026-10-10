@@ -32,19 +32,23 @@
  * ipcGuard / ipcMain 对象均由调用方注入 —— 本模块不 require electron，可在纯 Node 测试。
  */
 
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget,
   createActionProposal, AuditLog, CAPABILITIES,
 } = require('./agent-interfaces');
 const { UserConfirmationGate } = require('./agent-confirmation');
-const { ControlledAgentExecutor } = require('./agent-executor');
+const { ControlledAgentExecutor, ALLOWED_WRITE_EXTENSIONS, isMalformedWindowsPath } = require('./agent-executor');
 
 /**
  * 允许注册的通道名单（白名单即设计约束，不多不少）。
  *
  * D-1 时这里只有 4 条治理/查询通道；D-3 加了 agent:confirm-action；
  * D-4 加了 agent:execute，共 6 条；
- * D-5 加了 agent:get-pending-proposal，共 7 条（安全取回提案真身的唯一途径）。
+ * D-5 加了 agent:get-pending-proposal，共 7 条（安全取回提案真身的唯一途径）；
+ * SEC-01 加了 agent:get-proposal-content，共 8 条（受保护的正文安全只读查看通道）。
  *
  * ⚠️ agent:confirm-action **只登记用户的「同意/拒绝」**，它不执行任何动作。
  * 用户点头≠ 可以动手，中间还隔着预算终态判定、TTL、以及事务层。
@@ -58,6 +62,7 @@ const AGENT_CHANNELS = Object.freeze([
   'agent:get-status',
   'agent:get-capabilities',
   'agent:get-pending-proposal',
+  'agent:get-proposal-content',
   'agent:propose-action',
   'agent:confirm-action',
   'agent:execute',
@@ -105,6 +110,22 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 提案注册表上界：propose 已受 ExecutionBudget 约束（默认 20 次/会话），
   //   这里只是防御 map 无限增长，不构成新的可用性限制。
   const MAX_TRACKED_PROPOSALS = 200;
+
+  // 🔴 SEC-01：内容快照私有存储（仅主进程持有，杜绝渲染端篡改与未授权写盘）。
+  //   快照绑定 proposalId，存放真正用于写盘的可信内容字符串。
+  //   上界与提案注册表对齐；TTL 10 分钟；单次写入上限 5 MiB。
+  const contentSnapshotStore = options.contentSnapshotStore || ctx.contentSnapshotStore || new Map();
+  const MAX_CONTENT_BYTES = 5 * 1024 * 1024; // 5 MiB
+  const SNAPSHOT_TTL_MS = 10 * 60 * 1000;    // 10 分钟
+
+  function pruneSnapshots() {
+    const now = Date.now();
+    for (const [id, snap] of contentSnapshotStore.entries()) {
+      if (!proposalStore.has(id) || (now - snap.createdAt > SNAPSHOT_TTL_MS)) {
+        contentSnapshotStore.delete(id);
+      }
+    }
+  }
 
   // 🔴 D-9：动机来源求值器 —— **只能由主进程注入，渲染端永远传不进来**。
   //
@@ -190,6 +211,14 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     const verdict = policy.authorize(capability, raw.scope);
     if (!verdict.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: verdict.reason, verdict };
 
+    // 🔴 F5 & SEC-03：写扩展名白名单同源前置校验与 Windows 畸形文件名/保留名防御。建案期即拦截，不扣减用户动作预算。
+    if (capability === 'workspace.write') {
+      const ext = path.extname(raw.scope || '').toLowerCase();
+      if (isMalformedWindowsPath(raw.scope) || !ALLOWED_WRITE_EXTENSIONS.has(ext)) {
+        return { code: 'DISALLOWED_EXTENSION', ok: false, ext: ext || 'none' };
+      }
+    }
+
     // ③ 预算熔断：熔断为终态，触发后不放行任何动作。
     //
     // 🔴 D-12 修正（反重力复核裁定的架构缺陷）：**建案期只扣 actions，不扣 writes。**
@@ -258,6 +287,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       policy: {
         killSwitch: policy.killSwitch,
         grantedCapabilities: [...policy.allowed],
+        sandboxRoots: policy && policy.scopeRoots && typeof policy.scopeRoots.get === 'function'
+          ? [...(policy.scopeRoots.get('workspace.write') || [])]
+          : [],
       },
       registeredCapabilities: registry.list(),
       auditCount: auditLog.list().length,
@@ -342,6 +374,16 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       return fail('ALREADY_EXECUTED');
     }
 
+    let isOverwrite = false;
+    if (tracked.capability === 'workspace.write' && typeof tracked.scope === 'string' && tracked.scope) {
+      try {
+        const fsImpl = options.fs || fs;
+        isOverwrite = fsImpl.existsSync(path.resolve(tracked.scope));
+      } catch {
+        isOverwrite = false;
+      }
+    }
+
     const meta = registry.metaOf(tracked.capability) || {};
     const snapshot = Object.freeze({
       id: tracked.id,
@@ -351,8 +393,56 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       status: String(tracked.status || ''),
       dangerLevel: meta.dangerLevel || 'unknown',
       requiresConfirm: meta.requiresConfirm !== false,
+      // 🔴 UX-SEC-01：沙盒覆写风险标记（主进程权威检测，供确认卡片渲染展示）
+      isOverwrite: Boolean(isOverwrite),
+      // 🔴 SEC-01：展示层安全元数据白名单透出（杜绝未授权暴露完整正文）
+      contentHash: tracked.contentHash || null,
+      contentBytes: Number.isFinite(tracked.contentBytes) ? tracked.contentBytes : null,
+      contentPreview: typeof tracked.contentPreview === 'string' ? tracked.contentPreview : null,
+      isTruncated: Boolean(tracked.isTruncated),
     });
     return { ok: true, proposal: snapshot, budget: budget.state() };
+  }));
+
+  // 3b. 🔴 SEC-01：受保护的提案完整正文安全只读查看通道。
+  //   用于在用户确认抽屉中按需拉取可信正文展示。
+  //   四道安全拦截：
+  //     ① 跨进程身份必须受信（assertByHandler）；
+  //     ② 提案必须在 proposalStore 中且尚未决策（ALREADY_DECIDED / ALREADY_EXECUTED 拦截）；
+  //     ③ 必须存在有效快照且未过期；
+  //     ④ 纯只读，不消耗动作预算，不改动提案状态。
+  ipcGuard.handle('agent:get-proposal-content', guard((event, raw) => {
+    assertByHandler(event);
+    const id = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? String(raw.proposalId || '').trim()
+      : '';
+    if (!id) return fail('PROPOSAL_ID_REQUIRED');
+
+    const tracked = proposalStore.get(id);
+    if (!tracked) return fail('PROPOSAL_NOT_FOUND');
+
+    if (confirmation.lookup(id)) return fail('ALREADY_DECIDED');
+
+    if (executor && executor.consumed && typeof executor.consumed.has === 'function'
+      && executor.consumed.has(id)) {
+      return fail('ALREADY_EXECUTED');
+    }
+
+    const snap = contentSnapshotStore.get(id);
+    if (!snap) return fail('SNAPSHOT_NOT_FOUND');
+
+    if (Date.now() - snap.createdAt > SNAPSHOT_TTL_MS) {
+      contentSnapshotStore.delete(id);
+      return fail('SNAPSHOT_EXPIRED');
+    }
+
+    return {
+      ok: true,
+      proposalId: id,
+      content: snap.content,
+      contentBytes: snap.contentBytes,
+      contentHash: snap.contentHash,
+    };
   }));
 
   // 4. 提案受理：过三道闸门后建案并记审计。**本通道不执行任何动作。**
@@ -365,13 +455,67 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //
   //   ⚠️ 抽出来之后通道只剩「身份校验 + 信封化」，`via: 'ipc'` 由调用方区分：
   //     通道传 'ipc'，主进程传 'main'。审计里能看出提案是谁发起的。
-  function proposeInternal(raw, via, source) {
+  function proposeInternal(raw, via, source, trustedContent) {
     const src = via === 'main' ? 'main' : 'ipc';
     // 🔴 D-17：来源由**主进程侧**决定，经独立参数传入（不读 raw）。
     //   通道来的（渲染端）永远只能是 'user'；只有主进程建案时才能给 'selfNote'。
     //   ⚠️ 这里不做白名单校验（createActionProposal 内已兜底），
     //     但**必须只认这两个值** —— 未知值一律按 'user' 传下去。
     const proposalSource = src === 'main' && source === 'selfNote' ? 'selfNote' : 'user';
+
+    // 🔴 SEC-01 & F4：写能力权威内容快照强制绑定（P1 级安全防御 + 校验先于计费）
+    //   所有 workspace.write 提案必须在建案时取得有效字符串正文。
+    //   普通 IPC 提案必须提供 raw.content；selfNote 必须使用主进程可信的 trustedContent。
+    //   正文缺失、类型错误、空字符串或超限时，直接拒绝建案，不扣减用户动作预算，不得创建提案或授权记录。
+    let contentMeta = null;
+    let candidate = null;
+    if (raw && raw.capability === 'workspace.write') {
+      candidate = (src === 'main' && proposalSource === 'selfNote')
+        ? trustedContent
+        : (raw && raw.content);
+
+      if (typeof candidate !== 'string') {
+        auditLog.append({
+          channel: 'agent:propose-action',
+          outcome: 'rejected',
+          code: 'INVALID_PROPOSAL',
+          detail: 'CONTENT_REQUIRED',
+          capability: 'workspace.write',
+          via: src,
+        });
+        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_REQUIRED' });
+      }
+      if (candidate.length === 0) {
+        auditLog.append({
+          channel: 'agent:propose-action',
+          outcome: 'rejected',
+          code: 'INVALID_PROPOSAL',
+          detail: 'CONTENT_EMPTY',
+          capability: 'workspace.write',
+          via: src,
+        });
+        return fail('INVALID_PROPOSAL', { detail: 'CONTENT_EMPTY' });
+      }
+      const byteLen = Buffer.byteLength(candidate, 'utf8');
+      if (byteLen > MAX_CONTENT_BYTES) {
+        auditLog.append({
+          channel: 'agent:propose-action',
+          outcome: 'rejected',
+          code: 'PAYLOAD_TOO_LARGE',
+          capability: 'workspace.write',
+          via: src,
+        });
+        return fail('PAYLOAD_TOO_LARGE');
+      }
+      const hash = crypto.createHash('sha256').update(candidate, 'utf8').digest('hex');
+      contentMeta = {
+        contentHash: hash,
+        contentBytes: byteLen,
+        contentPreview: candidate.slice(0, 300),
+        isTruncated: candidate.length > 300,
+      };
+    }
+
     const evaluated = evaluateProposal(raw);
     if (!evaluated.ok) {
       // 拒绝也要留痕 —— 审计的价值一半在这里。
@@ -389,6 +533,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       if (evaluated.code === 'AUTHORIZED_REJECTED') {
         return fail('AUTHORIZED_REJECTED', { reason: evaluated.reason });
       }
+      if (evaluated.code === 'DISALLOWED_EXTENSION') {
+        return fail('DISALLOWED_EXTENSION', { ext: evaluated.ext });
+      }
       return fail(evaluated.code);
     }
 
@@ -398,7 +545,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       //   raw 是渲染端 payload，混进去就等于让她自报动机。
       // 🔴 D-17：来源作为**独立第三参数**传入，理由同上 ——
       //   渲染端能自报来源，就等于能给自己的提案免确认。
-      proposal = createActionProposal(raw, resolveIntentMotive(), proposalSource);
+      // 🔴 SEC-01：内容元数据作为**独立第四参数**传入，由主进程权威生成。
+      proposal = createActionProposal(raw, resolveIntentMotive(), proposalSource, contentMeta);
     } catch (err) {
       auditLog.append({
         channel: 'agent:propose-action',
@@ -448,10 +596,22 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       const oldest = proposalStore.keys().next();
       if (!oldest.done) {
         proposalStore.delete(oldest.value);
+        contentSnapshotStore.delete(oldest.value);
         confirmation.revoke(oldest.value, 'PROPOSAL_EVICTED');
       }
     }
     proposalStore.set(proposal.id, proposal);
+    if (candidate !== null && candidate !== undefined && contentMeta) {
+      contentSnapshotStore.set(proposal.id, {
+        content: candidate,
+        contentHash: contentMeta.contentHash,
+        contentBytes: contentMeta.contentBytes,
+        contentPreview: contentMeta.contentPreview,
+        isTruncated: contentMeta.isTruncated,
+        createdAt: Date.now(),
+        retryCount: 0,
+      });
+    }
 
     return { ok: true, proposal, executed: false, budget: budget.state() };
   }
@@ -519,6 +679,11 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //   records 只增不减（实测 502 条常驻）。挂在 confirm 上是自然触发点：
     //   用户产生确认动作时顺手清理，不需要额外定时器（D-001 禁轮询）。
     confirmation.prune();
+    pruneSnapshots();
+
+    if (decision === 'rejected') {
+      contentSnapshotStore.delete(proposalId);
+    }
 
     const result = confirmation.confirm(proposalId, decision, { status: tracked.status });
     if (!result.ok) {
@@ -571,21 +736,87 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       return fail('INVALID_INPUT');
     }
 
-    // 🔴 D-11：主进程若为该提案暂存了内容（她为自己留下的那句话），
-    //   **以主进程的为准，无视渲染端传的 content**。
-    //
-    //   为什么：那条内容是她现场生成、由主进程求得的；若让渲染端覆盖它，
-    //   就等于「她写下的东西可以由渲染端改写」—— 与 D-9「动机不信上游」同一条纪律。
-    //   渲染端传的内容只在**没有主进程暂存**时才用（走 proposeInternal 的普通通路）。
-    //
-    //   ⚠️ 取用即删（read-and-delete）：一条内容只能执行一次，
-    //     否则重放时可能被反复写入。
+    const proposalId = String(raw.proposalId || '').trim();
+    const trackedProposal = proposalStore.get(proposalId);
+    const snap = contentSnapshotStore.get(proposalId);
+    const isWrite = trackedProposal && trackedProposal.capability === 'workspace.write';
+
+    if (isWrite) {
+      if (!snap) {
+        const allowed = confirmation && typeof confirmation.isExecutionAllowed === 'function'
+          ? confirmation.isExecutionAllowed(proposalId)
+          : null;
+        if (allowed && allowed.allowed === false) {
+          // 让下游执行器如实返回确切决策原因（如 REJECTED_BY_USER、NOT_CONFIRMED 等）
+        } else {
+          const code = (trackedProposal && trackedProposal.contentHash) ? 'SNAPSHOT_EXPIRED' : 'SNAPSHOT_MISSING';
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, code);
+          }
+          return fail(code);
+        }
+      } else {
+        if (Date.now() - snap.createdAt > SNAPSHOT_TTL_MS) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'SNAPSHOT_EXPIRED');
+          }
+          return fail('SNAPSHOT_EXPIRED');
+        }
+        // 🔴 SEC-01：不可变权威快照强核验（四道硬校验）
+        //   1. snapshot.content 是有效字符串
+        //   2. 重算 SHA-256 必须与快照自身记录一致
+        //   3. 快照哈希必须与不可变提案上冻结的 proposal.contentHash 一致
+        //   4. 实际 UTF-8 字节数与 proposal.contentBytes 一致，且不超过 5 MiB
+        if (typeof snap.content !== 'string') {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
+          }
+          return fail('CONTENT_HASH_MISMATCH', { detail: 'SNAPSHOT_CONTENT_INVALID' });
+        }
+        const recomputedHash = crypto.createHash('sha256').update(snap.content, 'utf8').digest('hex');
+        if (recomputedHash !== snap.contentHash) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
+          }
+          return fail('CONTENT_HASH_MISMATCH', { detail: 'SNAPSHOT_TAMPERED' });
+        }
+        if (trackedProposal && trackedProposal.contentHash && snap.contentHash !== trackedProposal.contentHash) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_HASH_MISMATCH');
+          }
+          return fail('CONTENT_HASH_MISMATCH', { detail: 'PROPOSAL_HASH_MISMATCH' });
+        }
+        const actualBytes = Buffer.byteLength(snap.content, 'utf8');
+        if (trackedProposal && Number.isFinite(trackedProposal.contentBytes) && actualBytes !== trackedProposal.contentBytes) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'CONTENT_BYTES_MISMATCH');
+          }
+          return fail('CONTENT_BYTES_MISMATCH', { detail: 'PROPOSAL_BYTES_MISMATCH' });
+        }
+        if (actualBytes > MAX_CONTENT_BYTES) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'PAYLOAD_TOO_LARGE');
+          }
+          return fail('PAYLOAD_TOO_LARGE');
+        }
+      }
+    }
+
+    // 🔵 D-11 / 🔴 SEC-01: 若主进程注入了自发便签暂存取用器，优先取用暂存内容
+    // （自发便签内容由主进程内部产出，不经渲染端中转，防篡改）。
+    // 在 SEC-01 下，写入正文绝不允许回退使用 raw.content，必须且只能来自已核验的权威快照 snap.content。
     const stashed = typeof takeStashedContent === 'function'
-      ? takeStashedContent(raw.proposalId)
+      ? takeStashedContent(proposalId)
       : null;
     const effectiveContent = stashed !== null && stashed !== undefined
-      ? stashed
-      : raw.content;
+      ? (snap ? snap.content : undefined)
+      : (isWrite ? (snap ? snap.content : undefined) : undefined);
 
     const result = executor.execute({
       proposalId: raw.proposalId,
@@ -600,8 +831,27 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //      是全通道共用的，少了 ok 会被判成"成功但无字段"，比报错更危险。
     //      （实测踩过：归一化时 destructuring 掉了 ok，渲染端会走成功分支。）
     if (!result.ok) {
+      if (snap) {
+        snap.retryCount = (snap.retryCount || 0) + 1;
+        // 🔴 SEC-01 重试状态机：只有明确可重试的 I/O 故障（EXECUTION_FAILED 且回滚成功），
+        // 且重试次数恰为 1 时，才保留原始快照允许重试一次。
+        // 若回滚失败、安全校验不符或已重试过，立即清理快照并撤销授权，严禁任何重试。
+        const isRetryableIO = result.code === 'EXECUTION_FAILED' && !result.rollbackFailed;
+        if (!isRetryableIO || snap.retryCount > 1) {
+          contentSnapshotStore.delete(proposalId);
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, snap.retryCount > 1 ? 'RETRY_EXHAUSTED' : (result.code || 'EXECUTION_FAILED'));
+          }
+        }
+      }
       const { ok, code, ...rest } = result;
       return { ok: false, ...rest, error: code };
+    }
+
+    // 成功执行：清理快照与暂存
+    contentSnapshotStore.delete(proposalId);
+    if (typeof takeStashedContent === 'function') {
+      takeStashedContent(proposalId);
     }
 
     // 🔴 D-13：执行成功后，把「她写了什么」交回调用方（主进程侧的 onExecuted hook）。

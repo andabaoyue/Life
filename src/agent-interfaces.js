@@ -480,7 +480,7 @@ const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote']);
  *   渲染端在 payload 里塞 proposalSource 一律无效 —— 否则自报来源即可免确认，
  *   那是 D-3 顶替攻击那一族。
  */
-function createActionProposal(input = {}, intentMotive = null, proposalSourceArg = 'user') {
+function createActionProposal(input = {}, intentMotive = null, proposalSourceArg = 'user', contentMeta = null) {
   const status = String(input.status || 'proposed');
   if (!PROPOSAL_STATES.includes(status)) {
     throw new Error(`非法提案状态: ${status}（合法值见 PROPOSAL_STATES）`);
@@ -532,6 +532,13 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
     intentSources: motive.intentSources,
     intentKind: motive.intentKind,
     intentOrigin: motive.intentOrigin,
+    // 🔴 SEC-01：权威内容快照绑定字段（只读不可变）。
+    //   写能力必须绑定 contentHash (SHA-256)、contentBytes、contentPreview 与 isTruncated。
+    //   严格只能来自主进程权威第四参数 contentMeta，禁止回退读取渲染端 input，杜绝伪造。
+    contentHash: contentMeta && contentMeta.contentHash ? String(contentMeta.contentHash) : null,
+    contentBytes: contentMeta && Number.isFinite(contentMeta.contentBytes) ? contentMeta.contentBytes : null,
+    contentPreview: contentMeta && typeof contentMeta.contentPreview === 'string' ? contentMeta.contentPreview : null,
+    isTruncated: Boolean(contentMeta && contentMeta.isTruncated),
   });
 }
 

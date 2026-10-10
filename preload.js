@@ -115,6 +115,8 @@ contextBridge.exposeInMainWorld('deskpet', {
     //     渲染端必须自己回查 agent:get-pending-proposal（冻结快照）。
     //     若在这里把提案对象塞过来，D-3 顶替攻击那一族就重新打开了。
     getPendingProposal: (proposalId) => ipcRenderer.invoke('agent:get-pending-proposal', { proposalId }),
+    // 🔴 SEC-01：受保护的可信待写入正文查询（按 proposalId 按需拉取，纯文本展示）。
+    getProposalContent: (proposalId) => ipcRenderer.invoke('agent:get-proposal-content', { proposalId }),
     onProposalAvailable: (cb) => ipcRenderer.on('agent-proposal-available', (e, p) => cb(p))
   },
 

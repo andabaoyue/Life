@@ -73,7 +73,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
   const h = harness();
   // 模拟渲染端经 propose 通道提交，payload 里带伪造来源
   const p = h.api.proposeInternal(
-    { capability: 'workspace.write', scope: path.join(h.sb, 'fake.txt'), reason: 'x', proposalSource: 'selfNote' },
+    { capability: 'workspace.write', scope: path.join(h.sb, 'fake.txt'), reason: 'x', proposalSource: 'selfNote', content: 'x' },
     'ipc');
   check('🔴 通道来的提案来源必须是 user', p.proposal && p.proposal.proposalSource === 'user',
     p.proposal && p.proposal.proposalSource);
@@ -87,7 +87,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
   const h = harness();
   const p = h.api.proposeInternal(
     { capability: 'workspace.write', scope: path.join(h.sb, 'note.txt'), reason: '想留点什么' },
-    'main', 'selfNote');
+    'main', 'selfNote', '我想留一句话');
   check('主进程可盖 selfNote 戳', p.proposal.proposalSource === 'selfNote');
   const ex = h.api.executeInternal({ proposalId: p.proposal.id, content: '我想留一句话' });
   check('🔴 selfNote 免确认执行成功（无需任何 confirm 调用）', ex && ex.ok === true, ex && ex.error);
@@ -100,7 +100,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
 {
   const h = harness();
   const p = h.api.proposeInternal(
-    { capability: 'workspace.write', scope: path.join(h.sb, 'user.md'), reason: '帮我写' }, 'main');
+    { capability: 'workspace.write', scope: path.join(h.sb, 'user.md'), reason: '帮我写', content: 'x' }, 'main');
   check('主进程默认来源 = user', p.proposal.proposalSource === 'user');
   const ex = h.api.executeInternal({ proposalId: p.proposal.id, content: 'x' });
   check('🔴 user 来源未确认被拒（D-3 第五道闸门未松动）',
@@ -114,7 +114,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
   // 沙盒外的路径：即便盖了 selfNote，闸门 2（scope）也必须拒
   const outside = path.join(os.tmpdir(), 'd17-outside.txt');
   const p = h.api.proposeInternal(
-    { capability: 'workspace.write', scope: outside, reason: 'x' }, 'main', 'selfNote');
+    { capability: 'workspace.write', scope: outside, reason: 'x' }, 'main', 'selfNote', 'x');
   check('🔴 沙盒外路径：建案即被 scope 闸门拒（selfNote 不豁免范围）',
     p && p.ok === false, p && p.error);
   // hardDenied 能力：process.execute 即便 selfNote 也拒
@@ -229,7 +229,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
         { transactionManager: new WriteTransactionManager({ dir: txn2 }), txnDir: txn2,
           takeStashedContent: (id) => { if (!stash.has(id)) return null; const v = stash.get(id); stash.delete(id); return v; } });
       const p = api2.proposeInternal(
-        { capability: 'workspace.write', scope: path.join(sb2, 'chain.txt'), reason: 'r' }, 'main', 'selfNote');
+        { capability: 'workspace.write', scope: path.join(sb2, 'chain.txt'), reason: 'r' }, 'main', 'selfNote', '链路验收内容');
       stash.set(p.proposal.id, '链路验收内容');
       const ex = api2.executeInternal({ proposalId: p.proposal.id });
       chainOk = !!(ex && ex.ok === true);
@@ -272,7 +272,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
       const ev3 = { sender: { id: 1 } };
       const call3 = (ch, raw) => hs[ch](ev3, raw);
       const p3 = api3.proposeInternal(
-        { capability: 'workspace.write', scope: path.join(sb3, 'note.txt'), reason: 'r' }, 'main', 'selfNote');
+        { capability: 'workspace.write', scope: path.join(sb3, 'note.txt'), reason: 'r' }, 'main', 'selfNote', '内容');
       beforeOk = call3('agent:get-pending-proposal', { proposalId: p3.proposal.id }).ok === true;
       stash3.set(p3.proposal.id, '内容');
       api3.executeInternal({ proposalId: p3.proposal.id });
@@ -280,7 +280,7 @@ console.log('--- D-17 自发愿望免确认门禁 ---');
       afterBlocked = after.ok === false && after.error === 'ALREADY_EXECUTED';
       // 对照：普通未决策提案仍可获取（别把「待确认」一起挡掉）
       const p4 = api3.proposeInternal(
-        { capability: 'workspace.write', scope: path.join(sb3, 'u.txt'), reason: 'r' }, 'main');
+        { capability: 'workspace.write', scope: path.join(sb3, 'u.txt'), reason: 'r', content: 'u' }, 'main');
       userStillOk = call3('agent:get-pending-proposal', { proposalId: p4.proposal.id }).ok === true;
     } catch (e) { /* 失败即未通过 */ }
     check('🔴 行为：已执行的自发便签不再被当成待确认（展示层纵深防御）', afterBlocked);
