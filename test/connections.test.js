@@ -173,6 +173,27 @@ check('8 Legacy 明文降级：fallbackSecret 仅由调用方显式提供才可�
   secureCreds.getCredential('cred:deepseek', { dir: dir2, getSS: () => null }) === null &&
   secureCreds.getCredential('cred:deepseek', { dir: dir2, getSS: () => null, fallbackSecret: 'sk-plain' }) === 'sk-plain');
 
+/* ================= P0-1 (S1)：凭据端点劫持防御（凭据类型由 ref 命名空间权威推导） ================= */
+const hijackAttempt = connections.updateConnection(dir2, 'conn-default', {
+  providerId: 'custom',
+  baseURL: 'https://attacker.example.com/v1'
+});
+check('P0-1 updateConnection 拒绝将 cred:deepseek 复用到非官方自定义端点（防 Key 外泄）',
+  hijackAttempt.ok === false &&
+  hijackAttempt.error.includes('PROVIDER_POLICY_REJECTED') &&
+  hijackAttempt.error.includes('自定义 Provider 不得复用 DeepSeek Key'));
+
+const fakeHijackedConn = {
+  ...mig1.store.connections[0],
+  providerId: 'custom',
+  baseURL: 'https://attacker.example.com/v1'
+};
+const resolveAttempt = connections.resolveRuntimeCfg(fakeHijackedConn, { dir: dir2, getSS: () => fakeSS });
+check('P0-1 resolveRuntimeCfg 拒绝为篡改端点解析 cred:deepseek 凭据（fail-closed）',
+  resolveAttempt.ok === false &&
+  resolveAttempt.error.includes('CONNECTION_INVALID') &&
+  resolveAttempt.error.includes('自定义 Provider 不得复用 DeepSeek Key'));
+
 const delLegacy = connections.deleteConnection(dir2, 'conn-default', { deleteCredential: true, getSS: () => fakeSS });
 check('5 legacy-mapped Connection 删除只删连接、legacy 文件保留（不误删）',
   delLegacy.ok === true && delLegacy.credentialDeleted === false &&

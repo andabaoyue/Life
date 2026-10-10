@@ -242,6 +242,12 @@ class ControlledAgentExecutor {
     this.maxReadBytes = Number.isFinite(deps.maxReadBytes) ? deps.maxReadBytes : DEFAULT_MAX_READ_BYTES;
     this.maxWriteBytes = Number.isFinite(deps.maxWriteBytes) ? deps.maxWriteBytes : DEFAULT_MAX_WRITE_BYTES;
     this.resolveRealPath = deps.resolveRealPath || resolveRealPath;
+    this.maxWallClockMs = Number.isFinite(deps.maxWallClockMs)
+      ? deps.maxWallClockMs
+      : ((this.budget && this.budget.limits && Number.isFinite(this.budget.limits.maxWallClockMs))
+          ? this.budget.limits.maxWallClockMs
+          : 10 * 60 * 1000);
+    this.now = typeof deps.now === 'function' ? deps.now : null;
     //已消费提案的终态集合。执行成功后写入，重放时查。
     //用 Set 而非改proposal.status：提案对象是 Object.freeze 的，改不动。
     this.consumed = new Set();
@@ -319,6 +325,36 @@ class ControlledAgentExecutor {
       // 动机仍可查：提案对象还在注册表里（重放拦的是「再执行一次」，不是「查不到它」）。
       this._audit({ outcome: 'rejected', code: 'ALREADY_EXECUTED', proposalId: proposalId.slice(0, 120) }, proposal);
       return fail('ALREADY_EXECUTED');
+    }
+
+    // ── 提案端到端生命周期时限校验（P0-2：maxWallClockMs 语义为从建案到执行的生命周期上限，默认 10 分钟）
+    if (!Number.isFinite(proposal.createdAt)) {
+      if (this.confirmation && typeof this.confirmation.revoke === 'function') {
+        this.confirmation.revoke(proposalId, 'PROPOSAL_INVALID_TIMESTAMP');
+      }
+      this._audit({
+        outcome: 'rejected',
+        code: 'PROPOSAL_INVALID_TIMESTAMP',
+        capability: proposal.capability,
+        proposalId: proposalId.slice(0, 120),
+      }, proposal);
+      return fail('PROPOSAL_INVALID_TIMESTAMP', { reason: 'PROPOSAL_CREATED_AT_REQUIRED' });
+    }
+    const maxWallClock = (this.budget && this.budget.limits && Number.isFinite(this.budget.limits.maxWallClockMs))
+      ? this.budget.limits.maxWallClockMs
+      : (Number.isFinite(this.maxWallClockMs) ? this.maxWallClockMs : 10 * 60 * 1000);
+    const now = (typeof this.now === 'function' ? this.now() : Date.now());
+    if (maxWallClock > 0 && (now - proposal.createdAt > maxWallClock)) {
+      if (this.confirmation && typeof this.confirmation.revoke === 'function') {
+        this.confirmation.revoke(proposalId, 'PROPOSAL_EXPIRED');
+      }
+      this._audit({
+        outcome: 'rejected',
+        code: 'PROPOSAL_EXPIRED',
+        capability: proposal.capability,
+        proposalId: proposalId.slice(0, 120),
+      }, proposal);
+      return fail('PROPOSAL_EXPIRED', { reason: 'PROPOSAL_WALL_CLOCK_EXCEEDED' });
     }
 
     // ── 不变式 3：process.execute 永久硬拒（在任何其它判定之前）

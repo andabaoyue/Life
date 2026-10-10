@@ -319,9 +319,7 @@ class ExecutionBudget {
    */
   consume(isWrite = false, now = Date.now()) {
     if (this.tripped) return false;
-    if (this.limits.maxWallClockMs > 0 && (now - this.startedAt) > this.limits.maxWallClockMs) {
-      return this._trip('wall_clock_exceeded');
-    }
+    // 🔴 P0-2: 会话常驻不再受进程启动时间熔断；maxWallClockMs 语义回归「单次提案端到端时限」，由执行器执行期校验
     if (this.actions + 1 > this.limits.maxActionsPerSession) {
       return this._trip('max_actions_exceeded');
     }
