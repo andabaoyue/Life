@@ -71,37 +71,51 @@ check('11 getTimezoneStatus 锁定契约（locked 恒真 + 标签含 UTC）', ((
   const s = getTimezoneStatus();
   return s.locked === true && getTimezoneLabel().includes('UTC');
 })());
-check('12 方案 A 与衣橱防漂移门禁：研究面板、初澜台词与衣橱双语覆盖且 en 模式无中文残留', (() => {
-  const sampleKeys = [
-    'research.dreams.title', 'research.state.title', 'research.replay.title',
-    'research.export.title', 'research.prov.traceBtn', 'research.windows.selectLabel',
-    'chulan.greeting', 'chulan.idle1', 'status.savedCheck', 'conn.testing',
-    'wardrobe.wearFailed', 'wardrobe.putOnFailed', 'wardrobe.offFailed', 'wardrobe.wipSuffix',
-    'wardrobe.slot.hair', 'wardrobe.slot.dress', 'wardrobe.preset.default', 'wardrobe.preset.gothic',
-    'wardrobe.item.silver_wavy_01', 'wardrobe.item.black_boots_01', 'chat.wearPrefix'
-  ];
+check('12 全量防漂移门禁：全量 en 字典零中文残留、t() 插值契约与 DOM 中文硬编码零残留审计', (() => {
+  // 1. 全量字典审计：en 模式下所有已登记词条（390+ 键）严格零中文残留（非抽样）
   setLocale('en');
-  const enClean = sampleKeys.every(k => {
+  const enAllKeys = Object.keys(I18N['en']);
+  const enAllClean = enAllKeys.every(k => {
     const val = t(k);
-    return typeof val === 'string' && val.length > 0 && !/[\u4e00-\u9fa5]/.test(val);
+    return typeof val === 'string' && !/[\u4e00-\u9fa5]/.test(val);
   });
+  const interpEn = t('research.snapshot.status', { time: '12:00:00' });
   setLocale('zh-CN');
-  const zhClean = sampleKeys.every(k => {
-    const val = t(k);
-    return typeof val === 'string' && val.length > 0 && /[\u4e00-\u9fa5]/.test(val);
-  });
-  // 静态源码审计：断言 pet.js 的 renderI18nPanel 明确包含关键静态节点接线，且衣橱槽位/单品/套装均走 t()
+
+  // 2. t() 轻量插值引擎契约验证
+  const interpZh = t('research.prov.scTitle', { id: 'sc-1', win: 2, trait: 'vitality', prev: 10, newVal: 20, delta: 10 });
+  const interpOk = interpEn.includes('12:00:00') && interpEn.includes('Snapshot:') && interpZh.includes('Window #2') && interpZh.includes('sc-1');
+
+  // 3. 静态源码全量 DOM 审计：pet.js 中直接把中文赋给 DOM 文本属性且无 t() 保护的语句严格为 0
   const petCode = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const hardcodedDom = petCode.split('\n').filter(l =>
+    /\.(textContent|innerHTML|placeholder|title)\s*=/.test(l) &&
+    /[\u4e00-\u9fa5]/.test(l) && !/\bt\(/.test(l)
+  );
+
+  // 4. 关键动态接线与特质闭环模式审查（衣橱/特质/梦境/研究面板/生命看板/台词）
   const wiredInPet = ['rDreamsTitle', 'rStateTitle', 'rReplayTitle', 'rExportTitle', 'rTraceBtn', 'acLabelScope'].every(id => {
     return petCode.includes(`setText('${id}'`) || petCode.includes(`setText("${id}"`);
   });
-  const wardrobeWired = [
+  const dynamicWired = [
     "t('wardrobe.item.' + id",
     "t('wardrobe.preset.' + pid",
     "t('wardrobe.slot.' + slot.id",
-    "t('wardrobe.item.' + it.id"
+    "t('wardrobe.item.' + it.id",
+    "t('trait.' + tName",
+    "t('research.snapshot.status'",
+    "t('research.windows.noArchiveData'",
+    "t('research.prov.scTitle'",
+    "t('research.replay.fuseBlown'",
+    "t('say.reacquaint'",
+    "t('say.pinOn'",
+    "t('dreams.count'",
+    "t('research.lexicon.empty'",
+    "t('research.vitals.line1'",
+    "t('chat.needKeyBubble'"
   ].every(pattern => petCode.includes(pattern));
-  return enClean && zhClean && wiredInPet && wardrobeWired;
+
+  return enAllClean && interpOk && hardcodedDom.length === 0 && wiredInPet && dynamicWired;
 })());
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
