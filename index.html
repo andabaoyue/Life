@@ -20,7 +20,7 @@
       <div id="wdSuggest" class="hint hidden"><span id="wdSuggestText"></span><button id="wdSuggestBtn">一键成套</button></div>
       <div id="wdSlots" class="wd-slots"></div>
       <div class="hint" id="wdHint">换装只换外观，不影响性格和说话方式</div>
-      <div class="hint panel-hint">按 ESC 或右键空白处即可关闭</div>
+      <div class="hint panel-hint" id="wdCloseHint">按 ESC 或右键空白处即可关闭</div>
     </div>
 
     <!-- Agent 用户确认卡片（v1.0 D-3 第四道闸门）：
@@ -30,14 +30,14 @@
     <div id="agentConfirm" class="hidden" role="dialog" aria-hidden="true" aria-label="操作确认">
       <div class="ac-title" data-agent-field="capability">—</div>
       <div class="ac-danger" data-agent-field="danger">—</div>
-      <div class="ac-row"><span class="ac-key">目标</span><span class="ac-val" data-agent-field="scope">—</span></div>
-      <div class="ac-row"><span class="ac-key">理由</span><span class="ac-val" data-agent-field="reason">—</span></div>
-      <div class="ac-row"><span class="ac-key">预算</span><span class="ac-val" data-agent-field="budget">—</span></div>
-      <div class="ac-row ac-meta-row hidden"><span class="ac-key">内容</span><span class="ac-val ac-content-meta"><span data-agent-field="content-bytes"></span><span data-agent-field="content-hash"></span></span></div>
+      <div class="ac-row"><span class="ac-key" id="acLabelScope">目标</span><span class="ac-val" data-agent-field="scope">—</span></div>
+      <div class="ac-row"><span class="ac-key" id="acLabelReason">理由</span><span class="ac-val" data-agent-field="reason">—</span></div>
+      <div class="ac-row"><span class="ac-key" id="acLabelBudget">预算</span><span class="ac-val" data-agent-field="budget">—</span></div>
+      <div class="ac-row ac-meta-row hidden"><span class="ac-key" id="acLabelContent">内容</span><span class="ac-val ac-content-meta"><span data-agent-field="content-bytes"></span><span data-agent-field="content-hash"></span></span></div>
       <div class="ac-content-preview-box hidden">
         <div class="ac-val ac-content-text" data-agent-field="content-preview"></div>
         <div class="hint ac-trunc-hint" data-agent-field="content-truncated"></div>
-        <button type="button" class="ac-expand-btn hidden" data-agent-action="expand-content">查看完整正文</button>
+        <button type="button" class="ac-expand-btn hidden" data-agent-action="expand-content" id="acExpandBtn">查看完整正文</button>
       </div>
       <div class="ac-content-full-box hidden" data-agent-box="content-full">
         <pre class="ac-content-full-text" data-agent-field="content-full"></pre>
@@ -225,33 +225,33 @@
         <!-- 1. 主体状态面板 -->
         <!-- 梦境（v1.0 大分区：与主体状态同级）——会变得很多很多，排版向记忆看齐 -->
         <div id="rPaneDreams" class="r-pane hidden">
-          <div class="r-section-title">梦境（只读 · 离线重组，非亲历）</div>
+          <div class="r-section-title" id="rDreamsTitle">梦境（只读 · 离线重组，非亲历）</div>
           <div id="dreamList" class="r-table-container">—</div>
         </div>
 
         <div id="rPaneState" class="r-pane">
-          <div class="r-section-title">初澜主体状态 (Trait Bounds: [-999, 999])</div>
+          <div class="r-section-title" id="rStateTitle">初澜主体状态 (Trait Bounds: [-999, 999])</div>
           <div id="rTraitsList" class="r-traits-grid"></div>
-          <div class="r-section-title" style="margin-top: 8px;">生理潮汐（只读）</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rVitalsTitle">生理潮汐（只读）</div>
           <div id="rVitalsList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;">发育景观（只读）</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rDevTitle">发育景观（只读）</div>
           <div id="rDevList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;">认知张力（只读）</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rCogTitle">认知张力（只读）</div>
           <div id="rCogList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;">关系与存在（只读）</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rRelTitle">关系与存在（只读）</div>
           <div id="rRelList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;">她的词汇（只读）</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rLexiconTitle">她的词汇（只读）</div>
           <div id="rLexiconList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;">预期账本（只读）</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rExpectTitle">预期账本（只读）</div>
           <div id="rExpectList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;">特质跃迁与演化历史</div>
+          <div class="r-section-title" style="margin-top: 8px;" id="rHistoryTitle">特质跃迁与演化历史</div>
           <div id="rTraitHistory" class="r-table-container">—</div>
         </div>
 
         <!-- 2. Window 浏览器面板 -->
         <div id="rPaneWindows" class="r-pane hidden">
           <div class="r-toolbar">
-            <label>选择窗口：</label>
+            <label id="rWindowSelectLabel">选择窗口：</label>
             <select id="rWindowSelect"></select>
             <span id="rWindowIntegrityBadge" class="r-badge badge-certified">CERTIFIED</span>
             <span id="rWindowReplayBadge" class="r-badge badge-certified">COMPLETE</span>
@@ -295,7 +295,7 @@
 
         <!-- 4. Replay 实验室面板 -->
         <div id="rPaneReplay" class="r-pane hidden">
-          <div class="r-section-title">确定性离线 Replay (Fail-Stop 熔断保护)</div>
+          <div class="r-section-title" id="rReplayTitle">确定性离线 Replay (Fail-Stop 熔断保护)</div>
           <div class="r-replay-controls">
             <div class="r-row">
               <button id="rReplayAllBtn" class="r-btn-action">完整重演 (Replay All)</button>
@@ -320,9 +320,9 @@
 
         <!-- 5. 数据导出面板 -->
         <div id="rPaneExport" class="r-pane hidden">
-          <div class="r-section-title">实验观测与复盘数据导出（严格只读）</div>
+          <div class="r-section-title" id="rExportTitle">实验观测与复盘数据导出（严格只读）</div>
           <div class="fgroup">
-            <div class="fg-title">状态类导出</div>
+            <div class="fg-title" id="rExpGroupState">状态类导出</div>
             <div class="r-export-btns">
               <button id="rExpTrajJson" class="r-btn-sm">状态轨迹 (JSON)</button>
               <button id="rExpTrajCsv" class="r-btn-sm">状态轨迹 (CSV)</button>
@@ -330,7 +330,7 @@
             </div>
           </div>
           <div class="fgroup">
-            <div class="fg-title">证据与打包</div>
+            <div class="fg-title" id="rExpGroupEvidence">证据与打包</div>
             <div class="r-export-btns">
               <button id="rExpEvCsv" class="r-btn-sm">证据清单 (CSV)</button>
               <button id="rExpFullBundle" class="r-btn-action">完整实验包 (Bundle)</button>

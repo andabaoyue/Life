@@ -71,6 +71,39 @@ check('11 getTimezoneStatus 锁定契约（locked 恒真 + 标签含 UTC）', ((
   const s = getTimezoneStatus();
   return s.locked === true && getTimezoneLabel().includes('UTC');
 })());
+check('12 方案 A 与衣橱防漂移门禁：研究面板、初澜台词与衣橱双语覆盖且 en 模式无中文残留', (() => {
+  const sampleKeys = [
+    'research.dreams.title', 'research.state.title', 'research.replay.title',
+    'research.export.title', 'research.prov.traceBtn', 'research.windows.selectLabel',
+    'chulan.greeting', 'chulan.idle1', 'status.savedCheck', 'conn.testing',
+    'wardrobe.wearFailed', 'wardrobe.putOnFailed', 'wardrobe.offFailed', 'wardrobe.wipSuffix',
+    'wardrobe.slot.hair', 'wardrobe.slot.dress', 'wardrobe.preset.default', 'wardrobe.preset.gothic',
+    'wardrobe.item.silver_wavy_01', 'wardrobe.item.black_boots_01', 'chat.wearPrefix'
+  ];
+  setLocale('en');
+  const enClean = sampleKeys.every(k => {
+    const val = t(k);
+    return typeof val === 'string' && val.length > 0 && !/[\u4e00-\u9fa5]/.test(val);
+  });
+  setLocale('zh-CN');
+  const zhClean = sampleKeys.every(k => {
+    const val = t(k);
+    return typeof val === 'string' && val.length > 0 && /[\u4e00-\u9fa5]/.test(val);
+  });
+  // 静态源码审计：断言 pet.js 的 renderI18nPanel 明确包含关键静态节点接线，且衣橱槽位/单品/套装均走 t()
+  const petCode = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const wiredInPet = ['rDreamsTitle', 'rStateTitle', 'rReplayTitle', 'rExportTitle', 'rTraceBtn', 'acLabelScope'].every(id => {
+    return petCode.includes(`setText('${id}'`) || petCode.includes(`setText("${id}"`);
+  });
+  const wardrobeWired = [
+    "t('wardrobe.item.' + id",
+    "t('wardrobe.preset.' + pid",
+    "t('wardrobe.slot.' + slot.id",
+    "t('wardrobe.item.' + it.id"
+  ].every(pattern => petCode.includes(pattern));
+  return enClean && zhClean && wiredInPet && wardrobeWired;
+})());
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
+
