@@ -616,7 +616,7 @@ Copyright © 2026 andabaoyue
 - LICENSE ✅（PolyForm Noncommercial 1.0.0 官方正文，15 节齐全）
 - Branding / Trademark Policy ✅（[BRANDING.md](../BRANDING.md)：名称使用规范；**未注册商标**，
   该文档是声明而非注册，也不授予商标许可）
-- README 中的官方项目说明 ✅（「开源协议与使用规范」一节）
+- README 中的官方项目说明 ✅（「许可证与使用规范」一节）
 
 源码中可以保留：
 

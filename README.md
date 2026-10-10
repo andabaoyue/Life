@@ -930,10 +930,10 @@ DeepSeek 的上下文缓存按完整前缀单元工作，不是模糊相似匹�
 欢迎对数字生命实验平台、桌面交互与像素美术感兴趣的开发者与画师参与 Life 的建设！
 贡献指引详见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-- **Q 版像素画社区共创**：Life 平台的 64×80 Q 版点阵立绘、待机动作、走动循环与换装图层正处于开源后社区协同精修阶段。美术规范详见 [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md)。
+- **Q 版像素画社区共创**：Life 平台的 64×80 Q 版点阵立绘、待机动作、走动循环与换装图层正进入公开源码后的社区协同精修阶段。美术规范详见 [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md)。
 - **测试门禁验收**：在提交 Pull Request 前，请确保在根目录执行并通过 `npm test`（全量 117 项自动化契约）。
 
-## 开源协议与使用规范 (License)
+## 许可证与使用规范 (License)
 
 Life 采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 源码可用许可证（Source-Available）：
 
