@@ -429,7 +429,7 @@ function checkDeveloperPathLeaks() {
   for (const ent of fs.readdirSync(ROOT, { withFileTypes: true })) {
     if (ent.isDirectory()) continue;
     if (ent.name.startsWith('_') || ent.name.startsWith('V1.') || ent.name.startsWith('chulan_')) continue;
-    if (/\.(js|json|md|html|css|py|yml|yaml)$/i.test(ent.name)) {
+    if (/\.(js|json|md|html|css|py|yml|yaml)$/i.test(ent.name) || /^(LICENSE|NOTICE)$/i.test(ent.name)) {
       const full = path.join(ROOT, ent.name);
       const content = fs.readFileSync(full, 'utf8');
       content.split('\n').forEach((l, idx) => {
