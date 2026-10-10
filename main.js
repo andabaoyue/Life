@@ -522,7 +522,8 @@ function saveChatBounds() {
   try {
     if (chatWin && !chatWin.isDestroyed()) {
       chatWinBounds = chatWin.getBounds();
-      require('fs').writeFileSync(require('path').join(app.getPath('userData'), 'chat-window.json'), JSON.stringify(chatWinBounds));
+      const { writeJsonAtomic } = require('./src/atomic');
+      writeJsonAtomic(require('path').join(app.getPath('userData'), 'chat-window.json'), chatWinBounds);
     }
   } catch (e) { /* 记忆失败不致命 */ }
 }

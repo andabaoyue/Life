@@ -117,6 +117,15 @@ try {
     path.basename(a1).startsWith('.x.json.tmp-'), path.basename(a1));
 }
 
+/* 12. 生产源码静态审计：main.js 的 saveChatBounds 必须使用 writeJsonAtomic 写入 chat-window.json */
+{
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const chatSaveUsesAtomic = mainSrc.includes('writeJsonAtomic') &&
+    /saveChatBounds[\s\S]*?writeJsonAtomic/.test(mainSrc) &&
+    !/saveChatBounds[\s\S]*?fs\.writeFileSync/.test(mainSrc);
+  check('main.js saveChatBounds 使用 writeJsonAtomic 确保原子写', chatSaveUsesAtomic);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 临时目录交给系统 */ }
 process.exit(failures ? 1 : 0);
