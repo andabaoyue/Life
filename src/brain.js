@@ -36,7 +36,8 @@ const WANT_TO_LEAVE_SYS =
   + '3. 【不编造】不许虚构没发生过的经历、不许编日期或时长。'
   + '   你不知道现在几点，就不要写出钟点。\n'
   + '4. 【长度】两三句话之内。这是留给自己的，不是写给别人看的文章。\n'
-  + '5. 直接给内容本身，不要加引号、不要加标题、不要加任何说明或元话语。';
+  + '5. 【语言】使用你平时与用户交流时最常使用的语言。\n'
+  + '6. 直接给内容本身，不要加引号、不要加标题、不要加任何说明或元话语。';
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -63,6 +64,7 @@ const SUMMARY_SYS =
   + '   - expectations 条目形状（text 必填！）：{"text":"预期内容","kind":"external|pledge","source":"user|chulan","messageId":"m-...","dueHint":"时间指向"}；pledge 仅限初澜自己的承诺，用户的约定一律记 external。\n'
   + '   - expectationOutcomes 条目形状：{"id":"exp-000001","status":"fulfilled|broken|moot","messageId":"m-...","note":"客观事实摘录"}。\n'
   + '   - expectationOutcomes：只核验下方【待核验预期】清单里的条目，id 原样引用，status 取 fulfilled|broken|moot，messageId 引证本窗真实 ID（moot 可免），note 只写客观事实摘录，不写结论。\n'
+  + '5. 【语言一致性】各字段内容（用户事实、初澜经历、预期、词汇含义等）必须与当前窗口对话所使用的主要语言保持严格一致（对话为英文则提取英文，对话为中文则提取中文），严禁擅自翻译成其他语言。\n'
   + '请只输出如下合法 JSON 对象（不要 Markdown 代码块包裹）：\n'
   + '{"segments":[{"range":"1-20","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"21-40","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
@@ -77,7 +79,7 @@ const MERGE_SYS =
   + '把它们合并成一条连贯的早期记忆，要求：'
   + '同一事实以最新的为准，用户纠正过的结论必须覆盖旧版本；'
   + '保留所有具体的人名、称呼、数字、偏好、项目和约定，不得改写具体信息；'
-  + '去掉重复条目；控制在 250 字以内；只输出正文。';
+  + '去掉重复条目；语言与输入片段保持一致（中文约 250 字以内，英文约 250 词以内）；只输出正文。';
 
 const GROWTH_SYS =
   '你是数字主体的经历筛选器。只从给定对话中提取可能改变初澜是谁的长期成长证据，'
@@ -93,7 +95,8 @@ const GROWTH_SYS =
   + '若输入中出现【自发留痕事实】块：那是初澜自发写下的字（已铸入经历档案，引证 id 形如 selfnote-…，可放进 support 的 messageIds 引用）；'
   + '只有当你从中看到她真实做出的取舍、且引证合法时，才可在该条目上附加 '
   + '"traitHint":{"trait":"quiet_preference|social_initiative|attachment_need|vitality|philosophical_curiosity|self_continuity|meaning_presence|self_clarity","direction":1 或 -1,"strength":0.0~1.0}；'
-  + '没有足够依据绝不附加 —— 证据不足宁可不动她的特质。';
+  + '没有足够依据绝不附加 —— 证据不足宁可不动她的特质。'
+  + '语言一致性：提炼的 trait 描述语言必须与对话保持一致（引文 quote 必须严格逐字摘录原文）。';
 
 /* v0.9.9: 小结分段计划 —— 分段数随窗口规模自适应，绝不写死「3~5 段」：
    满 100 轮走标准 5 段（严格分支钉死 1-20…81-100），小窗口只写覆盖实际轮数的段。

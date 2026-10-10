@@ -268,6 +268,15 @@ const OBS_VALID = JSON.stringify({
   check('FC2 SUMMARY_SYS 覆盖句抑制照抄五段骨架（分段随窗口规模）',
     brainSrc.includes('分段数以【窗口规模】指令为准') && brainSrc.includes('不照抄上方五段骨架'));
 
+  const dreamSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'dream-system.js'), 'utf8');
+  check('FC4 提示词语言自适应防漂移（PERSONA/WANT_TO_LEAVE/SUMMARY/GROWTH/MERGE/DREAM 皆含语言条款）',
+    PERSONA.includes('语言自适应：当对方使用其他语言')
+    && brainSrc.includes('5. 【语言】使用你平时与用户交流时最常使用的语言')
+    && brainSrc.includes('5. 【语言一致性】各字段内容')
+    && brainSrc.includes('语言与输入片段保持一致（中文约 250 字以内，英文约 250 词以内）')
+    && brainSrc.includes('语言一致性：提炼的 trait 描述语言必须与对话保持一致')
+    && dreamSrc.includes('输出语言必须与日间遗留残余所使用的主要语言保持严格一致'));
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();
