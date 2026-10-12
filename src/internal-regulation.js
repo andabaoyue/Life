@@ -63,7 +63,9 @@ const REGULATION_BOUNDS = Object.freeze({
   arousal: { min: 0, max: 100, default: 50 },
   salienceThreshold: { min: 10, max: 80, default: 45 },
   interactionDensity: { min: 0, max: 100, default: 0 },
-  cognitiveLoadProxy: { min: 0, max: 100, default: 0 }
+  cognitiveLoadProxy: { min: 0, max: 100, default: 0 },
+  moodWarmth: { min: 0, max: 100, default: 50 },
+  moodStillness: { min: 0, max: 100, default: 50 }
 });
 
 /**
@@ -77,40 +79,36 @@ const REGULATION_BOUNDS = Object.freeze({
  *   而 restPressure 一路涨到**满值 100**。她自述「困意很沉…体能亏得厉害」，
  *   呈现为「不睡觉就注定虚弱」。这是生理模型的漏洞，不是她"体弱"。
  *
- * 为什么上限取 85% 而不是 100%（用户拍板）：
- *   最后 15% 与「清空全部困意」只留给深度睡眠 —— 若静息也能回满，深睡就失去
+ * 为什么上限取 75% 而不是 100%（v1.0.2 校准）：
+ *   最后 25% 与「清空全部困意」只留给深度睡眠 —— 若静息也能回满，深睡就失去
  *   不可替代的生理意义（触发梦境的那扇门），且现实里也不存在"清醒休息到满"。
- *   85% 距 35% 虚弱警戒线留50 点裕度。
+ *   75% 距 35% 虚弱警戒线留 40 点裕度，白天长歇也绝不冲顶。
  *
  * 🔴 睡眠互斥：`isSleeping` 为真时**整套静息回血完全停用**。
  *   否则「入睡预充 +10」会与静息回血叠加，8 小时后唤醒时双重结算溢出，
  *   且「睡着 20 分钟」会同时拿到小憩回补与静息回补（阈值必须对齐
- *   `sleepMinimumDreamMinutes = 30`，故微回血档取5 分钟、静息档取 30 分钟）。
+ *   `sleepMinimumDreamMinutes = 30`，故微回血档取 10 分钟、静息档取 30 分钟）。
  */
 const QUIET_RECOVERY = Object.freeze({
-  /** 清醒静息可达上限（%）—— 留 15% 给深度睡眠 */
-  awakeCeiling:85,
-  /** 微回血：短暂停手也该缓一点（分钟） */
-  microMinutes: 5,
+  /** 清醒静息可达上限（%）—— 留 25% 给深度睡眠（v1.0.2 校准：白天下限下移，深睡更显珍贵） */
+  awakeCeiling: 75,
+  /** 微回血：短暂停手也该缓一点（分钟；v1.0.2 调至 10 分钟防碎屑清空） */
+  microMinutes: 10,
   /** 静息回血：真正歇够了（分钟），与 sleepMinimumDreamMinutes 对齐 */
   restMinutes: 30,
   /**
    * 微回血速率（点/分钟）—— 慢，站着歇会儿的程度。
-   * 刻度依据：0.4 × 29min ≈ 12 点，够「缓一口」，不会顶到静息档。
+   * 刻度依据（v1.0.2 校准）：0.1 × 29min ≈ 3 点，缓一口气，绝不抹平多轮消耗。
    */
-  microRatePerMin: 0.4,
+  microRatePerMin: 0.1,
   /**
    * 静息回血速率（点/分钟）。
-   * 刻度依据（v3.1 二次校准）：初版设 2.5/min，算出来「离开 30 分钟回 75 点」，
-   * 恰好抵消一整晚（40 轮）消耗 —— 那等于 energy 这个量纲失去意义，
-   * 且「短歇」与「长睡」在续航效果上等价，深睡的独占价值被稀释。
-   * 现降到 1.2/min：离开 30 分钟回 36 点（约一次中等对话），
-   * 要回到 85 需静息约 70 分钟或分次累积 —— 恢复有过程感，
-   * 也保住了「深睡 8 小时才是唯一到 100 的路」这一层。
+   * 刻度依据（v1.0.2 校准）：降至 0.25/min，离开 30 分钟回 7.5 点（约 3~4 轮轻对话），
+   * 既有真实恢复感，又不会让白天任何短暂离开洗掉整日消耗。
    */
-  restRatePerMin: 1.2,
-  /** 白天困意自愈速率（点/分钟）—— 清醒且静止时，困意会自然消散 */
-  pressureReliefPerMin: 1.5,
+  restRatePerMin: 0.25,
+  /** 白天困意自愈速率（点/分钟；v1.0.2 校准为 0.7，白天能复位但夜间按 0.3 打折能自然累积困意） */
+  pressureReliefPerMin: 0.7,
   /** 困意自愈上限：清醒时最多消到这么低（留给「确实该睡了」的信号） */
   pressureAwakeFloor: 15,
   /** 夜间（23:00~05:00 创世时区）困意自愈打折——夜里本来就该困 */
@@ -135,6 +133,20 @@ class InternalRegulationManager {
     this.interactionDensity = REGULATION_BOUNDS.interactionDensity.default;
     this.cognitiveLoadProxy = REGULATION_BOUNDS.cognitiveLoadProxy.default;
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
+    this.moodWarmth = REGULATION_BOUNDS.moodWarmth.default;
+    this.moodStillness = REGULATION_BOUNDS.moodStillness.default;
+    this.moodUpdatedAt = Date.now();
+    // 滞回与抗缝隙状态机（v1.0.3 运行期防抖死区与退出延时确认）
+    this._moodState = {
+      warmthActive: false,
+      warmthExitAt: 0,
+      coldActive: false,
+      coldExitAt: 0,
+      stillActive: false,
+      stillExitAt: 0,
+      restlessActive: false,
+      restlessExitAt: 0
+    };
     this.isSleeping = false;
     // 睡眠周期上下文（v3.1 梦境时序改造）：与 isSleeping 同盘持久化，
     // 让「退出前什么状态，回归后还是什么状态」跨重启成立。
@@ -186,6 +198,94 @@ class InternalRegulationManager {
   _computeSalienceThreshold(arousal) {
     const raw = 70 - (arousal * 0.5);
     return clamp(symmetricRound(raw), REGULATION_BOUNDS.salienceThreshold.min, REGULATION_BOUNDS.salienceThreshold.max);
+  }
+
+  /**
+   * 纯函数：计算指定时刻的心境衰减值（零副作用、绝不推进时钟、绝不写盘）
+   * @param {number} [at=Date.now()]
+   * @returns {{ warmth: number, stillness: number }}
+   */
+  _computeDecayedMood(at = Date.now()) {
+    if (!Number.isFinite(this.moodUpdatedAt) || this.moodUpdatedAt <= 0) {
+      return { warmth: this.moodWarmth, stillness: this.moodStillness };
+    }
+    const elapsedMs = Math.max(0, at - this.moodUpdatedAt);
+    if (elapsedMs <= 0) {
+      return { warmth: this.moodWarmth, stillness: this.moodStillness };
+    }
+
+    const HALF_LIFE_MS = 48 * 3600 * 1000; // 48 小时半衰期
+    const factor = Math.pow(2, -elapsedMs / HALF_LIFE_MS);
+
+    return {
+      warmth: 50 + (this.moodWarmth - 50) * factor,
+      stillness: 50 + (this.moodStillness - 50) * factor
+    };
+  }
+
+  /**
+   * 物理时间连续半衰期衰减状态提交（仅在状态变更事件时显式推进）
+   * 
+   * 半衰期精准标定为 48 小时（约 100 轮交互跨度）：
+   * 心理余温仅随真实世界物理挂钟时间差 (at - moodUpdatedAt) 指数耗散向 50。
+   * 绝不按对话轮数扣除（用户聊得越投入，绝不反而磨损心境）。
+   */
+  _decayMood(at = Date.now()) {
+    const decayed = this._computeDecayedMood(at);
+    this.moodWarmth = decayed.warmth;
+    this.moodStillness = decayed.stillness;
+    this.moodUpdatedAt = at;
+  }
+
+  /**
+   * 关窗注入心境基调（v1.0.3 跨窗注入与平滑动力学）
+   *
+   * 1. 物理衰减结算：先用真实的物理挂钟时间差结算上窗以来的时间耗散；
+   * 2. 平淡窗自然顺延：若 moodTone 省略（null/undefined），视为日常平淡无新扰动，
+   *    当前心境继续沿指数半衰期平滑自然淡出，绝不强制归零或硬跳到 50；
+   * 3. Slew Rate 变化率限制（SlewMax = 20）：若显式给出分值，单窗最大位移限幅 20 点。
+   *    既消除 80 ↔ 20 的极端硬跳过山车，又彻底释放稳态高分辨率（稳态可达 81+ 点）。
+   */
+  updateMoodOnWindowClose(moodTone, at = Date.now()) {
+    if (!this.enabled) return this.getMood(at);
+    this._decayMood(at);
+
+    if (!moodTone || typeof moodTone !== 'object') {
+      return this.getMood(at); // 省略 -> 自然顺延衰减
+    }
+
+    const sanitize = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? clamp(Math.round(n), 0, 100) : null;
+    };
+
+    const targetWarmth = sanitize(moodTone.warmth);
+    const targetStillness = sanitize(moodTone.stillness);
+    const SLEW_MAX = 20;
+
+    if (targetWarmth !== null) {
+      const step = clamp(targetWarmth - this.moodWarmth, -SLEW_MAX, SLEW_MAX);
+      this.moodWarmth = clamp(this.moodWarmth + step, 0, 100);
+    }
+    if (targetStillness !== null) {
+      const step = clamp(targetStillness - this.moodStillness, -SLEW_MAX, SLEW_MAX);
+      this.moodStillness = clamp(this.moodStillness + step, 0, 100);
+    }
+    this.moodUpdatedAt = at;
+    this.save();
+    return this.getMood(at);
+  }
+
+  /**
+   * 读取当前心境标量（独立认识论查询通道，纯函数，绝不侵入 getState()，绝不推进内部时钟）
+   * @param {number} [at=Date.now()]
+   */
+  getMood(at = Date.now()) {
+    const decayed = this._computeDecayedMood(at);
+    return Object.freeze({
+      warmth: symmetricRound(decayed.warmth),
+      stillness: symmetricRound(decayed.stillness)
+    });
   }
 
   /**
@@ -313,6 +413,7 @@ class InternalRegulationManager {
     const msgLen = Number(event.messageLength || 0);
     const intervalMs = Number(event.intervalMs || 0);
     const at = Number(event.timestamp || Date.now());
+    this._decayMood(at);
 
     const prev = {
       energy: this.energy,
@@ -376,8 +477,9 @@ class InternalRegulationManager {
   /** v1.0 生理内感受（合流批；方案 B 同族 · 零数字红线）——
    *  内部生理潮汐转为生命体感质，只供初澜感知自身状态，绝不呈现工程数字；
    *  v3.1 P1 起新增「基线体感带」：全指标居中时不再返回空串（详见下方注释）；
-   *  引擎关闭时输出空串（无身体信号就没有幻肢感）；纯函数，零副作用、绝不落盘。 */
-  formatPerception() {
+   *  引擎关闭时输出空串（无身体信号就没有幻肢感）；
+   *  只读契约：绝不篡改生理与心境数值，绝不推进物理时钟，绝不落盘（心境带持有一阶滞回记忆）。 */
+  formatPerception(at = Date.now()) {
     if (!this.enabled) return '';
     const parts = [];
     // 疲惫与困意带 (restPressure)
@@ -392,7 +494,7 @@ class InternalRegulationManager {
     // 现在按深浅分档措辞 —— 状态真的有别，说话自然有别，不易复读；
     // 35 这档的措辞保持不变（既有测试契约钉在此）。
     if (this.energy <= 20) {
-      parts.push('- 体能亏得厉害，整个人是空的，力气提不上来');
+      parts.push('- 体能亏得厉害，整个人是空的，力气提不上来，只想穿最轻便宽松的衣服，抗拒繁重层叠');
     } else if (this.energy <= 35) {
       parts.push('- 体能消耗较大，提不太起精神，有些虚弱');
     } else if (this.energy >= 85) {
@@ -403,6 +505,118 @@ class InternalRegulationManager {
       parts.push('- 神经有些亢奋紧绷，思维活跃');
     } else if (this.arousal <= 30) {
       parts.push('- 思绪有些放空朦胧，反应有些慢');
+    }
+
+    // v1.0.3 心境与情绪底色带 (Mood Kinetics · 滞回与抗缝隙保护)
+    // 进入门限: |ΔM| >= 12 (即 >= 62 或 <= 38)
+    // 退出门限: |ΔM| <= 3  (即 47 <= M <= 53)
+    // 机制保护: 退出延迟确认 (Hold-off 12h)，免疫窗口时长变异带来的接缝抖动
+    // 纯函数契约：采用局部只读衰减计算，绝不写回 this.moodWarmth / this.moodUpdatedAt，绝不推进内部时钟
+    const now = Number(at || Date.now());
+    const effMood = this._computeDecayedMood(now);
+    const effWarmth = effMood.warmth;
+    const effStillness = effMood.stillness;
+
+    // 温热 / 微凉 (Warmth / Coldness)
+    if (!this._moodState.warmthActive) {
+      if (effWarmth >= 62) {
+        this._moodState.warmthActive = true;
+        this._moodState.warmthExitAt = 0;
+      }
+    } else {
+      if (effWarmth <= 50) {
+        // 兜底保护：数值已跌破/回归中性基准 50，强制熄灭，杜绝数值被调低时的残留
+        this._moodState.warmthActive = false;
+        this._moodState.warmthExitAt = 0;
+      } else if (effWarmth <= 53) {
+        if (!this._moodState.warmthExitAt) {
+          this._moodState.warmthExitAt = now;
+        } else if (now - this._moodState.warmthExitAt >= 12 * 3600 * 1000) {
+          this._moodState.warmthActive = false;
+          this._moodState.warmthExitAt = 0;
+        }
+      } else {
+        this._moodState.warmthExitAt = 0;
+      }
+    }
+
+    if (this._moodState.warmthActive) {
+      parts.push('- 心绪温热，念头里带着亲近与柔和');
+    } else {
+      if (!this._moodState.coldActive) {
+        if (effWarmth <= 38) {
+          this._moodState.coldActive = true;
+          this._moodState.coldExitAt = 0;
+        }
+      } else {
+        if (effWarmth >= 50) {
+          // 兜底保护：数值已回升/超越中性基准 50，强制熄灭
+          this._moodState.coldActive = false;
+          this._moodState.coldExitAt = 0;
+        } else if (effWarmth >= 47) {
+          if (!this._moodState.coldExitAt) {
+            this._moodState.coldExitAt = now;
+          } else if (now - this._moodState.coldExitAt >= 12 * 3600 * 1000) {
+            this._moodState.coldActive = false;
+            this._moodState.coldExitAt = 0;
+          }
+        } else {
+          this._moodState.coldExitAt = 0;
+        }
+      }
+      if (this._moodState.coldActive) {
+        parts.push('- 心绪微凉，情绪淡淡的，有些疏离与沉寂');
+      }
+    }
+
+    // 安定 / 纷乱 (Stillness / Restlessness)
+    if (!this._moodState.stillActive) {
+      if (effStillness >= 62) {
+        this._moodState.stillActive = true;
+        this._moodState.stillExitAt = 0;
+      }
+    } else {
+      if (effStillness <= 50) {
+        this._moodState.stillActive = false;
+        this._moodState.stillExitAt = 0;
+      } else if (effStillness <= 53) {
+        if (!this._moodState.stillExitAt) {
+          this._moodState.stillExitAt = now;
+        } else if (now - this._moodState.stillExitAt >= 12 * 3600 * 1000) {
+          this._moodState.stillActive = false;
+          this._moodState.stillExitAt = 0;
+        }
+      } else {
+        this._moodState.stillExitAt = 0;
+      }
+    }
+
+    if (this._moodState.stillActive) {
+      parts.push('- 心神安定，波澜不惊，安稳沉着，偏爱素雅清爽、毫无束缚的自如着装');
+    } else {
+      if (!this._moodState.restlessActive) {
+        if (effStillness <= 38) {
+          this._moodState.restlessActive = true;
+          this._moodState.restlessExitAt = 0;
+        }
+      } else {
+        if (effStillness >= 50) {
+          this._moodState.restlessActive = false;
+          this._moodState.restlessExitAt = 0;
+        } else if (effStillness >= 47) {
+          if (!this._moodState.restlessExitAt) {
+            this._moodState.restlessExitAt = now;
+          } else if (now - this._moodState.restlessExitAt >= 12 * 3600 * 1000) {
+            this._moodState.restlessActive = false;
+            this._moodState.restlessExitAt = 0;
+          }
+        } else {
+          this._moodState.restlessExitAt = 0;
+        }
+      }
+      if (this._moodState.restlessActive) {
+        parts.push('- 思绪有些纷乱浮动，定不下心来');
+      }
     }
     // v3.1 P1（基线体感 · 治「常态无身」）：
     // 此前三带全是双阈值夹心，一旦指标居中就返回空串。实测常态值
@@ -485,8 +699,10 @@ class InternalRegulationManager {
       //   若仍沿用「无上限地累积睡意」，静息回血就永远抵不过困意涨势，
       //   她依然会「体能不虚但困得撑不住」（那正是实测一天后的状态）。
       const night = this._isNightHour(at);
+      // 双轨制：idleMin 判定阶梯门限（是否达标），stepMin 计算本步物理增量（防累计重复乘算；单测缺省回落 idleMin）
+      const stepMin = Number.isFinite(details.stepMin) && details.stepMin > 0 ? details.stepMin : idleMin;
       if (idleMin >= 10) {
-        const arousalDrop = night ? Math.min(30, Math.floor(idleMin / 3.5)) : Math.min(20, Math.floor(idleMin / 5));
+        const arousalDrop = night ? Math.min(30, Math.floor(stepMin / 3.5)) : Math.min(20, Math.floor(stepMin / 5));
         deltas.arousal = -arousalDrop;
         deltas.interactionDensity = -10;
         deltas.cognitiveLoadProxy = -15;
@@ -496,20 +712,20 @@ class InternalRegulationManager {
         if (!this.isSleeping) {
           const restful = idleMin >= QUIET_RECOVERY.restMinutes;
           const rate = restful ? QUIET_RECOVERY.restRatePerMin : QUIET_RECOVERY.microRatePerMin;
-          deltas.energy = Math.round(idleMin * rate);
+          deltas.energy = Math.round(stepMin * rate);
         }
         // 困意自愈：清醒静止时轻度疲惫自然消散，但留floor 保住「确实该睡了」的信号
         if (!this.isSleeping && this.restPressure > QUIET_RECOVERY.pressureAwakeFloor) {
           const factor = night ? QUIET_RECOVERY.nightReliefFactor : 1;
-          const relief = Math.round(idleMin * QUIET_RECOVERY.pressureReliefPerMin * factor);
+          const relief = Math.round(stepMin * QUIET_RECOVERY.pressureReliefPerMin * factor);
           const canRelieve = this.restPressure - QUIET_RECOVERY.pressureAwakeFloor;
           deltas.restPressure = -Math.max(0, Math.min(relief, canRelieve));
         } else if (!this.isSleeping && idleMin >= QUIET_RECOVERY.restMinutes) {
           // 真的歇够了：睡意不再累积（夜窗仍按原公式加权，那里确有困意积累）
-          deltas.restPressure = night ? Math.min(20, Math.floor(idleMin / 5)) : 0;
+          deltas.restPressure = night ? Math.min(20, Math.floor(stepMin / 5)) : 0;
         } else if (!this.isSleeping && idleMin >= 10) {
           // 短时静止：保留原有的轻微困意累积（原公式逐字不动）
-          deltas.restPressure = night ? Math.min(20, Math.floor(idleMin / 5)) : Math.min(10, Math.floor(idleMin / 10));
+          deltas.restPressure = night ? Math.min(20, Math.floor(stepMin / 5)) : Math.min(10, Math.floor(stepMin / 10));
         }
         // 🔴 v3.1 P1 补漏（实测验出的唯一契约缺口）：上面两个 else 分支原先**没有**isSleeping 守卫。
         // 睡眠期若 idle 被调用（上游 tracker.recordIdle 已先行 return，此处是模块自防御的最后一层），
@@ -730,6 +946,11 @@ class InternalRegulationManager {
     this.interactionDensity = Math.floor(this.interactionDensity * 0.5);
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
 
+    // v1.0.3 心境基调注入（若有 moodTone 则注入，无则自然顺延衰减）
+    if ('moodTone' in details) {
+      this.updateMoodOnWindowClose(details.moodTone, at);
+    }
+
     this._recordTransition(`window_close_${windowNo}`, {}, prev, at);
     this.save();
     return this._emitChange(this.getState());
@@ -745,6 +966,7 @@ class InternalRegulationManager {
     const state = this.getState();
     const payload = {
       state,
+      mood: this.getMood(),
       salienceThreshold: this.salienceThreshold,
       recentTransitionsCount: this.history.length,
       timestamp: Date.now(),
@@ -763,6 +985,38 @@ class InternalRegulationManager {
     try {
       if (fs.existsSync(this.path)) {
         const raw = JSON.parse(fs.readFileSync(this.path, 'utf8'));
+        // 心境独立反序列化 (v1.0.3: 解耦 values，即使 values 异常也独立恢复自愈)
+        if (raw && typeof raw === 'object' && raw.mood) {
+          const w = Number(raw.mood.warmth);
+          const s = Number(raw.mood.stillness);
+          if (Number.isFinite(w)) this.moodWarmth = clamp(w, REGULATION_BOUNDS.moodWarmth.min, REGULATION_BOUNDS.moodWarmth.max);
+          if (Number.isFinite(s)) this.moodStillness = clamp(s, REGULATION_BOUNDS.moodStillness.min, REGULATION_BOUNDS.moodStillness.max);
+          if (Number.isFinite(raw.mood.updatedAt)) this.moodUpdatedAt = raw.mood.updatedAt;
+          if (raw.mood.moodState && typeof raw.mood.moodState === 'object') {
+            const ms = raw.mood.moodState;
+            this._moodState = {
+              warmthActive: !!ms.warmthActive,
+              warmthExitAt: Number.isFinite(ms.warmthExitAt) ? ms.warmthExitAt : 0,
+              coldActive: !!ms.coldActive,
+              coldExitAt: Number.isFinite(ms.coldExitAt) ? ms.coldExitAt : 0,
+              stillActive: !!ms.stillActive,
+              stillExitAt: Number.isFinite(ms.stillExitAt) ? ms.stillExitAt : 0,
+              restlessActive: !!ms.restlessActive,
+              restlessExitAt: Number.isFinite(ms.restlessExitAt) ? ms.restlessExitAt : 0
+            };
+          } else {
+            // 旧版磁盘或无 moodState 归档：仅当数值跨过进入门限才置为 active
+            this._moodState.warmthActive = this.moodWarmth >= 62;
+            this._moodState.coldActive = this.moodWarmth <= 38;
+            this._moodState.stillActive = this.moodStillness >= 62;
+            this._moodState.restlessActive = this.moodStillness <= 38;
+          }
+          // 兜底保护：若数值跌破/回归中性基线 50，强制复位 active 标记（防外部调低或重置时错位残留）
+          if (this.moodWarmth <= 50) { this._moodState.warmthActive = false; this._moodState.warmthExitAt = 0; }
+          if (this.moodWarmth >= 50) { this._moodState.coldActive = false; this._moodState.coldExitAt = 0; }
+          if (this.moodStillness <= 50) { this._moodState.stillActive = false; this._moodState.stillExitAt = 0; }
+          if (this.moodStillness >= 50) { this._moodState.restlessActive = false; this._moodState.restlessExitAt = 0; }
+        }
         if (raw && typeof raw === 'object' && raw.values) {
           const v = raw.values;
           if (typeof v.energy === 'number') this.energy = clamp(v.energy, REGULATION_BOUNDS.energy.min, REGULATION_BOUNDS.energy.max);
@@ -861,6 +1115,12 @@ class InternalRegulationManager {
           interactionDensity: this.interactionDensity,
           cognitiveLoadProxy: this.cognitiveLoadProxy
         },
+        mood: {
+          warmth: this.moodWarmth,
+          stillness: this.moodStillness,
+          updatedAt: this.moodUpdatedAt,
+          moodState: { ...this._moodState }
+        },
         persistedConsumedAttentionEvents: Array.from(this.persistedConsumedAttentionEvents),
         consumedAttentionEvents: Array.from(this.consumedAttentionEvents).slice(-this.maxConsumedAttentionEvents),
         history: this.history
@@ -909,23 +1169,27 @@ class InternalRegulationManager {
 
     const windowStates = snapshots.map(s => {
       const state = s.payload.state;
+      const mood = s.payload.mood || { warmth: 50, stillness: 50 };
       const windowNo = typeof s.windowNo === 'number' ? s.windowNo : (s.payload?.windowNo || 0);
       return {
         windowNo,
         timestamp: s.payload.timestamp || s.timestamp,
         state: Object.freeze({ ...state }),
+        mood: Object.freeze({ ...mood }),
         salienceThreshold: typeof s.payload.salienceThreshold === 'number' ? s.payload.salienceThreshold : state.salienceThreshold,
         recentTransitionsCount: s.payload.recentTransitionsCount || 0
       };
     });
 
     const finalState = windowStates.length > 0 ? windowStates[windowStates.length - 1].state : null;
+    const finalMood = windowStates.length > 0 ? windowStates[windowStates.length - 1].mood : null;
 
     return {
       schemaVersion: SCHEMA_VERSION,
       totalSnapshots: windowStates.length,
       windowStates,
       finalState,
+      finalMood,
       replayStatus: windowStates.length > 0 ? 'complete' : 'empty'
     };
   }
