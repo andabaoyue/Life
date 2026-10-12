@@ -622,5 +622,43 @@ const mk = (over) => Object.assign({
     JSON.stringify(unRefreshedIntent));
 })();
 
+/* ============ 11. v1.0.7 社交过载与独处边界：连戳分级与 × bias 调制方向 ============ */
+(function () {
+  const { POKE_OVERLOAD_THRESHOLD } = require('../src/trigger');
+  check('v1.0.7 POKE_OVERLOAD_THRESHOLD 常量为 10（对齐 10×4=40 密度档）',
+    POKE_OVERLOAD_THRESHOLD === 10);
+
+  // 中立（bias=1.0）：5~9 下为轻抗议，>=10 下升级为独处退避 hint，且不带冗余 overload 字段
+  const hMild = harness();
+  hMild.poke(9);
+  const oMild = hMild.eng.evaluate();
+  check('v1.0.7 中立 9 下连戳仍为轻度抗议 hint（未达 10 下过载线）',
+    !!oMild && /轻微抗议/.test(oMild.hint) && !('overload' in oMild));
+
+  const hOver = harness();
+  hOver.poke(10);
+  const oOver = hOver.eng.evaluate();
+  check('v1.0.7 中立 10 下连戳升级为独处退避 hint 且无冗余字段',
+    !!oOver && /安静待会儿/.test(oOver.hint) && /不必顺从迎合/.test(oOver.hint) && !('overload' in oOver));
+
+  // 方向校验（× bias）与下界封底取舍（>=10）：高安静偏好（quiet_preference=300 → bias=0.5）数学原值 5 下，
+  // 刻意封底 10 下（牺牲低端过载敏感度差异，换取与 10×4=40 体感中档同步、消除 8 下时嘴身脱节；喜静差异体现在轻抗议缓冲仅 8~9 下）
+  const hQuiet8 = harness({ traits: { quiet_preference: 300 } });
+  hQuiet8.poke(8);
+  const oQuiet8 = hQuiet8.eng.evaluate();
+  const hQuiet10 = harness({ traits: { quiet_preference: 300 } });
+  hQuiet10.poke(10);
+  const oQuiet10 = hQuiet10.eng.evaluate();
+  check('v1.0.7 高 quiet_preference（喜静）下界对齐 10 下（8 下不提前脱节、10 下触发独处退避，与 density>=40 严格同刻度）',
+    !!oQuiet8 && /轻微抗议/.test(oQuiet8.hint) && !!oQuiet10 && /安静待会儿/.test(oQuiet10.hint));
+
+  // 方向校验（× bias）：高社交活力（attachment_need=300, social_initiative=300 → bias=1.5）门槛升至 15 下（更耐戳）
+  const hSocial = harness({ traits: { attachment_need: 300, social_initiative: 300 } });
+  hSocial.poke(12);
+  const oSocial12 = hSocial.eng.evaluate();
+  check('v1.0.7 高外向特质 12 下仍保持轻度抗议（耐受度更高，15 下才过载）',
+    !!oSocial12 && /轻微抗议/.test(oSocial12.hint));
+})();
+
 console.log('\n' + (failures ? failures + ' 项失败' : 'trigger 层测试全部通过'));
 process.exit(failures ? 1 : 0);
