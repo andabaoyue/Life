@@ -338,10 +338,12 @@ class ActivityTracker {
       return;
     }
 
+    // 🔴 修复挂机重复累乘：在更新水位线前捕获本次跨越的步长（首次上报取满值，之后取梯级差）
+    const stepMin = this.lastReportedIdleMin > 0 ? (min - this.lastReportedIdleMin) : min;
     this.lastReportedIdleMin = Math.floor(min / 10) * 10;
 
     if (this.internalRegulation && typeof this.internalRegulation.updateOnActivity === 'function') {
-      this.internalRegulation.updateOnActivity('idle', { idleMin: min, timestamp: at });
+      this.internalRegulation.updateOnActivity('idle', { idleMin: min, stepMin, timestamp: at });
     }
     if (typeof this.perceptionPipeline === 'function') {
       this.perceptionPipeline({

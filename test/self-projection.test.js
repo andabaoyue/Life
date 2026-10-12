@@ -109,6 +109,7 @@ async function testBrainSelfProjectionIntegration() {
   const dir = tmpDir();
   const brain = new Brain(dir, {
     ...DEFAULTS,
+    experimentMode: 'baseline', // 显式钉住 baseline 模式，避免 internalRegulation 写入额外 snapshot 导致记录数断言漂移
     windowTurns: 2,
     keepTailMessages: 1,
     recordSelfProjection: true // 开启自省投影因果链落盘

@@ -105,10 +105,10 @@ const DEFAULTS = {
   },
 
   // ---- 生命实验动力学体系 (Phase 0.5) ----
-  experimentMode: 'baseline', // 'baseline' | 'experimental' | 'ablation'
+  experimentMode: 'experimental', // 'baseline' | 'experimental' | 'ablation' (v1.0.2 出厂默认启用实验模式通电)
   experimentModules: {
     homeostasis: false,
-    internalRegulation: false,
+    internalRegulation: true,  // v1.0.2 通电：正典生命代谢节律出厂默认启用
     digitalUmwelt: false,
     attentionGate: false,
     biographicalCanalization: false,
