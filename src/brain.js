@@ -65,6 +65,7 @@ const SUMMARY_SYS =
   + '   - expectationOutcomes 条目形状：{"id":"exp-000001","status":"fulfilled|broken|moot","messageId":"m-...","note":"客观事实摘录"}。\n'
   + '   - expectationOutcomes：只核验下方【待核验预期】清单里的条目，id 原样引用，status 取 fulfilled|broken|moot，messageId 引证本窗真实 ID（moot 可免），note 只写客观事实摘录，不写结论。\n'
   + '5. 【语言一致性】各字段内容（用户事实、初澜经历、预期、词汇含义等）必须与当前窗口对话所使用的主要语言保持严格一致（对话为英文则提取英文，对话为中文则提取中文），严禁擅自翻译成其他语言。\n'
+  + '6. 【心境基调（可选，windowSynthesis.moodTone）】0~100 整数基准分（50 为中性平静）：明显感到亲近温存、深度陪伴请给 68~80；明显感到疏离冷淡请给 20~32；明显心神安定沉着请给 68~80；明显思绪纷乱请给 20~32；若本窗口日常平淡无显著情绪倾向，请【整块省略 moodTone】（严禁输出空对象）。\n'
   + '请只输出如下合法 JSON 对象（不要 Markdown 代码块包裹）：\n'
   + '{"segments":[{"range":"1-20","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
   + '{"range":"21-40","userGiven":[],"chulanExperience":[],"stateEvidence":[],"uncertainties":[]},'
@@ -1007,8 +1008,16 @@ class Brain {
     }
 
     // v0.9.7: 关联线索触发休眠记忆重新激活 (Contextual Reactivation)
+    let involuntarySnippet = '';
     if (this.memory && this.memory.engramManager && !proactive) {
       this.memory.reactivateByContext(userText, this.memory.data.windowNo);
+      // v1.0.5: 普鲁斯特式非自愿回忆浮现 (仅在非主动搭话的自然交互中触发，避开 proactive 误消耗冷却)
+      const inv = typeof this.memory.triggerInvoluntaryRecall === 'function'
+        ? this.memory.triggerInvoluntaryRecall(this.memory.data.windowNo)
+        : null;
+      if (inv && inv.text) {
+        involuntarySnippet = inv.text;
+      }
     }
 
     const envText = snap ? snap.promptText : '';
@@ -1020,7 +1029,7 @@ class Brain {
        如果每轮写入历史，会导致历史中堆叠大量过期的自我账本副本，造成严重的 Token 膨胀并破坏长期记忆。
        正确数据流：memory.history 仅保存纯净用户输入（主动搭话记录纯净触发理由），
        在构建发给 DeepSeek 的请求时，动态附加在当前 user 消息末尾。 */
-    const dynamicBody = [currentSelf, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    const dynamicBody = [currentSelf, involuntarySnippet, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
     // v0.9.9: 瞬时上下文挂在 user 尾部是护缓存的必要设计，但必须标明程序注入身份 ——
     // 否则模型会把状态快照误认成用户贴来的内容（实测她真的以为用户在「贴表」）
     const dynamicContext = dynamicBody
@@ -1832,7 +1841,8 @@ class Brain {
         if (this.internalRegulation && this.isExperimentModuleActive('internalRegulation')) {
           try {
             this.internalRegulation.updateOnWindowClose(snap.windowNo, {
-              turnsRecorded: snap.actualTurnCount
+              turnsRecorded: snap.actualTurnCount,
+              moodTone: syn.moodTone
             });
             if (this.experiencesArchive) {
               const regSnapshot = this.internalRegulation.createSnapshotRecord(snap.windowNo);
@@ -1990,7 +2000,9 @@ class Brain {
       const arousalTrajectory = computeWindowArousalTrajectory(
         snap.activeItems || [], [], [], { regulationHistory: regHistory }
       );
-      const dayResidues = extractDayResidues(snap.activeItems || [], []);
+      const unaskedCuriosities = (this.memory && Array.isArray(this.memory.data.curiosityQueue))
+        ? this.memory.data.curiosityQueue.filter(x => x && x.asked !== true) : [];
+      const dayResidues = extractDayResidues(snap.activeItems || [], [], unaskedCuriosities);
 
       // 新异度用物理代理：只数真实交互条数，不编内容（与旧入睡路径同口径）
       const noveltyScore = Number(Math.min(1.0, Math.min(4, Math.round((snap.activeItems || []).length / 25)) * 0.25).toFixed(2));
@@ -2179,9 +2191,11 @@ class Brain {
               // 睡眠来源结算必须用入睡时冻结的原料（那才是「那一天」的遗留），
               // 缺失则如实退回现算，绝不用醒来后的新对话冒充睡眠期原料。
               const staging = ctx.sleepStaging || null;
+              const unaskedCuriosities = (this.memory && Array.isArray(this.memory.data.curiosityQueue))
+                ? this.memory.data.curiosityQueue.filter(x => x && x.asked !== true) : [];
               const residues = (ctx.fromSleep === true && staging && Array.isArray(staging.dayResidues) && staging.dayResidues.length > 0)
                 ? staging.dayResidues
-                : extractDayResidues(snap.activeItems || [], verifiedEvidence || []);
+                : extractDayResidues(snap.activeItems || [], verifiedEvidence || [], unaskedCuriosities);
               const dreamPrompt = buildDreamSynthesisPrompt(residues, snap.windowNo);
 
               // F-11: 严谨三层 Provenance 分离 (evidenceId ≠ eventId ≠ messageId)
@@ -2267,6 +2281,15 @@ class Brain {
                     }
                   } catch (e) {
                     // 巩固是旁路增益：失败绝不影响梦境归档本身（与 Dream fail-safe 同款纪律）
+                  }
+                }
+                // v1.0.5 好奇心队列夜间发酵：标记参与梦境原料的未解疑问已被发酵
+                if (this.memory && typeof this.memory.markCuriosityIncubated === 'function') {
+                  const incubatedTexts = residues
+                    .filter(r => r && r.sourceType === 'unresolved_curiosity')
+                    .map(r => r.text);
+                  if (incubatedTexts.length) {
+                    this.memory.markCuriosityIncubated(incubatedTexts, snap.windowNo);
                   }
                 }
                 if (!Array.isArray(this.dreamHistory)) this.dreamHistory = [];

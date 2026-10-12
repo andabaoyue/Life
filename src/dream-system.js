@@ -330,11 +330,11 @@ function evaluateDreamGate(opts = {}) {
 /**
  * 提取日间遗留 (Day Residues)：提炼用于梦境合成的高张力关键碎片（绝非完整100轮对话）
  */
-function extractDayResidues(activeItems = [], verifiedEvidence = []) {
+function extractDayResidues(activeItems = [], verifiedEvidence = [], curiosities = []) {
   const residues = [];
 
   // 从证据引文中提取高强度认知碎片
-  for (const ev of verifiedEvidence.slice(0, 5)) {
+  for (const ev of verifiedEvidence.slice(0, 3)) {
     if (ev && ev.quote) {
       residues.push({
         sourceType: 'evidence_quote',
@@ -344,16 +344,28 @@ function extractDayResidues(activeItems = [], verifiedEvidence = []) {
     }
   }
 
-  // 从最后几条活跃对话中提取尾部残余
-  const tailMessages = activeItems.slice(-4);
-  for (const m of tailMessages) {
-    if (m && m.content && !m.bridge) {
-      residues.push({
-        sourceType: 'tail_conversation',
-        role: m.role,
-        text: String(m.content).slice(0, 120)
-      });
+  // v1.0.5: 从未解疑问中提取潜意识未决张力 (好奇心队列夜间发酵)
+  if (Array.isArray(curiosities)) {
+    for (const c of curiosities.slice(0, 2)) {
+      const q = typeof c === 'string' ? c : (c && typeof c.q === 'string' ? c.q : null);
+      if (q && q.trim()) {
+        residues.push({
+          sourceType: 'unresolved_curiosity',
+          text: q.trim().slice(0, 120)
+        });
+      }
     }
+  }
+
+  // 从最后几条活跃对话中提取尾部残余（优先保留最新的一条对话）
+  const tailMessages = activeItems.filter(m => m && m.content && !m.bridge);
+  const remainingSlots = Math.max(1, 6 - residues.length);
+  for (const m of tailMessages.slice(-remainingSlots)) {
+    residues.push({
+      sourceType: 'tail_conversation',
+      role: m.role,
+      text: String(m.content).slice(0, 120)
+    });
   }
 
   return residues.slice(0, 6);

@@ -121,7 +121,8 @@ class Memory {
      */
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
                   totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
-                  lexicon: [], expectations: [], selfNotes: [] };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
+                  lexicon: [], expectations: [], selfNotes: [],
+                  lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
     // 🔴 D-20：她写过的东西 —— 与 lexicon/expectations 同款（落在 data 里，原子写保护）。
     //   兼容旧实例：schema 里没有本字段时归一为空表（见 load()）。
 
@@ -211,7 +212,7 @@ class Memory {
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
                     windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
-                    lexicon: [], expectations: [], ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+                    lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0, ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
       // v1.0 兼容平移：旧档案缺字段 → 空表；脏数据 → 归一为数组（绝不静默丢历史）
       this.data.lexicon = Array.isArray(this.data.lexicon) ? this.data.lexicon : [];
       this.data.expectations = Array.isArray(this.data.expectations) ? this.data.expectations : [];
@@ -355,6 +356,80 @@ class Memory {
       this.save();
     }
     return reactivated;
+  }
+
+  /**
+   * v1.0.5 普鲁斯特式非自愿回忆浮现 (Involuntary Evocation)
+   *
+   * 核心机制与不变式：
+   * 1. 严格双重防洪门禁：
+   *    - 物理时间门禁：距离上次浮现须 >= 12 小时 (12 * 3600 * 1000)
+   *    - 窗口单次门禁：同一窗口内最多触发 1 次 (this.data.lastInvoluntaryWindow === curWin)
+   * 2. 候选池限定为真实的 FADING / DORMANT 印痕，且本窗尚未被召回 (lastRetrievedWindow !== curWin)
+   * 3. 确定性排序：优先选取距离上次召回最久远、强度最低的印痕
+   * 4. 真实性约束：引证内容必须真实来自 memory.data.windows，绝不虚构
+   * 5. 说了即记：当场调用 engramManager.reactivate()，关窗 decayAll 平滑结算
+   */
+  triggerInvoluntaryRecall(currentWindow, at) {
+    if (!this.engramManager) return null;
+    const curWin = Number.isFinite(currentWindow) ? currentWindow : (this.data.windowNo || 1);
+    const now = Number.isFinite(at) ? at : Date.now();
+
+    // 门禁 1：同一窗口内最多触发 1 次
+    if (this.data.lastInvoluntaryWindow === curWin) return null;
+
+    // 门禁 2：物理时间距上次浮现不足 12 小时拦截
+    const lastAt = Number(this.data.lastInvoluntaryAt) || 0;
+    if (lastAt > 0 && (now - lastAt < 12 * 3600 * 1000)) return null;
+
+    // 候选池：从休眠态 (DORMANT) 与衰退态 (FADING) 中筛选本窗尚未被召回的真实印痕
+    const dormant = this.engramManager.getDormantTraces();
+    const fading = this.engramManager.getFadingTraces();
+    const pool = [...dormant, ...fading].filter(t => t && t.lastRetrievedWindow !== curWin);
+    if (!pool.length) return null;
+
+    // 建立窗口事实索引
+    const winMap = new Map();
+    for (const w of (this.data.windows || [])) {
+      if (w && typeof w.no === 'number' && typeof w.text === 'string' && w.text.trim()) {
+        winMap.set(w.no, w.text.trim());
+      }
+    }
+
+    // 过滤出在真实 windows 归档中切实有记录的候选
+    const validCandidates = pool.filter(t => {
+      const wNo = t.sourceWindowNo || t.createdWindow;
+      return winMap.has(wNo);
+    });
+    if (!validCandidates.length) return null;
+
+    // 确定性排序：优先取最久未被召回（lastRetrievedWindow 最小），次取强度最低，最后按 traceId 稳定决胜
+    validCandidates.sort((a, b) => {
+      const aRet = a.lastRetrievedWindow ?? a.createdWindow ?? 0;
+      const bRet = b.lastRetrievedWindow ?? b.createdWindow ?? 0;
+      if (aRet !== bRet) return aRet - bRet;
+      const aStr = Number(a.currentStrength) || 0;
+      const bStr = Number(b.currentStrength) || 0;
+      if (aStr !== bStr) return aStr - bStr;
+      return String(a.traceId).localeCompare(String(b.traceId));
+    });
+
+    const chosen = validCandidates[0];
+    const winNo = chosen.sourceWindowNo || chosen.createdWindow;
+    const winText = winMap.get(winNo);
+    const snippet = winText.slice(0, 60).replace(/[\r\n]+/g, ' ');
+
+    // 状态标记与记账
+    this.data.lastInvoluntaryWindow = curWin;
+    this.data.lastInvoluntaryAt = now;
+    this.engramManager.reactivate(chosen.traceId, curWin);
+    this.save();
+
+    return {
+      traceId: chosen.traceId,
+      windowNo: winNo,
+      text: '【偶发记忆浮现】脑海中忽然闪过第 ' + winNo + ' 段往事的一抹浮光（当时：“' + snippet + '”）；这只是心绪沉静时的自然浮现，若当期语境合适可淡淡提上一笔，绝不生硬强转话题'
+    };
   }
 
   flush() {
@@ -566,6 +641,34 @@ class Memory {
     const hit = this.data.curiosityQueue.find((x) => x && x.asked !== true
       && typeof x.q === 'string' && x.q.trim());
     return hit ? hit.q : null;
+  }
+
+  /**
+   * v1.0.5 梦境潜意识发酵标记：梦境生成成功后，标记对应未解疑问已被梦境重组。
+   * 采用 this.save(false) 延迟写盘，内容不丢且不阻塞关窗结算。
+   * 仅为对象追加 internal metadata，绝不更改 q 本身（保持 systemText 逐字节恒等）。
+   */
+  markCuriosityIncubated(questionOrTexts, windowNo) {
+    if (!Array.isArray(this.data.curiosityQueue)) return false;
+    const targets = Array.isArray(questionOrTexts)
+      ? questionOrTexts.map(t => typeof t === 'string' ? t.trim() : '').filter(Boolean)
+      : (typeof questionOrTexts === 'string' && questionOrTexts.trim() ? [questionOrTexts.trim()] : []);
+    if (!targets.length) return false;
+
+    let marked = false;
+    for (const q of targets) {
+      const hit = this.data.curiosityQueue.find(x => x && x.q === q);
+      if (hit && !hit.incubated) {
+        hit.incubated = true;
+        hit.incubatedWindow = Number.isFinite(windowNo) ? windowNo : (this.data.windowNo || 1);
+        hit.incubatedAt = Date.now();
+        marked = true;
+      }
+    }
+    if (marked) {
+      this.save();
+    }
+    return marked;
   }
 
   /* ---------- v1.0 生命机制（§4.7 #3 词汇表）：语言指纹的唯一入库口 ----------
@@ -1316,7 +1419,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [] };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
     this.save(true);
   }
 }
