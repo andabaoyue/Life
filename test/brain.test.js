@@ -954,8 +954,9 @@ async function main() {
     check('P1-02: DeepSeek API model 成功热更新', rcBrain.api.cfg.model === 'deepseek-chat-v2');
 
     // 9. P0-01~08: 5×20 + Window Synthesis, Provenance 强核验与 State Reducer 全链路测试
+    // 显式钉住 baseline 模式：隔离内部调节归档快照，确保 experiences.jsonl 记录数断言稳定
     const p0Dir = tmpDir();
-    const p0Brain = new Brain(p0Dir, { ...prodCfg, windowTurns: 2, keepTailMessages: 2 });
+    const p0Brain = new Brain(p0Dir, { ...prodCfg, experimentMode: 'baseline', windowTurns: 2, keepTailMessages: 2 });
 
     // 轮次 1
     await p0Brain.ask('初澜你好，我平时工作节奏很快，希望平时聊天可以安静一些。', () => {});

@@ -511,6 +511,7 @@ async function testScenarioJ_E2E() {
 
   const brain = new Brain(dir, {
     ...DEFAULTS,
+    experimentMode: 'baseline', // 显式钉住 baseline 模式，隔离内部调节归档快照干扰
     windowTurnLimit: 2,
     keepTailMessages: 2,
     subjectStateOpts: { stepWeight: 20, maxDeltaPerWindow: 50 }
