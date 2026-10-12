@@ -74,6 +74,29 @@ const SELF_NOTE_MAX_CHARS = 600;
 /** 🔴 D-13：自述队列上界。积压说明调用方出问题，超出即丢最旧的一条。 */
 const SELF_NOTE_MAX_QUEUE = 8;
 
+/**
+ * v1.0.6 词汇动力学提及检测（防子串假阳性与词边界防御）：
+ * 1. 词长前置保证：addLexicon 门禁强制 word.length >= 2（WORD_TOO_SHORT），彻底根除单字语素歧义与真阳性漏检陷阱；
+ * 2. 西方词汇/英文缩写（如 Al / cat）：严格使用单词边界匹配，杜绝 "Al" 误中 "Always"、"cat" 误中 "catch"；
+ * 3. 多字自创词/专属暗号（如「信物」「微光」「雨声」）：天然具备词汇特异性，子串包含即为合规提及；
+ *    （多字词偶发包含如「毛雨声音」中命中「雨声」符合自然语言演化容忍度，概率极低且保持纯本地高性能计算）。
+ */
+function isLexiconWordMentioned(text, word) {
+  if (!text || !word) return false;
+  const w = String(word).trim();
+  if (w.length < 2) return false;
+
+  // 1. 西方词汇 / 英文缩写
+  if (/^[\w-]+$/.test(w)) {
+    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(^|[^a-zA-Z0-9_-])' + escaped + '([^a-zA-Z0-9_-]|$)', 'i');
+    return re.test(text);
+  }
+
+  // 2. 多字词汇
+  return text.includes(w);
+}
+
 class Memory {
   constructor(dir, opts = {}) {
     this.dir = dir;
@@ -679,32 +702,73 @@ class Memory {
      4. 状态三态对齐 EngramTrace 梯队：ACTIVE | FADING | DORMANT，只淡化不删除（D-005）。
      防工具化红线：本层零定时器、零提醒。 */
   _resolveMessage(messageId, opts) {
-    if ((this.data.history || []).some((m) => m && m.messageId === messageId)) return true;
+    if (!messageId || typeof messageId !== 'string') return null;
+    const fromHistory = (this.data.history || []).find((m) => m && m.messageId === messageId);
+    if (fromHistory) return fromHistory;
+    if (opts && Array.isArray(opts.messages)) {
+      const fromOpts = opts.messages.find((m) => m && m.messageId === messageId);
+      if (fromOpts) return fromOpts;
+    }
     // v1.0 快照引证（架构评审提醒 1）：关窗时历史已裁到 keepTail=6，
     // 本窗合法 ID 需对照快照白名单解析，防止裁头误判成伪造。
-    return !!(opts && Array.isArray(opts.knownIds) && opts.knownIds.indexOf(messageId) >= 0);
+    if (opts && Array.isArray(opts.knownIds) && opts.knownIds.indexOf(messageId) >= 0) {
+      return { messageId, role: 'unknown', content: '' };
+    }
+    return null;
   }
 
   addLexicon(entry = {}, opts = {}) {
     const kind = String(entry.kind || '');
     if (!['coinage', 'metaphor', 'nickname', 'adopted'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
-    if (kind === 'adopted') return { ok: false, error: 'ADOPTED_NOT_YET' };   // v1 拍板：只收自创，占位声明
     const word = String(entry.word || '').trim();
     if (!word) return { ok: false, error: 'EMPTY_WORD' };
+    // v1.0.6 词长门禁：禁止单字词入库（防单字语素歧义与真阳性漏检陷阱）
+    if (word.length < 2) return { ok: false, error: 'WORD_TOO_SHORT' };
     const messageId = String(entry.messageId || '');
-    if (!this._resolveMessage(messageId, opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    const msg = this._resolveMessage(messageId, opts);
+    if (!msg) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+
+    const gloss = String(entry.gloss || '').trim();
+    // v1.0.6 专属门禁 1：adopted 词条 gloss 必填（必须说明为何是专属暗号与含义，防无义词泛滥）
+    if (kind === 'adopted' && !gloss) return { ok: false, error: 'EMPTY_GLOSS' };
+
+    // v1.0.6 专属门禁 2：引证消息的发言者角色校验。对于 adopted，必须是初澜亲口说出或接纳的话（assistant 角色，在 knownIds 等无主体内容的回落路径下 fail-closed）
+    if (kind === 'adopted' && (!msg.role || msg.role !== 'assistant')) {
+      return { ok: false, error: 'INVALID_MESSAGE_ROLE' };
+    }
+
+    // v1.0.6 专属门禁 3：词↔消息内容一致性校验。对于 adopted，所引证消息必须切实包含该词
+    if (kind === 'adopted' && (!msg.content || typeof msg.content !== 'string' || !msg.content.includes(word))) {
+      return { ok: false, error: 'WORD_NOT_IN_MESSAGE' };
+    }
+
     const list = Array.isArray(this.data.lexicon) ? this.data.lexicon : (this.data.lexicon = []);
     const hit = list.find((x) => x && x.word === word);
     if (hit) {
-      hit.weight = Math.min(3, (Number(hit.weight) || 1) + 0.2);
+      hit.weight = Math.min(3, Number(((Number(hit.weight) || 1) + 0.2).toFixed(2)));
       hit.status = 'ACTIVE';
+      hit.lastUsedWindow = Number.isFinite(entry.windowNo) ? entry.windowNo : (this.data.windowNo || 1);
+      hit.lastDecayedWindow = hit.lastUsedWindow;
       this.save();
       return { ok: true, entry: hit, created: false };
     }
+
+    // v1.0.6 专属门禁 4：单窗最多收纳 1 条 adopted 专属暗号（克制防膨胀）
+    const targetWin = Number.isFinite(entry.windowNo) ? entry.windowNo : (this.data.windowNo || 1);
+    if (kind === 'adopted') {
+      const alreadyAdoptedThisWin = list.some(x => x && x.kind === 'adopted' && x.windowNo === targetWin);
+      if (alreadyAdoptedThisWin) {
+        return { ok: false, error: 'WINDOW_ADOPTED_LIMIT' };
+      }
+    }
+
     const rec = {
       word, kind,
-      gloss: String(entry.gloss || ''),
+      gloss,
       messageId,
+      windowNo: targetWin,
+      lastUsedWindow: targetWin,
+      lastDecayedWindow: targetWin,
       firstAt: Number.isFinite(entry.firstAt) ? entry.firstAt : null,
       uses: [],
       weight: 1,
@@ -713,6 +777,66 @@ class Memory {
     list.push(rec);
     this.save();
     return { ok: true, entry: rec, created: true };
+  }
+
+  /**
+   * v1.0.6 词汇动力学提及检测（防子串假阳性与词边界防御）：
+   * 1. 西方词汇/英文缩写（如 Al / cat）：严格使用单词边界匹配，杜绝 "Al" 误中 "Always"；
+   * 2. 单字汉字暗号（如「月」）：前后均不得紧邻汉字字符，杜绝「一点月亮的影子都没有」将「月」误判为提及；
+   *    允许单字独立处于行首尾、空格、引号（「月」、“月”）、括号或标点符号旁；
+   * 3. 多字自创词/专属暗号（如「信物」「微光」「雨声」）：天然具备词汇特异性，子串包含即为合规提及。
+   */
+  _isWordMentioned(text, word) {
+    return isLexiconWordMentioned(text, word);
+  }
+
+  /**
+   * v1.0.6 词汇动力学静默流转（方案 A1）：
+   * 1. 零 Prompt 开销：在关窗时刻由本地根据本窗真实消息扫描判定，不打扰 LLM。
+   * 2. 活跃提及共振：本窗内切实提及的词条（ACTIVE / FADING / DORMANT），权重递增 (+0.2，上限 3.0)，状态复苏为 ACTIVE，并更新 lastUsedWindow 与 lastDecayedWindow。
+   * 3. 跨窗自然淡化（真正每 3 窗扣一次）：距上次提及且距上次衰减均达到 3 窗以上时，平滑减权 (-0.1，下限 0.1)，同步推进 lastDecayedWindow。
+   * 4. 三态严格对齐：权重低于 0.5 时退入 FADING（从 systemText 视野移出，节省 prompt 预算）；权重 <= 0.2 时退入 DORMANT。
+   * 5. 纯本地确定性代数，只淡化不删除（D-005）。
+   */
+  refreshLexiconDynamics(activeItems = [], windowNo) {
+    if (!Array.isArray(this.data.lexicon) || !this.data.lexicon.length) return [];
+    const curWin = Number.isFinite(windowNo) ? windowNo : (this.data.windowNo || 1);
+    const items = Array.isArray(activeItems) ? activeItems : [];
+    const allText = items
+      .map(m => (m && typeof m.content === 'string') ? m.content : '')
+      .join('\n');
+
+    for (const entry of this.data.lexicon) {
+      if (!entry || !entry.word) continue;
+      const word = String(entry.word).trim();
+      if (!word) continue;
+      const isMentioned = isLexiconWordMentioned(allText, word);
+      if (isMentioned) {
+        entry.weight = Math.min(3, Number(((Number(entry.weight) || 1) + 0.2).toFixed(2)));
+        entry.status = 'ACTIVE';
+        entry.lastUsedWindow = curWin;
+        entry.lastDecayedWindow = curWin;
+      } else {
+        const lastWin = Number.isFinite(entry.lastUsedWindow)
+          ? entry.lastUsedWindow
+          : (Number.isFinite(entry.windowNo) ? entry.windowNo : 1);
+        const lastDecayed = Number.isFinite(entry.lastDecayedWindow)
+          ? entry.lastDecayedWindow
+          : lastWin;
+
+        // 距上次提及且距上次衰减均 >= 3 窗（真正每 3 窗扣减一次，节奏从容平滑）
+        if (curWin - lastWin >= 3 && curWin - lastDecayed >= 3) {
+          entry.weight = Math.max(0.1, Number(((Number(entry.weight) || 1) - 0.1).toFixed(2)));
+          entry.lastDecayedWindow = curWin;
+          if (entry.weight <= 0.2) {
+            entry.status = 'DORMANT';
+          } else if (entry.weight < 0.5) {
+            entry.status = 'FADING';
+          }
+        }
+      }
+    }
+    return this.data.lexicon;
   }
 
   /* ---------- v1.0 生命机制（§4.7 #4 预期与意外）：时间的矢量 ----------
@@ -1289,6 +1413,9 @@ class Memory {
     // v0.9.9 Batch 2: 窗口轮转时刻刷新「底座深处经历地平线」（与 decayAll 同刻更新休眠集；
     // 无记忆动力学时置空，绝不留陈旧地平线）
     this.refreshDeepHorizon();
+
+    // v1.0.6 词汇动力学静默流转（方案 A1）：扫描本窗活跃消息，共振词升权，久未提及词平滑衰减
+    this.refreshLexiconDynamics(snap.activeItems || snap.items, closedWindowNo);
 
     this.data.windowNo++;
     // 快照之后可能被 rollback 弹掉几条，drop 不能越过当前长度
