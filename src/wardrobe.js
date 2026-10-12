@@ -468,6 +468,7 @@ class Wardrobe {
         block += '\n- 提醒：' + pref.name + ' 这套的可用图层正在重做中，本阶段不适合主动提议换上它；'
           + '想换衣服时，请改提「' + safeMeta.name + '」（[wear:default]）或上面列出的其他单品 itemId。';
       }
+      block += '\n- 你拥有自己的审美与舒适偏好；在疲惫或心绪不合时，你有权温和表达异议或推迟换装。';
     }
     return block;
   }
