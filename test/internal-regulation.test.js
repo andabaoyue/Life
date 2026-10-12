@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { InternalRegulationManager, REGULATION_BOUNDS } = require('../src/internal-regulation');
+const { ActivityTracker } = require('../src/tracker');
 const { ALLOWED_TRAITS } = require('../src/subject-state');
 
 // [D-8a] 临时目录清理：见下方 [tmp-hygiene] 插桩块。
@@ -368,14 +369,14 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     return m;
   };
 
-  check('v3.1 静息回血·微档：静止 5~29 分钟缓慢回血（缓一口，不是长睡等价）',(() => {
-    const a = mk('qr-m5-', 40, 0); a.updateOnActivity('idle', { idleMin: 5, timestamp: DAYT });
+  check('v3.1 静息回血·微档：静止 10~29 分钟缓慢回血（缓一口，不是长睡等价）',(() => {
+    const a = mk('qr-m10-', 40, 0); a.updateOnActivity('idle', { idleMin: 10, timestamp: DAYT });
     const b = mk('qr-m29-', 40, 0); b.updateOnActivity('idle', { idleMin: 29, timestamp: DAYT });
-    const c = mk('qr-m0-', 40, 0); c.updateOnActivity('idle', { idleMin: 2, timestamp: DAYT });
-    return c.getState().energy === 40            // 不足 5 分钟不回血
+    const c = mk('qr-m0-', 40, 0); c.updateOnActivity('idle', { idleMin: 5, timestamp: DAYT });
+    return c.getState().energy === 40            // v1.0.2: 不足 10 分钟（如 5 分钟）不回血
       && a.getState().energy > 40 && a.getState().energy <= 45
       && b.getState().energy > a.getState().energy
-      && b.getState().energy < 85;                 // 微档不得触到清醒上限
+      && b.getState().energy < 75;                 // 微档不得触到清醒上限
   })());
   check('v3.1 静息回血·静息档：>=30 分钟回血显著快于微档', (() => {
     const m30 = mk('qr-r30-', 40, 0); m30.updateOnActivity('idle', { idleMin: 30, timestamp: DAYT });
@@ -383,14 +384,14 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     return m30.getState().energy > m29.getState().energy
       && m30.getState().energy - 40 > (m29.getState().energy - 40) * 2;
   })());
-  check('v3.1 清醒静息上限 85%：静息再久也不越过（最后 15% 留给深度睡眠）', (() => {
+  check('v3.1 清醒静息上限 75%：静息再久也不越过（最后 25% 留给深度睡眠）', (() => {
     const m = mk('qr-cap-', 10, 0);
     for (let i = 0; i < 12; i++) m.updateOnActivity('idle', { idleMin: 30, timestamp: DAYT + i * 30 * 60000 });
-    return m.getState().energy === 85;
+    return m.getState().energy === 75;
   })());
   check('v3.1 困意自愈：清醒静置会把高困意降下来，但留floor 15（保住「该睡了」的信号）', (() => {
     const m = mk('qr-rp-', 50, 90);
-    m.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT });
+    m.updateOnActivity('idle', { idleMin: 120, timestamp: DAYT });
     return m.getState().restPressure < 90 && m.getState().restPressure === 15;
   })());
   check('v3.1 夜窗困意自愈打折 0.3（夜里本来就该困，不该被静息清掉）', (() => {
@@ -407,13 +408,13 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     return afterFall === 70                       // 100 上限下60 + 10 预充 = 70
       && m.getState().energy === afterFall;       // 静息 2 小时也一点没加
   })());
-  check('v3.1 深度睡眠仍是唯一到 100 的路（静息封 85，深睡 8h 到满）', (() => {
+  check('v3.1 深度睡眠仍是唯一到 100 的路（静息封 75，深睡 8h 到满）', (() => {
     const m = mk('qr-deep-', 50, 0);
     for (let i = 0; i < 10; i++) m.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT + i * 3600000 });
     const afterQuiet = m.getState().energy;
     m.updateOnSleep(true, { timestamp: DAYT + 10 * 3600000 });
     m.updateOnSleep(false, { timestamp: DAYT + 18 * 3600000 });   // 睡满 8 小时
-    return afterQuiet === 85 && m.getState().energy === 100;
+    return afterQuiet === 75 && m.getState().energy === 100;
   })());
   // v3.1 P1 补漏：idle 的两个 else 分支曾缺 isSleeping 守卫，夜窗会凭空加困意。
   // 实测病灶：入睡（restPressure 被 -60 压到 0）后，夜窗 idle 35 分钟 → 0→7；
@@ -457,8 +458,8 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     const morning = m.getState().energy;
     const sense = m.formatPerception();
     return spent < 40                              // 聊天确实耗电
-      && rested === 85                             // 挂机能回满到清醒上限
-      && morning >= 80                            // 次日早上是安泰的
+      && rested === 75                             // 挂机能回满到清醒上限
+      && morning >= 70                            // 次日早上是安泰的（v1.0.2: 清醒封 75 下 morning >= 70）
       && !/体能亏得厉害/.test(sense)               // 不再自我描述为空壳
       && !/困意很沉/.test(sense);                  // 也不再困到撑不住
   })());
@@ -474,6 +475,158 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
       && m.sleepStartTime === beforeSleepStart         // 不得改睡眠时刻
       && typeof st.energy === 'number'
       && !('history' in st)&& !('transitions' in st);   // 观测出口保持纯快照
+  })());
+
+  // v1.0.2：阶梯上报（6×10 分钟）须与单次上报（60 分钟）近似等价 —— 防"按累计静默重复计量"暴冲。
+  // 容差说明：夜窗 arousal 用 floor(idle/3.5)，而 3.5 不整除 60，
+  //   故 6 步与单次的 floor 累积天然差约 5（日间 /5 整除 60，Δ=0）。
+  //   cognitiveLoadProxy / interactionDensity 是「每次静默扣一次」的事件语义，
+  //   本就不与时长等价，故不纳入断言。
+  check('v1.0.2 阶梯上报与单次上报等价（防累计静默暴冲）', (() => {
+    const single = mk('eq-s-', 30, 80);
+    single.arousal = 70;
+    single.updateOnActivity('idle', { idleMin: 60, timestamp: DAYT });
+
+    const ladder = mk('eq-l-', 30, 80);
+    ladder.arousal = 70;
+    const tr = new ActivityTracker({ now: () => Date.now() });
+    tr.setInternalRegulation(ladder);
+    for (let k = 10; k <= 60; k += 10) tr.recordIdle(k, DAYT + k * 60000);
+
+    const a = single.getState(), b = ladder.getState();
+    return Math.abs(a.energy - b.energy) <= 2
+      && Math.abs(a.restPressure - b.restPressure) <= 2
+      && Math.abs(a.arousal - b.arousal) <= 6;
+  })());
+
+  // v1.0.3：心境系统动力学与契约规范 (Mood Kinetics)
+  check('v1.0.3 默认心境初始化 warmth=50, stillness=50 且不进入 getState()', (() => {
+    const m = mk('md-init-', 100, 0);
+    const md = m.getMood();
+    const st = m.getState();
+    return md.warmth === 50 && md.stillness === 50
+      && !('moodWarmth' in st) && !('moodStillness' in st)
+      && !('mood' in st);
+  })());
+
+  check('v1.0.3 物理时间 48h 半衰期连续衰减向基准 50', (() => {
+    const m = mk('md-decay-', 100, 0);
+    m.moodWarmth = 70; // Δ = +20
+    m.moodUpdatedAt = DAYT;
+    const m24 = m.getMood(DAYT + 24 * 3600000); // 24h: 50 + 20 * 2^(-0.5) ≈ 64.1
+    const m48 = m.getMood(DAYT + 48 * 3600000); // 48h: 50 + 20 * 0.5 = 60
+    const m96 = m.getMood(DAYT + 96 * 3600000); // 96h: 50 + 20 * 0.25 = 55
+    const mBack = m.getMood(DAYT); // 纯函数验证：回看过去时刻，时钟绝未被推进，应仍为 70
+    return m24.warmth === 64
+      && m48.warmth === 60
+      && m96.warmth === 55
+      && mBack.warmth === 70
+      && m.moodWarmth === 70
+      && m.moodUpdatedAt === DAYT;
+  })());
+
+  check('v1.0.3 关窗平淡时省略 moodTone 走自然顺延（不硬跳到 50）', (() => {
+    const m = mk('md-omit-', 100, 0);
+    m.moodWarmth = 70;
+    m.moodUpdatedAt = DAYT;
+    // 24 小时后关窗，LLM 省略 moodTone (传入 undefined/null)
+    m.updateMoodOnWindowClose(null, DAYT + 24 * 3600000);
+    const md = m.getMood(DAYT + 24 * 3600000);
+    return md.warmth === 64; // 顺延衰减至 64，绝非被强行置为 50
+  })());
+
+  check('v1.0.3 关窗显式注入受单窗最大步长 SlewMax=20 平滑限幅', (() => {
+    const m = mk('md-slew-', 100, 0);
+    m.moodWarmth = 50;
+    m.moodUpdatedAt = DAYT;
+    // 单窗要求跃迁至 85 (Δ = +35)，受 SlewMax=20 限制应步进至 70
+    m.updateMoodOnWindowClose({ warmth: 85 }, DAYT);
+    const md1 = m.getMood(DAYT);
+    // 次窗继续注入 85，步进至 85
+    m.updateMoodOnWindowClose({ warmth: 85 }, DAYT + 1000);
+    const md2 = m.getMood(DAYT + 1000);
+    return md1.warmth === 70 && md2.warmth === 85;
+  })());
+
+  check('v1.0.3 感知滞回与退出延时保护（进入 62，退出 53 且具备缝隙保护）', (() => {
+    const m = mk('md-hyst-', 100, 0);
+    m.moodWarmth = 62;
+    m.moodUpdatedAt = DAYT;
+    const txt1 = m.formatPerception(DAYT);
+    const hasWarm1 = /心绪温热/.test(txt1);
+
+    // 衰减至 54 (介于 53 与 62 之间)，滞回死区保持显现
+    m.moodWarmth = 54;
+    m.moodUpdatedAt = DAYT;
+    const txt2 = m.formatPerception(DAYT);
+    const hasWarm2 = /心绪温热/.test(txt2);
+
+    // 刚跌破 53 (如 52)，触发 12h 观察期保护，立即仍不中断
+    m.moodWarmth = 52;
+    m.moodUpdatedAt = DAYT;
+    const txt3 = m.formatPerception(DAYT);
+    const hasWarm3 = /心绪温热/.test(txt3);
+
+    // 观察期过后 (13 小时)，确认持续低位，平滑熄灭
+    m.moodWarmth = 52;
+    m.moodUpdatedAt = DAYT;
+    const txt4 = m.formatPerception(DAYT + 13 * 3600000);
+    const hasWarm4 = /心绪温热/.test(txt4);
+
+    // 纯函数零副作用验证：调用 formatPerception 绝不写回 moodWarmth 或推进 moodUpdatedAt
+    const pureCheck = (m.moodWarmth === 52) && (m.moodUpdatedAt === DAYT);
+
+    return hasWarm1 === true && hasWarm2 === true && hasWarm3 === true && hasWarm4 === false && pureCheck;
+  })());
+
+  check('v1.0.3 睡眠期间仅依物理时间流逝自然沉淀（无多余 40% 离散打折）', (() => {
+    const m = mk('md-sleep-', 100, 0);
+    m.moodWarmth = 70;
+    m.moodUpdatedAt = DAYT;
+    m.updateOnSleep(true, { timestamp: DAYT });
+    m.updateOnSleep(false, { timestamp: DAYT + 8 * 3600000 });
+    const md = m.getMood(DAYT + 8 * 3600000);
+    // 8h 后自然耗散为 50 + 20 * 2^(-8/48) ≈ 68 (保留率 92.6%)
+    return md.warmth === 68;
+  })());
+
+  check('v1.0.3 磁盘与归档解耦恢复：save/load 独立读写 data.mood，replay 挂载 finalMood', (() => {
+    const m = mk('md-rec-', 100, 0);
+    m.moodWarmth = 75;
+    m.moodStillness = 65;
+    m._moodState.warmthActive = true;
+    m.save();
+
+    const m2 = new InternalRegulationManager(m.dir, { enabled: true, birthTimezone: 'Asia/Shanghai' });
+    const mdLoaded = m2.getMood();
+    const moodStateLoaded = m2._moodState && m2._moodState.warmthActive === true;
+
+    const snap = m.createSnapshotRecord(1);
+    const hasMoodInPayload = snap.payload && snap.payload.mood && snap.payload.mood.warmth === 75;
+
+    const rep = InternalRegulationManager.replay([snap]);
+    const finalStatePure = rep.finalState && rep.finalState.energy === 100 && !('moodWarmth' in rep.finalState);
+    const finalMoodCorrect = rep.finalMood && rep.finalMood.warmth === 75 && rep.finalMood.stillness === 65;
+
+    return mdLoaded.warmth === 75 && mdLoaded.stillness === 65
+      && moodStateLoaded
+      && hasMoodInPayload
+      && finalStatePure
+      && finalMoodCorrect;
+  })());
+
+  check('v1.0.4 体能亏虚与心神安定带内嵌着装自决体感（防双份表达并继承滞回保护）', (() => {
+    const m = mk('md-wear-', 20, 0);
+    const lowEnergySense = m.formatPerception();
+    const hasLowEnergyWear = lowEnergySense.includes('只想穿最轻便宽松的衣服，抗拒繁重层叠');
+
+    m.energy = 60;
+    m.moodStillness = 65;
+    m.moodUpdatedAt = DAYT;
+    const stillSense = m.formatPerception(DAYT);
+    const hasStillWear = stillSense.includes('偏爱素雅清爽、毫无束缚的自如着装');
+
+    return hasLowEnergyWear === true && hasStillWear === true;
   })());
 })();
 
