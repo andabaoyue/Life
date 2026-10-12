@@ -292,6 +292,8 @@ check('promptBlock(null) 保持经典向下兼容', (() => {
   check('数据层 applyProposal 保持可用（修法只收敛提议、不砸机制）',
     applyR && applyR.ok === true);
   w.applyPreset('default'); // 复位，避免污染后续用例
+  check('v1.0.4 promptBlock(traits) 包含审美自决与推迟换装授权提示',
+    wipBlk.includes('你拥有自己的审美与舒适偏好；在疲惫或心绪不合时，你有权温和表达异议或推迟换装。'));
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
