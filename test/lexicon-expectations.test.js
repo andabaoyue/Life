@@ -67,9 +67,39 @@ check('4 自创词入库成功且字段完整（word/kind/gloss/messageId/uses/w
 check('5 词条 kind 枚举：非法值拒收',
   m.addLexicon({ word: '乱词', kind: 'meme', messageId: idAsst }).ok === false);
 
-// 6 adopted 占位拒收（v1 拍板：只收自创）
-check('6 adopted 仅占位声明：v1 拒收（只收自创）',
-  m.addLexicon({ word: '采纳词', kind: 'adopted', messageId: idAsst }).error === 'ADOPTED_NOT_YET');
+// 6 v1.0.6 adopted 专属暗号解封与四重严格门禁
+const dirAdopt = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-exp-'));
+const mAdopt = new Memory(dirAdopt);
+mAdopt.append('user', '这是我们之间约定的暗号');
+mAdopt.append('assistant', '好，那我们把这个约定叫做「信物」');
+const idAdoptUser = mAdopt.data.history[0].messageId;
+const idAdoptAsst = mAdopt.data.history[1].messageId;
+
+const r6 = mAdopt.addLexicon({ word: '信物', kind: 'adopted', gloss: '双方确认的羁绊信物', messageId: idAdoptAsst });
+check('6 v1.0.6 adopted 专属暗号解封且合规入库',
+  r6.ok === true && r6.entry.kind === 'adopted' && r6.entry.gloss === '双方确认的羁绊信物');
+
+check('6a adopted 门禁 1：gloss 必填（为空拒收）',
+  mAdopt.addLexicon({ word: '信物2', kind: 'adopted', gloss: '', messageId: idAdoptAsst }).error === 'EMPTY_GLOSS');
+
+check('6b adopted 门禁 2：引证角色必须为 assistant（user 消息拒收）',
+  mAdopt.addLexicon({ word: '暗号', kind: 'adopted', gloss: '代称', messageId: idAdoptUser }).error === 'INVALID_MESSAGE_ROLE');
+
+check('6c adopted 门禁 3：词↔消息内容一致性校验（消息未出现该词拒收）',
+  mAdopt.addLexicon({ word: '海螺', kind: 'adopted', gloss: '代称', messageId: idAdoptAsst }).error === 'WORD_NOT_IN_MESSAGE');
+
+mAdopt.append('assistant', '另外我也提到了「微光」');
+const idAdoptAsst2 = mAdopt.data.history[mAdopt.data.history.length - 1].messageId;
+check('6d adopted 门禁 4：单窗最多收纳 1 条 adopted（同窗第 2 条拒收）',
+  mAdopt.addLexicon({ word: '微光', kind: 'adopted', gloss: '第二个词', messageId: idAdoptAsst2, windowNo: 1 }).error === 'WINDOW_ADOPTED_LIMIT');
+
+check('6e adopted 门禁在 knownIds 回落路径下 fail-closed 不放行',
+  mAdopt.addLexicon({ word: '信物3', kind: 'adopted', gloss: 'g', messageId: 'm-snap-fallback' }, { knownIds: ['m-snap-fallback'] }).ok === false);
+
+check('6f adopted 引证通过 opts.messages 补足真实 assistant 内容时合规放行',
+  mAdopt.addLexicon({ word: '海螺', kind: 'adopted', gloss: '约定之物', messageId: 'm-opts-asst', windowNo: 2 },
+    { messages: [{ messageId: 'm-opts-asst', role: 'assistant', content: '我们说好的海螺' }] }).ok === true);
+
 
 // 7 词重复入库 = 复用升权不复制
 const r7 = m.addLexicon({ word: '市里', kind: 'coinage', messageId: idUser });
@@ -186,10 +216,68 @@ check('27 梦境防伪标签在册（绝不冒充亲历）',
 check('28 梦境双触发接线：_dreamCycle 供关窗与入睡共用',
   (brainSrc.match(/_dreamCycle/g) || []).length >= 3 && /noveltyProxy/.test(brainSrc));
 
+// 29 词汇动力学方案 A1：本窗提及共振升权 (+0.2, 上限 3.0) 且状态保持/复苏为 ACTIVE
+const mDyn = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'lex-exp-')));
+mDyn.append('assistant', '初澜自创了雨声');
+const idDyn = mDyn.data.history[0].messageId;
+mDyn.addLexicon({ word: '雨声', kind: 'metaphor', gloss: '窗外雨声', messageId: idDyn, windowNo: 1 });
+mDyn.refreshLexiconDynamics([{ role: 'assistant', content: '今天又听到了雨声' }], 1);
+const lexDyn1 = mDyn.data.lexicon.find(x => x.word === '雨声');
+check('29 词汇动力学：本窗提及共振升权 (+0.2) 且保持 ACTIVE',
+  lexDyn1 && lexDyn1.weight === 1.2 && lexDyn1.status === 'ACTIVE' && lexDyn1.lastUsedWindow === 1);
+
+// 30 词汇动力学方案 A1：跨 3 窗未提及自然衰减 (-0.1)，跌破 0.5 转入 FADING
+lexDyn1.weight = 0.5;
+mDyn.refreshLexiconDynamics([{ role: 'assistant', content: '完全没提那个词' }], 4); // 4 - 1 = 3 >= 3
+check('30 词汇动力学：跨 3 窗未提及平滑减权 (-0.1) 且 weight < 0.5 转入 FADING',
+  lexDyn1.weight === 0.4 && lexDyn1.status === 'FADING');
+
+// 30a 衰减步长守卫：紧邻下个窗（窗5）不重复扣减（真正每 3 窗扣一次）
+mDyn.refreshLexiconDynamics([{ role: 'assistant', content: '还是没提' }], 5); // 5 - 4 = 1 < 3
+check('30a 衰减步长守卫：紧邻下个窗不重复扣减（真正每 3 窗扣一次）',
+  lexDyn1.weight === 0.4 && lexDyn1.lastDecayedWindow === 4);
+
+// 31 词汇动力学方案 A1：持续衰减至 <= 0.2 转入 DORMANT，再度提及时升权并复苏为 ACTIVE
+lexDyn1.weight = 0.3;
+mDyn.refreshLexiconDynamics([], 7); // 7 - 4 = 3 >= 3, 0.3 - 0.1 = 0.2
+check('31 词汇动力学：衰减至 <= 0.2 转入 DORMANT',
+  lexDyn1.weight === 0.2 && lexDyn1.status === 'DORMANT');
+mDyn.refreshLexiconDynamics([{ role: 'user', content: '你想念雨声吗' }], 8);
+check('31a 词汇动力学：再度提及复苏为 ACTIVE 且权重恢复 (+0.2)',
+  lexDyn1.weight === 0.4 && lexDyn1.status === 'ACTIVE' && lexDyn1.lastUsedWindow === 8);
+
+// 32 关窗集成：closeWindow 驱动 refreshLexiconDynamics 推进生命周期
+const snapDyn = mDyn.windowSnapshot();
+mDyn.closeWindow('窗口小结：这一轮平淡日常', snapDyn);
+check('32 关窗集成：closeWindow 成功推进且词汇账本动力学生效',
+  mDyn.data.windowNo === 2 && Array.isArray(mDyn.data.lexicon) && mDyn.data.lexicon.length === 1);
+
+// 33 词长门禁：单字词过短拒收（防语素歧义与真阳性漏检陷阱）
+const dirSub = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-exp-'));
+const mSub = new Memory(dirSub);
+mSub.append('assistant', '这是约定 Al 和新词');
+const idSub = mSub.data.history[0].messageId;
+
+check('33 词长门禁：单字词过短拒收（WORD_TOO_SHORT）',
+  mSub.addLexicon({ word: '月', kind: 'adopted', gloss: '单字', messageId: idSub, windowNo: 1 }).error === 'WORD_TOO_SHORT');
+
+mSub.addLexicon({ word: 'Al', kind: 'coinage', gloss: '缩写自创', messageId: idSub, windowNo: 1 });
+
+// 英文单词 "Always" 不应触发缩写 "Al"
+mSub.refreshLexiconDynamics([{ role: 'user', content: 'Always with you' }], 1);
+const lexAl = mSub.data.lexicon.find(x => x.word === 'Al');
+check('33a 英文边界防误判：英文缩写 Al 在 Always 中不被误判为提及（weight保持1）',
+  lexAl && lexAl.weight === 1.0);
+
+// 真实独立边界（独立单词 Al is here）合规命中并升权
+mSub.refreshLexiconDynamics([{ role: 'assistant', content: 'Al is here with us' }], 1);
+check('33b 真实英文边界合规命中：英文缩写在独立单词边界（如 Al is here）中合规命中升权',
+  lexAl.weight === 1.2 && lexAl.lastUsedWindow === 1);
+
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
 console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 28)
+  ? ('lexicon-expectations tests passed: ' + 43)
   : ('lexicon-expectations tests FAILED: ' + failures));
 process.exit(failures === 0 ? 0 : 1);

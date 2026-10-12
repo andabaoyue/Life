@@ -1778,7 +1778,7 @@ class Brain {
         this.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo);
         // v1.0 §4.7 #3/#4：词汇与预期入库（引证按快照解析，防 keepTail 裁头误判；门槛拒收即跳过，绝不硬造）
         const knownIds = (snap && Array.isArray(snap.snapshotActiveMessageIds)) ? snap.snapshotActiveMessageIds : [];
-        const ingestOpts = { knownIds };
+        const ingestOpts = { knownIds, messages: (snap && Array.isArray(snap.activeItems)) ? snap.activeItems : [] };
         for (const c of (Array.isArray(syn.coinages) ? syn.coinages : [])) {
           this.memory.addLexicon(c, ingestOpts);
         }
