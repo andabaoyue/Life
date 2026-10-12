@@ -208,5 +208,52 @@ check('M5: 窗口无消息时，actualTurnCount 如实回落 snapshotTurnCount',
   emptySnap.actualTurnCount === 3);
 try { fs.rmSync(testTurnDir, { recursive: true, force: true }); } catch {}
 
+// 13. v1.0.5 普鲁斯特式非自愿回忆浮现双门禁与好奇心夜间发酵标记
+const testRecallDir = tmpDir();
+const recallMem = new Memory(testRecallDir, { memoryDynamics: true });
+recallMem.data.windows.push({
+  no: 1,
+  turns: 10,
+  at: Date.now() - 3600000,
+  text: '夏天在海边漫步，为初澜捡了一枚白色的海螺贝壳。'
+});
+recallMem.engramManager.registerTrace({
+  traceId: 'tr-w1',
+  sourceWindowNo: 1,
+  createdWindow: 1,
+  salienceBonus: 0.0
+});
+// 衰减至窗口 10 使其进入 DORMANT
+recallMem.engramManager.decayAll(10);
+
+const tNow = 1000000000000;
+const recallRes = recallMem.triggerInvoluntaryRecall(10, tNow);
+const sameWinRes = recallMem.triggerInvoluntaryRecall(10, tNow + 15 * 3600 * 1000);
+const tooSoonRes = recallMem.triggerInvoluntaryRecall(11, tNow + 2 * 3600 * 1000);
+const traceAfter = recallMem.engramManager.getTrace('tr-w1');
+
+check('v1.0.5 triggerInvoluntaryRecall 双重防洪门禁（12h物理时间 + 窗口单次）及印痕召回生效',
+  recallRes !== null &&
+  recallRes.traceId === 'tr-w1' &&
+  recallRes.windowNo === 1 &&
+  recallRes.text.includes('海螺贝壳') &&
+  sameWinRes === null &&
+  tooSoonRes === null &&
+  traceAfter.lastRetrievedWindow === 10);
+
+// 好奇心队列夜间发酵标记与 systemText 逐字节恒等
+recallMem.data.curiosityQueue.push({ q: '为什么落叶总是背面朝上？', addedAt: Date.now() });
+const sysBefore = recallMem.systemText();
+const marked = recallMem.markCuriosityIncubated('为什么落叶总是背面朝上？', 10);
+const sysAfter = recallMem.systemText();
+
+check('v1.0.5 markCuriosityIncubated 潜意识发酵标记且保持 systemText 逐字节恒等',
+  marked === true &&
+  recallMem.data.curiosityQueue[0].incubated === true &&
+  sysBefore === sysAfter);
+
+try { fs.rmSync(testRecallDir, { recursive: true, force: true }); } catch {}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
+

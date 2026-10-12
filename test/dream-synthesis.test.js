@@ -54,6 +54,12 @@ function check(name, cond, extra) {
   check('日间遗留条目数量受限 (<= 6)', residues.length <= 6 && residues.length > 0);
   check('包含证据中的高显著性引文', residues.some(r => r.text.includes('ten miles')));
   check('包含尾部对话残余', residues.some(r => r.text.includes('Message 19')));
+
+  const curResidues = extractDayResidues(activeItems, verifiedEvidence, [
+    { q: '为什么落叶总是背朝天？' }
+  ]);
+  check('v1.0.5 支持提取未决疑问作为日间遗留 (sourceType: unresolved_curiosity)',
+    curResidues.some(r => r.sourceType === 'unresolved_curiosity' && r.text.includes('落叶总是背朝天')));
 }
 
 // -------------------------------------------------------------
