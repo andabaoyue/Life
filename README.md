@@ -469,7 +469,7 @@ key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key �
 
 ```bash
 node test/brain.test.js          # 172 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user、history<=keepTail 时关窗不卡死、路线α发型自由脱下与人设无冲突
-node test/memory.test.js         # 38 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary（含 A 方案新旧段名双剥离漏斗防线）、窗口快照与小结归档、Bridge 与 Active Window 隔离、顶层数组受损守卫、M12 因果字段覆盖防御与 synthetic 正向对照、M5 真实 0 轮保留与空窗口回落
+node test/memory.test.js         # 40 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary（含 A 方案新旧段名双剥离漏斗防线）、窗口快照与小结归档、Bridge 与 Active Window 隔离、顶层数组受损守卫、M12 因果字段覆盖防御与 synthetic 正向对照、M5 真实 0 轮保留与空窗口回落、v1.0.5 非自愿回忆浮现双防洪门禁与印痕召回、未解疑问夜间发酵标记且保持 systemText 逐字节恒等
 node test/experiences-archive.test.js # 19 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索、S6 Legacy 迁移边界与防伪造守卫（含 R-S6 注入拦截）、M9 closeReason 缺失诚实保持 null 不伪造 turn_limit
 node test/subject-state.test.js  # 33 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式、internal_regulation_snapshot 不参与 maxArchiveWindow、M1 缺 values 触发归档重建、M7 500 条变更截断对齐
 node test/main.test.js           # 95 项：D-8a 启动时序（+5 项：抓到引擎实例的前置断言 / 启动后 traits 非 null / 与 brain.subjectState.values 逐键一致非空壳 / 逐档抬阈值后必然产出对应档意图=traits 可用输入 / 热替换刷新句仍在=第二层源码级防线）；主进程 IPC 面、M10 换装成功标记 brain.pendingCacheBreakReason 为 wardrobe_change
@@ -487,7 +487,7 @@ node test/bedside-mailbox.test.js      # 31 项：（v1.0 B 方案 +7：唤醒�
 node test/ui-i18n.test.js           # 12 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律、方案 A 研究面板与台词双语防漂移门禁）
 node test/lexicon-expectations.test.js  # 28 项：v1.0 生命机制门槛（词汇表+预期账本+生命看板：零先验/引证强校验/快照引证/状态流转/注入预算/别名归一/除零与轻量口护栏/防工具化与防漂移红线）
 node test/nonhuman-framework-prompt.test.js # 37 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话、A 方案后日历红线由日期锚点边界约束接管、主体跨语言自适应防漂移）
-node test/wardrobe.test.js       # 72 项：槽位/资源存在、互斥、发型自由脱下、可拆卸发饰、非法输入、持久化、脏文件降级、人格隔离、主体特质偏好与自决换装提案、项圈立项重回存档、无发素体形态标注、v3.1 WIP套装收敛回归（堵对话换装漏洞）
+node test/wardrobe.test.js       # 73 项：槽位/资源存在、互斥、发型自由脱下、可拆卸发饰、非法输入、持久化、脏文件降级、人格隔离、主体特质偏好与自决换装提案、项圈立项重回存档、无发素体形态标注、v3.1 WIP套装收敛回归（堵对话换装漏洞）、v1.0.4 静态着装审美自决授权
 node test/secure.test.js         # 44 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚、显式 clearKey 与空 key 防误删守卫、往返校验防坏密文遮蔽、回退明文不谎报已加密
 node test/atomic.test.js         # 21 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出、main.js 生产持久化原子写审计
 node test/config.test.js         # 31 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离、budgetMaxOutputTokens 从配置生效且默认不设限
@@ -569,9 +569,9 @@ node test/decision-log.test.js           # 33 项：v0.9.7 实验架构决策账
 node test/canalization.test.js           # 32 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay、0→1000 单调性确证、源码扫描守卫杜绝拟人化伪生命）
 node test/memory-dynamics.test.js         # 35 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
 node test/dream-gate.test.js             # 35 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性、Patch 2-B preClose 同窗口去重与跨窗口关窗间隔语义）
-node test/dream-synthesis.test.js        # 34 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获）
+node test/dream-synthesis.test.js        # 35 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获、v1.0.5 未解疑问作为日间遗留提取）
 node test/lifecycle-wiring.test.js    # 51 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留、生产装配下 scheduler 恒 null）
-node test/internal-regulation.test.js # 59 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合、v3.1 P0 入睡回补挂实睡时长而非常数与虚弱分档防复读、v3.1 P1 基线体感治常态无身及其措辞恒定/不叠加/零数字/红线后门自查、v3.1 P1 静息回血治「不睡觉就注定虚弱」[微回血5-29分/静息回血≥30分两档、清醒上限85%留15%给深睡、困意白天自愈留floor15、夜窗自愈打折0.3、睡眠期静息完全互斥、深睡8h仍是唯一到100的路]、睡眠期夜窗idle不得凭空加困意（else分支定点守卫回归及其不误伤清醒态arousal回落）、以及生物钟日间语义的相应改写[≥30分日间不再累积困意，<30分公式逐字不变]）
+node test/internal-regulation.test.js # 68 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合、v3.1 P0 入睡回补挂实睡时长而非常数与虚弱分档防复读、v3.1 P1 基线体感治常态无身及其措辞恒定/不叠加/零数字/红线后门自查、v3.1 P1 静息回血治「不睡觉就注定虚弱」[微回血5-29分/静息回血≥30分两档、清醒上限85%留15%给深睡、困意白天自愈留floor15、夜窗自愈打折0.3、睡眠期静息完全互斥、深睡8h仍是唯一到100的路]、睡眠期夜窗idle不得凭空加困意（else分支定点守卫回归及其不误伤清醒态arousal回落）、以及生物钟日间语义的相应改写[≥30分日间不再累积困意，<30分公式逐字不变]、v1.0.2 阶梯上报与单次上报等价防累计静默暴冲、v1.0.3 心境系统动力学与契约规范[48h半衰期向基准50连续衰减、平淡关窗顺延衰减、SlewMax=20平滑限幅、进入62/退出53感知滞回与12h防缝隙抖动保护、睡眠仅依真实物理时间自然沉淀、save/load与replay独立解耦恢复]、v1.0.4 体能亏虚与心神安定带内嵌着装自决体感）
 node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
 node test/attention-gate.test.js      # 36 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重、守卫拦真实枚举 SUBJECT_ACQUIRED）
 node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
