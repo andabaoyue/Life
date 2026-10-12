@@ -222,5 +222,13 @@ check('没有任何物理互动时不硬凑一行（没发生就不写）',
 check('环境块只列程序真有的东西（戳/拖/静默/睡眠），不夹带未实现的能力',
   !/姿态|走动|天气|屏幕内容/.test(snap.promptText), JSON.stringify(snap.promptText));
 
+tr = makeTracker();
+for (let i = 0; i < 9; i++) tr.record('click');
+check('v1.0.7 未达 10 次连戳时不附带节奏急促标注（9 次正常汇报）',
+  /被戳 9 次，被拖动 0 次/.test(tr.snapshot().promptText));
+tr.record('click');
+check('v1.0.7 累计未消费戳击 >= 10 次时附带动作密集急促定性标注',
+  /被戳 10 次（动作密集急促，节奏有些被打乱），被拖动 0 次/.test(tr.snapshot().promptText));
+
 console.log('\n' + (failures ? failures + ' 项失败' : 'tracker 层测试全部通过'));
 process.exit(failures ? 1 : 0);

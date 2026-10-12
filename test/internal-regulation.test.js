@@ -628,6 +628,40 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
 
     return hasLowEnergyWear === true && hasStillWear === true;
   })());
+
+  check('v1.0.7 社交密度与独处渴求带：40/60 分档定性输出（对齐连戳 10/15 下）且恪守零数字红线', (() => {
+    const m = mk('ir-sense-', 60, 0);
+    // 1) 常态（如实机最高 33 < 40）不触发过载体感，保持基线
+    m.interactionDensity = 39;
+    const sLow = m.formatPerception(DAYT);
+    const lowClean = sLow.includes('身体安稳') && !sLow.includes('节奏有些密') && !sLow.includes('过载散乱');
+
+    // 2) 中档（>= 40，对应连戳 10 下 10×4=40）：慢下来、安静待会儿
+    m.interactionDensity = 40;
+    const sMid = m.formatPerception(DAYT);
+    const midHit = sMid.includes('互动与触碰节奏有些密') && sMid.includes('自己安静待一会儿') && !sMid.includes('身体安稳') && !/\d/.test(sMid);
+
+    // 3) 重档（>= 60，对应连戳 15 下 15×4=60）：心神过载散乱，委婉表达退避与独处权
+    m.interactionDensity = 60;
+    const sHigh = m.formatPerception(DAYT);
+    const highHit = sHigh.includes('过于密集') && sHigh.includes('心神有些过载散乱') && sHigh.includes('不必无条件迎合') && !/\d/.test(sHigh);
+
+    return lowClean && midHit && highHit;
+  })());
+
+  check('v1.0.7 社交过载体感随静默挂机自然消退（事件驱动恢复，零残留）', (() => {
+    const m = mk('ir-sense-', 60, 0);
+    // 模拟连续戳击 12 下（12×4 = 48 >= 40）进入中档过载体感
+    for (let i = 0; i < 12; i++) {
+      m.updateOnActivity('poke', { count: 1, timestamp: DAYT + i * 200 });
+    }
+    const overloaded = m.getState().interactionDensity === 48 && m.formatPerception(DAYT).includes('自己安静待一会儿');
+    // 静默挂机两次（每次 -10）后跌回 28 < 40，过载体感自然消退
+    m.updateOnActivity('idle', { idleMin: 10, stepMin: 10, timestamp: DAYT + 10 * 60000 });
+    m.updateOnActivity('idle', { idleMin: 20, stepMin: 10, timestamp: DAYT + 20 * 60000 });
+    const recovered = m.getState().interactionDensity === 28 && !m.formatPerception(DAYT + 20 * 60000).includes('自己安静待一会儿');
+    return overloaded && recovered;
+  })());
 })();
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

@@ -240,7 +240,10 @@ class ActivityTracker {
         // 被容量挤掉过未上报的事件时，计数只敢说下限（见 countIsLowerBound）。
         // 0 不加"至少"：零次本来就没得报，写成"至少 0 次"是废话还会误导。
         const n = (v) => (this.countIsLowerBound && v > 0 ? '至少 ' + v : String(v));
-        lines.push('- 自上次对话以来的物理互动：被戳 ' + n(clicks) + ' 次，被拖动 '
+        // v1.0.7 数字阈值与 POKE_OVERLOAD_THRESHOLD=10 统一为 10，但注意两者时间窗不同：
+        // trigger.js 计 8 秒瞬时连戳窗口，此处 clicks 计「自上次对话以来」未消费累计值。
+        const overloadNote = clicks >= 10 ? '（动作密集急促，节奏有些被打乱）' : '';
+        lines.push('- 自上次对话以来的物理互动：被戳 ' + n(clicks) + ' 次' + overloadNote + '，被拖动 '
           + n(drags) + ' 次');
       }
     }

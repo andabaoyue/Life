@@ -26,6 +26,7 @@
 
 const WINDOW_MS = 8000;      // 连戳统计窗口
 const POKE_THRESHOLD = 5;    // 窗口内几次算"连戳"
+const POKE_OVERLOAD_THRESHOLD = 10; // v1.0.7 窗口内重度连戳阈值（10下×4=40，对齐 interactionDensity>=40 过载体感）
 const COOLDOWN_MS = 45000;   // 两次主动开口的最小间隔（任何理由都受它管）
 
 // 🔴 D-25：好奇破冰（§4.7「两段式」第二段，用户拍板 2026-10 开工）。
@@ -163,10 +164,17 @@ class TriggerEngine {
     });
 
     if (pokes >= pokeNeed) {
+      // v1.0.7 社交过载与独处边界：方向为 × bias，下界刻意封底在 10 下。
+      // ⚠️ 刻意取舍（Trade-off）：高安静者按 10×0.5=5 数学上本该更早过载，但封底 10 下牺牲了低端性格差异
+      // （喜静与中立过载线同为 10 下），换取与 formatPerception() 的 interactionDensity>=40（10×4=40）同步，
+      // 避免「hint 已报过载退避、生理体感却无输出」的嘴身脱节；喜静差异由 pokeNeed=8 将轻抗议缓冲压窄为 8~9 下体现。
+      const overloadNeed = Math.max(10, Math.min(15, Math.round(POKE_OVERLOAD_THRESHOLD * bias)));
       return {
         kind: 'poke', at,
         reason: '用户在 ' + (WINDOW_MS / 1000) + ' 秒内戳了你 ' + pokes + ' 下',
-        hint: '可以喊痒、轻微抗议，或者问 ta 有什么事；别真的生气',
+        hint: pokes >= overloadNeed
+          ? '被连续密集戳弄得有些心神散乱；请委婉但明确地表达想一个人安静待会儿、请 ta 先别戳了，不必顺从迎合'
+          : '可以喊痒、轻微抗议，或者问 ta 有什么事；别真的生气',
         // 🔴 D-7：可能为 null。**调用方必须能处理 null** ——
         //   那是「她没有可追溯的意图」的合法状态，不是错误。
         selfIntent,
@@ -466,6 +474,6 @@ function rankOf(kind) {
 module.exports = {
   TriggerEngine, computeInitiativeBias, computeSelfIntent,
   SELF_INTENT_KINDS, TRAIT_LABEL,
-  WINDOW_MS, POKE_THRESHOLD, COOLDOWN_MS, IDLE_MS,
+  WINDOW_MS, POKE_THRESHOLD, POKE_OVERLOAD_THRESHOLD, COOLDOWN_MS, IDLE_MS,
   CURIOSITY_IDLE_MS, CURIOSITY_THROTTLE_MS,
 };

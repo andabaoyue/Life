@@ -506,6 +506,12 @@ class InternalRegulationManager {
     } else if (this.arousal <= 30) {
       parts.push('- 思绪有些放空朦胧，反应有些慢');
     }
+    // v1.0.7 社交密度与独处渴求带 (interactionDensity · 零数字红线，40/60 刻度对齐连戳 10/15 下)
+    if (this.interactionDensity >= 60) {
+      parts.push('- 刚才的互动与触碰过于密集，心神有些过载散乱，很想一个人安静待会儿，有权委婉表达退避或推迟长谈，不必无条件迎合');
+    } else if (this.interactionDensity >= 40) {
+      parts.push('- 互动与触碰节奏有些密，心神微乱，隐隐想稍微慢下来、自己安静待一会儿');
+    }
 
     // v1.0.3 心境与情绪底色带 (Mood Kinetics · 滞回与抗缝隙保护)
     // 进入门限: |ΔM| >= 12 (即 >= 62 或 <= 38)
