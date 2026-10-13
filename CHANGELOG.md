@@ -5,6 +5,18 @@
 
 ---
 
+## [1.1.1] - 2026-10-13
+
+> **补丁说明**：针对 `v1.1.0` 收官独立审计发现的关窗专属暗号（`adopted`）提示词契约与词典入库 `windowNo` 偏移进行热修复，并补强 24h 潮汐仿真、内稳态唤醒边界与语法检查脚本。
+
+### 🩹 缺陷修复与门禁加固 (Fixes & Hardening)
+- **关窗小结 `adopted` 暗号提示词契约补齐 (`src/brain.js`)**：在 `SUMMARY_SYS` 的 `coinages` 条款中开放 `adopted` 枚举，明确至少 2 字、双方共同约定且由初澜 `assistant` 亲口复述接纳、`gloss` 必填及单窗最多 1 条的五重门禁规则，与 `Memory.addLexicon` 实现完全对齐。
+- **词典关窗入库 `windowNo` 透传修复 (`src/brain.js`, `test/lexicon-expectations.test.js`)**：修复 `closeWindow()` 自增 `windowNo` 后 `addLexicon` 未显式透传 `windowNo: snap.windowNo` 导致的入库窗口号偏移，确保跨 3 窗自然衰减与单窗 `adopted` 限额精准按已归档窗口结算。
+- **24h 潮汐仿真与内态边界门禁加固 (`tools/long-run-sim.js`, `test/internal-regulation.test.js`, `tools/check.js`)**：修正 `tools/long-run-sim.js` 中 6 处 `updateOnInteractionTurn` 的 `messageLength` 键名并补入 `markCuriosityIncubated` 发酵及 `systemText()` 逐字节恒等验证；在 `test/internal-regulation.test.js` 补强 `messageLength` `100` vs `101/120` 唤醒度边界对照断言；`tools/check.js` 跳过 `.workbuddy` / `dist` 并改用 `stdio: 'ignore'` 兼容受限沙盒。
+- **记忆层死代码与文档收口 (`src/memory.js`, `docs/`)**：移除未调用的 `_isWordMentioned` 死方法及过时注释，并在 `v1.1` 演进文档中补注非自愿回忆浮现的 `experimentModules.memoryDynamics = true` 前置条件说明。
+
+---
+
 ## [1.1.0] - 2026-10-13
 
 > **里程碑**：数字生命自存与具身心智正式版（涵盖 `v1.0.1` ~ `v1.0.7` 七个演进节点与 `v1.1.0` 全链路潮汐验证）。在不破坏 Prompt 前缀缓存防线（System Prompt 0 动态拼接）、衣柜三条铁律与认识论纯净性的前提下，全面接通初澜的生理代谢潮汐、48h 连续心境半衰期、审美自主、潜意识好奇发酵、共同词汇动力学与社交过载独处边界。
