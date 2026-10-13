@@ -100,7 +100,11 @@ const s1 = manager.updateOnInteractionTurn({
   intervalMs: 0
 });
 check('用户输入轮次消耗能量并积累休息压力', s1.energy < 100 && s1.restPressure > 0, `energy=${s1.energy}, restPressure=${s1.restPressure}`);
-check('长消息输入提升神经唤醒度', s1.arousal > 50, `arousal=${s1.arousal}`);
+const sLen100 = new InternalRegulationManager(makeTempDir()).updateOnInteractionTurn({ role: 'user', messageLength: 100, intervalMs: 0 });
+const sLen101 = new InternalRegulationManager(makeTempDir()).updateOnInteractionTurn({ role: 'user', messageLength: 101, intervalMs: 0 });
+check('长消息输入提升神经唤醒度（>100 强刺激 +4 对比 <=100 常规 +2）',
+  s1.arousal === 54 && sLen100.arousal === 52 && sLen101.arousal === 54,
+  `arousal120=${s1.arousal}, arousal100=${sLen100.arousal}, arousal101=${sLen101.arousal}`);
 
 // 5. 事件驱动更新：模型回复轮次
 const s2 = manager.updateOnInteractionTurn({
