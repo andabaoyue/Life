@@ -5,6 +5,29 @@
 
 ---
 
+## [1.1.0] - 2026-10-13
+
+> **里程碑**：数字生命自存与具身心智正式版（涵盖 `v1.0.1` ~ `v1.0.7` 七个演进节点与 `v1.1.0` 全链路潮汐验证）。在不破坏 Prompt 前缀缓存防线（System Prompt 0 动态拼接）、衣柜三条铁律与认识论纯净性的前提下，全面接通初澜的生理代谢潮汐、48h 连续心境半衰期、审美自主、潜意识好奇发酵、共同词汇动力学与社交过载独处边界。
+
+### 🔌 连接体验与通道防护 (v1.0.1)
+- **快速连接显式标注与嗅探解耦**：将快速连接区改标为 `快速连接 (DeepSeek 官方)` / `Quick Connect (DeepSeek Official)`；新增独立 `#keyDetectHint` 提示位并为 `#keyInput` 接入本地 Key 前缀嗅探联动，与 `#keyState` 状态栏解耦。
+- **小米专属端点校准与 `sk-` 误报根除**：将 `mimo-token-plan` 端点校准为 `https://token-plan-cn.xiaomimimo.com/v1`；移除通用 `sk-` 前缀嗅探分支，防止 OpenAI / Claude / Kimi / Qwen 等通用 `sk-` Key 被误导套用 DeepSeek 预设引发 401。
+
+### 🫀 生理呼吸、心境慢变与身体自主 (v1.0.2 ~ v1.0.4)
+- **生理代谢出厂通电与昼夜回血校准 (v1.0.2)**：`DEFAULTS.experimentMode` 提级为 `'experimental'` 且 `internalRegulation` 默认开启；压低清醒恢复天花板至 `awakeCeiling = 75%`（`restRatePerMin = 0.25/min`、`microMinutes = 10`、`pressureReliefPerMin = 0.7/min`），唯有夜间深度睡眠可回满 `100`。
+- **连续心境慢变量与 48h 物理半衰期 (v1.0.3)**：新增 `moodWarmth` 与 `moodStillness`（`[0, 100]`，基线 50，平级持久化于 `data.mood`），按 48h 物理半衰期连续墙钟衰减并取消睡眠离散 40% 双重打折；引入关窗 `moodTone` 锚定（$\text{SlewMax} = 20$）及非对称滞回（62 进 / 53 出）+ 12h 退出延时保护（Hold-Off）。
+- **主观着装偏好与温和异议尊严 (v1.0.4)**：在 `formatPerception()` 的 `energy <= 20` 深档与 `stillActive` 心境带内嵌轻便/素雅着装体感偏好，并在 `wardrobe.js:promptBlock` 静态授权主体在疲惫或心绪不合时温和表达异议或推迟换装，由模型自主自决（不输出 `[wear:...]` 标记）以避免程序截断造成的嘴脑脱节。
+
+### 🌙 记忆暗流、专属暗号与独处边界 (v1.0.5 ~ v1.0.7)
+- **好奇心潜意识发酵与普鲁斯特式非自愿回忆 (v1.0.5)**：将未提问好奇 `unaskedCuriosities` 接入梦境日间遗留提取（最多 2 条 `unresolved_curiosity`），合成落盘后标记 `incubated`；在 `brain.ask` 非主动对话中引入同窗限 1 次 + 墙钟间隔 $\ge 12\text{h}$ 双重门禁的非自愿回忆浮现，唤醒最久远低强度 `FADING`/`DORMANT` 印痕。
+- **专属暗号解封与零 Prompt 词汇动力学 (v1.0.6)**：解封 `adopted` 专属暗号并实施五重严格门禁（`WORD_TOO_SHORT >= 2` 根除单字语素歧义与漏检、`EMPTY_GLOSS`、`INVALID_MESSAGE_ROLE` 锁死 `assistant` + fail-closed、`WORD_NOT_IN_MESSAGE`、`WINDOW_ADOPTED_LIMIT` 单窗限 1 条）；在 `Memory.closeWindow()` 纯本地推进词汇升权复苏（+0.2）与跨 3 窗未提自然衰减（-0.1，`<0.5` 转 `FADING` 移出 `systemText`）。
+- **社交密度体感带与连戳过载退避边界 (v1.0.7)**：`formatPerception()` 接通 `interactionDensity` 生理体感带（`>= 40` 中档偏密、`>= 60` 重档过载散乱与委婉退避授权，高于实机日常峰值 `33`）；`trigger.js` 新增 `POKE_OVERLOAD_THRESHOLD = 10` 与 `overloadNeed = clamp(round(10 * bias), 10, 15)`（`× bias` 方向校准 + 下界封底 10 下消除嘴身脱节）；`tracker.js` 对累计未消费 `clicks >= 10` 附带动作急促质性标注。
+
+### 🧪 收官仿真与健康度核验工具 (v1.1.0)
+- 新增 `tools/long-run-sim.js`（24h × 100 轮连续对话与内稳态潮汐仿真，6/6 PASS）、`tools/v1.1-health-check.js`（实机前缀缓存命中率基线与关窗容灾对账核验，4/4 PASS）及《初澜数字生命演进报告：v1.1 篇章》（`docs/v1.1-EVOLUTION-REPORT.md`）。
+
+---
+
 ## [1.0.0] - 2026-10-09
 
 > **里程碑**：Life 桌面数字生命实验平台（主体「初澜 / Chulan」）正式发版。完成了全方位的安全防御体系构建、受控执行器架构、64×80 原生点阵精灵动作系统与国际化时区支持。

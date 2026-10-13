@@ -1,4 +1,4 @@
-# Life v1.0.0 — Chulan
+# Life v1.1.0 — Chulan
 
 > **English entry point.** The full documentation (architecture, invariants, memory model,
 > experiment layer, complete test inventory) is maintained in [README.md](README.md) (Chinese).
