@@ -1089,7 +1089,9 @@ renderI18nPanel();
 const connPresetSelect = document.getElementById('connPresetSelect');
 const presetLabel = document.getElementById('presetLabel');
 const presetHint = document.getElementById('presetHint');
+const keyDetectHint = document.getElementById('keyDetectHint');
 let pendingDetect = null;
+let pendingQuickDetect = null;
 
 function renderProviderPanel() {
   if (presetLabel) presetLabel.textContent = t('preset.section');
@@ -1135,6 +1137,34 @@ if (presetHint) presetHint.addEventListener('click', () => {
     if (connPresetSelect) connPresetSelect.value = pendingDetect.presetId;
     pendingDetect = null;
     presetHint.textContent = '';
+  }
+});
+
+// v1.0.1 快速连接区（#keyInput）专属前缀嗅探：写入独立 #keyDetectHint（不抢 #keyState 配置状态位）
+function onQuickKeyDetect(e) {
+  const det = detectProviderByKey(e.target.value);
+  pendingQuickDetect = det;
+  if (keyDetectHint) {
+    keyDetectHint.textContent = det
+      ? (t('detect.suggest') + ' ' + t(det.reasonKey) + ' [' + t('detect.apply') + ']')
+      : '';
+  }
+}
+const keyInputEl = document.getElementById('keyInput');
+if (keyInputEl) {
+  keyInputEl.addEventListener('input', onQuickKeyDetect);
+  keyInputEl.addEventListener('paste', () => setTimeout(() => onQuickKeyDetect({ target: keyInputEl }), 0));
+}
+if (keyDetectHint) keyDetectHint.addEventListener('click', () => {
+  if (pendingQuickDetect) {
+    applyPreset(pendingQuickDetect.presetId);
+    if (connPresetSelect) connPresetSelect.value = pendingQuickDetect.presetId;
+    if (connKeyEl && keyInputEl && keyInputEl.value) {
+      connKeyEl.value = keyInputEl.value.trim();
+      keyInputEl.value = '';
+    }
+    pendingQuickDetect = null;
+    keyDetectHint.textContent = '';
   }
 });
 renderProviderPanel();
@@ -1696,6 +1726,8 @@ document.getElementById('keySave').addEventListener('click', async () => {
     const r = await api.setKey(v);
     if (r && r.ok === false) return say(t('say.saveKeyFailed', '保存 Key 失败：') + r.error);
     document.getElementById('keyInput').value = '';
+    if (keyDetectHint) keyDetectHint.textContent = '';
+    pendingQuickDetect = null;
   }
   refreshStats();   // 存储状态（加密/明文）由它按主进程返回值刷新，别在这里下结论
   say(t('say.nowCanTalk', '好啦，现在能跟我说话了~'));

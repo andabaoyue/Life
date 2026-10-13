@@ -18,7 +18,7 @@ const PRESETS = {
   },
   'mimo-token-plan': {
     id: 'mimo-token-plan', nameKey: 'preset.mimoTokenPlan', providerId: 'custom', protocol: 'openai-compatible',
-    baseURL: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2-flash'
+    baseURL: 'https://token-plan-cn.xiaomimimo.com/v1', model: 'mimo-v2-flash'
   },
   'gpt': {
     id: 'gpt', nameKey: 'preset.gpt', providerId: 'custom', protocol: 'openai-compatible',
@@ -91,6 +91,8 @@ function getPreset(id) {
 /**
  * Key 前缀本地识别（纯函数）：只返回「像哪个服务商」的建议，绝不返回/保留 Key 本身。
  * 只建议不强制：套不套用由用户点一下决定。
+ * v1.0.1 收紧：仅识别高确定性专属前缀（tp-/ttp- 与 mimo-），移除行业通用 sk- 分支，
+ * 防止将 OpenAI (sk-proj-) / Claude (sk-ant-) / Kimi / Qwen 等 sk- 凭据误导套用为 DeepSeek 引发 401。
  */
 function detectProviderByKey(rawKey) {
   const k = String(rawKey || '').trim();
@@ -100,9 +102,6 @@ function detectProviderByKey(rawKey) {
   }
   if (/^mimo-[a-zA-Z0-9_-]+/.test(k)) {
     return { presetId: 'mimo', confidence: 'high', reasonKey: 'detect.reason.mimo' };
-  }
-  if (/^sk-[a-zA-Z0-9_-]+/.test(k)) {
-    return { presetId: 'deepseek', confidence: 'medium', reasonKey: 'detect.reason.sk' };
   }
   return null;
 }

@@ -19,15 +19,18 @@ check('1 PRESETS 五预设字段完整（id/nameKey/providerId/protocol/baseURL/
     const p = PRESETS[id];
     return p && ['id', 'nameKey', 'providerId', 'protocol', 'baseURL', 'model'].every(k => k in p) && p.id === id;
   }));
-check('2 tp-/ttp- 前缀命中 mimo-token-plan（high）',
+check('2 tp-/ttp- 前缀命中 mimo-token-plan（high）且专属端点为 token-plan-cn.xiaomimimo.com',
   detectProviderByKey('tp-abc123').presetId === 'mimo-token-plan'
-  && detectProviderByKey('ttp-abc123').confidence === 'high');
+  && detectProviderByKey('ttp-abc123').confidence === 'high'
+  && getPreset('mimo-token-plan').baseURL === 'https://token-plan-cn.xiaomimimo.com/v1'
+  && getPreset('mimo-token-plan').baseURL !== getPreset('mimo').baseURL);
 check('3 mimo- 前缀命中 mimo（high）',
   detectProviderByKey('mimo-abc123').presetId === 'mimo'
   && detectProviderByKey('mimo-abc123').confidence === 'high');
-check('4 sk- 前缀命中 deepseek（medium，仅建议）',
-  detectProviderByKey('sk-test-0000').presetId === 'deepseek'
-  && detectProviderByKey('sk-test-0000').confidence === 'medium');
+check('4 通用 sk- 前缀不误判为特定服务商（防 OpenAI/Claude/Kimi/Qwen 误套用 DeepSeek 引发 401）',
+  detectProviderByKey('sk-test-0000') === null
+  && detectProviderByKey('sk-proj-abc123') === null
+  && detectProviderByKey('sk-ant-abc123') === null);
 check('5 非法输入防御（空串 / 空白 / 无前缀 / 数字）',
   detectProviderByKey('') === null && detectProviderByKey('   ') === null
   && detectProviderByKey('abc123') === null && detectProviderByKey(12345) === null);
