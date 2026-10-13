@@ -401,7 +401,8 @@ function checkDeveloperPathLeaks() {
   const leakToolsPat = new RegExp(['D:', 'software', ['hui', 'hua'].join('')].join('[\\\\/]'), 'i');
   const lifePat = new RegExp(['D:', 'GAME', ['LI', 'FE'].join('')].join('[\\\\/]'), 'i');
   const userPat = new RegExp(['Users', ['an', 'dab'].join('')].join('[\\\\/]'), 'i');
-  const leakPatterns = [leakToolsPat, lifePat, userPat];
+  const privateRepoPat = new RegExp(['Life', ['Chu', 'lan'].join('')].join('-'), 'i');
+  const leakPatterns = [leakToolsPat, lifePat, userPat, privateRepoPat];
 
   const targetDirs = ['src', 'test', 'docs', 'tools'];
   function scan(dir) {
