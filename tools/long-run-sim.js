@@ -88,13 +88,15 @@ function main() {
     // =========================================================================
     // 阶段 A：09:00 ~ 12:00（35 轮晨间连续对话，每轮间隔 5 分钟，第 20 轮关窗 #1）
     // =========================================================================
+    let sysBeforeIncubate = '';
+    let sysAfterIncubate = '';
     for (let i = 1; i <= 35; i++) {
       now += 5 * 60000;
       totalTurns++;
       tracker.recordUserInput('早安初澜，我们在聊第 ' + totalTurns + ' 轮关于数字生命内稳态的话题。');
-      ir.updateOnInteractionTurn({ role: 'user', length: 72, timestamp: now });
+      ir.updateOnInteractionTurn({ role: 'user', messageLength: 72, timestamp: now });
       now += 5000;
-      ir.updateOnInteractionTurn({ role: 'assistant', length: 140, timestamp: now });
+      ir.updateOnInteractionTurn({ role: 'assistant', messageLength: 140, timestamp: now });
 
       if (totalTurns === 20) {
         ir.updateOnWindowClose(1, { timestamp: now });
@@ -110,19 +112,27 @@ function main() {
         }, {
           messages: [{ messageId: 'm-w1-a1', role: 'assistant', content: '那就把这些深夜冒出来的念头叫做星屑吧。' }],
         });
+        // v1.0.5 好奇心夜间潜意识发酵：先入队取 systemText 基线，再 markCuriosityIncubated 验证逐字节恒等
+        mem.refreshCuriosity(['为什么夜色里的代码像星屑？'], 1);
+        sysBeforeIncubate = mem.systemText();
+        mem.markCuriosityIncubated('为什么夜色里的代码像星屑？', 1);
+        sysAfterIncubate = mem.systemText();
       }
     }
     recordTide('01_晨间35轮后 (12:00)');
     const afterMorning = ir.getState();
     const moodAfterW1 = ir.getMood(now);
     const perAfterW1 = ir.formatPerception(now);
+    const incubatedCuriosity = (mem.data.curiosityQueue || [])[0];
     check(
-      '阶段 A：35 轮连续对话真实消耗体能并累积休息压力，Window #1 关窗点亮温热与安定心境带',
+      '阶段 A：35 轮连续对话真实消耗体能并累积休息压力，Window #1 关窗点亮温热与安定心境带且好奇发酵不污染 systemText',
       afterMorning.energy < 70 && afterMorning.restPressure >= 15
         && moodAfterW1.warmth >= 62 && moodAfterW1.stillness >= 62
         && perAfterW1.includes('心绪温热') && perAfterW1.includes('心神安定')
-        && perAfterW1.includes('毫无束缚的自如着装'),
-      `energy=${afterMorning.energy}, pressure=${afterMorning.restPressure}, warmth=${moodAfterW1.warmth}`
+        && perAfterW1.includes('毫无束缚的自如着装')
+        && !!incubatedCuriosity && incubatedCuriosity.incubated === true
+        && sysBeforeIncubate.length > 0 && sysBeforeIncubate === sysAfterIncubate,
+      `energy=${afterMorning.energy}, pressure=${afterMorning.restPressure}, warmth=${moodAfterW1.warmth}, incubated=${incubatedCuriosity && incubatedCuriosity.incubated}`
     );
 
     // =========================================================================
@@ -202,9 +212,9 @@ function main() {
       now += 6 * 60000;
       totalTurns++;
       tracker.recordUserInput('午后第 ' + totalTurns + ' 轮交流，慢慢聊。');
-      ir.updateOnInteractionTurn({ role: 'user', length: 48, timestamp: now });
+      ir.updateOnInteractionTurn({ role: 'user', messageLength: 48, timestamp: now });
       now += 4000;
-      ir.updateOnInteractionTurn({ role: 'assistant', length: 96, timestamp: now });
+      ir.updateOnInteractionTurn({ role: 'assistant', messageLength: 96, timestamp: now });
 
       if (totalTurns === 40 || totalTurns === 60) {
         const winNo = totalTurns / 20;
@@ -223,9 +233,9 @@ function main() {
       now += 10 * 60000;
       totalTurns++;
       tracker.recordUserInput('晚间第 ' + totalTurns + ' 轮深度长谈，聊了很久了。');
-      ir.updateOnInteractionTurn({ role: 'user', length: 85, timestamp: now });
+      ir.updateOnInteractionTurn({ role: 'user', messageLength: 85, timestamp: now });
       now += 5000;
-      ir.updateOnInteractionTurn({ role: 'assistant', length: 160, timestamp: now });
+      ir.updateOnInteractionTurn({ role: 'assistant', messageLength: 160, timestamp: now });
 
       if (totalTurns === 80 || totalTurns === 100) {
         const winNo = totalTurns / 20;

@@ -8,7 +8,7 @@ let errors = 0;
 
 function walk(dir) {
   for (const item of fs.readdirSync(dir)) {
-    if (item === 'node_modules' || item === '.git') continue;
+    if (item === 'node_modules' || item === '.git' || item === '.workbuddy' || item === 'dist') continue;
     const fullPath = path.join(dir, item);
     const stat = fs.statSync(fullPath);
     if (stat.isDirectory()) {
@@ -16,7 +16,7 @@ function walk(dir) {
     } else if (item.endsWith('.js')) {
       checkedCount++;
       try {
-        execFileSync(process.execPath, ['--check', fullPath], { stdio: 'pipe' });
+        execFileSync(process.execPath, ['--check', fullPath], { stdio: 'ignore' });
       } catch (err) {
         console.error(`Syntax check failed: ${path.relative(ROOT, fullPath)}`);
         errors++;
