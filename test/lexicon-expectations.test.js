@@ -161,7 +161,9 @@ check('18 快照引证：knownIds 白名单内的本窗 ID 不被裁头误判为
 // 19 提示词契约防漂移：三键在 SUMMARY_SYS 模板里（windowSynthesis 窗级产物）
 const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
 check('19 提示词契约防漂移：模板含 coinages/expectations/expectationOutcomes',
-  /coinages/.test(brainSrc) && /expectationOutcomes/.test(brainSrc) && /"expectations":\[\]/.test(brainSrc));
+  /coinages/.test(brainSrc) && /coinage\|metaphor\|nickname\|adopted/.test(brainSrc)
+  && /addLexicon\(Object\.assign\(\{\},\s*c,\s*\{\s*windowNo:\s*snap\.windowNo\s*\}\)/.test(brainSrc)
+  && /expectationOutcomes/.test(brainSrc) && /"expectations":\[\]/.test(brainSrc));
 
 // 20 偏差事实防漂移：broken 进成长反思且「只报事实不代拟」格式在册
 check('20 偏差事实防漂移：【偏差事实】客观格式进 GROWTH 输入',
@@ -249,8 +251,12 @@ check('31a 词汇动力学：再度提及复苏为 ACTIVE 且权重恢复 (+0.2)
 // 32 关窗集成：closeWindow 驱动 refreshLexiconDynamics 推进生命周期
 const snapDyn = mDyn.windowSnapshot();
 mDyn.closeWindow('窗口小结：这一轮平淡日常', snapDyn);
+// P1-2 门禁：关窗后入库必须透传 snap.windowNo，不得回落到自增后的 data.windowNo
+mDyn.addLexicon({ word: '雨声', kind: 'metaphor', gloss: '窗外雨声', messageId: idDyn, windowNo: snapDyn.windowNo });
+const e32 = mDyn.data.lexicon.find(x => x.word === '雨声');
 check('32 关窗集成：closeWindow 成功推进且词汇账本动力学生效',
-  mDyn.data.windowNo === 2 && Array.isArray(mDyn.data.lexicon) && mDyn.data.lexicon.length === 1);
+  mDyn.data.windowNo === 2 && Array.isArray(mDyn.data.lexicon) && mDyn.data.lexicon.length === 1
+  && e32 && e32.lastUsedWindow === snapDyn.windowNo && e32.lastDecayedWindow === snapDyn.windowNo);
 
 // 33 词长门禁：单字词过短拒收（防语素歧义与真阳性漏检陷阱）
 const dirSub = fs.mkdtempSync(path.join(os.tmpdir(), 'lex-exp-'));

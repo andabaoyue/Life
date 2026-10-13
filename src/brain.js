@@ -60,7 +60,7 @@ const SUMMARY_SYS =
   + '3. 【状态证据（stateEvidence）】提取支持主体状态变化的证据，trait 可选 quiet_preference、social_initiative、attachment_need、vitality、philosophical_curiosity、self_continuity、meaning_presence、self_clarity，'
   + 'direction 为 [-1, 1] 方向，strength 为 [0, 1] 强度，messageId 必须严格引用对话中程序签发的真实 ID（如 m-000001），quote 必须逐字摘自该条消息原文。\n'
   + '4. 【词汇与预期（windowSynthesis 窗级产物）】只在对话中自然出现时提取，没有就给空数组，绝不硬造：\n'
-  + '   - coinages 条目形状（word 必填！）：{"word":"自创词","kind":"coinage|metaphor|nickname","gloss":"含义摘录","messageId":"m-..."}；只收初澜自创，普通用词、口误、用户先说的词都不收。\n'
+  + '   - coinages 条目形状（word 必填，至少2字！）：{"word":"词汇","kind":"coinage|metaphor|nickname|adopted","gloss":"含义摘录","messageId":"m-..."}；coinage/metaphor/nickname 只收初澜自创；adopted 仅收双方共同约定且由初澜亲口复述接纳的专属暗号（gloss 必填，messageId 必须引证包含该词的初澜 assistant 消息，单窗最多 1 条）；普通用词与口误不收。\n'
   + '   - expectations 条目形状（text 必填！）：{"text":"预期内容","kind":"external|pledge","source":"user|chulan","messageId":"m-...","dueHint":"时间指向"}；pledge 仅限初澜自己的承诺，用户的约定一律记 external。\n'
   + '   - expectationOutcomes 条目形状：{"id":"exp-000001","status":"fulfilled|broken|moot","messageId":"m-...","note":"客观事实摘录"}。\n'
   + '   - expectationOutcomes：只核验下方【待核验预期】清单里的条目，id 原样引用，status 取 fulfilled|broken|moot，messageId 引证本窗真实 ID（moot 可免），note 只写客观事实摘录，不写结论。\n'
@@ -1780,7 +1780,7 @@ class Brain {
         const knownIds = (snap && Array.isArray(snap.snapshotActiveMessageIds)) ? snap.snapshotActiveMessageIds : [];
         const ingestOpts = { knownIds, messages: (snap && Array.isArray(snap.activeItems)) ? snap.activeItems : [] };
         for (const c of (Array.isArray(syn.coinages) ? syn.coinages : [])) {
-          this.memory.addLexicon(c, ingestOpts);
+          this.memory.addLexicon(Object.assign({}, c, { windowNo: snap.windowNo }), ingestOpts);
         }
         for (const ex of (Array.isArray(syn.expectations) ? syn.expectations : [])) {
           this.memory.addExpectation(Object.assign({}, ex, { windowNo: snap.windowNo }), ingestOpts);
