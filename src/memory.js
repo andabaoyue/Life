@@ -698,7 +698,7 @@ class Memory {
      门槛（设计书拍板 + 架构评审）：
      1. 零先验：初始空表，唯一来源是她自己的话（messageId 引证）；
      2. 不可伪造：messageId 必须解析到真实历史，解析不到拒收；
-     3. v1 只收自创（coinage/metaphor/nickname）—— adopted 仅枚举占位，明确拒收；
+     3. v1.0.6 起支持自创（coinage/metaphor/nickname）与双方专属暗号（adopted，五重严格门禁）；
      4. 状态三态对齐 EngramTrace 梯队：ACTIVE | FADING | DORMANT，只淡化不删除（D-005）。
      防工具化红线：本层零定时器、零提醒。 */
   _resolveMessage(messageId, opts) {
@@ -777,17 +777,6 @@ class Memory {
     list.push(rec);
     this.save();
     return { ok: true, entry: rec, created: true };
-  }
-
-  /**
-   * v1.0.6 词汇动力学提及检测（防子串假阳性与词边界防御）：
-   * 1. 西方词汇/英文缩写（如 Al / cat）：严格使用单词边界匹配，杜绝 "Al" 误中 "Always"；
-   * 2. 单字汉字暗号（如「月」）：前后均不得紧邻汉字字符，杜绝「一点月亮的影子都没有」将「月」误判为提及；
-   *    允许单字独立处于行首尾、空格、引号（「月」、“月”）、括号或标点符号旁；
-   * 3. 多字自创词/专属暗号（如「信物」「微光」「雨声」）：天然具备词汇特异性，子串包含即为合规提及。
-   */
-  _isWordMentioned(text, word) {
-    return isLexiconWordMentioned(text, word);
   }
 
   /**
