@@ -869,11 +869,16 @@ class Memory {
     if (!['fulfilled', 'broken', 'moot'].includes(status)) return { ok: false, error: 'INVALID_STATUS' };
     const messageId = outcome.messageId == null ? null : String(outcome.messageId);
     if (status !== 'moot' && !this._resolveMessage(messageId || '', opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    // v1.2 A-1：记录实际结算窗口号 resolvedWindowNo（保留创建窗 hit.windowNo 不变），避免关窗 closeWindow 已自增 windowNo 后误记到下一窗
+    const resolvedWindowNo = Number.isFinite(outcome.windowNo)
+      ? outcome.windowNo
+      : (Number.isFinite(opts.windowNo) ? opts.windowNo : this.data.windowNo);
     hit.status = status;
     hit.outcome = {
       at: Number.isFinite(outcome.at) ? outcome.at : null,
       messageId,
-      note: String(outcome.note || '')
+      note: String(outcome.note || ''),
+      resolvedWindowNo
     };
     this.save();
     return { ok: true, entry: hit };

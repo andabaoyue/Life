@@ -1787,7 +1787,7 @@ class Brain {
         }
         for (const oc of (Array.isArray(syn.expectationOutcomes) ? syn.expectationOutcomes : [])) {
           this.memory.resolveExpectation(oc && oc.id, {
-            status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note
+            status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note, windowNo: snap.windowNo
           }, ingestOpts);
         }
         this.memory.save(true);
@@ -2585,9 +2585,23 @@ class Brain {
       // 否则 oppose 约束是空话；体积由 currentSelfTokenBudget 护栏兜底，不再二次截断
       const selfProjection = this.selfLedger ? this.selfLedger.currentSelfText() : '';
       // v1.0 §4.7 #4：broken 预期以「偏差事实」进成长反思 —— 只报客观事实，不代拟结论（架构评审提醒 3）
-      const brokenFacts = ((this.memory && this.memory.data && this.memory.data.expectations) || [])
-        .filter((x) => x && x.status === 'broken' && x.windowNo === window)
+      // v1.2 A-2：修复跨窗 broken 过滤断路（按结算窗 resolvedWindowNo 筛选，旧存档回退 x.windowNo），
+      //   并以「兑现事实」补齐本窗 fulfilled 客观事实（严守 D-008 与只报事实不代拟情绪）
+      const isResolvedInWindow = (x) => x && (
+        (x.outcome && Number.isFinite(x.outcome.resolvedWindowNo))
+          ? x.outcome.resolvedWindowNo === window
+          : x.windowNo === window
+      );
+      const expectationsList = (this.memory && this.memory.data && Array.isArray(this.memory.data.expectations))
+        ? this.memory.data.expectations
+        : [];
+      const brokenFacts = expectationsList
+        .filter((x) => x && x.status === 'broken' && isResolvedInWindow(x))
         .map((x) => '【偏差事实】曾预期「' + x.text + '」，但本窗未兑现（引证 ' + ((x.outcome && x.outcome.messageId) || '—') + '）')
+        .join('\n');
+      const fulfilledFacts = expectationsList
+        .filter((x) => x && x.status === 'fulfilled' && isResolvedInWindow(x))
+        .map((x) => '【兑现事实】曾预期「' + x.text + '」，已在本窗兑现（引证 ' + ((x.outcome && x.outcome.messageId) || '—') + '）')
         .join('\n');
       // 🔴 D-24：自发留痕事实 —— 她自发写下的字（A 段已铸入经历档案）。
       //   与 brokenFacts 同款纪律：只报客观事实，不代拟结论；引证 id 可回查档案。
@@ -2595,6 +2609,7 @@ class Brain {
         ? opts.selfNoteFacts : '';
       const userContent = '【当前自我投影】\n' + (selfProjection || '暂无')
         + (brokenFacts ? '\n\n' + brokenFacts : '')
+        + (fulfilledFacts ? '\n\n' + fulfilledFacts : '')
         + (selfNoteFacts ? '\n\n' + selfNoteFacts : '')
         + '\n\n【窗口小结】\n' + summary
         + '\n\n【窗口对话】\n' + dialogue;
