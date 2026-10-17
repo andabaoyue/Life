@@ -68,6 +68,33 @@ function msgTokens(m) {
   return estimateTokens(typeof m.content === 'string' ? m.content : '') + 4;
 }
 
+/**
+ * v1.2.x 渐褪记忆句界优雅截断（纯函数）：
+ * 1. 在 [0.60 * cap, cap] 区间内向前寻找最靠后的合法句子终结符（。；！？\n，以及带空白的英文句界）；
+ * 2. 截断体严格 <= cap，输出含省略号 <= cap + 3；
+ * 3. 若区间内无合法句界，或输入为纯字母/无标点字符串，严格回退为原样 slice(0, cap) + '...'。
+ */
+function truncateFadingText(text, cap = 60) {
+  const str = String(text || '');
+  if (str.length <= cap) return str;
+  // DSH 实测标定：0.60 下限兼顾 cap=60 与 cap=300（实测 5/5 完整句）
+  const minBound = Math.max(0, Math.floor(cap * 0.6));
+  const searchSlice = str.slice(minBound, cap);
+  const re = /[。；！？\n]|(?:\.[ \t\n])|(?:\;[ \t\n])|(?:\![ \t\n])|(?:\?[ \t\n])/g;
+  let lastMatch = null;
+  let m;
+  while ((m = re.exec(searchSlice)) !== null) {
+    if (minBound + m.index + m[0].length <= cap) {
+      lastMatch = m;
+    }
+  }
+  if (lastMatch) {
+    const cutPos = minBound + lastMatch.index + lastMatch[0].length;
+    return str.slice(0, cutPos).trimEnd() + '...';
+  }
+  return str.slice(0, cap) + '...';
+}
+
 /** 🔴 D-13：自述单条最大字符数。超过整条拒收（不截断——截断会让她的话变形）。 */
 const SELF_NOTE_MAX_CHARS = 600;
 
@@ -558,7 +585,7 @@ class Memory {
       if (dormantNos.has(w.no)) return sum;                 // 整段移出视野
       const full = String(w.text || '');
       if (fadingNos.has(w.no) && full.length > cap) {
-        return sum + estimateTokens(full.slice(0, cap) + '...');
+        return sum + estimateTokens(truncateFadingText(full, cap));
       }
       return sum + estimateTokens(full);
     }, 0);
@@ -986,7 +1013,7 @@ class Memory {
               // 🔴 丙：截断长度可配（原先硬编码 60 —— 实测连一句完整的话都放不下，
               //   读起来是断句碎片而不是「渐褪」）。生效值来自 engramManager.config。
               const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
-              const text = (w.text && w.text.length > cap) ? (w.text.slice(0, cap) + '...') : (w.text || '');
+              const text = (w.text && w.text.length > cap) ? truncateFadingText(w.text, cap) : (w.text || '');
               return tag + text;
             }
             const tag = w.early ? '【早期】' : `【第${w.no}段】`;
@@ -1487,7 +1514,7 @@ class Memory {
       const full = String(w.text || '');
       if (!this.engramManager) return estimateTokens(full);
       if (dormantNos.has(w.no)) return 0;
-      if (fadingNos.has(w.no) && full.length > cap) return estimateTokens(full.slice(0, cap) + '...');
+      if (fadingNos.has(w.no) && full.length > cap) return estimateTokens(truncateFadingText(full, cap));
       return estimateTokens(full);
     };
     let acc = 0, split = 0;
@@ -1545,4 +1572,4 @@ class Memory {
   }
 }
 
-module.exports = { Memory, estimateTokens };
+module.exports = { Memory, estimateTokens, truncateFadingText };
