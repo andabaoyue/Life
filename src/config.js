@@ -79,24 +79,27 @@ const DEFAULTS = {
   agentIdleMinutes: 30,
   agentSelfNoteIdleMinutes: 120,
 
-  // 🔴 丙（2026-10-07）：长期记忆「渐褪」的投影参数。
-  //   背景（实测真实数据）：开启记忆动力学后，5 段小结**全部**被压成 63 字，
-  //   其中一段原文 1844 字 —— 因为 activeThreshold=0.60 恰好卡在初始强度
-  //   (baseStrength 0.50 + salienceBonus 0.10 = 0.60) 上，过 1 个窗口必跌破。
-  //   结果不是「近的清晰、远的模糊」，而是「除最新一段外全成断句碎片」。
-  //
-  //   ⚠️ 这两个键**只在 experimentModules.memoryDynamics 为真时生效**；
-  //      基线模式下 notruncate、不剔除，既有行为一字不变。
-  //   ⚠️ 默认值与 DEFAULT_DYNAMICS_CONFIG 保持一致（0.60 / 60），
-  //      **默认值必须稳** —— 行为变更走用户显式配置，不靠改默认值偷袭。
-  memoryActiveThreshold: 0.60,
-  memoryFadingMaxChars: 60,
+  // 🔴 D-011（v1.2.y）：长期记忆「渐褪」的标定参数与出厂通电。
+  //   决策依据（D-011 实测真实数据）：
+  //   1. 活跃门限 0.50：确立三阶认知金字塔 —— ΔW 0-1 保持全文 ACTIVE（近景焦点），
+  //      ΔW 2-5 保持 300 字句界主干 FADING（远景摘要），ΔW >= 6 沉入 DORMANT（潜意识），
+  //      彻底克服 0.60 关窗腰斩与 0.40 FADING 塌缩成 1 窗窄缝的缺陷；
+  //   2. 渐褪截断 300：配合 v1.2.x 句界截断，提供完整意思的印象速写；在默认 6000 预算下稳态占 38.5%~55.6%，
+  //      彻底根除 0.40 在长文下飙至 147% 触发不可逆合并的重大风险；
+  //   3. 存量用户显式配置优先，出厂默认变更仅惠及新装用户。
+  memoryActiveThreshold: 0.50,
+  memoryFadingMaxChars: 300,
   // 🔴 D-23：每条消息最多增强几条记忆印痕（召回 top-N）。0 = 关闭增强。
   //   默认 1 —— 一句话只加深最相关的那一段（注意力聚焦），防洪泛。
   memoryRecallTopN: 1,
   motionSpeed: 2,
   motionTickMs: 50,
   motionMargin: 20,
+
+  // ---- v1.5-a: Provider 容灾自动回落 ----
+  fallbackConnectionId: '',        // 空串 = 未配置备用
+  fallbackFailureThreshold: 3,
+  fallbackCooldownMs: 30000,
 
   // 单价（元/百万 token）。峰谷价不同，按你账单实际数字改这里。
   price: {
@@ -112,7 +115,7 @@ const DEFAULTS = {
     digitalUmwelt: false,
     attentionGate: false,
     biographicalCanalization: false,
-    memoryDynamics: false,
+    memoryDynamics: true,      // v1.2.y D-011 通电：出厂默认启用长期记忆三阶动力学梯度
     sleepConsolidation: true   // v2.0 拍板：真睡眠开梦（baseline 仍关；显式 false 可关）
   }
 };
@@ -217,6 +220,10 @@ function sanitize(raw = {}) {
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
     motionMargin: finiteInt(raw.motionMargin, DEFAULTS.motionMargin, 0, 200),
+    // v1.5-a: Provider 容灾自动回落配置清洗
+    fallbackConnectionId: typeof raw.fallbackConnectionId === 'string' ? raw.fallbackConnectionId.trim() : DEFAULTS.fallbackConnectionId,
+    fallbackFailureThreshold: finiteInt(raw.fallbackFailureThreshold, DEFAULTS.fallbackFailureThreshold, 1, 100),
+    fallbackCooldownMs: finiteInt(raw.fallbackCooldownMs, DEFAULTS.fallbackCooldownMs, 1000, 3600000),
     price: {
       peak: { hit: finiteNonNegative(peak.hit, DEFAULTS.price.peak.hit), miss: finiteNonNegative(peak.miss, DEFAULTS.price.peak.miss), out: finiteNonNegative(peak.out, DEFAULTS.price.peak.out) },
       valley: { hit: finiteNonNegative(valley.hit, DEFAULTS.price.valley.hit), miss: finiteNonNegative(valley.miss, DEFAULTS.price.valley.miss), out: finiteNonNegative(valley.out, DEFAULTS.price.valley.out) }
@@ -229,19 +236,36 @@ function sanitize(raw = {}) {
         : null;
 
       if (!experimentMode) {
+        // v1.2.y：与 DEFAULTS.experimentMode 对齐 —— 此前这里硬编码推导 baseline，
+        //   导致 DEFAULTS.experimentMode 成为只写不读的死配置，改它对新装用户零效果。
+        //   新语义：配置里没有任何模块显式开启时，回落到 DEFAULTS 声明的出厂模式。
         const hasAnyActive = Object.values(rawModules).some(v => v === true);
-        experimentMode = hasAnyActive ? 'experimental' : 'baseline';
+        const fallbackMode = validModes.includes(String(DEFAULTS.experimentMode).trim().toLowerCase())
+          ? String(DEFAULTS.experimentMode).trim().toLowerCase()
+          : 'baseline';
+        experimentMode = hasAnyActive ? 'experimental' : fallbackMode;
       }
 
       const isBaseline = experimentMode === 'baseline';
+      // v1.2.y：缺省键继承 DEFAULTS（而非硬编码 false），显式 false 仍保留 false。
+      //   - 缺省键 ⇒ 用户从没表过态 ⇒ 应吃出厂默认姿态
+      //   - 显式 false ⇒ 用户或 ablation 明确关闭 ⇒ 必须尊重，绝不覆盖
+      //   ⚠️ sleepConsolidation 原本就是 `!== false` 语义（缺省视为 true），
+      //      改造后与其余模块统一，但**必须用 DEFAULTS 里的值兜底**，
+      //      不能直接写成 Boolean(undefined) —— 那会把出厂默认 from true 变 false。
+      const pick = (key) => {
+        if (isBaseline) return false;
+        if (Object.prototype.hasOwnProperty.call(rawModules, key)) return Boolean(rawModules[key]);
+        return Boolean(DEFAULTS.experimentModules && DEFAULTS.experimentModules[key]);
+      };
       const experimentModules = {
-        homeostasis: isBaseline ? false : Boolean(rawModules.homeostasis),
-        internalRegulation: isBaseline ? false : Boolean(rawModules.internalRegulation),
-        digitalUmwelt: isBaseline ? false : Boolean(rawModules.digitalUmwelt),
-        attentionGate: isBaseline ? false : Boolean(rawModules.attentionGate),
-        biographicalCanalization: isBaseline ? false : Boolean(rawModules.biographicalCanalization),
-        memoryDynamics: isBaseline ? false : Boolean(rawModules.memoryDynamics),
-        sleepConsolidation: isBaseline ? false : rawModules.sleepConsolidation !== false
+        homeostasis: pick('homeostasis'),
+        internalRegulation: pick('internalRegulation'),
+        digitalUmwelt: pick('digitalUmwelt'),
+        attentionGate: pick('attentionGate'),
+        biographicalCanalization: pick('biographicalCanalization'),
+        memoryDynamics: pick('memoryDynamics'),
+        sleepConsolidation: pick('sleepConsolidation')
       };
 
       return { experimentMode, experimentModules };

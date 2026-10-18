@@ -68,6 +68,33 @@ function msgTokens(m) {
   return estimateTokens(typeof m.content === 'string' ? m.content : '') + 4;
 }
 
+/**
+ * v1.2.x 渐褪记忆句界优雅截断（纯函数）：
+ * 1. 在 [0.60 * cap, cap] 区间内向前寻找最靠后的合法句子终结符（。；！？\n，以及带空白的英文句界）；
+ * 2. 截断体严格 <= cap，输出含省略号 <= cap + 3；
+ * 3. 若区间内无合法句界，或输入为纯字母/无标点字符串，严格回退为原样 slice(0, cap) + '...'。
+ */
+function truncateFadingText(text, cap = 60) {
+  const str = String(text || '');
+  if (str.length <= cap) return str;
+  // DSH 实测标定：0.60 下限兼顾 cap=60 与 cap=300（实测 5/5 完整句）
+  const minBound = Math.max(0, Math.floor(cap * 0.6));
+  const searchSlice = str.slice(minBound, cap);
+  const re = /[。；！？\n]|(?:\.[ \t\n])|(?:\;[ \t\n])|(?:\![ \t\n])|(?:\?[ \t\n])/g;
+  let lastMatch = null;
+  let m;
+  while ((m = re.exec(searchSlice)) !== null) {
+    if (minBound + m.index + m[0].length <= cap) {
+      lastMatch = m;
+    }
+  }
+  if (lastMatch) {
+    const cutPos = minBound + lastMatch.index + lastMatch[0].length;
+    return str.slice(0, cutPos).trimEnd() + '...';
+  }
+  return str.slice(0, cap) + '...';
+}
+
 /** 🔴 D-13：自述单条最大字符数。超过整条拒收（不截断——截断会让她的话变形）。 */
 const SELF_NOTE_MAX_CHARS = 600;
 
@@ -558,7 +585,7 @@ class Memory {
       if (dormantNos.has(w.no)) return sum;                 // 整段移出视野
       const full = String(w.text || '');
       if (fadingNos.has(w.no) && full.length > cap) {
-        return sum + estimateTokens(full.slice(0, cap) + '...');
+        return sum + estimateTokens(truncateFadingText(full, cap));
       }
       return sum + estimateTokens(full);
     }, 0);
@@ -869,11 +896,16 @@ class Memory {
     if (!['fulfilled', 'broken', 'moot'].includes(status)) return { ok: false, error: 'INVALID_STATUS' };
     const messageId = outcome.messageId == null ? null : String(outcome.messageId);
     if (status !== 'moot' && !this._resolveMessage(messageId || '', opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
+    // v1.2 A-1：记录实际结算窗口号 resolvedWindowNo（保留创建窗 hit.windowNo 不变），避免关窗 closeWindow 已自增 windowNo 后误记到下一窗
+    const resolvedWindowNo = Number.isFinite(outcome.windowNo)
+      ? outcome.windowNo
+      : (Number.isFinite(opts.windowNo) ? opts.windowNo : this.data.windowNo);
     hit.status = status;
     hit.outcome = {
       at: Number.isFinite(outcome.at) ? outcome.at : null,
       messageId,
-      note: String(outcome.note || '')
+      note: String(outcome.note || ''),
+      resolvedWindowNo
     };
     this.save();
     return { ok: true, entry: hit };
@@ -981,7 +1013,7 @@ class Memory {
               // 🔴 丙：截断长度可配（原先硬编码 60 —— 实测连一句完整的话都放不下，
               //   读起来是断句碎片而不是「渐褪」）。生效值来自 engramManager.config。
               const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
-              const text = (w.text && w.text.length > cap) ? (w.text.slice(0, cap) + '...') : (w.text || '');
+              const text = (w.text && w.text.length > cap) ? truncateFadingText(w.text, cap) : (w.text || '');
               return tag + text;
             }
             const tag = w.early ? '【早期】' : `【第${w.no}段】`;
@@ -1174,12 +1206,12 @@ class Memory {
         windowNo: Number.isFinite(input.windowNo) ? input.windowNo : (this.data && this.data.windowNo) || 1,
         at,
         drained: false,
-        // 🔴 D-24：来源戳 + 铸造幂等标记（随 data 落盘，跨重启有效）。
-        //   source === 'selfNote'：她**自发**留下的字（提案来源由主进程从执行回执带下来，
-        //     渲染端无法伪造）—— 只有它有资格铸进自传经历档案（用户拍板：受托任务不算）。
+        // 🔴 D-24 & v1.4-b：来源戳 + 铸造幂等标记（随 data 落盘，跨重启有效）。
+        //   source === 'selfNote' / 'observerJournal'：她自发留下的字与生活观察日记（提案来源由主进程从执行回执带下来，
+        //     渲染端无法伪造）—— 只有它们有资格铸进自传经历档案（用户拍板：受托任务不算）。
         //   engraved === true：已铸进 experiences.jsonl，终身只铸一次。
         //   ⚠️ 旧数据（D-24 之前）没有 source 字段 ⇒ 一律不铸（宁缺毋滥，不猜来源）。
-        source: input.source === 'selfNote' ? 'selfNote' : (input.source || null),
+        source: (input.source === 'selfNote' || input.source === 'observerJournal') ? input.source : (input.source || null),
         engraved: false,
       });
       // 🔴 D-20：立即落盘 —— 不能等 3 秒防抖（进程可能在这之前退出）。
@@ -1231,11 +1263,11 @@ class Memory {
   }
 
   /**
-   * 🔴 D-24（A 段取用口）：返回「她自发写下、尚未铸进经历档案」的条目。
+   * 🔴 D-24 & v1.4-b（A 段取用口）：返回「她自发写下、尚未铸进经历档案」的条目。
    *
    *   判据三条，缺一不铸：
-   *     1. source === 'selfNote' —— 只铸她的自发之举（受托写下的任务产物不算她的经历）；
-   *     2. engraved !== true    —— 幂等：同一条便签终身只铸一次（含跨重启）；
+   *     1. source 为 'selfNote' 或 'observerJournal' —— 只铸她的自发之举与生活观察日记（受托写下的任务产物不算她的经历）；
+   *     2. engraved !== true    —— 幂等：同一条便签/日记终身只铸一次（含跨重启）；
    *     3. content 非空字符串   —— 空内容不是经历（沿用 addSelfNote 的拒收口径）。
    *   ⚠️ 不要求 drained：「她写下」这个事实与「她看到」无关，
    *      关窗时刻如实铸造，不因她还没开口就漏掉她真实做过的事。
@@ -1244,7 +1276,7 @@ class Memory {
     if (!Array.isArray(this.data.selfNotes)) return [];
     return this.data.selfNotes.filter((n) => n
       && n.engraved !== true
-      && n.source === 'selfNote'
+      && (n.source === 'selfNote' || n.source === 'observerJournal')
       && typeof n.content === 'string' && n.content.trim());
   }
 
@@ -1482,7 +1514,7 @@ class Memory {
       const full = String(w.text || '');
       if (!this.engramManager) return estimateTokens(full);
       if (dormantNos.has(w.no)) return 0;
-      if (fadingNos.has(w.no) && full.length > cap) return estimateTokens(full.slice(0, cap) + '...');
+      if (fadingNos.has(w.no) && full.length > cap) return estimateTokens(truncateFadingText(full, cap));
       return estimateTokens(full);
     };
     let acc = 0, split = 0;
@@ -1540,4 +1572,4 @@ class Memory {
   }
 }
 
-module.exports = { Memory, estimateTokens };
+module.exports = { Memory, estimateTokens, truncateFadingText };

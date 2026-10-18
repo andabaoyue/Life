@@ -156,3 +156,81 @@
   - `Brain.closeWindow`、`Brain.growSelf`、`Brain.mergeMemory` 全量接入；
   - `SelfLedger` 启用强事实核验与 `rejected` 追踪。
 
+---
+
+## Decision D-011: 记忆动力学出厂通电与三阶梯度标定 (Memory Dynamics Default Activation & Three-Tier Calibration)
+
+> **编号体系声明**：本编号 `D-011` 属本文件的三位编号序列（`D-001 ~ D-011`），
+> 与 `src/` 源码注释中的两位编号（`D-10 ~ D-26`）**分属不同体系**，严禁混用。
+
+- **状态：** `SETTLED DECISION`
+- **生效版本：** v1.2.y
+- **决策内容：** 记忆动力学（`memoryDynamics`）出厂通电，默认参数标定为
+  `memoryActiveThreshold = 0.50`、`memoryFadingMaxChars = 300`。
+
+### 一、实证依据（真实数据实测，非理论推演）
+
+衰减公式为 `src/memory-dynamics.js:135-138` 的真实实现：
+
+    S = S0 · (1 + β·ln(1+r)) · (1 + γ·support) / (1 + λ·ΔW)^α
+
+其中 `S0 = baseStrength(0.50) + salienceBonus(0.10) = 0.60`、`β = 0.15`、
+`λ = 0.10`、`α = 1.15`、`dormantThreshold = 0.35`、`dormantWindowGap = 5`。
+
+无召回基准下的确定性梯度（实测 `EngramTraceManager` 输出）：
+
+| ΔW | S | 0.60 | **0.50** | 0.40 |
+| :--: | --: | :--: | :--: | :--: |
+| 0 | 0.6000 | ACTIVE | **ACTIVE** | ACTIVE |
+| 1 | 0.5377 | FADING | **ACTIVE** | ACTIVE |
+| 2 | 0.4865 | FADING | **FADING** | ACTIVE |
+| 3 | 0.4437 | FADING | **FADING** | ACTIVE |
+| 4 | 0.4075 | FADING | **FADING** | ACTIVE |
+| 5 | 0.3764 | FADING | **FADING** | FADING |
+| ≥6 | ≤0.3495 | DORMANT | **DORMANT** | DORMANT |
+
+### 二、为什么是 0.50（否决 0.40 与 0.60）
+
+- **否决 0.60**：ACTIVE 仅 1 窗（ΔW=0），关窗即腰斩，记忆毫无短期连续性；
+- **否决 0.40**：FADING 塌缩为 **1 窗窄缝**——`[0.35, 0.40)` 区间内只有 `ΔW=5` 的
+  `0.3764` 一个取值，导致「300 字主干」这一档几乎形同虚设；
+- **采纳 0.50**：`ΔW 0-1 ACTIVE(全文)` / `ΔW 2-5 FADING(300 字主干)` /
+  `ΔW ≥6 DORMANT(移出 prompt)`，三阶各占其位，构成匀称的
+  「近景焦点 → 远景摘要 → 潜意识」认知漏斗。
+
+### 三、预算安全性（默认 memoryCap = 6000）
+
+`src/memory.js:135` 的默认预算为 **6000**（非 `DEFAULTS.memoryCapTokens = 12000`）。
+40 窗稳态实测：
+
+| 每窗字数 | 0.60/60 | **0.50/300** | 0.40/300 |
+| :--: | --: | :--: | :--: |
+| 1105 字 | 5.1% | **38.5%** | 78.7% |
+| 2135 字 | 5.1% | **55.6%** | **147.3%（触发不可逆 applyMerge）** |
+
+`0.50/300` 在真实长文场景下仍远低于预算上限，不会触发不可逆合并——这是采纳
+它的**第二个独立依据**（与梯度结构无关）。
+
+### 四、连带效应（必须知悉）
+
+1. **普鲁斯特非自愿回忆自然通电**：`triggerInvoluntaryRecall` 依赖 `engramManager`
+   （`src/brain.js:1015` → `src/memory.js:396`）。通电后她会在合适情境自发唤醒休眠
+   记忆，受**同窗限 1 次 + 物理墙钟间隔 ≥ 12h** 双重防洪门禁约束。
+2. **前缀缓存不变式不受影响**：`decayAll` 仅在关窗边界执行，窗口内 `systemText`
+   逐字节稳定（`src/memory-dynamics.js:306-308` 明确记载）。
+3. **存量用户迁移边界（重要）**：`save()` 会把 `DEFAULTS` 展开后整体落盘，因此
+   **已在配置文件中固化了 `0.6/60/false` 的老用户不会受本决策影响**——他们读到的
+   是文件里的显式值。本决策的收益面是**全新安装用户**。
+   如未来需要惠及存量用户，必须新增 `CONFIG_MIGRATIONS` 迁移条目（当前迁移机制
+   按 `schemaVersion` 索引，需先扩展），**不得**在本决策中用「忽略用户已写值」的
+   方式偷袭。
+
+### 五、不变量（本决策不得触碰）
+
+- `baseline` 模式仍强制全部实验模块为 `false`（基线隔离不变式）；
+- 显式 `experimentModules.<key> = false` 必须被尊重（ablation 消融语义）；
+- `DEFAULT_DYNAMICS_CONFIG` 中的 `activeThreshold/fadingMaxChars`（`0.60/60`）
+  **保持不变**——它是底层模块的默认值，生效值由 `config.js` 经 `brain.js` 注入，
+  改动它会突破 `test/memory-dynamics.test.js` 的既有断言，属于无收益的风险。
+
+

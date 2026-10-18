@@ -81,8 +81,9 @@
             <div class="fgroup">
               <div class="fg-title" id="connAdvTitle">高级</div>
               <div class="fg-row">
-                <div class="fg-cell"><label id="connListLabel">连接列表</label>
+                <div class="fg-cell"><label id="connListLabel">已保存的连接</label>
                   <div class="row"><select id="connList"></select></div>
+                  <div class="hint" id="connListHint">选中一条可查看 / 修改它。要新增连接，请先填好下方表单，再点「＋ 新建连接」。</div>
                 </div>
                 <!-- 服务商预设（v1.0 笔 7 / UX-01）：一键填充，绝不覆写已手填内容 -->
                 <div class="fg-cell"><label id="presetLabel">服务商预设</label>
@@ -144,8 +145,8 @@
               <label>Model</label>
               <div class="row"><input id="connModel" type="text" placeholder="手填 model ID" spellcheck="false"></div>
               <div class="row btns">
-                <button id="connNew" class="btn-ghost">新建</button>
-                <button id="connSave" class="btn-primary">保存</button>
+                <button id="connNew" class="btn-ghost">＋ 新建连接</button>
+                <button id="connSave" class="btn-primary">💾 保存修改</button>
                 <button id="connTest" class="btn-ghost">测试连接</button>
                 <button id="connActivate" class="btn-ghost">设为当前</button>
               </div>

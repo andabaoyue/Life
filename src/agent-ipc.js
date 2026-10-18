@@ -457,20 +457,21 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //     通道传 'ipc'，主进程传 'main'。审计里能看出提案是谁发起的。
   function proposeInternal(raw, via, source, trustedContent) {
     const src = via === 'main' ? 'main' : 'ipc';
-    // 🔴 D-17：来源由**主进程侧**决定，经独立参数传入（不读 raw）。
-    //   通道来的（渲染端）永远只能是 'user'；只有主进程建案时才能给 'selfNote'。
+    // 🔴 D-17 & v1.4-b：来源由**主进程侧**决定，经独立参数传入（不读 raw）。
+    //   通道来的（渲染端）永远只能是 'user'；主进程自主建案时放行 'selfNote' 与 'observerJournal'。
     //   ⚠️ 这里不做白名单校验（createActionProposal 内已兜底），
-    //     但**必须只认这两个值** —— 未知值一律按 'user' 传下去。
-    const proposalSource = src === 'main' && source === 'selfNote' ? 'selfNote' : 'user';
+    //     但**只认受信任的主进程自主来源值** —— 未知值一律按 'user' 传下去。
+    const proposalSource = (src === 'main' && (source === 'selfNote' || source === 'observerJournal'))
+      ? source : 'user';
 
     // 🔴 SEC-01 & F4：写能力权威内容快照强制绑定（P1 级安全防御 + 校验先于计费）
     //   所有 workspace.write 提案必须在建案时取得有效字符串正文。
-    //   普通 IPC 提案必须提供 raw.content；selfNote 必须使用主进程可信的 trustedContent。
+    //   普通 IPC 提案必须提供 raw.content；自主提案（selfNote / observerJournal）必须使用主进程可信的 trustedContent。
     //   正文缺失、类型错误、空字符串或超限时，直接拒绝建案，不扣减用户动作预算，不得创建提案或授权记录。
     let contentMeta = null;
     let candidate = null;
     if (raw && raw.capability === 'workspace.write') {
-      candidate = (src === 'main' && proposalSource === 'selfNote')
+      candidate = (src === 'main' && (proposalSource === 'selfNote' || proposalSource === 'observerJournal'))
         ? trustedContent
         : (raw && raw.content);
 

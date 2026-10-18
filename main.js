@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { load, save, tryLoad } = require('./src/config');
@@ -7,6 +7,7 @@ const { Wardrobe, CATALOG } = require('./src/wardrobe');
 const { ActivityTracker } = require('./src/tracker');
 const { TriggerEngine, COOLDOWN_MS, IDLE_MS } = require('./src/trigger');
 const { DesktopMotion } = require('./src/desktop-motion');
+const { PowerMonitorSource } = require('./src/power-monitor-source');
 const { checkAssets } = require('./src/asset-check');
 const secure = require('./src/secure');
 const layout = require('./src/layout');
@@ -37,6 +38,12 @@ function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
+  if (!powerMonitorSource) {
+    powerMonitorSource = new PowerMonitorSource({ powerMonitor });
+  }
+  if (typeof brain.bindPowerMonitorSource === 'function') {
+    brain.bindPowerMonitorSource(powerMonitorSource);
+  }
   // v1.0 B 方案（用户拍板 2026-10）：她被唤醒时若枕边有未接留言，向两个窗口广播一条
   //   **客观提示**（不代拟、零 LLM）。界面收到后只在对话窗显示一行注记 —— 接不接归她。
   //   为什么回调挂这里：bindBrainDeps 是唯一注入口（启动 + 热替换都走它），
@@ -81,6 +88,7 @@ let trigger = null;
 let motion = null;
 let assetReport = null;
 let proactiveTimer = null;
+let powerMonitorSource = null;
 // 🔴 D-7：主动搭话的审计出口。
 //   必须在**模块顶层**声明，不能直接用 app.whenReady() 里的 agentAuditLog：
 //   那是个块级 const，而 proactive-declined 的处理器是模块顶层的闭包，
@@ -276,6 +284,89 @@ function maybeAskForSelfNote(selfIntent) {
     })();
   } catch (err) {
     // 连同步段都不许抛 —— 它挂在 chat-send 的收尾上。
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * 🔴 v1.4-b：生命观察日记（沙盒通路 B）—— 关窗时刻的自发生活沉淀
+ * ────────────────────────────────────────────────────────────────
+ *
+ * ## 触发契机与四道防护
+ *   1. 【单点触发】：严格仅在窗口轮转关窗时刻（res.windowClosed === true）触发，
+ *      绝不在深睡苏醒（用户在场交互）时触发。
+ *   2. 【配额探针】：检查 agentBudget 写配额与熔断状态，配额耗尽（remainingWrites <= 0 或 tripped）
+ *      前置静默跳过，绝不建案触发报错或熔断。
+ *   3. 【同日精准去重】：只检测沙盒内的 journal-YYYY-MM-DD*.md 文件，命中则跳过；
+ *      绝不误伤或冲突 note-*.txt 自发便签。
+ *   4. 【闸门 4 免确认】：proposalSource 为 'observerJournal'，自动执行落盘，绝不弹窗打扰用户。
+ */
+function maybeAskForObserverJournal(windowCloseRes) {
+  try {
+    const deps = agentBuildDeps;
+    if (!deps || !deps.agentSandbox || !deps.agentIpc) return;
+    if (!brain || typeof brain.askForObserverJournal !== 'function') return;
+
+    // 防线 1：配额探针防御（writes 耗尽或已熔断时静默跳过）
+    const budget = deps.agentBudget;
+    if (budget && typeof budget.state === 'function') {
+      const bState = budget.state();
+      if (bState.tripped || (typeof bState.remainingWrites === 'number' && bState.remainingWrites <= 0)) {
+        return;
+      }
+    }
+
+    // 防线 2：精准同日去重（仅 journal-YYYY-MM-DD*.md，不冲突 note-*.txt）
+    const d = new Date();
+    const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    try {
+      if (fs.existsSync(deps.agentSandbox)) {
+        const files = fs.readdirSync(deps.agentSandbox);
+        const hasJournalToday = files.some((f) => f.startsWith(`journal-${ds}`) && f.endsWith('.md'));
+        if (hasJournalToday) return;
+      }
+    } catch (_) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const journal = await brain.askForObserverJournal({
+          windowNo: (brain.memory && brain.memory.data && brain.memory.data.windowNo) || 1,
+          synthesis: windowCloseRes && windowCloseRes.summaryText
+        });
+        if (!journal || !journal.content) return;
+
+        const filename = 'journal-' + ds + '-' + Math.random().toString(36).slice(2, 6) + '.md';
+        const scope = path.join(deps.agentSandbox, filename);
+
+        const res = typeof deps.agentIpc.proposeInternal === 'function'
+          ? deps.agentIpc.proposeInternal(
+            { capability: 'workspace.write', scope, reason: '生活观察日记' },
+            'main',
+            'observerJournal',
+            journal.content
+          )
+          : null;
+
+        if (res && res.ok && res.proposal) {
+          pendingSelfNoteContent.set(res.proposal.id, journal.content);
+
+          const exec = typeof deps.agentIpc.executeInternal === 'function'
+            ? deps.agentIpc.executeInternal({ proposalId: res.proposal.id })
+            : null;
+
+          if (exec && exec.ok) {
+            console.log('[Agent] 初澜写下了一篇生活观察日记:', filename);
+          } else {
+            console.log('[Agent] 观察日记未落盘:', exec && exec.error);
+          }
+        }
+      } catch (err) {
+        // 静默
+      }
+    })();
+  } catch (err) {
+    // 静默
   }
 }
 
@@ -698,6 +789,8 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     if (res.wearChanged) pushWardrobe();
     // v0.9.9 意志层：关窗后特质可能演进，刷新主动性权重（只动权重，不动闸门）
     if (res.windowClosed && trigger && brain && brain.subjectState) trigger.updateTraits(brain.subjectState.values);
+    // 🔴 v1.4-b：关窗轮转时刻触发生活观察日记（沙盒通路 B）
+    if (res.windowClosed) maybeAskForObserverJournal(res);
     // 🔴 v1.0 她说完了 → 通知对话窗重新对账。
     //
     //   ## 为什么必须在这里通知，而不是靠对话窗自己刷新
@@ -773,7 +866,7 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
 // 拿它去记冷却会把时间线记歪。
 const OFFER_TTL_MS = COOLDOWN_MS;
 function validOffer(offer) {
-  if (!offer || (offer.kind !== 'poke' && offer.kind !== 'idle')) return false;
+  if (!offer || (offer.kind !== 'poke' && offer.kind !== 'idle' && offer.kind !== 'silent_presence')) return false;
   if (typeof offer.at !== 'number' || !Number.isFinite(offer.at)) return false;
   const age = Date.now() - offer.at;
   return age >= 0 && age <= OFFER_TTL_MS;
@@ -860,7 +953,7 @@ ipcGuard.on('proactive-declined', (e, offer) => {
   //   那同样属于「现在别说」，必须收干净，不能静默停摆调度。
   const hasOffer = !!offer && typeof offer === 'object' && !Array.isArray(offer);
   const wellFormed = hasOffer
-    && (offer.kind === 'poke' || offer.kind === 'idle')
+    && (offer.kind === 'poke' || offer.kind === 'idle' || offer.kind === 'silent_presence')
     && typeof offer.at === 'number' && Number.isFinite(offer.at)
     && validOffer(offer);
 
@@ -894,6 +987,14 @@ ipcGuard.on('proactive-declined', (e, offer) => {
   }
   // 正常拒绝：退一个完整冷却。
   scheduleProactiveCheck(COOLDOWN_MS);
+});
+
+// v1.3-b: 沉默留白直接记账通道 (零 LLM 调用，仅驱动微动作并提交 trigger 记账)
+ipcGuard.on('proactive-commit', (e, offer) => {
+  if (offer && validOffer(offer) && trigger) {
+    trigger.commit(offer);
+  }
+  scheduleProactiveCheck(proactiveBaseMs());
 });
 
 ipcGuard.handle('proactive-check', () => {
@@ -1130,7 +1231,7 @@ ipcGuard.handle('config-set-key', (e, key) => {
     oldBrain: brain,
     oldCfg,
     nextCfg: next,
-    createCandidate: (c) => new Brain(app.getPath('userData'), c),
+    createCandidate: (c) => new Brain(app.getPath('userData'), c, { getSS }),
     bindCandidate: bindBrainDeps,
     persistCfg: (c) => { persisted = persistCfg(c, { clearKey: !trimmed }); }
   });
@@ -1286,7 +1387,7 @@ ipcGuard.handle('connections:activate', (e, opts = {}) => {
     oldBrain: brain,
     oldCfg: cfg,
     persistFlat: (c) => { persistCfg(c); },
-    createCandidate: (c) => new Brain(app.getPath('userData'), c),
+    createCandidate: (c) => new Brain(app.getPath('userData'), c, { getSS }),
     bindCandidate: bindBrainDeps,
     getSS,
     fallbackSecret: (cfg && cfg.apiKey) || ''
@@ -1325,7 +1426,7 @@ app.whenReady().then(() => {
   // （反过来也不报错，只会静默注进去两个 null —— 那正是最难查的那种。）
   tracker = new ActivityTracker();
   wardrobe = new Wardrobe(app.getPath('userData'));
-  brain = new Brain(app.getPath('userData'), cfg);
+  brain = new Brain(app.getPath('userData'), cfg, { getSS });
   // 换装执行器 + 本地活动追踪器注入：模型给提案 -> wardrobe 落真实状态 ->
   // 结果写回历史；她被戳了几下 -> tracker 记账 -> 随当轮 user 消息如实告知。
   bindBrainDeps(brain);
@@ -1521,7 +1622,7 @@ app.whenReady().then(() => {
   // 🔴 D-10：把建案所需的三样交给模块顶层的 tryBuildProposalFromIntent。
   //   必须是**赋值**而不是局部 const —— 调用点（chat-send handler）在模块顶层，
   //   它读的是这个模块级变量。
-  agentBuildDeps = { agentIpc, agentSandbox, broadcastToWindows, takeStashedContent };
+  agentBuildDeps = { agentIpc, agentSandbox, broadcastToWindows, agentBudget, takeStashedContent };
 
   createWindow();
 
@@ -1565,6 +1666,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   appQuitting = true;   // 对话窗 close 拦截放行，允许真销毁
+  if (powerMonitorSource && typeof powerMonitorSource.stop === 'function') powerMonitorSource.stop();
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
 });
 

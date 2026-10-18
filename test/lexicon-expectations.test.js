@@ -283,7 +283,96 @@ check('33b 真实英文边界合规命中：英文缩写在独立单词边界（
 check('17 落盘往返：lexicon/expectations 持久化不丢',
   m3.data.lexicon.length === 1 && m3.data.expectations.length === 10);
 
-console.log(failures === 0
-  ? ('lexicon-expectations tests passed: ' + 43)
-  : ('lexicon-expectations tests FAILED: ' + failures));
-process.exit(failures === 0 ? 0 : 1);
+// 34 v1.2 A-1 跨窗结算：记录 outcome.resolvedWindowNo 且保留创建窗口 entry.windowNo
+const mA1 = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'lex-exp-')));
+mA1.data.windowNo = 5;
+mA1.append('user', '明天一定一起看日出');
+const idA1Create = mA1.data.history[0].messageId;
+const rA1Add = mA1.addExpectation({ kind: 'external', source: 'user', text: '明天一起看日出', messageId: idA1Create });
+mA1.data.windowNo = 6;
+mA1.append('user', '今天睡过头没看到日出');
+const idA1Resolve = mA1.data.history[1].messageId;
+const rA1Res = mA1.resolveExpectation(rA1Add.entry.id, { status: 'broken', messageId: idA1Resolve, note: '睡过头错过' });
+check('34 v1.2 A-1 跨窗结算：第 5 窗立约、第 6 窗结算 broken 时保留 windowNo===5 且记录 outcome.resolvedWindowNo===6',
+  rA1Res.ok === true
+  && rA1Res.entry.windowNo === 5
+  && rA1Res.entry.outcome && rA1Res.entry.outcome.resolvedWindowNo === 6);
+
+// 34a v1.2 A-1 关窗时序门禁：closeWindow 自增 data.windowNo 后，传入 windowNo: snap.windowNo 时不落入自增后的下一窗
+const rA1Add2 = mA1.addExpectation({ kind: 'pledge', source: 'chulan', text: '帮你记着买牛奶', messageId: idA1Resolve, windowNo: 6 });
+const snapA1 = mA1.windowSnapshot(); // snapA1.windowNo === 6
+mA1.closeWindow('第 6 窗小结', snapA1); // closeWindow 后 mA1.data.windowNo 已自增为 7
+const rA1Res2 = mA1.resolveExpectation(rA1Add2.entry.id, {
+  status: 'fulfilled',
+  messageId: idA1Resolve,
+  note: '已提醒',
+  windowNo: snapA1.windowNo
+}, { knownIds: snapA1.snapshotActiveMessageIds });
+check('34a v1.2 A-1 关窗时序门禁：closeWindow 自增 windowNo 后透传 snap.windowNo 仍准确记入关窗前窗口号',
+  mA1.data.windowNo === 7
+  && rA1Res2.ok === true
+  && rA1Res2.entry.windowNo === 6
+  && rA1Res2.entry.outcome && rA1Res2.entry.outcome.resolvedWindowNo === 6);
+
+// 34b v1.2 A-1 源码契约守卫：brain.js 关窗结算 resolveExpectation 必须显式透传 windowNo: snap.windowNo
+check('34b v1.2 A-1 源码契约守卫：brain.js 关窗结算 resolveExpectation 显式透传 windowNo: snap.windowNo',
+  /resolveExpectation\([\s\S]{0,160}windowNo:\s*snap\.windowNo/.test(brainSrc));
+
+// 35 ~ 35c v1.2 A-2：growSelf 跨窗 broken 漏检修复、fulfilled 客观兑现事实闭环、旧档回退与 D-008 边界守卫
+const { Brain } = require(path.join(__dirname, '..', 'src', 'brain'));
+(async () => {
+  const bA2 = new Brain(fs.mkdtempSync(path.join(os.tmpdir(), 'lex-exp-')), {
+    apiKey: 'sk-test', model: 'mock', windowTurns: 999, windowMaxTokens: 1e9,
+    keepTailMessages: 6, memoryCapTokens: 1e9, selfGrowthEnabled: false,
+    price: { peak: {}, valley: {} }
+  });
+
+  // 第 4 窗已结算旧约（不应混入第 6 窗 growSelf）
+  bA2.memory.data.windowNo = 4;
+  bA2.memory.append('user', '第4窗约定');
+  const idW4 = bA2.memory.data.history[0].messageId;
+  const expW4 = bA2.memory.addExpectation({ kind: 'external', source: 'user', text: '第4窗已结旧约', messageId: idW4, windowNo: 4 });
+  bA2.memory.resolveExpectation(expW4.entry.id, { status: 'broken', messageId: idW4, note: '第4窗已结', windowNo: 4 });
+
+  // 第 5 窗立下两条跨窗预期，在第 6 窗分别结算为 broken 与 fulfilled
+  bA2.memory.data.windowNo = 5;
+  bA2.memory.append('user', '第5窗立下两个跨窗约定');
+  const idW5 = bA2.memory.data.history[1].messageId;
+  const expCrossBroken = bA2.memory.addExpectation({ kind: 'external', source: 'user', text: '跨窗未兑现之约', messageId: idW5, windowNo: 5 });
+  const expCrossFulfilled = bA2.memory.addExpectation({ kind: 'pledge', source: 'chulan', text: '跨窗已兑现之诺', messageId: idW5, windowNo: 5 });
+
+  bA2.memory.data.windowNo = 6;
+  bA2.memory.append('user', '第6窗结算这两个约定');
+  const idW6 = bA2.memory.data.history[2].messageId;
+  bA2.memory.resolveExpectation(expCrossBroken.entry.id, { status: 'broken', messageId: idW6, note: '跨窗落空', windowNo: 6 });
+  bA2.memory.resolveExpectation(expCrossFulfilled.entry.id, { status: 'fulfilled', messageId: idW6, note: '跨窗兑现', windowNo: 6 });
+
+  // 模拟旧存档：无 outcome.resolvedWindowNo 字段，仅靠 entry.windowNo === 6 回退匹配
+  const expLegacy = bA2.memory.addExpectation({ kind: 'external', source: 'user', text: '旧档无resolvedWindowNo条目', messageId: idW6, windowNo: 6 });
+  expLegacy.entry.status = 'broken';
+  expLegacy.entry.outcome = { at: null, messageId: idW6, note: '模拟旧档缺失resolvedWindowNo' };
+
+  let capturedA2 = null;
+  bA2.api = { complete: async (msgs) => { capturedA2 = msgs; return { text: '[]', usage: {} }; } };
+  await bA2.growSelf('第6窗对话', '第6窗小结', 6, {});
+  const userContentA2 = (capturedA2 && capturedA2[1] && capturedA2[1].content) || '';
+
+  check('35 v1.2 A-2 跨窗 broken 漏检修复：第 5 窗立约、第 6 窗结算 broken 的预期准确进入第 6 窗 growSelf【偏差事实】',
+    userContentA2.includes('【偏差事实】曾预期「跨窗未兑现之约」，但本窗未兑现（引证 ' + idW6 + '）'));
+
+  check('35a v1.2 A-2 fulfilled 兑现事实闭环：本窗兑现的预期以客观【兑现事实】进入 growSelf 视野',
+    userContentA2.includes('【兑现事实】曾预期「跨窗已兑现之诺」，已在本窗兑现（引证 ' + idW6 + '）'));
+
+  check('35b v1.2 A-2 旧档兼容回退与窗口隔离：缺 resolvedWindowNo 时按 windowNo 回退命中，且他窗已结条目零混入',
+    userContentA2.includes('【偏差事实】曾预期「旧档无resolvedWindowNo条目」，但本窗未兑现（引证 ' + idW6 + '）')
+    && !userContentA2.includes('第4窗已结旧约'));
+
+  const irSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'internal-regulation.js'), 'utf8');
+  check('35c v1.2 A-2 严守 D-008 红线：internal-regulation.js 零耦合 expectations/brokenFacts/fulfilledFacts（不代拟情绪）',
+    !/expectations|brokenFacts|fulfilledFacts/.test(irSrc));
+
+  console.log(failures === 0
+    ? ('lexicon-expectations tests passed: ' + 50)
+    : ('lexicon-expectations tests FAILED: ' + failures));
+  process.exit(failures === 0 ? 0 : 1);
+})();

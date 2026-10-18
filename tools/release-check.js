@@ -10,6 +10,7 @@
  * 7. 配置版本与默认配置完整性 (schemaVersion=1, configVersion="1.0.0")
  * 8. README.md 文档声明与测试集文件清单严格一致
  * 9. electron-builder.yml 的 files 白名单覆盖全部真实运行入口（F-REL-001 回归门禁）
+ * 10. 公开发布剥离门禁：公开集内零开发机绝对路径 / 零凭据 / 零断链 / 零未分类（tools/public-export.js）
  *
  * 输出格式：结构化 (PASS / WARN / FAIL)
  */
@@ -395,56 +396,32 @@ function checkDocsAndTestSuites() {
   }
 }
 
-/* 10. 开发机私有绝对路径与隐私泄露扫描 */
-function checkDeveloperPathLeaks() {
-  const leaks = [];
-  const leakToolsPat = new RegExp(['D:', 'software', ['hui', 'hua'].join('')].join('[\\\\/]'), 'i');
-  const lifePat = new RegExp(['D:', 'GAME', ['LI', 'FE'].join('')].join('[\\\\/]'), 'i');
-  const userPat = new RegExp(['Users', ['an', 'dab'].join('')].join('[\\\\/]'), 'i');
-  const privateRepoPat = new RegExp(['Life', ['Chu', 'lan'].join('')].join('-'), 'i');
-  const leakPatterns = [leakToolsPat, lifePat, userPat, privateRepoPat];
-
-  const targetDirs = ['src', 'test', 'docs', 'tools'];
-  function scan(dir) {
-    if (!fs.existsSync(dir)) return;
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        scan(full);
-      } else if (/\.(js|json|md|html|css)$/i.test(e.name)) {
-        if (full === path.join(ROOT, 'tools', 'release-check.js')) continue;
-        const content = fs.readFileSync(full, 'utf8');
-        content.split('\n').forEach((l, idx) => {
-          for (const pat of leakPatterns) {
-            if (pat.test(l)) {
-              leaks.push(`${path.relative(ROOT, full)}:${idx + 1}`);
-              break;
-            }
-          }
-        });
-      }
-    }
+/* 10. 公开发布剥离门禁：公开集内零开发机绝对路径、零凭据、零断链、零未分类文件 */
+function checkPublicExport() {
+  let r;
+  try {
+    r = require('./public-export').report();
+  } catch (e) {
+    report('FAIL', '公开发布剥离', '无法计算公开集（fail-closed，不放行）: ' + e.message);
+    return;
   }
-  for (const d of targetDirs) scan(path.join(ROOT, d));
-  // 检查根目录全部公开与门面文件（含全部 .md 文档、入口脚本与配置）
-  for (const ent of fs.readdirSync(ROOT, { withFileTypes: true })) {
-    if (ent.isDirectory()) continue;
-    if (ent.name.startsWith('_') || ent.name.startsWith('V1.') || ent.name.startsWith('chulan_')) continue;
-    if (/\.(js|json|md|html|css|py|yml|yaml)$/i.test(ent.name) || /^(LICENSE|NOTICE)$/i.test(ent.name)) {
-      const full = path.join(ROOT, ent.name);
-      const content = fs.readFileSync(full, 'utf8');
-      content.split('\n').forEach((l, idx) => {
-        for (const pat of leakPatterns) {
-          if (pat.test(l)) leaks.push(`${ent.name}:${idx + 1}`);
-        }
-      });
-    }
+  const problems = [];
+  if (r.unclassified.length) {
+    problems.push('未分类 ' + r.unclassified.length + ' 个（' + r.unclassified.slice(0, 3).join(', ') + '）');
   }
-
-  if (leaks.length > 0) {
-    report('FAIL', '开发机私有绝对路径扫描', `发现 ${leaks.length} 处开发机绝对路径残留: ${leaks.slice(0, 5).join(', ')}`);
+  if (r.deadRules.length) {
+    problems.push('死规则 ' + r.deadRules.length + ' 条（' + r.deadRules.slice(0, 3).map(x => x.rule).join(', ') + '）');
+  }
+  if (r.leaks.length) {
+    problems.push('开发机路径/凭据 ' + r.leaks.length + ' 处（例: ' + r.leaks[0].file + ':' + r.leaks[0].line + ' ' + r.leaks[0].text + '）');
+  }
+  if (r.brokenLinks.length) {
+    problems.push('公开集内断链 ' + r.brokenLinks.length + ' 条（例: ' + r.brokenLinks[0].file + ' -> ' + r.brokenLinks[0].target + '）');
+  }
+  if (problems.length) {
+    report('FAIL', '公开发布剥离', problems.join('；'));
   } else {
-    report('PASS', '开发机私有绝对路径扫描', '生产/文档/测试目录严格零开发机绝对路径残留 (0 处泄露)');
+    report('PASS', '公开发布剥离', '公开集 ' + r.included.length + ' 个文件内开发机路径 0 处、凭据 0 处、断链 0 条；另按规则挡住 ' + r.excluded.length + ' 个文件');
   }
 }
 
@@ -456,7 +433,7 @@ checkFallbackSprite();
 checkPackageLock();
 checkConfigDefaults();
 checkDocsAndTestSuites();
-checkDeveloperPathLeaks();
+checkPublicExport();
 checkBuilderClosure();
 
 console.log('\n====================================================');

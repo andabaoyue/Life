@@ -937,9 +937,10 @@ function renderI18nPanel() {
 
   // 连接区与用量
   setText('connQuickTitle', 'conn.quick');
-  setText('keySave', 'conn.save');
+  setText('keySave', 'conn.quickSave');
   setText('connAdvTitle', 'conn.advanced');
   setText('connListLabel', 'conn.list');
+  setText('connListHint', 'conn.listHint');
   setText('connNameLabel', 'conn.name');
   setText('optAnthropicNative', 'conn.anthropicNative');
   setText('connNew', 'conn.new');
@@ -1812,6 +1813,15 @@ document.getElementById('connNew').addEventListener('click', async () => {
 document.getElementById('connSave').addEventListener('click', async () => {
   if (!api || !api.connections || !connSelectedId) return;
   const key = document.getElementById('connKey').value;
+  // 🔴 UX 防误覆盖（v1.6-c）：选中一条已有 Key 的连接、又填了新 Key 时，保存会【直接覆盖】。
+  //   这正是「把 A 服务商的 Key 存进 B 服务商连接」的成因 —— 覆盖前必须让用户确认。
+  //   ⚠️ 只在「已有 Key 且本次填了新 Key」时问；首次配置或只改名称/端点时不打扰。
+  const cur = connItems.find((x) => x.connectionId === connSelectedId);
+  if (key && cur && cur.hasCredential) {
+    if (!window.confirm(t('conn.overwriteKeyConfirm', '这条连接已经有 Key 了。继续保存会用你刚才输入的 Key 覆盖它 —— 确认要覆盖吗？'))) {
+      return; // 用户取消：什么都不动，输入框里的 Key 保留着方便他改
+    }
+  }
   const r = await api.connections.update(connSelectedId, connEditorFields(), key || undefined);
   if (!r || r.ok === false) return connSay(t('conn.saveFailedPrefix', '保存失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
   document.getElementById('connKey').value = '';
@@ -2995,8 +3005,23 @@ async function tryProactive() {
     if (api.proactiveDeclined) api.proactiveDeclined(offer);
     return;
   }
+  // v1.3-b: silent_presence 沉默留白第三种结局：零 LLM 调用，仅以微动作表达同在
+  if (offer.kind === 'silent_presence') {
+    executeSilentPresence(offer);
+    return;
+  }
   // 带 offer 发请求：主进程用它记账，且只有真的说出口才记（见 main.js）
   await runChat('（自言自语）', { proactive: true, offer });
+}
+
+/** 触发沉默留白微动作并向主进程记账 (v1.3-b) */
+function executeSilentPresence(offer) {
+  if (api && api.proactiveCommit) api.proactiveCommit(offer);
+  if (animController && typeof animController.playAction === 'function') {
+    animController.playAction('look_around', { duration: 2000, reason: 'silent_presence' });
+  } else {
+    setState('idle');
+  }
 }
 
 /* 连戳的**调度计数**在渲染端：主进程看不到"现在是第几下"，
@@ -3027,6 +3052,11 @@ if (api && api.onProactiveOffer) {
     if (!offer) return;
     if (busy || streaming || remoteStreaming || !politeToSpeak(offer.kind)) {
       if (api.proactiveDeclined) api.proactiveDeclined(offer);
+      return;
+    }
+    // v1.3-b: silent_presence 沉默留白第三种结局：零 LLM 调用
+    if (offer.kind === 'silent_presence') {
+      executeSilentPresence(offer);
       return;
     }
     await runChat('（自言自语）', { proactive: true, offer });

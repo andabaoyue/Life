@@ -5,6 +5,50 @@
 
 ---
 
+## [1.6.0] - 2026-10-18
+
+> **版本补录说明**：`v1.1.1`（2026-10-13）之后仓库连续交付了 v1.2 → v1.6 五条演进线，但版本号与本文件一直停在上一正式版。
+> 这不是「版本号漂移」—— `package.json` / `README.md` / `README.en.md` / 本文件四处**一致地**停在 `1.1.1`，任何一致性门禁都不会报错；缺的是**一次发版动作本身**。
+> 本次把五条演进线一次性收口为 `1.6.0`，条目文字取自当时的施工单与提交，未做回溯性美化。
+
+### 🔒 v1.2 预期/守信跨窗闭环与记忆动力学通电
+- **跨窗 `broken` 漏检修复 + `fulfilled` 兑现事实闭环 (A-1 + A-2)**：预期账本关窗结算时不再漏掉跨窗失效项；兑现事实以客观证据写入 `growSelf`，不代拟情绪。
+- **记忆动力学出厂通电（D-011 三阶梯度标定）**：`memoryDynamics` 出厂 `true`，`memoryActiveThreshold = 0.50`、`memoryFadingMaxChars = 300`；老用户显式 `false` 严格保留以支持消融实验（`test/config-default-inheritance.test.js` 7 项同时锁住「缺键继承」与「显式 false 不被覆盖」两个方向）。
+- **句界截断判别力补强**：`truncateFadingText` 的系数与 `trimEnd` 断言补齐，消除恒真断言盲区。
+- **隐私边界收口**：`NOTICE` 移除指向私有归档的链接声明，`release-check` 的隔离门禁补强。
+
+### 🫀 v1.3 具身环境知觉与沉默留白
+- **知觉注入通道**：宿主环境事件（解锁、供电状态变化等）经显著性筛选后**只注入当轮 user 消息尾部**，不进 System Prompt、不落 `history`，前缀缓存不变式不受影响。
+- **沉默留白第三种结局**：她可以选择不回应，而不被记为异常。
+- 三条新测试：`test/v13-perception-channel.test.js`（32 项）、`test/v13-silent-presence.test.js`（23 项）、`test/v13-power-monitor-source.test.js`（13 项）。
+- 实机验证：`experiment-telemetry.jsonl` 中出现首条真实 `perception_attach`（`host_unlock` / `salience 88` / window 6 / turn 314）。
+
+### 📔 v1.4 生命观察日记与自发便签
+- **观察日记（通路 B）**：观察结果走沙盒提案通路入传，`PROPOSAL_SOURCES` 扩展为 `user` / `selfNote` / `observerJournal`；闸门 4 对两类自源内容免确认，其余四道闸门照旧。
+- **自发便签的素材供给与零污染防护 (v1.4-a)**：便签输入由 `selfLedger` 投影、调节感知、清洗后的近期对话与上一条便签构成；`synthetic` 轮整条跳过，避免程序自造内容回流成她的记忆。
+- 两条新测试：`test/v14-observer-journal.test.js`（27 项）、`test/v14-selfnote-context.test.js`（27 项）。
+
+### 🔌 v1.5 Provider 容灾回落与熔断编排 (v1.5-a)
+- **`src/fallback-adapter.js`**：主端点 `retryable` 失败时一次回落备用端点；**流式已吐字（`emitted > 0`）硬阻断回落**，避免同一句话被两个模型各说一半；`maxFallbacksPerCall = 1` 防抖动放大。
+- **`src/circuit-breaker.js` 生产接线**：`failureThreshold = 3`、`cooldownMs = 30000`；熔断后直接走备用。
+- **计费口径修正**：401 等客户端错误不计入熔断失败数，避免把「Key 错了」误报成「熔断打开」。
+- **`getSS` 透传修复**：`Brain` 构造时未把 `getSS` 传进备用适配器，备用端点永远解析不到凭据 —— 功能对真实用户静默失效而测试全绿；已修并补 3 项断言。
+- `test/v15-provider-fallback.test.js`（51 项）。
+
+### 🩹 v1.6 缺口收口 (v1.6-a / v1.6-b)
+- **观察日记超长不再整篇丢弃 (v1.6-a)**：原文 `text.length > 400` 直接 `return null`，而提示词允许写到约 600 字 —— 她认真写长了反而一个字都不留。改为复用 `truncateFadingText(text, 400)` 句界截断保留（无标点则硬截 + 省略号，上界 403）。
+- **INT-01 处置结论澄清 (v1.6-b)**：P4 契约裁定为架构储备，不列入本版施工。
+- 既有断言「超 400 返回 null」随之**重写**为三条新断言（丢弃 → 截断保留），而不是删除。
+- **连接管理区消歧义**：改标「已保存的连接」、`＋ 新建连接`、`💾 保存修改`，并在覆盖已有 Key 前加确认。
+
+### 🛠 v1.6-c 公开发布剥离（本版新增）
+- **`tools/public-export.js`**：把「哪些文件可公开」从人工挑选改为**默认拒绝的发布边界** —— 白名单 `INCLUDE` 决定能出去什么，带理由的 `EXCLUDE` 在白名单内挖洞，两者都未命中的文件判为未分类并让门禁失败。三个入口：`--check` 门禁、`--list` 判定明细、`--out <目录>` 物化公开集。
+- **`release-check.js` 第 10 项重做**：旧实现有三重盲区（文件名前缀跳过 `V1.` / `chulan_`、只认一个 `software` 子目录、只扫 4 个目录），实测对 49 行开发机绝对路径报「0 处泄露」。现改为调用公开集判定。
+- **`test/public-export.test.js`（32 项）**：含「已知含 27 处开发机路径的私有文件必须被抓出」的变异对照，防止门禁退化成空转。
+- 修 4 条存量断链（`docs/v1.1-UPDATE-PLAN.md` 3 条少一级 `../`、`docs/ROADMAP-AND-PUBLIC-RELEASE-PLAN.md` 1 条重复 `docs/`）。
+
+---
+
 ## [1.1.1] - 2026-10-13
 
 > **补丁说明**：针对 `v1.1.0` 收官独立审计发现的关窗专属暗号（`adopted`）提示词契约与词典入库 `windowNo` 偏移进行热修复，并补强 24h 潮汐仿真、内稳态唤醒边界与语法检查脚本。

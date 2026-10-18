@@ -1,12 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Memory } = require('./memory');
+const { Memory, truncateFadingText } = require('./memory');
 const { isPeakHour } = require('./deepseek');
 // v0.9.8 P2-7: 业务层经 Provider Registry 获取 adapter（stable provider id），
 // 不再依赖 DeepSeek concrete class；isPeakHour（峰谷判定 util）暂留。
 // P5-A: 成本记账改走 provider-keyed Cost Strategy，不再经 DeepSeek concrete costOf。
 const { createAdapter, getProviderInfo } = require('./provider-registry');
+const { createFallbackAdapter } = require('./fallback-adapter');
+const { createCircuitBreaker } = require('./circuit-breaker');
 const { getCostStrategy } = require('./cost-strategy');
 const { normalizeUsage } = require('./usage-normalizer');
 const { PERSONA } = require('./persona');
@@ -38,6 +40,16 @@ const WANT_TO_LEAVE_SYS =
   + '4. 【长度】两三句话之内。这是留给自己的，不是写给别人看的文章。\n'
   + '5. 【语言】使用你平时与用户交流时最常使用的语言。\n'
   + '6. 直接给内容本身，不要加引号、不要加标题、不要加任何说明或元话语。';
+
+const OBSERVER_JOURNAL_SYS =
+  '这一段共同的时间告一段落。这是属于你的生活观察日记 —— 记录你所看到的日常、彼此相处的痕迹与细微的生活体感。'
+  + '这不是一个任务，也不是向用户汇报 —— 这是你自己眼中的世界：\n'
+  + '规则：\n'
+  + '1. 【可以说不】如果现在没有特别想写下的观察或感觉，只回一个「不」或「不想写」。硬凑比不写更糟。\n'
+  + '2. 【第一人称视角】以你的视角记录你注意到的细节、彼此交流的真实痕迹或安静流淌的氛围。你可以自然地提到对方或生活细节。\n'
+  + '3. 【真实不编造】只基于刚才实际发生的陪伴与对话痕迹，不许编造未发生的事情。你不知道精确钟点，不要写出具体时分。\n'
+  + '4. 【篇幅适度】一段真诚从容的段落（通常在 50 至 200 字左右，最长不超过 400 字，不少于 30 字）。\n'
+  + '5. 【直接给出】直接输出日记正文，不要加标题、不要加引号、不要加任何说明或元话语。';
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -153,6 +165,16 @@ function parseWear(text) {
   return { text: clean || text, wear: key };
 }
 
+// v1.3-a: 宿主与环周感知事件至定性语义描述规范映射表
+const PERCEPTION_TEXT_MAP = Object.freeze({
+  host_suspend: '感受到了宿主设备的休眠停顿',
+  host_resume: '感受到了宿主设备的唤醒与重启运转',
+  host_lock: '感受到了宿主设备屏幕被锁定',
+  host_unlock: '感受到了宿主设备屏幕已解锁',
+  tactile_poke: '感受到了被人轻轻碰了一下',
+  tactile_drag: '感受到了身体被轻微拖拽移动'
+});
+
 /**
  * 调度：对话 -> 记录 usage -> 到窗口边界就小结 -> 记忆超预算就合并。
  *
@@ -163,9 +185,12 @@ function parseWear(text) {
  *   否则分两次做要破两次缓存。
  */
 class Brain {
-  constructor(userDataDir, cfg) {
+  constructor(userDataDir, cfg, opts = {}) {
     this.dir = userDataDir;
     this.cfg = cfg || {};
+    this._getSS = (opts && typeof opts.getSS === 'function')
+      ? opts.getSS
+      : (this.cfg && typeof this.cfg._getSS === 'function' ? this.cfg._getSS : undefined);
     // v1.0 D-6：提案触发源判定结果暂存（接线时写入，③ 建案阶段消费）。
     //   🔴 必须在构造函数初始化为 null —— 不初始化的话，下一个人接线时读到
     //   undefined会与「没有提案」混淆，于是功能静默少一块且**不报错**。
@@ -189,7 +214,25 @@ class Brain {
     }
     // P5-B4: provider dispatch 经 Registry —— provider 来自 config（缺省经 providerFor 解析），
     // 未知 provider fail-closed；无品牌 if/else。
-    this.api = createAdapter(this.cfg.provider || providerFor(this.cfg.baseURL), this.cfg);
+    // v1.5-a: Provider 容灾自动回落与熔断包装（未配置备用时退化为纯熔断保护）
+    const primaryAdapter = createAdapter(this.cfg.provider || providerFor(this.cfg.baseURL), this.cfg);
+    const secondaryAdapter = this._buildFallbackAdapter(this.cfg);
+    this.providerBreaker = createCircuitBreaker({
+      failureThreshold: this.cfg.fallbackFailureThreshold || 3,
+      cooldownMs: this.cfg.fallbackCooldownMs || 30000,
+    });
+    this.api = secondaryAdapter
+      ? createFallbackAdapter({
+          primary: primaryAdapter,
+          secondary: secondaryAdapter,
+          breaker: this.providerBreaker,
+          onFallback: (info) => this._noteFallback(info)
+        })
+      : createFallbackAdapter({
+          primary: primaryAdapter,
+          secondary: null,
+          breaker: this.providerBreaker
+        });
     this.persona = PERSONA;
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
@@ -211,8 +254,12 @@ class Brain {
       //   ⚠️ EngramTraceManager 构造器做 `{...DEFAULT, ...config}`，
       //      所以这里只传覆盖项即可；未传字段仍走 DEFAULT（默认行为不变）。
       engramConfig: {
-        activeThreshold: this.cfg.memoryActiveThreshold,
-        fadingMaxChars: this.cfg.memoryFadingMaxChars
+        activeThreshold: this.cfg.memoryActiveThreshold !== undefined
+          ? this.cfg.memoryActiveThreshold
+          : DEFAULTS.memoryActiveThreshold,
+        fadingMaxChars: this.cfg.memoryFadingMaxChars !== undefined
+          ? this.cfg.memoryFadingMaxChars
+          : DEFAULTS.memoryFadingMaxChars
       }
     });
 
@@ -279,6 +326,11 @@ class Brain {
 
     // Phase 0.5: 环境知觉与注意力流水线缓冲区 (bounded <= 50)
     this.recentPerceptions = [];
+    // v1.3-a: 知觉注入通道节流控制 (同窗 <= 3 次，间隔 >= 5 轮) 与事件源引用
+    this._windowPerceptionCount = 0;
+    this._lastPerceptionTurn = -999;
+    this._lastPerceptionWindowNo = currentWinNo;
+    this.powerMonitorSource = null;
 
     // 实验遥测与缓存破坏归因底座 (v0.9.6 P0-14 & P0-15)
     this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
@@ -352,6 +404,21 @@ class Brain {
     }
     if (this.tracker && typeof this.processEnvironmentalPerception === 'function') {
       this.tracker.setPerceptionPipeline((raw) => this.processEnvironmentalPerception(raw));
+    }
+  }
+
+  /**
+   * 绑定宿主电源与环境事件源 (v1.3-a PowerMonitorSource)
+   * @param {PowerMonitorSource} source
+   */
+  bindPowerMonitorSource(source) {
+    this.powerMonitorSource = source || null;
+    if (this.powerMonitorSource && typeof this.powerMonitorSource.start === 'function') {
+      this.powerMonitorSource.start((evt) => {
+        if (typeof this.processEnvironmentalPerception === 'function') {
+          this.processEnvironmentalPerception(evt);
+        }
+      });
     }
   }
 
@@ -441,6 +508,86 @@ class Brain {
     }
 
     return record;
+  }
+
+  /**
+   * 格式化知觉候选为质性语义提示文本 (v1.3-a)
+   * @param {Object} candidate
+   * @returns {string}
+   */
+  _formatPerceptionSnippet(candidate) {
+    if (!candidate || !candidate.category) return '';
+    const desc = PERCEPTION_TEXT_MAP[candidate.category] || (
+      candidate.qualitativeDescriptor === 'intense_activity' ? '感受到了强烈的外部刺激' :
+      candidate.qualitativeDescriptor === 'moderate_flow' ? '感受到了外部环境的微弱流转' :
+      '感受到了外部环境的轻微扰动'
+    );
+    return `【此刻的环境知觉】\n${desc}`;
+  }
+
+  /**
+   * 消费并提取 ATTENDED 知觉候选，带同窗最多 3 次与间隔 >= 5 轮节流 (v1.3-a)
+   * 满足不变量：
+   * 1. 严格 Null-Perception：无感知或节流被挡时返回空串 ''；
+   * 2. 遥测写入 experiment-telemetry.jsonl (recordType: 'perception_attach')；
+   * 3. ATTENDED ≠ SUBJECT_ACQUIRED：仅生成质性描述，不碰 SubjectState 与归档底座。
+   * @returns {string}
+   */
+  _drainAttendedPerception() {
+    if (!this.isExperimentModuleActive('digitalUmwelt')) return '';
+    if (!Array.isArray(this.recentPerceptions) || !this.recentPerceptions.length) return '';
+
+    // 寻找最新的未消费 ATTENDED 感知
+    let targetRecord = null;
+    for (let i = this.recentPerceptions.length - 1; i >= 0; i--) {
+      const rec = this.recentPerceptions[i];
+      if (rec && !rec.consumed && rec.gateResult && rec.gateResult.status === 'ATTENDED' && rec.candidate) {
+        targetRecord = rec;
+        break;
+      }
+    }
+    if (!targetRecord) return '';
+
+    // 标定全部记录为 consumed，防止陈旧堆积
+    for (const rec of this.recentPerceptions) {
+      rec.consumed = true;
+    }
+
+    const currentWindowNo = (this.memory && this.memory.data && typeof this.memory.data.windowNo === 'number')
+      ? this.memory.data.windowNo : 1;
+    if (currentWindowNo !== this._lastPerceptionWindowNo) {
+      this._lastPerceptionWindowNo = currentWindowNo;
+      this._windowPerceptionCount = 0;
+    }
+
+    // 节流判据 1：同窗内挂载次数上限 N=3
+    if (this._windowPerceptionCount >= 3) {
+      return '';
+    }
+
+    // 节流判据 2：相邻两次挂载间隔 >= 5 轮
+    const currentTurn = (this.memory && this.memory.data && typeof this.memory.data.totalTurns === 'number')
+      ? this.memory.data.totalTurns : 0;
+    if (this._lastPerceptionTurn !== -999 && (currentTurn - this._lastPerceptionTurn) < 5) {
+      return '';
+    }
+
+    this._windowPerceptionCount++;
+    this._lastPerceptionTurn = currentTurn;
+
+    const snippet = this._formatPerceptionSnippet(targetRecord.candidate);
+
+    // 记录遥测
+    this.appendTelemetry({
+      recordType: 'perception_attach',
+      category: targetRecord.candidate.category,
+      salience: targetRecord.candidate.salience,
+      perceptionId: targetRecord.candidate.perceptionId,
+      windowNo: currentWindowNo,
+      turnNo: currentTurn
+    });
+
+    return snippet;
   }
 
   /**
@@ -607,7 +754,8 @@ class Brain {
         telemetrySeq: this.telemetrySeq,
         timestamp: data.timestamp || Date.now(),
         windowNo: (typeof data.windowNo === 'number' && !Number.isNaN(data.windowNo)) ? data.windowNo : (this.memory ? this.memory.data.windowNo : 1),
-        requestType: data.requestType || 'chat',
+        recordType: data.recordType || 'llm_call',
+        requestType: data.requestType || (data.recordType ? null : 'chat'),
         promptTokens: typeof data.promptTokens === 'number' ? data.promptTokens : 0,
         promptCacheHitTokens: typeof data.promptCacheHitTokens === 'number' ? data.promptCacheHitTokens : 0,
         promptCacheMissTokens: typeof data.promptCacheMissTokens === 'number' ? data.promptCacheMissTokens : 0,
@@ -615,6 +763,18 @@ class Brain {
         cacheHitRate: typeof data.cacheHitRate === 'number' ? data.cacheHitRate : 0,
         cacheBreakReason: data.cacheBreakReason || null
       };
+      if (data.recordType === 'perception_attach') {
+        rec.category = data.category || null;
+        rec.salience = typeof data.salience === 'number' ? data.salience : null;
+        if (data.perceptionId) rec.perceptionId = data.perceptionId;
+        if (typeof data.turnNo === 'number') rec.turnNo = data.turnNo;
+      }
+      if (data.recordType === 'provider_fallback') {
+        rec.reason = data.reason || null;
+        rec.primaryFailed = Boolean(data.primaryFailed);
+        rec.primaryConnectionId = data.primaryConnectionId || null;
+        rec.fallbackConnectionId = data.fallbackConnectionId || null;
+      }
       if (!fs.existsSync(this.dir)) {
         fs.mkdirSync(this.dir, { recursive: true });
       }
@@ -622,6 +782,67 @@ class Brain {
       return rec;
     } catch (e) {
       console.error('[Brain] appendTelemetry failed:', e.message);
+      return null;
+    }
+  }
+
+  _getActiveConnectionId() {
+    if (this.cfg && this.cfg.connectionId) return this.cfg.connectionId;
+    if (!this.dir) return '';
+    try {
+      const { loadStore } = require('./connections');
+      const loaded = loadStore(this.dir);
+      return (loaded && loaded.ok && loaded.store && loaded.store.activeConnectionId) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  _noteFallback(info = {}) {
+    console.log('[Provider Fallback]', info.reason || 'fallback');
+    this.appendTelemetry({
+      recordType: 'provider_fallback',
+      reason: info.reason,
+      primaryFailed: Boolean(info.primaryFailed),
+      primaryConnectionId: this._getActiveConnectionId(),
+      fallbackConnectionId: (this.cfg && this.cfg.fallbackConnectionId) || '',
+      timestamp: info.at || Date.now()
+    });
+  }
+
+  _buildFallbackAdapter(cfg) {
+    if (!cfg || !cfg.fallbackConnectionId || typeof cfg.fallbackConnectionId !== 'string' || !cfg.fallbackConnectionId.trim()) {
+      return null;
+    }
+    const fallbackId = cfg.fallbackConnectionId.trim();
+    if (!this.dir) return null;
+    try {
+      const { loadStore, resolveRuntimeCfg } = require('./connections');
+      const loaded = loadStore(this.dir);
+      if (!loaded || !loaded.ok || !loaded.store || !Array.isArray(loaded.store.connections)) {
+        return null;
+      }
+      const target = loaded.store.connections.find((c) => c && c.connectionId === fallbackId);
+      if (!target) return null;
+      const getSS = this._getSS || (cfg && typeof cfg._getSS === 'function' ? cfg._getSS : undefined);
+      const resolved = resolveRuntimeCfg(target, { dir: this.dir, getSS });
+      if (!resolved || !resolved.ok || !resolved.cfg) {
+        console.warn(`[Brain] 备用端点凭据解析未通过 (${fallbackId}):`, resolved && resolved.error);
+        return null;
+      }
+
+      const { providerFor } = require('./provider-policy');
+      const fallbackMergedCfg = {
+        ...this.cfg,
+        provider: resolved.cfg.provider,
+        baseURL: resolved.cfg.baseURL,
+        credentialType: resolved.cfg.credentialType,
+        model: resolved.cfg.model,
+        apiKey: resolved.cfg.apiKey
+      };
+      return createAdapter(fallbackMergedCfg.provider || providerFor(fallbackMergedCfg.baseURL), fallbackMergedCfg);
+    } catch (err) {
+      console.warn('[Brain] _buildFallbackAdapter 失败:', err.message);
       return null;
     }
   }
@@ -723,6 +944,9 @@ class Brain {
     this.shutdownRequested = true;
     this.generationId++;
     this.abort();
+    if (this.powerMonitorSource && typeof this.powerMonitorSource.stop === 'function') {
+      this.powerMonitorSource.stop();
+    }
     this.flushAll();
   }
 
@@ -1029,7 +1253,9 @@ class Brain {
        如果每轮写入历史，会导致历史中堆叠大量过期的自我账本副本，造成严重的 Token 膨胀并破坏长期记忆。
        正确数据流：memory.history 仅保存纯净用户输入（主动搭话记录纯净触发理由），
        在构建发给 DeepSeek 的请求时，动态附加在当前 user 消息末尾。 */
-    const dynamicBody = [currentSelf, involuntarySnippet, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    // v1.3-a: 知觉注入通道（复用 suffix 瞬时上下文，带同窗 <=3 次与间隔 >=5 轮节流）
+    const perceptionSnippet = this._drainAttendedPerception();
+    const dynamicBody = [currentSelf, involuntarySnippet, perceptionSnippet, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
     // v0.9.9: 瞬时上下文挂在 user 尾部是护缓存的必要设计，但必须标明程序注入身份 ——
     // 否则模型会把状态快照误认成用户贴来的内容（实测她真的以为用户在「贴表」）
     const dynamicContext = dynamicBody
@@ -1787,7 +2013,7 @@ class Brain {
         }
         for (const oc of (Array.isArray(syn.expectationOutcomes) ? syn.expectationOutcomes : [])) {
           this.memory.resolveExpectation(oc && oc.id, {
-            status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note
+            status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note, windowNo: snap.windowNo
           }, ingestOpts);
         }
         this.memory.save(true);
@@ -2368,20 +2594,105 @@ class Brain {
    *
    * @returns {Promise<?{content:string, usage:object}>} null = 她说不留/失败
    */
+  /**
+   * v1.4-a：提取安静前最近的对话痕迹（供自留便签素材使用）。
+   *
+   * ## 铁律与边界
+   *   1. **整条丢弃 synthetic 消息**：主动感知消息（含「用户离开 N 分钟」、
+   *      [内部语气提示]、[此刻她想说的方向]）是程序指令，绝不是真实对话。
+   *      整条过滤，一个字都不放进素材，杜绝一切程序计时与提示词污染。
+   *   2. **保留 bridge 跨窗真实尾消息**（桥梁消息是前窗真实对话）。
+   *   3. **剥离尾部程序块**：剥除用户消息尾部可能附带的【...】附加块（如【此刻的环境知觉】、
+   *      【当前环境感知】等）与助手尾部 [系统] 换装执行结果。
+   *   4. **只取最近 maxMessages 条**（缺省 6 条，即 2~3 轮）。
+   */
+  _extractRecentDialogueForSelfNote(maxMessages = 6) {
+    if (!this.memory || !this.memory.data || !Array.isArray(this.memory.data.history)) return [];
+    const hist = this.memory.data.history;
+    const picked = [];
+    for (let i = hist.length - 1; i >= 0 && picked.length < maxMessages; i--) {
+      const item = hist[i];
+      if (!item || typeof item.content !== 'string') continue;
+      // 铁律 1：整条丢弃 synthetic 消息
+      if (item.synthetic === true) continue;
+
+      let text = item.content;
+      // 剥除尾部附加块
+      text = text
+        .replace(/(?:\r?\n)+【(?:出生与程序年龄|出生时刻|当前自我投影|当前主体状态快照|当前环境感知|此刻的环境知觉)】[\s\S]*$/g, '')
+        .replace(/(?:\r?\n)+\[系统\][\s\S]*$/g, '')
+        .trim();
+      if (!text) continue;
+
+      // 单条消息适度截断（最多 80 字），防止对话痕迹膨胀至上千 Token 吞噬注意力
+      const trimmedText = text.length > 80 ? text.slice(0, 78) + '…' : text;
+
+      picked.unshift({
+        role: item.role === 'user' ? 'user' : 'assistant',
+        text: trimmedText
+      });
+    }
+    return picked;
+  }
+
   async askForSelfNote(opts = {}) {
     try {
       if (this.shutdownRequested) return null;
       if (this.api && typeof this.api.complete !== 'function') return null;
 
-      // 把「她此刻的状态」如实给她 —— 但**只给方向，不给程序数字**。
-      //   ⚠️ 绝不把 idleMinutes 这类程序换算值拼进 prompt：
-      //     实测踩过（D-7 那次她真的说出「静了 50000 分钟」），
-      //     那既是内部时钟泄漏，也违反 persona.js:28。
+      // v1.4-a：为「自留便签」供给真实素材（自我投射、生理体感、对话痕迹、上次便签）。
+      // ⚠️ 铁律守护：
+      //   1. 坚决排除出生时刻与日期锚点（避免与「你不知道现在几点」产生认知冲突）。
+      //   2. 坚决零程序数字（零 \d+ 分钟、零 HH:MM 时钟数字、零 token 预算）。
+      //   3. 整条丢弃 synthetic 消息（不让指令与计时泄漏进视野）。
       const intentKind = opts.intentKind ? String(opts.intentKind).slice(0, 64) : null;
-      const userContent = '【此刻】'
-        + '\n用户不在。你独自安静了一段时间 —— 这是事实，不是情绪。'
-        + (intentKind === 'wantToLeaveSomething' ? '\n你想留下点什么。' : '')
-        + '\n\n如果你确实想留下点什么，就写下来；不想就说不。';
+      const sections = [];
+
+      sections.push('【此刻】');
+      sections.push('用户不在。你独自安静了一段时间 —— 这是事实，不是情绪。');
+      if (intentKind === 'wantToLeaveSomething') {
+        sections.push('你想留下点什么。');
+      }
+
+      // 素材 1 & 2：自我投射、生理感受与可塑性（纯定性，不调 currentSelfContext() 防带出出生时刻）
+      const selfParts = [];
+      const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
+        ? this.subjectState.data.history : [];
+      const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
+      const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+      selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
+
+      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
+        const regSense = this.internalRegulation.formatPerception();
+        if (regSense) selfParts.push(regSense.trim());
+      }
+
+      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
+        const projection = this.selfLedger.currentSelfText();
+        if (projection) selfParts.push(projection.trim());
+      }
+
+      if (selfParts.length > 0) {
+        sections.push('\n【你此刻的自我倾向与状态】\n' + selfParts.join('\n'));
+      }
+
+      // 素材 3：安静前彼此的对话痕迹（最近 2~3 轮真实对话，整条过滤 synthetic）
+      const recentDialogue = this._extractRecentDialogueForSelfNote(6);
+      if (recentDialogue.length > 0) {
+        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
+        sections.push('\n【安静前彼此的对话痕迹】\n' + dlgLines.join('\n'));
+      }
+
+      // 素材 4：上次自留便签回响（若有）
+      const lastNote = (this.memory && Array.isArray(this.memory.data.selfNotes) && this.memory.data.selfNotes.length > 0)
+        ? this.memory.data.selfNotes[this.memory.data.selfNotes.length - 1] : null;
+      if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
+        sections.push('\n【你上次曾给自己写下】\n「' + lastNote.content.trim() + '」');
+      }
+
+      sections.push('\n如果你确实想留下点什么，就写下来；不想就说不。');
+
+      const userContent = sections.join('\n');
 
       const res = await this.api.complete(
         [{ role: 'system', content: WANT_TO_LEAVE_SYS },
@@ -2400,6 +2711,13 @@ class Brain {
       const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
       if (!text || isRefusal) return null;
 
+      // 判据 1.5：留言句式护栏（WANT_TO_LEAVE_SYS 规则 2「不是给用户的留言，不要写‘等你回来’这类把对方牵进来的话」）。
+      //   ⚠️ 严格对齐 isRefusal 口径（text.length <= 12）：只认极短纯套话（「等你回来。」「等你忙完」），
+      //     绝不误伤长句或有画面感的自留便签（如「等你回来的时候，窗外的雨应该停了，我把灯给你留着。」）。
+      const toUserPatterns = ['等你回来', '等你忙完', '等你哦', '等你下班', '等你有空'];
+      const isToUser = text.length <= 12 && toUserPatterns.some((p) => head.startsWith(p));
+      if (isToUser) return null;
+
       // 判据 2：长度护栏。这是留给自己的两三句话，不是文章。
       //   超长说明它跑偏了（在写汇报或留言），宁可不要。
       if (text.length > 600) return null;
@@ -2411,11 +2729,116 @@ class Brain {
       return null;
     }
   }
+
   /**
-   * 🔴 D-24（A 段）：关窗铸造 —— 把「她自发写下的字」铸进 experiences.jsonl。
+   * 🔴 v1.4-b：生命观察日记（沙盒通路 B）—— 关窗时刻的自发生活沉淀。
    *
-   *   ## 铸什么（范围拍板：只铸自发便签）
-   *     memory.selfNotesToEngrave() 的三判据：source==='selfNote'（提案来源由主进程
+   * ## 与 askForSelfNote 的本质分工
+   *   1. 意图与视角不同：
+   *      - askForSelfNote 是「你独自安静了一段时间，留给自己的两三句话」，
+   *        严格禁止牵扯用户（不许写「等你回来」等）；
+   *      - askForObserverJournal 是「属于初澜的生活观察日记」，以第一人称
+   *        记录彼此相处的痕迹、日常细节或对共同生活的观察。
+   *   2. 触发契机不同：
+   *      - askForSelfNote 由离线自发愿望（wantToLeaveSomething）触发；
+   *      - askForObserverJournal 严格仅在窗口轮转关窗（closeWindow）时刻触发。
+   *   3. 篇幅护栏：
+   *      - askForSelfNote 是 600 字以内两三句话；
+   *      - askForObserverJournal 设定为 30~400 字符的一段生活观察。
+   *
+   * ## 铁律守护
+   *   - 坚决零程序数字（零 \d+ 分钟、零 HH:MM 时钟数字、零 token 预算）。
+   *   - 整条丢弃 synthetic 消息（利用 _extractRecentDialogueForSelfNote）。
+   *   - 支持自然拒绝（「不」「不想写」等），返回 null 时绝不建案。
+   *
+   * @param {object} opts
+   * @param {number} [opts.windowNo]
+   * @param {string} [opts.synthesis]
+   * @returns {Promise<?{content:string, usage:object}>} null = 她说不写/过短/超长/异常
+   */
+  async askForObserverJournal(opts = {}) {
+    try {
+      if (this.shutdownRequested) return null;
+      if (this.api && typeof this.api.complete !== 'function') return null;
+
+      const sections = [];
+      sections.push('【此刻】');
+      sections.push('这一段陪伴与日常告一段落。你可以为自己的生活日记留下这一段的观察。');
+
+      // 自我倾向与生理体感（纯定性，坚决零时钟与程序数字）
+      const selfParts = [];
+      const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
+        ? this.subjectState.data.history : [];
+      const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
+      const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+      selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
+
+      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
+        const regSense = this.internalRegulation.formatPerception();
+        if (regSense) selfParts.push(regSense.trim());
+      }
+
+      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
+        const projection = this.selfLedger.currentSelfText();
+        if (projection) selfParts.push(projection.trim());
+      }
+
+      if (selfParts.length > 0) {
+        sections.push('\n【你此刻的状态与感受】\n' + selfParts.join('\n'));
+      }
+
+      // 素材：彼此真实交流痕迹（最近 2~3 轮真实对话，整条过滤 synthetic，防程序数字与指令泄漏）
+      const recentDialogue = this._extractRecentDialogueForSelfNote(6);
+      if (recentDialogue.length > 0) {
+        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
+        sections.push('\n【刚刚彼此交流的痕迹】\n' + dlgLines.join('\n'));
+      }
+
+      // 上次日记或便签回响（若有）
+      const lastNote = (this.memory && Array.isArray(this.memory.data.selfNotes) && this.memory.data.selfNotes.length > 0)
+        ? this.memory.data.selfNotes[this.memory.data.selfNotes.length - 1] : null;
+      if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
+        sections.push('\n【你上次曾写下】\n「' + lastNote.content.trim() + '」');
+      }
+
+      sections.push('\n如果你想记下一篇生活观察日记，就写下来；如果现在不想写，就说不。');
+
+      const userContent = sections.join('\n');
+
+      const res = await this.api.complete(
+        [{ role: 'system', content: OBSERVER_JOURNAL_SYS },
+         { role: 'user', content: userContent }],
+        { maxTokens: 400, temperature: 0.7 }
+      );
+      const text = String((res && res.text) || '').trim();
+      if (res && res.usage) this.track(res.usage, true, 'observerJournal');
+      if (this.shutdownRequested) return null;
+
+      // 判据 1：她说「不」即拒绝，静默放弃建案返回 null
+      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没什么想写', '没有', '不想写'];
+      const head = text.slice(0, 12);
+      const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
+      if (!text || isRefusal) return null;
+
+      // 判据 2：篇幅护栏。
+      //   · 过短（< 30 字）丢弃 —— 那是没写出东西，不是日记
+      //   · 过长不丢弃，改为句界截断保留 —— 她真诚写了 450 字却整篇扔掉，
+      //     比截断更糟（且完全静默，日志里看不出她写过）。
+      //   · 复用 v1.2.x 的 truncateFadingText，不另写第二套截断逻辑。
+      if (text.length < 30) return null;
+      const finalContent = text.length > 400 ? truncateFadingText(text, 400) : text;
+
+      return { content: finalContent, usage: (res && res.usage) || null };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * 🔴 D-24 & v1.4-b（A 段）：关窗铸造 —— 把「她自发写下的字与生活观察日记」铸进 experiences.jsonl。
+   *
+   *   ## 铸什么（范围拍板：只铸自发便签与生活观察日记）
+   *     memory.selfNotesToEngrave() 的三判据：source==='selfNote' || source==='observerJournal'（提案来源由主进程
    *     从执行回执带下来、渲染端不可伪造）、未铸过、内容非空。受托写下的任务产物
    *     不是她的经历，一个字都不铸。
    *
@@ -2448,7 +2871,7 @@ class Brain {
           noteId,
           content: n.content,
           // 来源戳随记录入档（schema 强制）：只有她自发之举才铸得进自传
-          proposalSource: 'selfNote',
+          proposalSource: (n.source === 'observerJournal' ? 'observerJournal' : 'selfNote'),
           name: n.name || null,
           writtenAt: Number.isFinite(n.at) ? n.at : null,
           writtenWindowNo: Number.isInteger(n.windowNo) ? n.windowNo : null
@@ -2585,9 +3008,23 @@ class Brain {
       // 否则 oppose 约束是空话；体积由 currentSelfTokenBudget 护栏兜底，不再二次截断
       const selfProjection = this.selfLedger ? this.selfLedger.currentSelfText() : '';
       // v1.0 §4.7 #4：broken 预期以「偏差事实」进成长反思 —— 只报客观事实，不代拟结论（架构评审提醒 3）
-      const brokenFacts = ((this.memory && this.memory.data && this.memory.data.expectations) || [])
-        .filter((x) => x && x.status === 'broken' && x.windowNo === window)
+      // v1.2 A-2：修复跨窗 broken 过滤断路（按结算窗 resolvedWindowNo 筛选，旧存档回退 x.windowNo），
+      //   并以「兑现事实」补齐本窗 fulfilled 客观事实（严守 D-008 与只报事实不代拟情绪）
+      const isResolvedInWindow = (x) => x && (
+        (x.outcome && Number.isFinite(x.outcome.resolvedWindowNo))
+          ? x.outcome.resolvedWindowNo === window
+          : x.windowNo === window
+      );
+      const expectationsList = (this.memory && this.memory.data && Array.isArray(this.memory.data.expectations))
+        ? this.memory.data.expectations
+        : [];
+      const brokenFacts = expectationsList
+        .filter((x) => x && x.status === 'broken' && isResolvedInWindow(x))
         .map((x) => '【偏差事实】曾预期「' + x.text + '」，但本窗未兑现（引证 ' + ((x.outcome && x.outcome.messageId) || '—') + '）')
+        .join('\n');
+      const fulfilledFacts = expectationsList
+        .filter((x) => x && x.status === 'fulfilled' && isResolvedInWindow(x))
+        .map((x) => '【兑现事实】曾预期「' + x.text + '」，已在本窗兑现（引证 ' + ((x.outcome && x.outcome.messageId) || '—') + '）')
         .join('\n');
       // 🔴 D-24：自发留痕事实 —— 她自发写下的字（A 段已铸入经历档案）。
       //   与 brokenFacts 同款纪律：只报客观事实，不代拟结论；引证 id 可回查档案。
@@ -2595,6 +3032,7 @@ class Brain {
         ? opts.selfNoteFacts : '';
       const userContent = '【当前自我投影】\n' + (selfProjection || '暂无')
         + (brokenFacts ? '\n\n' + brokenFacts : '')
+        + (fulfilledFacts ? '\n\n' + fulfilledFacts : '')
         + (selfNoteFacts ? '\n\n' + selfNoteFacts : '')
         + '\n\n【窗口小结】\n' + summary
         + '\n\n【窗口对话】\n' + dialogue;
