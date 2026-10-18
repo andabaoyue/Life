@@ -211,8 +211,12 @@ class Brain {
       //   ⚠️ EngramTraceManager 构造器做 `{...DEFAULT, ...config}`，
       //      所以这里只传覆盖项即可；未传字段仍走 DEFAULT（默认行为不变）。
       engramConfig: {
-        activeThreshold: this.cfg.memoryActiveThreshold,
-        fadingMaxChars: this.cfg.memoryFadingMaxChars
+        activeThreshold: this.cfg.memoryActiveThreshold !== undefined
+          ? this.cfg.memoryActiveThreshold
+          : DEFAULTS.memoryActiveThreshold,
+        fadingMaxChars: this.cfg.memoryFadingMaxChars !== undefined
+          ? this.cfg.memoryFadingMaxChars
+          : DEFAULTS.memoryFadingMaxChars
       }
     });
 

@@ -45,7 +45,8 @@ const requiredDecisions = [
   { id: 'D-007', name: '发育景观采用经历依赖塑性衰减' },
   { id: 'D-008', name: '内部短时调节与长期人格特质的双轨分离' },
   { id: 'D-009', name: '生产运行时统一权威接线与因果闭环规范' },
-  { id: 'D-010', name: '实验条件元数据绑定与证据事实核验铁律' }
+  { id: 'D-010', name: '实验条件元数据绑定与证据事实核验铁律' },
+  { id: 'D-011', name: '记忆动力学出厂通电与三阶梯度标定' }
 ];
 
 for (const d of requiredDecisions) {

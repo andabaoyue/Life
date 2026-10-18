@@ -39,6 +39,7 @@ process.on('exit', () => {
 });
 
 const { Memory, estimateTokens, truncateFadingText } = require('../src/memory');
+const { DEFAULTS } = require('../src/config');
 
 let failures = 0;
 function check(name, cond, extra) {
@@ -61,7 +62,15 @@ function mk(windows, opts) {
     history: [], lexicon: [], expectations: [], selfNotes: [], dreamFragments: [],
     deepHorizon: '', curiosityQueue: [], windows,
   }));
-  const m = new Memory(d, Object.assign({ persona: 'P', memoryCapTokens: 12000 }, opts));
+  const defaultOpts = {
+    persona: 'P',
+    memoryCapTokens: 12000,
+    engramConfig: {
+      activeThreshold: DEFAULTS.memoryActiveThreshold,
+      fadingMaxChars: DEFAULTS.memoryFadingMaxChars
+    }
+  };
+  const m = new Memory(d, Object.assign(defaultOpts, opts));
   if (m.engramManager) {
     windows.forEach((w) => m.engramManager.registerTrace({
       sourceWindowNo: w.no, createdWindow: w.no, salienceBonus: 0.1,
@@ -118,19 +127,21 @@ console.log('--- D-22 记忆渐褪梯度门禁 ---');
     'visible=' + m.visibleTokens() + ' full=' + m.memoryTokens());
 }
 
-/* ============ 3. 默认不动：0.60 / 60 与改动前一致 ============ */
+/* ============ 3. 默认出厂：0.50 / 300（D-011 通电标定） ============ */
 {
-  const m = mk(wins(), { memoryDynamics: true });   // 不传 engramConfig → 走 DEFAULT
-  check('默认 activeThreshold 仍是 0.60', m.engramManager.config.activeThreshold === 0.60);
-  check('默认 fadingMaxChars 仍是 60（默认值必须稳）', m.engramManager.config.fadingMaxChars === 60);
+  const m = mk(wins(), { memoryDynamics: true });   // 不传 engramConfig → 走出厂 DEFAULTS
+  check('默认 activeThreshold 为 0.50（D-011）', m.engramManager.config.activeThreshold === 0.50);
+  check('默认 fadingMaxChars 为 300（D-011）', m.engramManager.config.fadingMaxChars === 300);
   const sys = m.systemText();
-  // 0.60 门限下：初始 0.60 → 过 1 窗跌破 → 全 FADING（这是改动前的既有行为）
-  check('⚠️ 默认配置下仍是全 FADING（既有行为未被偷袭改变）',
-    m.engramManager.getActiveTraces().length === 0,
-    'ACTIVE=' + m.engramManager.getActiveTraces().length);
+  // 0.50 门限下：ΔW=1 的第 5 段 S=0.5377 >= 0.50 为 ACTIVE，其余 4 段为 FADING
+  check('默认配置下 ACTIVE=1 / FADING=4（三阶各占其位）',
+    m.engramManager.getActiveTraces().length === 1 && m.engramManager.getFadingTraces().length === 4,
+    'ACTIVE=' + m.engramManager.getActiveTraces().length + ' FADING=' + m.engramManager.getFadingTraces().length);
+  check('默认配置下不再全 FADING（克服 0.60 关窗腰斩缺陷）',
+    m.engramManager.getActiveTraces().length > 0);
   const f1 = uniq(1);
-  check('默认配置下截断在 60 字附近（不是 300）',
-    !sys.includes(f1.slice(0, 61)) && sys.includes(f1.slice(0, 60)));
+  check('默认配置下截断在 300 字主干（不是 60 碎片）',
+    sys.includes(f1.slice(0, 300)) && !sys.includes(f1.slice(0, 301)));
 }
 
 /* ============ 4. 基线兼容：无动力学 ============ */
@@ -289,6 +300,15 @@ console.log('--- D-22 记忆渐褪梯度门禁 ---');
       !/\s$/.test(body) && body === '甲'.repeat(50) + '.',
       JSON.stringify(body.slice(-6)) + ' 长=' + body.length + '（51=已裁剪 / 53=未裁剪）');
   }
+}
+
+/* ============ 7. v1.2.y D-011 默认值防回退判别用例 ============ */
+{
+  const m = mk(wins(), { memoryDynamics: true });   // 走出厂默认
+  // 判别力：0.50 下 ΔW=1 必须是 ACTIVE（0.60 时会掉 FADING）
+  check('v1.2.y: 🔴 默认 0.50 下 ΔW=1 保持 ACTIVE（改回 0.60 必 FAIL）',
+    m.engramManager.getActiveTraces().length === 1,
+    'ACTIVE=' + m.engramManager.getActiveTraces().length);
 }
 
 console.log('');
