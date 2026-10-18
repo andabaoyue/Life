@@ -745,8 +745,8 @@ function validateArchiveRecord(record, options = {}) {
     }
 
     case 'self_note': {
-      // 🔴 D-24 A 段：自发留痕 —— 她真实做过的事，内容零改写地铸入。
-      //   proposalSource 必须是 'selfNote'（提案来源戳由主进程从执行回执带下来、
+      // 🔴 D-24 A 段 & v1.4-b：自发留痕与生活观察日记 —— 她真实做过的事，内容零改写地铸入。
+      //   proposalSource 必须是 'selfNote' 或 'observerJournal'（提案来源戳由主进程从执行回执带下来、
       //   渲染端不可伪造）：受托任务产物没有资格冒充她的自传经历。
       if (!payload || typeof payload !== 'object') {
         return { valid: false, reason: 'INVALID_SELF_NOTE_PAYLOAD' };
@@ -757,7 +757,7 @@ function validateArchiveRecord(record, options = {}) {
       if (typeof payload.content !== 'string' || !payload.content.trim()) {
         return { valid: false, reason: 'MISSING_SELF_NOTE_CONTENT' };
       }
-      if (payload.proposalSource !== 'selfNote') {
+      if (payload.proposalSource !== 'selfNote' && payload.proposalSource !== 'observerJournal') {
         return { valid: false, reason: 'SELF_NOTE_REQUIRES_SELF_NOTE_SOURCE' };
       }
       break;

@@ -465,10 +465,11 @@ function normalizeIntentMotive(motive) {
  *   `input.intentSources` / `input.intentKind` / `input.intentOrigin` 一律被忽略。
  * @returns 冻结的提案对象
  */
-/** 🔴 D-17：提案来源白名单。只有这两个值合法，其余一律回落 'user'（fail-closed）。
- *   'user'     —— 用户让她写：保留第五道闸门（D-3 原则不动）
- *   'selfNote' —— 她自己想留的：免逐次确认（沙盒/格式/长度/预算四道硬约束仍在） */
-const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote']);
+/** 🔴 D-17 & v1.4-b：提案来源白名单。只有这三个值合法，其余一律回落 'user'（fail-closed）。
+ *   'user'            —— 用户让她写：保留第五道闸门（D-3 原则不动）
+ *   'selfNote'        —— 她自己想留的便签：免逐次确认（沙盒/格式/长度/预算四道硬约束仍在）
+ *   'observerJournal' —— 她自主沉淀的观察日记（v1.4-b）：免逐次确认（同沙盒四道硬约束） */
+const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote', 'observerJournal']);
 
 /**
  * @param {object} input **来自渲染端的不可信输入**，只取白名单字段。
@@ -504,10 +505,11 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
     //   现在它没人读所以无害；但把它接到执行器上等于把一个渲染端可控的免确认开关
     //   接进安全链，那正是 D-3 顶替攻击那一族。
     //
-    //   ## proposalSource 的两个取值（由主进程写入，渲染端同名键一律忽略）
-    //     'user'      用户让她写 → **保留**第五道闸门（D-3 原则不动）
-    //     'selfNote'  她自己想留的 → 免逐次确认（走沙盒+格式+长度+预算四道硬约束）
-    //     缺失/未知  → 一律按 'user' 处理（fail-closed，绝不因缺字段而放行）
+    //   ## proposalSource 的取值（由主进程写入，渲染端同名键一律忽略）
+    //     'user'            用户让她写 → **保留**第五道闸门（D-3 原则不动）
+    //     'selfNote'        她自己想留的便签 → 免逐次确认（走沙盒+格式+长度+预算四道硬约束）
+    //     'observerJournal' 她自主沉淀的观察日记 → 免逐次确认（走同上四道硬约束，v1.4-b）
+    //     缺失/未知         → 一律按 'user' 处理（fail-closed，绝不因缺字段而放行）
     //
     //   ## ⚠️ 为什么不叫 origin
     //   提案上已有 D-9 的 `intentOrigin`（动机类别：self_trait / user_action），
@@ -612,7 +614,7 @@ class AuditLog {
   }
 }
 
-module.exports = { CAPABILITIES, CAPABILITY_META, PROPOSAL_STATES, DEFAULT_BUDGET, looksLikePath,
+module.exports = { CAPABILITIES, CAPABILITY_META, PROPOSAL_STATES, PROPOSAL_SOURCES, DEFAULT_BUDGET, looksLikePath,
   CapabilityRegistry, PermissionPolicy, ExecutionBudget,
   createActionProposal, AuditLog, AgentBridgeMock,
   // D-9：动机来源的分类与归一。导出是为了让门禁能**直接测判据本身**，

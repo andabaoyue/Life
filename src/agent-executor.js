@@ -461,11 +461,14 @@ class ControlledAgentExecutor {
     //   ## ⚠️ 来源是不可伪造的
     //   `proposalSource` 由 `createActionProposal` 的**独立第三参数**写入，
     //   渲染端在 payload 里塞同名字段一律被忽略（有门禁钉死）。
-    //   通道来的提案永远是 'user' —— 只有主进程建案时才能给 'selfNote'。
+    //   通道来的提案永远是 'user' —— 只有主进程建案时才能给 'selfNote' 或 'observerJournal'。
     const isSelfNote = proposal && proposal.proposalSource === 'selfNote';
+    const isObserverJournal = proposal && proposal.proposalSource === 'observerJournal';
     const gate = isSelfNote
       ? { allowed: true, reason: 'SELF_NOTE_EXEMPT' }
-      : this.confirmation.isExecutionAllowed(proposalId);
+      : (isObserverJournal
+        ? { allowed: true, reason: 'OBSERVER_JOURNAL_EXEMPT' }
+        : this.confirmation.isExecutionAllowed(proposalId));
     if (!gate || gate.allowed !== true) {
       const reason = (gate && gate.reason) || 'NOT_CONFIRMED';
       this._audit({

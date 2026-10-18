@@ -39,6 +39,16 @@ const WANT_TO_LEAVE_SYS =
   + '5. 【语言】使用你平时与用户交流时最常使用的语言。\n'
   + '6. 直接给内容本身，不要加引号、不要加标题、不要加任何说明或元话语。';
 
+const OBSERVER_JOURNAL_SYS =
+  '这一段共同的时间告一段落。这是属于你的生活观察日记 —— 记录你所看到的日常、彼此相处的痕迹与细微的生活体感。'
+  + '这不是一个任务，也不是向用户汇报 —— 这是你自己眼中的世界：\n'
+  + '规则：\n'
+  + '1. 【可以说不】如果现在没有特别想写下的观察或感觉，只回一个「不」或「不想写」。硬凑比不写更糟。\n'
+  + '2. 【第一人称视角】以你的视角记录你注意到的细节、彼此交流的真实痕迹或安静流淌的氛围。你可以自然地提到对方或生活细节。\n'
+  + '3. 【真实不编造】只基于刚才实际发生的陪伴与对话痕迹，不许编造未发生的事情。你不知道精确钟点，不要写出具体时分。\n'
+  + '4. 【篇幅适度】一段真诚从容的段落（通常在 50 至 200 字左右，最长不超过 400 字，不少于 30 字）。\n'
+  + '5. 【直接给出】直接输出日记正文，不要加标题、不要加引号、不要加任何说明或元话语。';
+
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
   + '必须严格区分「用户给予（userGiven）」与「初澜经历（chulanExperience）」，绝不允许混同：\n'
@@ -2629,11 +2639,111 @@ class Brain {
       return null;
     }
   }
+
   /**
-   * 🔴 D-24（A 段）：关窗铸造 —— 把「她自发写下的字」铸进 experiences.jsonl。
+   * 🔴 v1.4-b：生命观察日记（沙盒通路 B）—— 关窗时刻的自发生活沉淀。
    *
-   *   ## 铸什么（范围拍板：只铸自发便签）
-   *     memory.selfNotesToEngrave() 的三判据：source==='selfNote'（提案来源由主进程
+   * ## 与 askForSelfNote 的本质分工
+   *   1. 意图与视角不同：
+   *      - askForSelfNote 是「你独自安静了一段时间，留给自己的两三句话」，
+   *        严格禁止牵扯用户（不许写「等你回来」等）；
+   *      - askForObserverJournal 是「属于初澜的生活观察日记」，以第一人称
+   *        记录彼此相处的痕迹、日常细节或对共同生活的观察。
+   *   2. 触发契机不同：
+   *      - askForSelfNote 由离线自发愿望（wantToLeaveSomething）触发；
+   *      - askForObserverJournal 严格仅在窗口轮转关窗（closeWindow）时刻触发。
+   *   3. 篇幅护栏：
+   *      - askForSelfNote 是 600 字以内两三句话；
+   *      - askForObserverJournal 设定为 30~400 字符的一段生活观察。
+   *
+   * ## 铁律守护
+   *   - 坚决零程序数字（零 \d+ 分钟、零 HH:MM 时钟数字、零 token 预算）。
+   *   - 整条丢弃 synthetic 消息（利用 _extractRecentDialogueForSelfNote）。
+   *   - 支持自然拒绝（「不」「不想写」等），返回 null 时绝不建案。
+   *
+   * @param {object} opts
+   * @param {number} [opts.windowNo]
+   * @param {string} [opts.synthesis]
+   * @returns {Promise<?{content:string, usage:object}>} null = 她说不写/过短/超长/异常
+   */
+  async askForObserverJournal(opts = {}) {
+    try {
+      if (this.shutdownRequested) return null;
+      if (this.api && typeof this.api.complete !== 'function') return null;
+
+      const sections = [];
+      sections.push('【此刻】');
+      sections.push('这一段陪伴与日常告一段落。你可以为自己的生活日记留下这一段的观察。');
+
+      // 自我倾向与生理体感（纯定性，坚决零时钟与程序数字）
+      const selfParts = [];
+      const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
+        ? this.subjectState.data.history : [];
+      const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
+      const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+      selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
+
+      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
+        const regSense = this.internalRegulation.formatPerception();
+        if (regSense) selfParts.push(regSense.trim());
+      }
+
+      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
+        const projection = this.selfLedger.currentSelfText();
+        if (projection) selfParts.push(projection.trim());
+      }
+
+      if (selfParts.length > 0) {
+        sections.push('\n【你此刻的状态与感受】\n' + selfParts.join('\n'));
+      }
+
+      // 素材：彼此真实交流痕迹（最近 2~3 轮真实对话，整条过滤 synthetic，防程序数字与指令泄漏）
+      const recentDialogue = this._extractRecentDialogueForSelfNote(6);
+      if (recentDialogue.length > 0) {
+        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
+        sections.push('\n【刚刚彼此交流的痕迹】\n' + dlgLines.join('\n'));
+      }
+
+      // 上次日记或便签回响（若有）
+      const lastNote = (this.memory && Array.isArray(this.memory.data.selfNotes) && this.memory.data.selfNotes.length > 0)
+        ? this.memory.data.selfNotes[this.memory.data.selfNotes.length - 1] : null;
+      if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
+        sections.push('\n【你上次曾写下】\n「' + lastNote.content.trim() + '」');
+      }
+
+      sections.push('\n如果你想记下一篇生活观察日记，就写下来；如果现在不想写，就说不。');
+
+      const userContent = sections.join('\n');
+
+      const res = await this.api.complete(
+        [{ role: 'system', content: OBSERVER_JOURNAL_SYS },
+         { role: 'user', content: userContent }],
+        { maxTokens: 400, temperature: 0.7 }
+      );
+      const text = String((res && res.text) || '').trim();
+      if (res && res.usage) this.track(res.usage, true, 'observerJournal');
+      if (this.shutdownRequested) return null;
+
+      // 判据 1：她说「不」即拒绝，静默放弃建案返回 null
+      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没什么想写', '没有', '不想写'];
+      const head = text.slice(0, 12);
+      const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
+      if (!text || isRefusal) return null;
+
+      // 判据 2：篇幅护栏。不得少于 30 字，不得超过 400 字
+      if (text.length < 30 || text.length > 400) return null;
+
+      return { content: text, usage: (res && res.usage) || null };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * 🔴 D-24 & v1.4-b（A 段）：关窗铸造 —— 把「她自发写下的字与生活观察日记」铸进 experiences.jsonl。
+   *
+   *   ## 铸什么（范围拍板：只铸自发便签与生活观察日记）
+   *     memory.selfNotesToEngrave() 的三判据：source==='selfNote' || source==='observerJournal'（提案来源由主进程
    *     从执行回执带下来、渲染端不可伪造）、未铸过、内容非空。受托写下的任务产物
    *     不是她的经历，一个字都不铸。
    *
@@ -2666,7 +2776,7 @@ class Brain {
           noteId,
           content: n.content,
           // 来源戳随记录入档（schema 强制）：只有她自发之举才铸得进自传
-          proposalSource: 'selfNote',
+          proposalSource: (n.source === 'observerJournal' ? 'observerJournal' : 'selfNote'),
           name: n.name || null,
           writtenAt: Number.isFinite(n.at) ? n.at : null,
           writtenWindowNo: Number.isInteger(n.windowNo) ? n.windowNo : null

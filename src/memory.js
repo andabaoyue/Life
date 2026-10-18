@@ -1206,12 +1206,12 @@ class Memory {
         windowNo: Number.isFinite(input.windowNo) ? input.windowNo : (this.data && this.data.windowNo) || 1,
         at,
         drained: false,
-        // 🔴 D-24：来源戳 + 铸造幂等标记（随 data 落盘，跨重启有效）。
-        //   source === 'selfNote'：她**自发**留下的字（提案来源由主进程从执行回执带下来，
-        //     渲染端无法伪造）—— 只有它有资格铸进自传经历档案（用户拍板：受托任务不算）。
+        // 🔴 D-24 & v1.4-b：来源戳 + 铸造幂等标记（随 data 落盘，跨重启有效）。
+        //   source === 'selfNote' / 'observerJournal'：她自发留下的字与生活观察日记（提案来源由主进程从执行回执带下来，
+        //     渲染端无法伪造）—— 只有它们有资格铸进自传经历档案（用户拍板：受托任务不算）。
         //   engraved === true：已铸进 experiences.jsonl，终身只铸一次。
         //   ⚠️ 旧数据（D-24 之前）没有 source 字段 ⇒ 一律不铸（宁缺毋滥，不猜来源）。
-        source: input.source === 'selfNote' ? 'selfNote' : (input.source || null),
+        source: (input.source === 'selfNote' || input.source === 'observerJournal') ? input.source : (input.source || null),
         engraved: false,
       });
       // 🔴 D-20：立即落盘 —— 不能等 3 秒防抖（进程可能在这之前退出）。
@@ -1263,11 +1263,11 @@ class Memory {
   }
 
   /**
-   * 🔴 D-24（A 段取用口）：返回「她自发写下、尚未铸进经历档案」的条目。
+   * 🔴 D-24 & v1.4-b（A 段取用口）：返回「她自发写下、尚未铸进经历档案」的条目。
    *
    *   判据三条，缺一不铸：
-   *     1. source === 'selfNote' —— 只铸她的自发之举（受托写下的任务产物不算她的经历）；
-   *     2. engraved !== true    —— 幂等：同一条便签终身只铸一次（含跨重启）；
+   *     1. source 为 'selfNote' 或 'observerJournal' —— 只铸她的自发之举与生活观察日记（受托写下的任务产物不算她的经历）；
+   *     2. engraved !== true    —— 幂等：同一条便签/日记终身只铸一次（含跨重启）；
    *     3. content 非空字符串   —— 空内容不是经历（沿用 addSelfNote 的拒收口径）。
    *   ⚠️ 不要求 drained：「她写下」这个事实与「她看到」无关，
    *      关窗时刻如实铸造，不因她还没开口就漏掉她真实做过的事。
@@ -1276,7 +1276,7 @@ class Memory {
     if (!Array.isArray(this.data.selfNotes)) return [];
     return this.data.selfNotes.filter((n) => n
       && n.engraved !== true
-      && n.source === 'selfNote'
+      && (n.source === 'selfNote' || n.source === 'observerJournal')
       && typeof n.content === 'string' && n.content.trim());
   }
 
