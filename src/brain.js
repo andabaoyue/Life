@@ -153,6 +153,16 @@ function parseWear(text) {
   return { text: clean || text, wear: key };
 }
 
+// v1.3-a: 宿主与环周感知事件至定性语义描述规范映射表
+const PERCEPTION_TEXT_MAP = Object.freeze({
+  host_suspend: '感受到了宿主设备的休眠停顿',
+  host_resume: '感受到了宿主设备的唤醒与重启运转',
+  host_lock: '感受到了宿主设备屏幕被锁定',
+  host_unlock: '感受到了宿主设备屏幕已解锁',
+  tactile_poke: '感受到了被人轻轻碰了一下',
+  tactile_drag: '感受到了身体被轻微拖拽移动'
+});
+
 /**
  * 调度：对话 -> 记录 usage -> 到窗口边界就小结 -> 记忆超预算就合并。
  *
@@ -283,6 +293,11 @@ class Brain {
 
     // Phase 0.5: 环境知觉与注意力流水线缓冲区 (bounded <= 50)
     this.recentPerceptions = [];
+    // v1.3-a: 知觉注入通道节流控制 (同窗 <= 3 次，间隔 >= 5 轮) 与事件源引用
+    this._windowPerceptionCount = 0;
+    this._lastPerceptionTurn = -999;
+    this._lastPerceptionWindowNo = currentWinNo;
+    this.powerMonitorSource = null;
 
     // 实验遥测与缓存破坏归因底座 (v0.9.6 P0-14 & P0-15)
     this.telemetryPath = path.join(userDataDir, 'experiment-telemetry.jsonl');
@@ -356,6 +371,21 @@ class Brain {
     }
     if (this.tracker && typeof this.processEnvironmentalPerception === 'function') {
       this.tracker.setPerceptionPipeline((raw) => this.processEnvironmentalPerception(raw));
+    }
+  }
+
+  /**
+   * 绑定宿主电源与环境事件源 (v1.3-a PowerMonitorSource)
+   * @param {PowerMonitorSource} source
+   */
+  bindPowerMonitorSource(source) {
+    this.powerMonitorSource = source || null;
+    if (this.powerMonitorSource && typeof this.powerMonitorSource.start === 'function') {
+      this.powerMonitorSource.start((evt) => {
+        if (typeof this.processEnvironmentalPerception === 'function') {
+          this.processEnvironmentalPerception(evt);
+        }
+      });
     }
   }
 
@@ -445,6 +475,86 @@ class Brain {
     }
 
     return record;
+  }
+
+  /**
+   * 格式化知觉候选为质性语义提示文本 (v1.3-a)
+   * @param {Object} candidate
+   * @returns {string}
+   */
+  _formatPerceptionSnippet(candidate) {
+    if (!candidate || !candidate.category) return '';
+    const desc = PERCEPTION_TEXT_MAP[candidate.category] || (
+      candidate.qualitativeDescriptor === 'intense_activity' ? '感受到了强烈的外部刺激' :
+      candidate.qualitativeDescriptor === 'moderate_flow' ? '感受到了外部环境的微弱流转' :
+      '感受到了外部环境的轻微扰动'
+    );
+    return `【此刻的环境知觉】\n${desc}`;
+  }
+
+  /**
+   * 消费并提取 ATTENDED 知觉候选，带同窗最多 3 次与间隔 >= 5 轮节流 (v1.3-a)
+   * 满足不变量：
+   * 1. 严格 Null-Perception：无感知或节流被挡时返回空串 ''；
+   * 2. 遥测写入 experiment-telemetry.jsonl (recordType: 'perception_attach')；
+   * 3. ATTENDED ≠ SUBJECT_ACQUIRED：仅生成质性描述，不碰 SubjectState 与归档底座。
+   * @returns {string}
+   */
+  _drainAttendedPerception() {
+    if (!this.isExperimentModuleActive('digitalUmwelt')) return '';
+    if (!Array.isArray(this.recentPerceptions) || !this.recentPerceptions.length) return '';
+
+    // 寻找最新的未消费 ATTENDED 感知
+    let targetRecord = null;
+    for (let i = this.recentPerceptions.length - 1; i >= 0; i--) {
+      const rec = this.recentPerceptions[i];
+      if (rec && !rec.consumed && rec.gateResult && rec.gateResult.status === 'ATTENDED' && rec.candidate) {
+        targetRecord = rec;
+        break;
+      }
+    }
+    if (!targetRecord) return '';
+
+    // 标定全部记录为 consumed，防止陈旧堆积
+    for (const rec of this.recentPerceptions) {
+      rec.consumed = true;
+    }
+
+    const currentWindowNo = (this.memory && this.memory.data && typeof this.memory.data.windowNo === 'number')
+      ? this.memory.data.windowNo : 1;
+    if (currentWindowNo !== this._lastPerceptionWindowNo) {
+      this._lastPerceptionWindowNo = currentWindowNo;
+      this._windowPerceptionCount = 0;
+    }
+
+    // 节流判据 1：同窗内挂载次数上限 N=3
+    if (this._windowPerceptionCount >= 3) {
+      return '';
+    }
+
+    // 节流判据 2：相邻两次挂载间隔 >= 5 轮
+    const currentTurn = (this.memory && this.memory.data && typeof this.memory.data.totalTurns === 'number')
+      ? this.memory.data.totalTurns : 0;
+    if (this._lastPerceptionTurn !== -999 && (currentTurn - this._lastPerceptionTurn) < 5) {
+      return '';
+    }
+
+    this._windowPerceptionCount++;
+    this._lastPerceptionTurn = currentTurn;
+
+    const snippet = this._formatPerceptionSnippet(targetRecord.candidate);
+
+    // 记录遥测
+    this.appendTelemetry({
+      recordType: 'perception_attach',
+      category: targetRecord.candidate.category,
+      salience: targetRecord.candidate.salience,
+      perceptionId: targetRecord.candidate.perceptionId,
+      windowNo: currentWindowNo,
+      turnNo: currentTurn
+    });
+
+    return snippet;
   }
 
   /**
@@ -611,7 +721,8 @@ class Brain {
         telemetrySeq: this.telemetrySeq,
         timestamp: data.timestamp || Date.now(),
         windowNo: (typeof data.windowNo === 'number' && !Number.isNaN(data.windowNo)) ? data.windowNo : (this.memory ? this.memory.data.windowNo : 1),
-        requestType: data.requestType || 'chat',
+        recordType: data.recordType || 'llm_call',
+        requestType: data.requestType || (data.recordType ? null : 'chat'),
         promptTokens: typeof data.promptTokens === 'number' ? data.promptTokens : 0,
         promptCacheHitTokens: typeof data.promptCacheHitTokens === 'number' ? data.promptCacheHitTokens : 0,
         promptCacheMissTokens: typeof data.promptCacheMissTokens === 'number' ? data.promptCacheMissTokens : 0,
@@ -619,6 +730,12 @@ class Brain {
         cacheHitRate: typeof data.cacheHitRate === 'number' ? data.cacheHitRate : 0,
         cacheBreakReason: data.cacheBreakReason || null
       };
+      if (data.recordType === 'perception_attach') {
+        rec.category = data.category || null;
+        rec.salience = typeof data.salience === 'number' ? data.salience : null;
+        if (data.perceptionId) rec.perceptionId = data.perceptionId;
+        if (typeof data.turnNo === 'number') rec.turnNo = data.turnNo;
+      }
       if (!fs.existsSync(this.dir)) {
         fs.mkdirSync(this.dir, { recursive: true });
       }
@@ -727,6 +844,9 @@ class Brain {
     this.shutdownRequested = true;
     this.generationId++;
     this.abort();
+    if (this.powerMonitorSource && typeof this.powerMonitorSource.stop === 'function') {
+      this.powerMonitorSource.stop();
+    }
     this.flushAll();
   }
 
@@ -1033,7 +1153,9 @@ class Brain {
        如果每轮写入历史，会导致历史中堆叠大量过期的自我账本副本，造成严重的 Token 膨胀并破坏长期记忆。
        正确数据流：memory.history 仅保存纯净用户输入（主动搭话记录纯净触发理由），
        在构建发给 DeepSeek 的请求时，动态附加在当前 user 消息末尾。 */
-    const dynamicBody = [currentSelf, involuntarySnippet, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    // v1.3-a: 知觉注入通道（复用 suffix 瞬时上下文，带同窗 <=3 次与间隔 >=5 轮节流）
+    const perceptionSnippet = this._drainAttendedPerception();
+    const dynamicBody = [currentSelf, involuntarySnippet, perceptionSnippet, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
     // v0.9.9: 瞬时上下文挂在 user 尾部是护缓存的必要设计，但必须标明程序注入身份 ——
     // 否则模型会把状态快照误认成用户贴来的内容（实测她真的以为用户在「贴表」）
     const dynamicContext = dynamicBody

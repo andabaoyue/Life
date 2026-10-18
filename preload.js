@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   // 主进程事件驱动主动搭话推送
   onProactiveOffer: (cb) => ipcRenderer.on('proactive-offer', (e, o) => cb(o)),
   proactiveDeclined: (offer) => ipcRenderer.send('proactive-declined', offer),
+  proactiveCommit: (offer) => ipcRenderer.send('proactive-commit', offer),
   report: () => ipcRenderer.invoke('chat-report'),
   listMemory: () => ipcRenderer.invoke('memory-list'),
   chatHistory: () => ipcRenderer.invoke('chat-history'),

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { load, save, tryLoad } = require('./src/config');
@@ -7,6 +7,7 @@ const { Wardrobe, CATALOG } = require('./src/wardrobe');
 const { ActivityTracker } = require('./src/tracker');
 const { TriggerEngine, COOLDOWN_MS, IDLE_MS } = require('./src/trigger');
 const { DesktopMotion } = require('./src/desktop-motion');
+const { PowerMonitorSource } = require('./src/power-monitor-source');
 const { checkAssets } = require('./src/asset-check');
 const secure = require('./src/secure');
 const layout = require('./src/layout');
@@ -37,6 +38,12 @@ function bindBrainDeps(brain) {
   if (!brain) return;
   brain.wardrobe = wardrobe || null;
   brain.bindTracker(tracker);
+  if (!powerMonitorSource) {
+    powerMonitorSource = new PowerMonitorSource({ powerMonitor });
+  }
+  if (typeof brain.bindPowerMonitorSource === 'function') {
+    brain.bindPowerMonitorSource(powerMonitorSource);
+  }
   // v1.0 B 方案（用户拍板 2026-10）：她被唤醒时若枕边有未接留言，向两个窗口广播一条
   //   **客观提示**（不代拟、零 LLM）。界面收到后只在对话窗显示一行注记 —— 接不接归她。
   //   为什么回调挂这里：bindBrainDeps 是唯一注入口（启动 + 热替换都走它），
@@ -81,6 +88,7 @@ let trigger = null;
 let motion = null;
 let assetReport = null;
 let proactiveTimer = null;
+let powerMonitorSource = null;
 // 🔴 D-7：主动搭话的审计出口。
 //   必须在**模块顶层**声明，不能直接用 app.whenReady() 里的 agentAuditLog：
 //   那是个块级 const，而 proactive-declined 的处理器是模块顶层的闭包，
@@ -773,7 +781,7 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
 // 拿它去记冷却会把时间线记歪。
 const OFFER_TTL_MS = COOLDOWN_MS;
 function validOffer(offer) {
-  if (!offer || (offer.kind !== 'poke' && offer.kind !== 'idle')) return false;
+  if (!offer || (offer.kind !== 'poke' && offer.kind !== 'idle' && offer.kind !== 'silent_presence')) return false;
   if (typeof offer.at !== 'number' || !Number.isFinite(offer.at)) return false;
   const age = Date.now() - offer.at;
   return age >= 0 && age <= OFFER_TTL_MS;
@@ -860,7 +868,7 @@ ipcGuard.on('proactive-declined', (e, offer) => {
   //   那同样属于「现在别说」，必须收干净，不能静默停摆调度。
   const hasOffer = !!offer && typeof offer === 'object' && !Array.isArray(offer);
   const wellFormed = hasOffer
-    && (offer.kind === 'poke' || offer.kind === 'idle')
+    && (offer.kind === 'poke' || offer.kind === 'idle' || offer.kind === 'silent_presence')
     && typeof offer.at === 'number' && Number.isFinite(offer.at)
     && validOffer(offer);
 
@@ -894,6 +902,14 @@ ipcGuard.on('proactive-declined', (e, offer) => {
   }
   // 正常拒绝：退一个完整冷却。
   scheduleProactiveCheck(COOLDOWN_MS);
+});
+
+// v1.3-b: 沉默留白直接记账通道 (零 LLM 调用，仅驱动微动作并提交 trigger 记账)
+ipcGuard.on('proactive-commit', (e, offer) => {
+  if (offer && validOffer(offer) && trigger) {
+    trigger.commit(offer);
+  }
+  scheduleProactiveCheck(proactiveBaseMs());
 });
 
 ipcGuard.handle('proactive-check', () => {
@@ -1565,6 +1581,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   appQuitting = true;   // 对话窗 close 拦截放行，允许真销毁
+  if (powerMonitorSource && typeof powerMonitorSource.stop === 'function') powerMonitorSource.stop();
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
 });
 

@@ -89,6 +89,14 @@ class TriggerEngine {
     //   同样显式初始化为 null，不留 undefined。
     this.traits = (opts.traits && typeof opts.traits === 'object' && !Array.isArray(opts.traits))
       ? Object.assign({}, opts.traits) : null;
+
+    // v1.3-b: 连续沉默留白计数器 (上限 K=2 退出条件)
+    this.consecutiveSilenceCount = 0;
+  }
+
+  /** 重置连续沉默留白计数 (v1.3-b) */
+  resetSilence() {
+    this.consecutiveSilenceCount = 0;
   }
 
   /** 特质随窗口演进后刷新意愿权重 —— 只动权重，绝不碰冷却 / 刹车 / 睡眠闸门 */
@@ -137,6 +145,11 @@ class TriggerEngine {
     // 睡着了她不该自己开口 —— 真要说话也该是用户先把她叫醒
     if (tr.sleepMode) return null;
     if (at - this.lastFiredAt < this.cooldownMs) return null;
+
+    // v1.3-b: 若期间发生了用户交互，重置连续沉默计数
+    if (tr && typeof tr.lastInteractionAt === 'number' && tr.lastInteractionAt > this.lastFiredAt) {
+      this.consecutiveSilenceCount = 0;
+    }
 
     // v0.9.9 意志层：性格只调「多愿意开口」——阈值 / 间隔有界调制；
     // 睡眠、冷却、挂机刹车三道防骚扰铁律不归它管，任何性格都别想绕过。
@@ -201,6 +214,18 @@ class TriggerEngine {
     const isSelfNote = selfIntent && selfIntent.kind === 'wantToLeaveSomething';
     const selfNoteBlocked = isSelfNote && tr.selfNoteDuringIdle === true;
     if (idleMs >= idleNeed && !selfNoteBlocked && (!tr.spokenDuringIdle || isSelfNote)) {
+      // v1.3-b: 沉默留白第三种结局 (D-A / D-C / Q2 / Q3)
+      // 仅作用于主动场景 (非 isSelfNote)，且基于已有长期特质 quiet_preference >= 60
+      // 严禁随机，且带有严格退出条件：连续沉默上限 K=2，达到则必须回退常规 idle 搭话
+      const quietPref = Number(this.traits && this.traits.quiet_preference) || 0;
+      if (!isSelfNote && quietPref >= 60 && this.consecutiveSilenceCount < 2) {
+        return {
+          kind: 'silent_presence', at,
+          reason: '用户已经离开 ' + Math.round(idleMs / 60000) + ' 分钟（偏好安静陪伴）',
+          hint: '静默相伴，不出声，仅微动作同在',
+          selfIntent,
+        };
+      }
       return {
         kind: 'idle', at,
         reason: '用户已经离开 ' + Math.round(idleMs / 60000) + ' 分钟',
@@ -215,6 +240,12 @@ class TriggerEngine {
   commit(out) {
     if (!out) return;
     this.lastFiredAt = out.at;
+    // v1.3-b: 连续沉默留白计数与退出重置
+    if (out.kind === 'silent_presence') {
+      this.consecutiveSilenceCount++;
+    } else {
+      this.consecutiveSilenceCount = 0;
+    }
     // 连戳不需要单独记账：那 5 下过了 8 秒窗口自然不再算连戳，
     // 期间想再开口由冷却挡着 —— 同串去重是它的严格子集（见文件头）。
     // 🔴 D-16：两条刹车分开记。
@@ -226,6 +257,7 @@ class TriggerEngine {
     if (this.tracker) {
       if (isSelfNote) this.tracker.selfNoteDuringIdle = true;
       // D-25：好奇提问是**开口**（不是留纸条）⇒ 照吃 spokenDuringIdle 刹车，一视同仁
+      // v1.3-b: silent_presence 亦置位 spokenDuringIdle，表示本轮挂机已产生留白陪伴，防止每 45 秒重复触发微动作
       else if (out.kind !== 'poke') this.tracker.spokenDuringIdle = true;
     }
     // 🔴 D-25：好奇破冰独立节流记账 —— 只有真的说出口才记（被礼貌闸门拒了不记，下次还问）

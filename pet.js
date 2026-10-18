@@ -2995,8 +2995,23 @@ async function tryProactive() {
     if (api.proactiveDeclined) api.proactiveDeclined(offer);
     return;
   }
+  // v1.3-b: silent_presence 沉默留白第三种结局：零 LLM 调用，仅以微动作表达同在
+  if (offer.kind === 'silent_presence') {
+    executeSilentPresence(offer);
+    return;
+  }
   // 带 offer 发请求：主进程用它记账，且只有真的说出口才记（见 main.js）
   await runChat('（自言自语）', { proactive: true, offer });
+}
+
+/** 触发沉默留白微动作并向主进程记账 (v1.3-b) */
+function executeSilentPresence(offer) {
+  if (api && api.proactiveCommit) api.proactiveCommit(offer);
+  if (animController && typeof animController.playAction === 'function') {
+    animController.playAction('look_around', { duration: 2000, reason: 'silent_presence' });
+  } else {
+    setState('idle');
+  }
 }
 
 /* 连戳的**调度计数**在渲染端：主进程看不到"现在是第几下"，
@@ -3027,6 +3042,11 @@ if (api && api.onProactiveOffer) {
     if (!offer) return;
     if (busy || streaming || remoteStreaming || !politeToSpeak(offer.kind)) {
       if (api.proactiveDeclined) api.proactiveDeclined(offer);
+      return;
+    }
+    // v1.3-b: silent_presence 沉默留白第三种结局：零 LLM 调用
+    if (offer.kind === 'silent_presence') {
+      executeSilentPresence(offer);
       return;
     }
     await runChat('（自言自语）', { proactive: true, offer });
