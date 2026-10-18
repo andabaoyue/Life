@@ -64,6 +64,7 @@ const INCLUDE = [
   'NOTICE',
   'BRANDING.md',
   'ASSET-GENERATION-GUIDE.md',
+  'SOFTWARE-PURPOSES-AND-APPLICATIONS.md',
 
   // 目录级
   'src/**',
@@ -102,7 +103,6 @@ const EXCLUDE = [
   ['Life-实验有效性修复-第二阶段.md', '实验有效性修复过程稿（第二阶段），非交付物'],
   ['Life-实验有效性修复-第三阶段.md', '实验有效性修复过程稿（第三阶段），非交付物'],
   ['拟人化三条_实施方案_待审核.md', '待审核的实施方案草案，未定稿不外发'],
-  ['SOFTWARE-PURPOSES-AND-APPLICATIONS.md', '软件用途说明长文；正文版本号仍停在 v0.9.5.2 且全仓零引用（孤儿文档），修好再议'],
   ['AGENTS.md', '内部开发纪律；引用 .pi/skills 工具链与本机环境备注，且它指向的 .pi 不外发'],
 
   // —— 工具链配置 ——
