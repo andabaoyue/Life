@@ -7,6 +7,8 @@ const { isPeakHour } = require('./deepseek');
 // 不再依赖 DeepSeek concrete class；isPeakHour（峰谷判定 util）暂留。
 // P5-A: 成本记账改走 provider-keyed Cost Strategy，不再经 DeepSeek concrete costOf。
 const { createAdapter, getProviderInfo } = require('./provider-registry');
+const { createFallbackAdapter } = require('./fallback-adapter');
+const { createCircuitBreaker } = require('./circuit-breaker');
 const { getCostStrategy } = require('./cost-strategy');
 const { normalizeUsage } = require('./usage-normalizer');
 const { PERSONA } = require('./persona');
@@ -183,9 +185,12 @@ const PERCEPTION_TEXT_MAP = Object.freeze({
  *   否则分两次做要破两次缓存。
  */
 class Brain {
-  constructor(userDataDir, cfg) {
+  constructor(userDataDir, cfg, opts = {}) {
     this.dir = userDataDir;
     this.cfg = cfg || {};
+    this._getSS = (opts && typeof opts.getSS === 'function')
+      ? opts.getSS
+      : (this.cfg && typeof this.cfg._getSS === 'function' ? this.cfg._getSS : undefined);
     // v1.0 D-6：提案触发源判定结果暂存（接线时写入，③ 建案阶段消费）。
     //   🔴 必须在构造函数初始化为 null —— 不初始化的话，下一个人接线时读到
     //   undefined会与「没有提案」混淆，于是功能静默少一块且**不报错**。
@@ -209,7 +214,25 @@ class Brain {
     }
     // P5-B4: provider dispatch 经 Registry —— provider 来自 config（缺省经 providerFor 解析），
     // 未知 provider fail-closed；无品牌 if/else。
-    this.api = createAdapter(this.cfg.provider || providerFor(this.cfg.baseURL), this.cfg);
+    // v1.5-a: Provider 容灾自动回落与熔断包装（未配置备用时退化为纯熔断保护）
+    const primaryAdapter = createAdapter(this.cfg.provider || providerFor(this.cfg.baseURL), this.cfg);
+    const secondaryAdapter = this._buildFallbackAdapter(this.cfg);
+    this.providerBreaker = createCircuitBreaker({
+      failureThreshold: this.cfg.fallbackFailureThreshold || 3,
+      cooldownMs: this.cfg.fallbackCooldownMs || 30000,
+    });
+    this.api = secondaryAdapter
+      ? createFallbackAdapter({
+          primary: primaryAdapter,
+          secondary: secondaryAdapter,
+          breaker: this.providerBreaker,
+          onFallback: (info) => this._noteFallback(info)
+        })
+      : createFallbackAdapter({
+          primary: primaryAdapter,
+          secondary: null,
+          breaker: this.providerBreaker
+        });
     this.persona = PERSONA;
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
@@ -746,6 +769,12 @@ class Brain {
         if (data.perceptionId) rec.perceptionId = data.perceptionId;
         if (typeof data.turnNo === 'number') rec.turnNo = data.turnNo;
       }
+      if (data.recordType === 'provider_fallback') {
+        rec.reason = data.reason || null;
+        rec.primaryFailed = Boolean(data.primaryFailed);
+        rec.primaryConnectionId = data.primaryConnectionId || null;
+        rec.fallbackConnectionId = data.fallbackConnectionId || null;
+      }
       if (!fs.existsSync(this.dir)) {
         fs.mkdirSync(this.dir, { recursive: true });
       }
@@ -753,6 +782,67 @@ class Brain {
       return rec;
     } catch (e) {
       console.error('[Brain] appendTelemetry failed:', e.message);
+      return null;
+    }
+  }
+
+  _getActiveConnectionId() {
+    if (this.cfg && this.cfg.connectionId) return this.cfg.connectionId;
+    if (!this.dir) return '';
+    try {
+      const { loadStore } = require('./connections');
+      const loaded = loadStore(this.dir);
+      return (loaded && loaded.ok && loaded.store && loaded.store.activeConnectionId) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  _noteFallback(info = {}) {
+    console.log('[Provider Fallback]', info.reason || 'fallback');
+    this.appendTelemetry({
+      recordType: 'provider_fallback',
+      reason: info.reason,
+      primaryFailed: Boolean(info.primaryFailed),
+      primaryConnectionId: this._getActiveConnectionId(),
+      fallbackConnectionId: (this.cfg && this.cfg.fallbackConnectionId) || '',
+      timestamp: info.at || Date.now()
+    });
+  }
+
+  _buildFallbackAdapter(cfg) {
+    if (!cfg || !cfg.fallbackConnectionId || typeof cfg.fallbackConnectionId !== 'string' || !cfg.fallbackConnectionId.trim()) {
+      return null;
+    }
+    const fallbackId = cfg.fallbackConnectionId.trim();
+    if (!this.dir) return null;
+    try {
+      const { loadStore, resolveRuntimeCfg } = require('./connections');
+      const loaded = loadStore(this.dir);
+      if (!loaded || !loaded.ok || !loaded.store || !Array.isArray(loaded.store.connections)) {
+        return null;
+      }
+      const target = loaded.store.connections.find((c) => c && c.connectionId === fallbackId);
+      if (!target) return null;
+      const getSS = this._getSS || (cfg && typeof cfg._getSS === 'function' ? cfg._getSS : undefined);
+      const resolved = resolveRuntimeCfg(target, { dir: this.dir, getSS });
+      if (!resolved || !resolved.ok || !resolved.cfg) {
+        console.warn(`[Brain] 备用端点凭据解析未通过 (${fallbackId}):`, resolved && resolved.error);
+        return null;
+      }
+
+      const { providerFor } = require('./provider-policy');
+      const fallbackMergedCfg = {
+        ...this.cfg,
+        provider: resolved.cfg.provider,
+        baseURL: resolved.cfg.baseURL,
+        credentialType: resolved.cfg.credentialType,
+        model: resolved.cfg.model,
+        apiKey: resolved.cfg.apiKey
+      };
+      return createAdapter(fallbackMergedCfg.provider || providerFor(fallbackMergedCfg.baseURL), fallbackMergedCfg);
+    } catch (err) {
+      console.warn('[Brain] _buildFallbackAdapter 失败:', err.message);
       return null;
     }
   }

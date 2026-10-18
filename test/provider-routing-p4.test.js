@@ -155,7 +155,9 @@ function check(name, cond, extra) {
 {
   const srcDir = path.join(__dirname, '..', 'src');
   const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.js'));
-  const targetModules = ['circuit-breaker', 'provider-routing', 'generation-attempt'];
+  // v1.5-a: circuit-breaker 已正式接线接入主干生产编排（brain.js / fallback-adapter.js），
+  // 不再属于 0 生产引用的预留模块；provider-routing 与 generation-attempt 仍保持预留。
+  const targetModules = ['provider-routing', 'generation-attempt'];
   let productionReferences = 0;
   for (const file of files) {
     if (targetModules.some(m => file === `${m}.js`)) continue;
@@ -169,7 +171,7 @@ function check(name, cond, extra) {
       }
     }
   }
-  check('INT-01 源码门禁：src/ 对三大预留模块的生产引用数恒为 0（架构储备未接主生产链路）', productionReferences === 0);
+  check('INT-01 源码门禁：src/ 对预留模块的生产引用数恒为 0（架构储备未接主生产链路）', productionReferences === 0);
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

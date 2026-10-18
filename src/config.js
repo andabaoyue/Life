@@ -96,6 +96,11 @@ const DEFAULTS = {
   motionTickMs: 50,
   motionMargin: 20,
 
+  // ---- v1.5-a: Provider 容灾自动回落 ----
+  fallbackConnectionId: '',        // 空串 = 未配置备用
+  fallbackFailureThreshold: 3,
+  fallbackCooldownMs: 30000,
+
   // 单价（元/百万 token）。峰谷价不同，按你账单实际数字改这里。
   price: {
     peak:   { hit: 0.04, miss: 2, out: 8 },
@@ -215,6 +220,10 @@ function sanitize(raw = {}) {
     motionSpeed: finiteInt(raw.motionSpeed, DEFAULTS.motionSpeed, 1, 20),
     motionTickMs: finiteInt(raw.motionTickMs, DEFAULTS.motionTickMs, 30, 250),
     motionMargin: finiteInt(raw.motionMargin, DEFAULTS.motionMargin, 0, 200),
+    // v1.5-a: Provider 容灾自动回落配置清洗
+    fallbackConnectionId: typeof raw.fallbackConnectionId === 'string' ? raw.fallbackConnectionId.trim() : DEFAULTS.fallbackConnectionId,
+    fallbackFailureThreshold: finiteInt(raw.fallbackFailureThreshold, DEFAULTS.fallbackFailureThreshold, 1, 100),
+    fallbackCooldownMs: finiteInt(raw.fallbackCooldownMs, DEFAULTS.fallbackCooldownMs, 1000, 3600000),
     price: {
       peak: { hit: finiteNonNegative(peak.hit, DEFAULTS.price.peak.hit), miss: finiteNonNegative(peak.miss, DEFAULTS.price.peak.miss), out: finiteNonNegative(peak.out, DEFAULTS.price.peak.out) },
       valley: { hit: finiteNonNegative(valley.hit, DEFAULTS.price.valley.hit), miss: finiteNonNegative(valley.miss, DEFAULTS.price.valley.miss), out: finiteNonNegative(valley.out, DEFAULTS.price.valley.out) }

@@ -1,8 +1,8 @@
 /**
  * src/circuit-breaker.js — Provider Health / Circuit Breaker（v0.9.8 P4-3）
  *
- * 【Staged 预留阶段】本模块已实现并有回归覆盖，但暂未接进主干生产编排
- * （brain.js 主链路当前无真实熔断流量经此流转）——INT-01：实现 ≠ 运行时。
+ * 【v1.5-a 生产接线】本模块已正式接进主干生产编排（brain.js / fallback-adapter.js）。
+ * 主链路与备用回落流量经此流转，提供端点熔断与快速失败保护。
  *
  * 状态机：closed → open → half-open → closed / open。
  * - closed：正常放行；

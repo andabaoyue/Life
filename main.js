@@ -1231,7 +1231,7 @@ ipcGuard.handle('config-set-key', (e, key) => {
     oldBrain: brain,
     oldCfg,
     nextCfg: next,
-    createCandidate: (c) => new Brain(app.getPath('userData'), c),
+    createCandidate: (c) => new Brain(app.getPath('userData'), c, { getSS }),
     bindCandidate: bindBrainDeps,
     persistCfg: (c) => { persisted = persistCfg(c, { clearKey: !trimmed }); }
   });
@@ -1387,7 +1387,7 @@ ipcGuard.handle('connections:activate', (e, opts = {}) => {
     oldBrain: brain,
     oldCfg: cfg,
     persistFlat: (c) => { persistCfg(c); },
-    createCandidate: (c) => new Brain(app.getPath('userData'), c),
+    createCandidate: (c) => new Brain(app.getPath('userData'), c, { getSS }),
     bindCandidate: bindBrainDeps,
     getSS,
     fallbackSecret: (cfg && cfg.apiKey) || ''
@@ -1426,7 +1426,7 @@ app.whenReady().then(() => {
   // （反过来也不报错，只会静默注进去两个 null —— 那正是最难查的那种。）
   tracker = new ActivityTracker();
   wardrobe = new Wardrobe(app.getPath('userData'));
-  brain = new Brain(app.getPath('userData'), cfg);
+  brain = new Brain(app.getPath('userData'), cfg, { getSS });
   // 换装执行器 + 本地活动追踪器注入：模型给提案 -> wardrobe 落真实状态 ->
   // 结果写回历史；她被戳了几下 -> tracker 记账 -> 随当轮 user 消息如实告知。
   bindBrainDeps(brain);
