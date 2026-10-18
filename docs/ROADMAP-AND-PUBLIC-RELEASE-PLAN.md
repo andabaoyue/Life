@@ -662,6 +662,18 @@ Private Research Repository
 - 可公开的示例数据 / 示例配置
 - License / Notice / Branding 文档
 
+> **落地状态（2026-10）**：以上剥离流程已实现为 `tools/public-export.js`。
+> 它不做黑名单过滤，而是**默认拒绝的发布边界**：白名单 `INCLUDE` 决定能出去什么，
+> 带理由的 `EXCLUDE` 在白名单内挖洞，既没被 `INCLUDE` 也没被 `EXCLUDE` 命中的文件
+> 一律判为未分类并让门禁失败（新增根目录文档必须显式表态）。
+>
+> - `node tools/public-export.js` —— 门禁：公开集内零开发机绝对路径 / 零凭据 / 零断链 / 零未分类
+> - `node tools/public-export.js --list` —— 查看每个文件被判公开还是挡住，及挡住它的理由
+> - `node tools/public-export.js --out <目录>` —— 按判定结果物化一份公开集（不落在仓库内）
+>
+> 它与 `release-check.js` 第 10 项、`test/public-export.test.js`（32 项）共同锁住：
+> 任何一次「顺手把内部文档发出去」都会先在门禁上撞墙，而不是等推到公开库之后才发现。
+
 ---
 
 ## 12. 长期路线总览
@@ -785,7 +797,7 @@ Public Source-Available Release
 
 ## 13. v1.2 ~ v1.4 数字生命三阶演进与 v1.5+ 综合大成规划
 
-> 详细技术规格与 `v1.2` 专项实施计划见独立正典文档：[`docs/v1.2-UPDATE-PLAN.md`](docs/v1.2-UPDATE-PLAN.md)
+> 详细技术规格与 `v1.2` 专项实施计划见独立正典文档：[`docs/v1.2-UPDATE-PLAN.md`](v1.2-UPDATE-PLAN.md)
 
 ### 13.1 演进总方针：严守仓库纪律，拆版解耦，按「风险收益比与生命纯粹性」分步推进
 

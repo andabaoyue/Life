@@ -1,4 +1,4 @@
-# Life v1.1.1
+# Life v1.6.0
 
 ```text
         . ~ ~ ~ ~ ~ .
@@ -193,7 +193,8 @@ assets/pet.png        透明立绘（单图兜底皮套，64×80 像素点阵）
 assets/character/     分层换装资源（见「换装系统」）
 tools/chroma.py  绿幕抠图脚本
 tools/check.js   全量语法检查脚本
-tools/release-check.js 发布包资源完整性自动化检查脚本
+tools/release-check.js 发布包资源完整性自动化检查脚本（含公开发布剥离门禁）
+tools/public-export.js 公开发布剥离器：白名单选出可公开文件，默认拒绝未分类文件
 tools/replay-check.js  Replay 离线推演一致性核验工具
 test/            测试
 ```
@@ -593,6 +594,7 @@ node test/v14-selfnote-context.test.js # 27 项：v1.4-a 自留便签素材供�
 node test/v14-observer-journal.test.js # 27 项：v1.4-b 生命观察日记内核（PROPOSAL_SOURCES 契约不降级、IPC 防伪造降级、trustedContent 权威快照绑定、闸门 4 免确认放行、配额探针防御、精准同日去重、零时间数字泄漏与篇幅护栏、v1.6-a 句界截断保留与无标点回退、D-24 关窗铸造入传闭环）
 node test/v15-provider-fallback.test.js # 51 项：v1.5-a Provider 容灾自动回落与熔断接线（主端点正常备用零调用、retryable 错误一次回落成功、3 次失败熔断第 4 次直接走备用、401/4xx 客户端错误直接抛出且不计入熔断、AbortError 用户取消不回落、两端均失败 PRIMARY_AND_FALLBACK_FAILED 且调用次数为 2、无备用退化纯熔断快速失败、回落写遥测且零密钥泄露、shouldFallback 行为矩阵、流式已吐字 emitted>0 硬阻断防重播、hot-swap 新 Brain breaker closed 独立隔离、流式未吐字 emitted=0 允许切备用、DPAPI 密文凭据解密与端到端真实回落）
 python3 test/ui_test.py                  # 171 项：真实交互 + mock 衣柜桥接 + 运动步态与素体基座解耦 + 64px 整数倍立绘 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
+node test/public-export.test.js # 36 项：v1.6-c 公开发布剥离门禁。为什么单独成文：ROADMAP §11 要求「公开发布剥离」流程，但仓库此前从无此物 —— 公开库的 276 文件快照是手工挑的，而旧 release-check 的路径扫描给的是「0 处泄露」假绿灯（三重盲区：文件名前缀跳过、只认一个 software 子目录、只扫 4 个目录）。覆盖：glob 语义（** 跨级、目录前缀不越界、根文件名精确）、协议不被误判成盘符（https 的 s: 实测 599 处假阳性）、转义双反斜杠归一（实测 26 处误报）、豁免清单双向前缀（C:\Program Files 中间空格会被 token 截断）、光杆盘符与省略号判为「形状」而非「位置」、规则 A 只覆盖非 test 文件而规则 B（真用户名探测）全量生效、默认拒绝的 unclassified、死规则点名、真实公开集零开发机路径零凭据零断链、v1.3~v1.6 发布回退锁、以及「扫描器不是空转」的变异对照（拿已知含 27 处开发机路径的私有审计报告喂进去必须报出来）、以及 --sync 就地同步公开库工作树的三道守卫（不存在 / 与私有库重叠 / 私有库父目录一律拒绝，且拒绝时零文件系统改动）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 node test/gate-selfcheck.test.js  # 同理：门禁自检，不标项数（只断言 docs.test.js 的调度层设计，不重跑全仓）
 ```
