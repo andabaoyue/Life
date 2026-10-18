@@ -589,6 +589,7 @@ node test/persona-manner.test.js  # 46 项：v3.1 口癖与体感回归（A 方�
 node test/v13-power-monitor-source.test.js # 13 项：v1.3-a 宿主电源与环境事件源（PowerMonitorSource 依赖注入适配器、4 类事件映射、订阅与取消对称性、防泄漏与异常安全隔离）
 node test/v13-perception-channel.test.js # 32 项：v1.3-a 具身环境知觉注入通道（ATTENDED 候选挂载 user 尾部、system 提示词零污染前缀缓存铁律、同窗<=3次与间隔>=5轮严格节流、Null-Perception 原则、ATTENDED≠SUBJECT_ACQUIRED 认识论防线、成本遥测落盘）
 node test/v13-silent-presence.test.js  # 23 项：v1.3-b 沉默留白第三种结局（quiet_preference>=60 沉默提案、对照组低分回退 idle、连续上限 K=2 退出条件、用户主动开口必应、零 LLM API 调用、微动作触发、静态扫描严禁 Math.random）
+node test/v14-selfnote-context.test.js # 27 项：v1.4-a 自留便签素材供给与零污染防护（整条过滤 synthetic、零计时数字、排除出生时刻与日期锚点、自我投射与生理感受纯定性融入、便签回响、单条截断防膨胀、长句观察免误伤跑偏拦截）
 python3 test/ui_test.py                  # 171 项：真实交互 + mock 衣柜桥接 + 运动步态与素体基座解耦 + 64px 整数倍立绘 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
 node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
 node test/gate-selfcheck.test.js  # 同理：门禁自检，不标项数（只断言 docs.test.js 的调度层设计，不重跑全仓）

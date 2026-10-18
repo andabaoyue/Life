@@ -2494,20 +2494,105 @@ class Brain {
    *
    * @returns {Promise<?{content:string, usage:object}>} null = 她说不留/失败
    */
+  /**
+   * v1.4-a：提取安静前最近的对话痕迹（供自留便签素材使用）。
+   *
+   * ## 铁律与边界
+   *   1. **整条丢弃 synthetic 消息**：主动感知消息（含「用户离开 N 分钟」、
+   *      [内部语气提示]、[此刻她想说的方向]）是程序指令，绝不是真实对话。
+   *      整条过滤，一个字都不放进素材，杜绝一切程序计时与提示词污染。
+   *   2. **保留 bridge 跨窗真实尾消息**（桥梁消息是前窗真实对话）。
+   *   3. **剥离尾部程序块**：剥除用户消息尾部可能附带的【...】附加块（如【此刻的环境知觉】、
+   *      【当前环境感知】等）与助手尾部 [系统] 换装执行结果。
+   *   4. **只取最近 maxMessages 条**（缺省 6 条，即 2~3 轮）。
+   */
+  _extractRecentDialogueForSelfNote(maxMessages = 6) {
+    if (!this.memory || !this.memory.data || !Array.isArray(this.memory.data.history)) return [];
+    const hist = this.memory.data.history;
+    const picked = [];
+    for (let i = hist.length - 1; i >= 0 && picked.length < maxMessages; i--) {
+      const item = hist[i];
+      if (!item || typeof item.content !== 'string') continue;
+      // 铁律 1：整条丢弃 synthetic 消息
+      if (item.synthetic === true) continue;
+
+      let text = item.content;
+      // 剥除尾部附加块
+      text = text
+        .replace(/(?:\r?\n)+【(?:出生与程序年龄|出生时刻|当前自我投影|当前主体状态快照|当前环境感知|此刻的环境知觉)】[\s\S]*$/g, '')
+        .replace(/(?:\r?\n)+\[系统\][\s\S]*$/g, '')
+        .trim();
+      if (!text) continue;
+
+      // 单条消息适度截断（最多 80 字），防止对话痕迹膨胀至上千 Token 吞噬注意力
+      const trimmedText = text.length > 80 ? text.slice(0, 78) + '…' : text;
+
+      picked.unshift({
+        role: item.role === 'user' ? 'user' : 'assistant',
+        text: trimmedText
+      });
+    }
+    return picked;
+  }
+
   async askForSelfNote(opts = {}) {
     try {
       if (this.shutdownRequested) return null;
       if (this.api && typeof this.api.complete !== 'function') return null;
 
-      // 把「她此刻的状态」如实给她 —— 但**只给方向，不给程序数字**。
-      //   ⚠️ 绝不把 idleMinutes 这类程序换算值拼进 prompt：
-      //     实测踩过（D-7 那次她真的说出「静了 50000 分钟」），
-      //     那既是内部时钟泄漏，也违反 persona.js:28。
+      // v1.4-a：为「自留便签」供给真实素材（自我投射、生理体感、对话痕迹、上次便签）。
+      // ⚠️ 铁律守护：
+      //   1. 坚决排除出生时刻与日期锚点（避免与「你不知道现在几点」产生认知冲突）。
+      //   2. 坚决零程序数字（零 \d+ 分钟、零 HH:MM 时钟数字、零 token 预算）。
+      //   3. 整条丢弃 synthetic 消息（不让指令与计时泄漏进视野）。
       const intentKind = opts.intentKind ? String(opts.intentKind).slice(0, 64) : null;
-      const userContent = '【此刻】'
-        + '\n用户不在。你独自安静了一段时间 —— 这是事实，不是情绪。'
-        + (intentKind === 'wantToLeaveSomething' ? '\n你想留下点什么。' : '')
-        + '\n\n如果你确实想留下点什么，就写下来；不想就说不。';
+      const sections = [];
+
+      sections.push('【此刻】');
+      sections.push('用户不在。你独自安静了一段时间 —— 这是事实，不是情绪。');
+      if (intentKind === 'wantToLeaveSomething') {
+        sections.push('你想留下点什么。');
+      }
+
+      // 素材 1 & 2：自我投射、生理感受与可塑性（纯定性，不调 currentSelfContext() 防带出出生时刻）
+      const selfParts = [];
+      const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
+        ? this.subjectState.data.history : [];
+      const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
+      const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+      selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
+
+      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
+        const regSense = this.internalRegulation.formatPerception();
+        if (regSense) selfParts.push(regSense.trim());
+      }
+
+      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
+        const projection = this.selfLedger.currentSelfText();
+        if (projection) selfParts.push(projection.trim());
+      }
+
+      if (selfParts.length > 0) {
+        sections.push('\n【你此刻的自我倾向与状态】\n' + selfParts.join('\n'));
+      }
+
+      // 素材 3：安静前彼此的对话痕迹（最近 2~3 轮真实对话，整条过滤 synthetic）
+      const recentDialogue = this._extractRecentDialogueForSelfNote(6);
+      if (recentDialogue.length > 0) {
+        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
+        sections.push('\n【安静前彼此的对话痕迹】\n' + dlgLines.join('\n'));
+      }
+
+      // 素材 4：上次自留便签回响（若有）
+      const lastNote = (this.memory && Array.isArray(this.memory.data.selfNotes) && this.memory.data.selfNotes.length > 0)
+        ? this.memory.data.selfNotes[this.memory.data.selfNotes.length - 1] : null;
+      if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
+        sections.push('\n【你上次曾给自己写下】\n「' + lastNote.content.trim() + '」');
+      }
+
+      sections.push('\n如果你确实想留下点什么，就写下来；不想就说不。');
+
+      const userContent = sections.join('\n');
 
       const res = await this.api.complete(
         [{ role: 'system', content: WANT_TO_LEAVE_SYS },
@@ -2525,6 +2610,13 @@ class Brain {
       const head = text.slice(0, 12);
       const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
       if (!text || isRefusal) return null;
+
+      // 判据 1.5：留言句式护栏（WANT_TO_LEAVE_SYS 规则 2「不是给用户的留言，不要写‘等你回来’这类把对方牵进来的话」）。
+      //   ⚠️ 严格对齐 isRefusal 口径（text.length <= 12）：只认极短纯套话（「等你回来。」「等你忙完」），
+      //     绝不误伤长句或有画面感的自留便签（如「等你回来的时候，窗外的雨应该停了，我把灯给你留着。」）。
+      const toUserPatterns = ['等你回来', '等你忙完', '等你哦', '等你下班', '等你有空'];
+      const isToUser = text.length <= 12 && toUserPatterns.some((p) => head.startsWith(p));
+      if (isToUser) return null;
 
       // 判据 2：长度护栏。这是留给自己的两三句话，不是文章。
       //   超长说明它跑偏了（在写汇报或留言），宁可不要。
