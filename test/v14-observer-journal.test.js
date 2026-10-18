@@ -245,12 +245,32 @@ console.log('--- v1.4-b 生命观察日记内核门禁 ---');
     b.api = { complete: async () => ({ text: '不想写', usage: null }) };
     check('初澜回复「不想写」时静默放弃建案返回 null', (await b.askForObserverJournal({})) === null);
 
-    // 篇幅护栏：超长（>400 字符）返回 null
-    const tooLong = '字'.repeat(401);
-    b.api = { complete: async () => ({ text: tooLong, usage: null }) };
-    check('超过 400 字符篇幅护栏返回 null', (await b.askForObserverJournal({})) === null);
+    // 380 字正常放行，不触发截断 (v1.6-a)
+    const pass380 = '今天你一直在改代码。'.repeat(38); // 10 * 38 = 380 字
+    b.api = { complete: async () => ({ text: pass380, usage: null }) };
+    const passRes = await b.askForObserverJournal({});
+    check('v1.6-a: 适度篇幅（<=400 字）正常放行不触发截断',
+      passRes && passRes.content === pass380);
 
-    // 篇幅护栏：过短（<30 字符）返回 null
+    // 篇幅护栏：超长（>400 字符）【句界截断保留，不再整篇丢弃】(v1.6-a)
+    const tooLong = '字'.repeat(500); // 无标点，走回退路径
+    b.api = { complete: async () => ({ text: tooLong, usage: null }) };
+    const longRes = await b.askForObserverJournal({});
+    check('v1.6-a: 超长日记不再返回 null（改为截断保留）', longRes !== null);
+    check('v1.6-a: 超长日记长度上界 <= 403（400 + 省略号）',
+      longRes && longRes.content.length <= 403, longRes ? 'len=' + longRes.content.length : 'null');
+    check('v1.6-a: 无标点超长串严格回退为 slice(0,400) + "..."',
+      longRes && longRes.content === tooLong.slice(0, 400) + '...');
+
+    // 句界截断：带标点超长串验证「结尾为标点+省略号」
+    const punctText = '今天你一直在改那段代码，眉头皱着。'.repeat(30); // 510 字
+    b.api = { complete: async () => ({ text: punctText, usage: null }) };
+    const punctRes = await b.askForObserverJournal({});
+    check('v1.6-a: 带标点超长串在句界处截断（结尾为标点+省略号）',
+      punctRes && /[。；！？]\.\.\.$/.test(punctRes.content),
+      punctRes ? JSON.stringify(punctRes.content.slice(-6)) : 'null');
+
+    // 篇幅护栏：过短（<30 字符）返回 null（回归保护）
     b.api = { complete: async () => ({ text: '今天挺好的。', usage: null }) };
     check('过短无观察细节（<30 字符）返回 null', (await b.askForObserverJournal({})) === null);
   }

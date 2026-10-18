@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Memory } = require('./memory');
+const { Memory, truncateFadingText } = require('./memory');
 const { isPeakHour } = require('./deepseek');
 // v0.9.8 P2-7: 业务层经 Provider Registry 获取 adapter（stable provider id），
 // 不再依赖 DeepSeek concrete class；isPeakHour（峰谷判定 util）暂留。
@@ -2820,10 +2820,15 @@ class Brain {
       const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
       if (!text || isRefusal) return null;
 
-      // 判据 2：篇幅护栏。不得少于 30 字，不得超过 400 字
-      if (text.length < 30 || text.length > 400) return null;
+      // 判据 2：篇幅护栏。
+      //   · 过短（< 30 字）丢弃 —— 那是没写出东西，不是日记
+      //   · 过长不丢弃，改为句界截断保留 —— 她真诚写了 450 字却整篇扔掉，
+      //     比截断更糟（且完全静默，日志里看不出她写过）。
+      //   · 复用 v1.2.x 的 truncateFadingText，不另写第二套截断逻辑。
+      if (text.length < 30) return null;
+      const finalContent = text.length > 400 ? truncateFadingText(text, 400) : text;
 
-      return { content: text, usage: (res && res.usage) || null };
+      return { content: finalContent, usage: (res && res.usage) || null };
     } catch (err) {
       return null;
     }
