@@ -140,7 +140,7 @@ node -v              → v22.23.1
 | stream 中途 error | partial 保留 | `partial='partial-before-error '` | 安全 |
 | **stream 错误消息脱敏** | secret 脱敏 | `***`→`[REDACTED]`，**`SECRET_MID` 泄漏** | **泄漏（归 A-01）** |
 | stream abrupt cut | partial 保留 | `partial` 含 `cut-off` | 安全 |
-| stream 内静默重启 | 禁止 | stream() 无重启（仅 raw() 预 yield 重试） | 安全（但 P4 fallback 保护未接线，见 INT-01） |
+| stream 内静默重启 | 禁止 | stream() 无重启（仅 raw() 预 yield 重试） | 安全（P4 契约见 INT-01 处置结论；运行时由 fallback-adapter 落实 emitted>0 硬阻断） |
 
 ### E. Budget Guard / Cost
 测试文件：`pure-logic.js`（段 E）。
@@ -258,6 +258,13 @@ node -v              → v22.23.1
 - **Impact**：「fallback 受 outputYielded/cost/privacy/budget 约束」「circuit breaker」「一次调用一 Attempt」等 P4 契约真实 runtime 不生效，仅单元测试覆盖。「测试通过=生产有保护」是误判。
 - **Design Constraint**：与 P4 设计声明存在落差（功能存在但未上生产）。
 - **Minimal Fix Direction**：在 brain 请求编排接线 routing/attempt/circuit，或在 README 明确标注 P4 为「未激活预留」。
+
+#### 处置结论（v1.6-b 追加）
+- **circuit-breaker.js**：已于 v1.5-a 接线生产（`fallback-adapter.js` 使用）。
+- **provider-routing.js / generation-attempt.js**：于 v1.6-b 裁定为**架构储备，不计划启用**。
+- **运行时等效能力**：由 `src/fallback-adapter.js` 提供（主备回落 + 熔断 + 流式防重播）。
+- **为何不接线**：当前无任何消费者读取 Attempt 轨迹；接入只会产生无消费者的死数据与额外调用链开销。
+- **重新激活条件**：需要「完整尝试轨迹」（如成本归因看板）时再评估。
 
 ---
 
@@ -378,7 +385,7 @@ node -v              → v22.23.1
 ## 6. PARTIAL 风险
 
 - **[G-01] usage 真值依赖可伪造的 mint 层**：`usage-normalizer` 自身无法区分 caller-supplied vs provider usage（`usageSource` 仅按字段形态判定）；真值依赖 mint 层，而 mint 可伪造（C-01）。单独 normalize 层无伪造，组合后可伪造「provider_response usage」。Component: `usage-normalizer.js` + `experiment-metadata.js`。
-- **[D-post-yield]「已 yield 禁 fallback/重启」保护未生效**：`stream()` 内无静默重启（验证通过），但强制逻辑在 `provider-routing/generation-attempt`（未接线，INT-01），故运行时该保护目前不生效。
+- **[D-post-yield]「已 yield 禁 fallback/重启」保护未生效**：`stream()` 内无静默重启（验证通过），但强制逻辑在 `provider-routing/generation-attempt`（未接线，INT-01），故运行时该保护目前不生效。（注：v1.5-a `fallback-adapter` 已在运行时落实 emitted>0 硬阻断，P4 契约处置见 INT-01 处置结论）
 
 ## 7. STATIC_ONLY 候选
 
@@ -412,7 +419,7 @@ node -v              → v22.23.1
 |---|---|---|---|---|---|
 | B-01 | High | CONFIRMED | deepseek.js / experiment-metadata.js / provider-adapter.js | Yes | Yes |
 | C-01 | High | CONFIRMED | experiment-metadata.js (`__internal`) | Yes | Yes |
-| INT-01 | High | CONFIRMED | provider-routing.js / generation-attempt.js / circuit-breaker.js / brain.js | Yes (grep) | Yes |
+| INT-01 | High | CONFIRMED（已澄清，见处置结论） | provider-routing.js / generation-attempt.js / circuit-breaker.js / brain.js | Yes (grep) | 见处置结论 |
 | A-01 | Medium | CONFIRMED | redact.js | Yes | Yes |
 | E-02 | Medium | CONFIRMED | deepseek.js `costOf` / cost-strategy.js / brain.js:1564 | Yes | Yes |
 | F-01 | Medium | CONFIRMED | provider-registry.js | Yes | Yes |
@@ -441,7 +448,7 @@ node -v              → v22.23.1
 5. **进程崩溃注入**：未做 process kill / 断电 / 半写入 fault-injection（`secure.js` saveConfig 事务回滚、`atomic.js` 原子写未测崩溃一致性）。
 6. **网络**：Sandbox 有 GitHub 出站（`git fetch`/`push` 成功）；但未探测对公网任意 endpoint 的出站策略；mock server 仅回环 `127.0.0.1`。
 7. **凭据**：全程未触碰/输出 git 或任何 API 凭据；`secure.js` 加密不可用时的明文降级路径未实测（需 Electron）。
-8. **P4 未接线**：因 INT-01，E-01「运行时暂不触发」，无法在真实 fallback 流复现预算 fail-open 的实际后果（仅模块级复现）。
+8. **P4 未接线**：因 INT-01，E-01「运行时暂不触发」，无法在真实 fallback 流复现预算 fail-open 的实际后果（仅模块级复现；P4 契约处置见 INT-01 处置结论）。
 9. **时间边界**：#9 峰谷表仅覆盖 2026 年手工节假日/调休，2027+ 未验证（表过期方向安全，多估成本）。
 
 ---
