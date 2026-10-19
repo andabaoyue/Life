@@ -872,6 +872,58 @@ function validOffer(offer) {
   return age >= 0 && age <= OFFER_TTL_MS;
 }
 
+/* 🔴 2026-10-19：主进程在等渲染端回执时**不持状态**（见 chat-send 的注释），
+   而回执本身可能丢 —— 渲染端卡顿、系统进 Modern Standby 时 IPC 排队，
+   渲染进程被回收也一样。丢一次回执，旧实现就再也不会自己醒来：
+   实测 2026-10-19 整夜零开口，事后只能靠遥测与电源日志倒推。
+   所以提案发出后必须自带一条自愈重排：等提案过期（TTL）之后再过一个冷却，
+   重新评估一次。这一步纯本地（evaluate 不碰网络），绝不产生 API 调用。 */
+const OFFER_RETRY_MS = OFFER_TTL_MS + COOLDOWN_MS;
+
+/* brain 未就绪（冷启动没填 Key、或热替换进行中）时的短重试。
+   旧实现在这条路上直接 return，调度器当场停摆；用户后来填好 Key 也不会自己回来。 */
+const PROACTIVE_WAKE_RETRY_MS = 60000;
+
+/** D-25：把好奇破冰的事实随评估带入 —— 待问计数与队首原话，**只取不加工**。
+ *  队列的读口是 memory.nextCuriosity()（跳过已问的），与 asked 标记看的是同一条。
+ *
+ *  🔴 2026-10-19 收口：此前这段只存在于后台 tick，`proactive-check` IPC 直接调
+ *     `trigger.evaluate()`（零参）⇒ 渲染端发起的那条路永远拿不到 curiosityAsk，
+ *     同一个引擎在两条入口上给出不同答案。现在两条入口共用本函数。
+ *  ⚠️ brain / memory 都可能为 null（启动早期、热替换窗口）：给 null 事实而不是抛。 */
+function evaluateTriggerWithCuriosity() {
+  if (!trigger) return null;
+  const mem = brain && brain.memory ? brain.memory : null;
+  const curQuestion = (mem && typeof mem.nextCuriosity === 'function')
+    ? mem.nextCuriosity() : null;
+  const curPending = (mem && mem.data && Array.isArray(mem.data.curiosityQueue))
+    ? mem.data.curiosityQueue.filter((x) => x && x.asked !== true).length : 0;
+  return trigger.evaluate({ curiosityPending: curPending, curiosityQuestion: curQuestion });
+}
+
+/** 提案派发留痕（2026-10-19）。为什么值得记：昨夜排查时 `proactive-declined` 有审计
+ *  而 `proactive-offer` 没有 —— 于是「主进程到底有没有出过提案」只能靠 perception_attach
+ *  遥测与 Windows 电源日志反推。补上之后三种形态一眼可分：
+ *    offer 有、declined 无、chat 无 ⇒ 回执丢了；
+ *    offer 有、declined 有        ⇒ 被礼貌闸门拒了（正常）；
+ *    offer 有、chat 有、llm_call 无 ⇒ API 失败。
+ *  ⚠️ 只记元数据（提案种类 / 意图种类），绝不记提案内容或用户数据。
+ *  ⚠️ append 失败绝不能影响派发 —— 审计是证据，不是前置条件。 */
+function auditProactiveDispatched(offer) {
+  if (!proactiveAuditLog) return;
+  try {
+    proactiveAuditLog.append({
+      channel: 'proactive-offer',
+      outcome: 'dispatched',
+      capability: null,
+      via: 'main',
+      offerKind: offer && offer.kind ? String(offer.kind) : null,
+      selfIntentKind: (offer && offer.selfIntent && offer.selfIntent.kind)
+        ? String(offer.selfIntent.kind) : null,
+    });
+  } catch { /* 审计写不进去也不能挡住派发 */ }
+}
+
 function scheduleProactiveCheck(delayMs) {
   if (proactiveTimer) clearTimeout(proactiveTimer);
   proactiveTimer = setTimeout(() => {
@@ -897,7 +949,14 @@ function proactiveBaseMs() {
 }
 
 function checkAndPushProactive() {
-  if (!trigger || !brain || !brain.ready || !win || win.isDestroyed()) return;
+  // 🔴 2026-10-19 不变式：**每一次 tick 结束都必须已经安排好下一次 tick**。
+  //   除了「用户互动主动重排」那一条路径之外，任何 return 之前都要有 scheduleProactiveCheck。
+  //   旧实现在这里直接 return ⇒ 冷启动没填 Key 时调度器当场停摆，用户后来填好也不会自己回来。
+  //   此处宁可 60 秒后空转一次（纯本地，零 API 成本），也不许停摆。
+  if (!trigger || !brain || !brain.ready || !win || win.isDestroyed()) {
+    scheduleProactiveCheck(PROACTIVE_WAKE_RETRY_MS);
+    return;
+  }
 
   const at = Date.now();
   const lastAct = tracker ? tracker.lastInteractionAt : at;
@@ -911,20 +970,24 @@ function checkAndPushProactive() {
 
   // 🔴 D-25：好奇破冰的事实随评估带入 —— 待问计数与队首原话，**只取不加工**。
   //   队列的读口是 memory.nextCuriosity()（跳过已问的），与 asked 标记看的是同一条。
-  const curQuestion = (brain.memory && typeof brain.memory.nextCuriosity === 'function')
-    ? brain.memory.nextCuriosity() : null;
-  const curPending = (brain.memory && Array.isArray(brain.memory.data.curiosityQueue))
-    ? brain.memory.data.curiosityQueue.filter((x) => x && x.asked !== true).length : 0;
-  const offer = trigger.evaluate({ curiosityPending: curPending, curiosityQuestion: curQuestion });
+  //   ⚠️ 2026-10-19 起组装逻辑收口到 evaluateTriggerWithCuriosity()，
+  //     让后台 tick 与 proactive-check IPC 两条入口共用同一份事实（此前 IPC 漏传）。
+  const offer = evaluateTriggerWithCuriosity();
   if (offer) {
     win.webContents.send('proactive-offer', offer);
-  } else {
-    const idleRemaining = proactiveBaseMs() - idleMs;
-    const nextDelay = idleRemaining > 0 ? idleRemaining : COOLDOWN_MS;
-    // 挂机检查调度：步长不超过 10 分钟，确保 10、20 分钟阶段性挂机事件能被及时检测
-    const checkDelay = Math.min(Math.max(COOLDOWN_MS, nextDelay), 10 * 60000);
-    scheduleProactiveCheck(checkDelay);
+    auditProactiveDispatched(offer);
+    // 🔴 回执（proactive-commit / proactive-declined / chat-send 的 finally）会把它
+    //   换更短的间隔；回执丢了就靠这一条自愈重排 —— 90 秒后重新评估。
+    //   为什么不会变成骚扰：提案没真的说出口就不会 commit，重排只是再产出一份提案
+    //   （纯本地 IPC）；真说了则 spokenDuringIdle 已置位，evaluate 直接返回 null。
+    scheduleProactiveCheck(OFFER_RETRY_MS);
+    return;
   }
+  const idleRemaining = proactiveBaseMs() - idleMs;
+  const nextDelay = idleRemaining > 0 ? idleRemaining : COOLDOWN_MS;
+  // 挂机检查调度：步长不超过 10 分钟，确保 10、20 分钟阶段性挂机事件能被及时检测
+  const checkDelay = Math.min(Math.max(COOLDOWN_MS, nextDelay), 10 * 60000);
+  scheduleProactiveCheck(checkDelay);
 }
 
 // 🔴 D-7：她说完（或被礼貌闸门拒了）之后的收尾。
@@ -1004,7 +1067,11 @@ ipcGuard.handle('proactive-check', () => {
   if (brain && brain.checkPhysiologicalCollapse && brain.checkPhysiologicalCollapse()) return null;
   if (brain && brain.tracker && brain.tracker.sleepMode) return null;
   if (brain && brain.internalRegulation && brain.internalRegulation.isSleeping) return null;
-  return trigger.evaluate();
+  // 🔴 D-25 收口（2026-10-19）：这里原来调 `trigger.evaluate()`（零参），
+  //   于是渲染端这条入口永远拿不到 curiosityPending / curiosityQuestion ⇒
+  //   同一个引擎在「后台 tick」与「渲染端来问」两条路上给出不同答案，
+  //   好奇破冰只在后台那一半世界里存在。现在两条入口共用同一份事实。
+  return evaluateTriggerWithCuriosity();
 });
 
 ipcGuard.handle('chat-report', () => {
@@ -1241,6 +1308,12 @@ ipcGuard.handle('config-set-key', (e, key) => {
   cfg = res.cfg;
   brain = res.brain;
   keyEncrypted = persisted.encrypted;
+
+  // 🔴 2026-10-19：填/换 Key 之后必须把主动搭话的调度叫醒。
+  //   冷启动没 Key 时 tick 走的是「brain 未就绪，60 秒后重试」那条路，本来就会自愈；
+  //   但热替换会换掉 brain 实例、且用户往往在填完 Key 后就不再碰窗口 ——
+  //   不在这里重排，她得等到用户下一次互动才可能开口。这一行是「配置改了要生效」的落点。
+  scheduleProactiveCheck(proactiveBaseMs());
 
   return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
 });
@@ -1625,6 +1698,22 @@ app.whenReady().then(() => {
   agentBuildDeps = { agentIpc, agentSandbox, broadcastToWindows, agentBudget, takeStashedContent };
 
   createWindow();
+
+  /* 🔴 2026-10-19：系统从 Modern Standby / 休眠回来后对齐主动搭话的调度。
+   *
+   *   为什么必须有这一条：挂起的整段时间里 setTimeout 不走表（进程被冻结），
+   *   醒来后那个「旧的下一次」可能已经是一个多小时前就该响的约定 —— 而 Electron
+   *   在 Windows Modern Standby 下不保证补发到点回调。实测 2026-10-19 一整夜：
+   *   系统 22:30 进 Modern Standby，只在 02:35 / 03:29 / 05:09 / 05:39 / 06:10
+   *   五次维护性唤醒的缝隙里动了一下，其余时间整条主动搭话链是静止的。
+   *
+   *   ⚠️ 醒来先隔一个冷却（45 秒）再复查，不立刻弹：刚睁眼就说话是最像「软件」的形态。
+   *   ⚠️ powerMonitor 在部分环境（无头、测试桩）不存在或没有 .on —— 必须判空。 */
+  if (powerMonitor && typeof powerMonitor.on === 'function') {
+    try {
+      powerMonitor.on('resume', () => scheduleProactiveCheck(COOLDOWN_MS));
+    } catch (e) { /* 电源事件不可用不影响任何既有功能 */ }
+  }
 
   // v1.0 系统托盘：水波微澜专用图标（assets/tray.png / tray.ico）+ 双击呼出对话 + 右键菜单；退出严守安全退出链
   try {
