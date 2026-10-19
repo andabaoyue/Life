@@ -1313,7 +1313,13 @@ ipcGuard.handle('config-set-key', (e, key) => {
   //   冷启动没 Key 时 tick 走的是「brain 未就绪，60 秒后重试」那条路，本来就会自愈；
   //   但热替换会换掉 brain 实例、且用户往往在填完 Key 后就不再碰窗口 ——
   //   不在这里重排，她得等到用户下一次互动才可能开口。这一行是「配置改了要生效」的落点。
-  scheduleProactiveCheck(proactiveBaseMs());
+  //
+  //   ⚠️ 延迟取**冷却**而不是基准（proactiveBaseMs）：
+  //     基准是 30 分钟，用它等于「刚填完 Key 她还要再等半小时才第一次评估」——
+  //     而如果填 Key 前已经挂机很久（典型：装好软件先去填 Key），
+  //     那一等就是白等。45 秒既让评估尽快发生，又不至于「刚点完确定她就开口」。
+  //     说不说仍由 evaluate() 独立判定：静默不够久就返回 null 并照常重排。
+  scheduleProactiveCheck(COOLDOWN_MS);
 
   return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
 });
