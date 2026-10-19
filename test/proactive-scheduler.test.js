@@ -266,7 +266,12 @@ check('⑫ proactive-check IPC 走收口后的评估函数（否则 D-25 只剩�
 check('⑬ 派发提案时写了审计（proactive-offer 留痕）',
   /win\.webContents\.send\('proactive-offer'[\s\S]{0,200}?auditProactiveDispatched\(offer\)/.test(mainSrc));
 check('⑭ 填/换 Key 成功后重新叫醒调度（否则填完 Key 她仍不开口）',
-  /ipcGuard\.handle\('config-set-key'[\s\S]{0,1200}?scheduleProactiveCheck\(proactiveBaseMs\(\)\)/
+  /ipcGuard\.handle\('config-set-key'[\s\S]{0,1500}?scheduleProactiveCheck\(COOLDOWN_MS\)/
+    .test(mainSrc)
+  // 🔴 为什么钉住 COOLDOWN 而不是 proactiveBaseMs：基准是 30 分钟，
+  //   用它等于「刚填完 Key 还要再等半小时才第一次评估」。这条断言防的是
+  //   「顺手改成看起来更保守的基准」—— 那会让 V3 的整条验证失效。
+  && !/ipcGuard\.handle\('config-set-key'[\s\S]{0,1500}?scheduleProactiveCheck\(proactiveBaseMs\(\)\)/
     .test(mainSrc));
 check('⑮ 系统 resume 后对齐调度，且先等一个冷却才复查（刚醒就说话最像软件）',
   /powerMonitor\.on\('resume',\s*\(\)\s*=>\s*scheduleProactiveCheck\(COOLDOWN_MS\)\)/.test(mainSrc));
