@@ -1272,7 +1272,13 @@ async function runChat(text, opts) {
       } else if (res.aborted) {
         finish(t('chat.abortedBubble', '(已取消)'));
       } else {
-        finish(t('chat.errorBubble', '(出错了：{error})', { error: res.error }));
+        // 🔴 2026-10-19：按错误类别给不同的话，别再一律「出错了：{error}」。
+        //
+        //   事故背景：Key 失效后 7 次主动搭话全被 401 拒掉，而界面只闪一句
+        //   「出错了：HTTP 401 [auth_failed] …」6 秒就收 —— 人不在电脑前就等于没提示。
+        //   现在：认证失败给**指路**的话（去设置重填 Key），网络类给可读的原因，
+        //   其余保持原样（不替用户下结论）。
+        finish(errorBubbleText(res), isAuthFailure(res) ? 15000 : 6000);
       }
     }
   } catch (e) {
@@ -1288,13 +1294,47 @@ async function runChat(text, opts) {
     syncMotionPriority();
   }
 
-  function finish(t) {
+  function finish(t, ms = 6000) {
     // 报错/取消也要退出 thinking，不然会一直卡在思考动画
     setState('idle');
     show(t);
     clearTimeout(bubbleTimer);
-    bubbleTimer = setTimeout(hideBubble, 6000);
+    bubbleTimer = setTimeout(hideBubble, ms);
   }
+}
+
+/** 认证失败判定（2026-10-19）：只认主进程给的 errorType，渲染端不猜状态码。 */
+function isAuthFailure(res) {
+  return !!res && res.errorType === 'auth_failed';
+}
+
+/** 失败要说人话（2026-10-19）。
+ *
+ *  ## 为什么需要这层映射而不是直接把 err.message 丢上屏
+ *
+ *  实测事故：Key 失效，transport 抛的是
+ *  `HTTP 401 [auth_failed] provider=deepseek stage=request …`。
+ *  这句话对开发者够用，对用户是噪音 —— 它没说「你该去干什么」。
+ *  更要紧的是：**六秒后气泡自动收起**，用户离开一趟就再也不知道发生过什么。
+ *
+ *  所以：
+ *    · 认证失败（401/403）⇒ 明确指路「去设置重填 Key」，并**延长显示**；
+ *    · 网络类（network_error / timeout）⇒ 说清是连不上，不是她的问题；
+ *    · 其余 ⇒ 保持原来的「出错了：{error}」，绝不替用户下结论。
+ *
+ *  ⚠️ 判定只认主进程给的 errorType（单一事实源），不在渲染端猜 HTTP 状态码。
+ *  ⚠️ 这里不写任何审计 —— 审计在主进程（auditChatFailure），渲染端没有那个出口。 */
+function errorBubbleText(res) {
+  const type = (res && res.errorType) || '';
+  const msg = (res && res.error) || '';
+  if (type === 'auth_failed') {
+    return t('chat.authFailedBubble',
+      '(Key 失效了：服务端拒绝了这次请求。右键 → 设置 → 重新填 Key)');
+  }
+  if (type === 'network_error' || type === 'timeout') {
+    return t('chat.networkFailedBubble', '(连不上服务端：{error})', { error: msg });
+  }
+  return t('chat.errorBubble', '(出错了：{error})', { error: msg });
 }
 
 // v1.0 方案二：主窗输入条已退役 —— 对话统一在独立对话窗（chat.html）进行

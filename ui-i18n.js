@@ -429,6 +429,11 @@ const I18N = {
     'chat.needKeyBubble': '(还没填 API Key，右键 → 设置 / 用量)',
     'chat.abortedBubble': '(已取消)',
     'chat.errorBubble': '(出错了：{error})',
+    'chat.authFailedBubble': '(Key 失效了：服务端拒绝了这次请求。右键 → 设置 → 重新填 Key)',
+    'chat.networkFailedBubble': '(连不上服务端：{error})',
+    'chat.authFailedNotice': '（这条没送出去：API Key 被服务端拒绝，请到设置里重新填）',
+    'chat.proactiveAuthFailed': '（她想开口，但 API Key 被服务端拒绝了 —— 到设置里重新填一次）',
+    'chat.proactiveNetworkFailed': '（她想开口，但当时连不上服务端）',
     'chat.exceptionBubble': '(异常：{error})',
   },
   // UX-05（笔 6）：en 表键集必须与 zh-CN 100% 一致（测试机械死守）
@@ -845,6 +850,11 @@ const I18N = {
     'chat.needKeyBubble': '(API Key not set; right-click → Settings / Usage)',
     'chat.abortedBubble': '(Cancelled)',
     'chat.errorBubble': '(Error: {error})',
+    'chat.authFailedBubble': '(API Key rejected by the server. Right-click → Settings to re-enter it)',
+    'chat.networkFailedBubble': "(Can't reach the server: {error})",
+    'chat.authFailedNotice': "(not sent: the API Key was rejected — re-enter it in Settings)",
+    'chat.proactiveAuthFailed': '(she tried to speak, but the API Key was rejected — re-enter it in Settings)',
+    'chat.proactiveNetworkFailed': "(she tried to speak, but couldn't reach the server)",
     'chat.exceptionBubble': '(Exception: {error})',
   }
 };

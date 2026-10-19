@@ -188,6 +188,33 @@ if (api && api.onBedsideUnreadOnWake) {
   });
 }
 
+/* 🔴 2026-10-19：她主动开口但失败了 → 在对话窗留一行**常驻客观注记**。
+ *
+ *   ## 为什么必须有这一条
+ *   事故：Key 于 10-18 深夜失效，此后 7 次主动搭话全被 401 拒掉。头顶气泡 15 秒就收，
+ *   而主动搭话恰恰发生在她独自待着、用户不在电脑前的时候 —— 于是「她一直在试、
+ *   一直在被拒」这件事，用户一整晚都不知道。审计写了，但那是给我们排查用的，
+ *   用户不会去翻 agent-audit.jsonl。
+ *
+ *   ## 边界
+ *   · 只陈述**事实**：她试着开口，没成功；原因类别是什么。不代拟她的话、不写 history；
+ *   · payload 只有 errorType / proactive，**没有报错原文**（不该把 HTTP 细节糊到用户脸上）；
+ *   · 用 chatNotice（客观事实行）而不是 chatError（错误行）：
+ *     这不是用户的操作失败，是她那一趟没成 —— 语气该是对事实的陈述。 */
+if (api && api.onChatFailed) {
+  api.onChatFailed((p) => {
+    const type = (p && p.errorType) || '';
+    if (type === 'auth_failed') {
+      chatNotice = t('chat.proactiveAuthFailed',
+        '（她想开口，但 API Key 被服务端拒绝了 —— 到设置里重新填一次）');
+    } else {
+      chatNotice = t('chat.proactiveNetworkFailed',
+        '（她想开口，但当时连不上服务端）');
+    }
+    renderChat();
+  });
+}
+
 // 流式：临时气泡逐字上屏（遮蔽走 stripState），智能贴底不打断回看
 if (api && api.onDelta) {
   api.onDelta((d) => {
@@ -229,7 +256,12 @@ async function submit() {
       if (res.windowClosed) notes.push(res.merged ? t('chat.windowFullMerged', '窗口已满，小结并合并了记忆') : t('chat.windowFullSummary', '满一轮窗口，已生成小结'));
       if (notes.length) chatNotice = notes.join(' · ');
     } else if (!res || res.declined || !res.ok) {
-      chatError = t('chat.sendFailed') + (res && res.error ? '：' + res.error : '');
+      // 🔴 2026-10-19：认证失败要说清「去干什么」，不能只丢一句原始报错。
+      //   对话窗的错误行是**常驻**的（不像头顶气泡 6 秒就收），所以这里是
+      //   Key 失效时用户真正能看见的那一处 —— 事故当天就是因为两处都不可靠才拖了四小时。
+      chatError = res && res.errorType === 'auth_failed'
+        ? t('chat.authFailedNotice', '（这条没送出去：API Key 被服务端拒绝，请到设置里重新填）')
+        : t('chat.sendFailed') + (res && res.error ? '：' + res.error : '');
     }
   } catch (e) {
     chatError = t('chat.sendFailed') + '：' + e.message;

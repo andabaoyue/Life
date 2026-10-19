@@ -50,6 +50,12 @@ contextBridge.exposeInMainWorld('deskpet', {
   panelViewport: (open, w, h) => ipcRenderer.invoke('panel-viewport', open === true, { w: w || 0, h: h || 0 }),
   onChatBusy: (cb) => ipcRenderer.on('chat-busy', (e, p) => cb(p)),
   onChatHidden: (cb) => ipcRenderer.on('chat-window-hidden', () => cb()),
+  // 🔴 2026-10-19：她主动开口但**失败**了，也要在对话窗留一行客观事实。
+  //   为什么需要单独一条通道：头顶气泡 15 秒就收，而失败往往发生在用户不在电脑前时
+  //   （凌晨那次 Key 失效就是这样被瞒了四小时）。对话窗的注记行是常驻的，
+  //   用户回来打开就能看到「她试过，但没成功」。
+  //   ⚠️ payload 只有错误类别，不带报错原文、不带她要说的话 —— 对话窗只需知道「怎么告诉她」。
+  onChatFailed: (cb) => ipcRenderer.on('chat-failed', (e, p) => cb(p)),
   onSleepState: (cb) => ipcRenderer.on('sleep-state', (e, p) => cb(p)),
   // v1.0 B 方案：她被唤醒且枕边有未接留言时的**客观提示**（只给条数，不带内容）。
   //   刻意不带正文：对话窗自己回查 history（单一事实源），payload 只当"该提示了"的信号。
