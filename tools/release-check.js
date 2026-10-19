@@ -11,6 +11,7 @@
  * 8. README.md 文档声明与测试集文件清单严格一致
  * 9. electron-builder.yml 的 files 白名单覆盖全部真实运行入口（F-REL-001 回归门禁）
  * 10. 公开发布剥离门禁：公开集内零开发机绝对路径 / 零凭据 / 零断链 / 零未分类（tools/public-export.js）
+ * 11. 产物新鲜度：dist/ 内的 app.asar 是否仍落后于源码（tools/artifact-freshness.js；WARN 级）
  *
  * 输出格式：结构化 (PASS / WARN / FAIL)
  */
@@ -425,6 +426,75 @@ function checkPublicExport() {
   }
 }
 
+/* 11. 产物新鲜度：dist/ 里的 app.asar 是否还落后于源码
+ *
+ *   🔴 为什么必须有这一条（2026-10-19 实测事故）：
+ *     v1.6.0 的三个安装包构建于 10-18 21:02，而调度自愈与失败可见性两批修复是
+ *     10-19 白天才落的。代码修了、126 套测试全绿、本脚本也全绿 ——
+ *     因为 `dist/` 在 `.gitignore` 里，**没有任何门禁看得到产物**。
+ *     最后是人工把 app.asar 里的 main.js 哈希与工作树比对才发现「一个修复都没有」。
+ *
+ *   评级定为 WARN 而非 FAIL，两个理由：
+ *     · 干净克隆 / 尚未构建时 dist/ 不存在，那是正常态，不该让门禁变红；
+ *     · 「源码比产物新」是发布前的正常中间态，不该拦住日常开发。
+ *       但它**必须在发布检查里被看见** —— 这才是这条存在的意义。
+ *   判据本体在 tools/artifact-freshness.js（纯函数，可单测；
+ *   见 test/artifact-freshness.test.js 的 11 项）。 */
+function checkArtifactFreshness() {
+  let af;
+  try {
+    af = require('./artifact-freshness');
+  } catch (e) {
+    report('WARN', '产物新鲜度', '检查器加载失败（未阻塞发布，但该检查本次未生效）: ' + e.message);
+    return;
+  }
+  const asarPath = af.discoverAsar(ROOT);
+  if (!asarPath) {
+    report('WARN', '产物新鲜度', '未找到 dist/ 下的 app.asar —— 尚未构建，跳过（发布前请先 npx electron-builder --win --x64）');
+    return;
+  }
+
+  /* 🔴 版本闸门（实测的公开库形态）：那里躺着一份 v1.0.0 时代的 dist/，而源码已是 1.6.x。
+   *   只比字节会稳定地报「11 个文件全都旧了」—— 技术上没错，但那是**不同版本**的产物，
+   *   不是「改完代码忘了构建」。两者的处置完全不同，所以跨版本一律判「不适用」。
+   *   取不到版本（旧产物无 package.json / 解析失败）同样按不适用处理，不猜。 */
+  let srcVersion = null;
+  try { srcVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch {}
+  const packedVersion = af.readArtifactVersion(asarPath);
+  if (!packedVersion || !srcVersion || packedVersion !== srcVersion) {
+    report('WARN', '产物新鲜度',
+      'dist/ 内是另一版本的产物（产物 ' + (packedVersion || '未知') + ' ≠ 源码 ' + (srcVersion || '未知')
+      + '），不做逐字节比对 —— 发布前请先重新构建');
+    return;
+  }
+
+  let r;
+  try {
+    r = af.compareArtifact({
+      root: ROOT,
+      readPacked: (name) => af.readAsarEntry(asarPath, name),
+    });
+  } catch (e) {
+    report('WARN', '产物新鲜度', '无法比对产物（fail-open，仅告警）: ' + e.message);
+    return;
+  }
+  if (r.missing.length) {
+    report('WARN', '产物新鲜度',
+      '产物内缺少 ' + r.missing.length + ' 个运行入口: ' + r.missing.slice(0, 6).join(', ')
+      + ' —— 白名单与实际加载链不一致，请重新构建');
+    return;
+  }
+  if (r.stale.length) {
+    report('WARN', '产物新鲜度',
+      '产物落后于源码 ' + r.stale.length + '/' + r.checked + ' 个文件: '
+      + r.stale.slice(0, 6).join(', ') + (r.stale.length > 6 ? ' …' : '')
+      + ' —— 这些修复不在安装包里，发布前请重新运行 npx electron-builder --win --x64');
+    return;
+  }
+  report('PASS', '产物新鲜度',
+    '产物内 ' + r.checked + ' 个运行入口与工作树逐字节一致（' + path.basename(path.dirname(path.dirname(asarPath))) + '）');
+}
+
 /* 执行检查 */
 checkJsSyntax();
 checkWardrobeAssets();
@@ -435,6 +505,7 @@ checkConfigDefaults();
 checkDocsAndTestSuites();
 checkPublicExport();
 checkBuilderClosure();
+checkArtifactFreshness();
 
 console.log('\n====================================================');
 console.log(`检查完成: PASS ${totalPass} 项, WARN ${totalWarn} 项, FAIL ${totalFail} 项`);
