@@ -850,7 +850,29 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
              proactive };
   } catch (err) {
     if (err.name === 'AbortError') return { ok: false, aborted: true };
-    return { ok: false, error: err.message };
+    // 🔴 2026-10-19：失败必须留痕（见 auditChatFailure 头注释）。
+    //   放在 AbortError 之后：用户主动取消是他们自己的意图，不是故障，不该进失败审计。
+    auditChatFailure(err, { proactive, offer });
+    // 同时推给对话窗（常驻注记行）—— 头顶气泡会收，审计用户不会翻，
+    // 而主动搭话失败恰恰总发生在用户不在电脑前的时候。
+    notifyChatFailureToWindows(err, { proactive, offer });
+    // 认证失败要进退避：否则自愈重排会每 90 秒打一次注定 401 的请求。
+    if (err && err.errorType === 'auth_failed') {
+      authFailureUntil = Date.now() + AUTH_FAILURE_BACKOFF_MS;
+    }
+    // 认证失败要把 errorType 与 status 一并交给渲染端 —— 否则界面只能显示
+    // 一句「出错了」，用户无法区分「Key 失效」与「网络抖动」，
+    // 而这正是本次事故里 4 小时没被发现的原因。
+    //
+    // ⚠️ TimeoutError / AbortError 是**没有 errorType 的**（provider-adapter 刻意
+    //   原样透传不重新包装），所以这里补一层按 name 的归类 —— 否则超时会被
+    //   打成 'unknown_error'，渲染端那条 timeout 分支永远不会走到。
+    return {
+      ok: false,
+      error: err.message,
+      errorType: err.errorType || (err.name === 'TimeoutError' ? 'timeout' : 'unknown_error'),
+      status: typeof err.status === 'number' ? err.status : null,
+    };
   } finally {
     motionUi.chatBusy = false;
     syncMotionBlock('chat-done');
@@ -883,6 +905,35 @@ const OFFER_RETRY_MS = OFFER_TTL_MS + COOLDOWN_MS;
 /* brain 未就绪（冷启动没填 Key、或热替换进行中）时的短重试。
    旧实现在这条路上直接 return，调度器当场停摆；用户后来填好 Key 也不会自己回来。 */
 const PROACTIVE_WAKE_RETRY_MS = 60000;
+
+/* 🔴 2026-10-19：认证失败后的长退避。
+ *
+ *   为什么需要它：提案被拒（401）时**不会 commit**（commit 只在真的说出口时调用），
+ *   所以 `spokenDuringIdle` 仍是 false、evaluate() 下一轮照样产出提案 ——
+ *   于是 90 秒的自愈重排会变成「每 90 秒打一次注定 401 的请求」，一小时 40 次。
+ *   虽然不烧 token（请求在鉴权就被拒），但那是无意义的网络与日志噪音，
+ *   而且掩盖了真正该做的事：**让人去换 Key**。
+ *
+ *   所以：认证失败后把下一次评估推迟到 10 分钟。这不是防骚扰铁律的一部分，
+ *   是「明知道对面关门了就别一直敲」—— 用户换完 Key 会被 config-set-key 那条显式重排立刻叫醒。 */
+const AUTH_FAILURE_BACKOFF_MS = 10 * 60000;
+
+/* 认证失败退避的到期时刻（0 = 无退避）。
+ *
+ *   ⚠️ 刻意只存在内存里：退避是「当前这把 Key 被拒了」的临时判断，
+ *     换了 Key、重启了进程都该重新试。持久化它会让「用户换完 Key 却因为
+ *     盘上还记着旧退避而继续沉默」—— 那正是本次事故里同一族的坑。 */
+let authFailureUntil = 0;
+
+/** 认证失败退避是否仍在生效。 */
+function inAuthFailureBackoff() {
+  return authFailureUntil > 0 && Date.now() < authFailureUntil;
+}
+
+/** 清掉退避（换 Key / 换连接成功时调用）。 */
+function clearAuthFailureBackoff() {
+  authFailureUntil = 0;
+}
 
 /** D-25：把好奇破冰的事实随评估带入 —— 待问计数与队首原话，**只取不加工**。
  *  队列的读口是 memory.nextCuriosity()（跳过已问的），与 asked 标记看的是同一条。
@@ -924,6 +975,68 @@ function auditProactiveDispatched(offer) {
   } catch { /* 审计写不进去也不能挡住派发 */ }
 }
 
+/** 对话失败留痕（2026-10-19）。
+ *
+ *  ## 为什么必须有这一条
+ *
+ *  实测事故：Key 在 10-18 深夜失效，之后 7 次主动搭话全部在 `brain.ask` 里被服务端
+ *  401 拒掉。但从用户视角看只是「她一直不说话」—— 因为失败只落到一个 **6 秒就自动
+ *  收起的气泡**上，人不在电脑前就等于没发生。
+ *  而 `experiment-telemetry.jsonl` 又只在**成功**时才写 `llm_call`（见 brain.track），
+ *  于是「失败」在磁盘上**没有任何痕迹**，只能靠 offer 有、llm_call 无来反推。
+ *
+ *  这条留痕的价值就在于把那个反推变成直读：
+ *    offer 有 + chat-failed(auth_failed) ⇒ Key 失效，去换 Key；
+ *    offer 有 + chat-failed(network_error) ⇒ 网络/端点问题，不是她的错；
+ *    offer 有 + 什么都没有 ⇒ 回执丢了（见 OFFER_RETRY_MS 那条自愈重排）。
+ *
+ *  ⚠️ 只记元数据（错误类别 / HTTP 状态 / 是否主动搭话），**绝不记正文与凭据**。
+ *     error message 本身可能带 provider 名与 URL，但不含 key（transport 层已 redact）。
+ *  ⚠️ 审计失败绝不能把异常再抛回去 —— 它已经在 catch 里了。 */
+function auditChatFailure(err, info) {
+  if (!proactiveAuditLog) return;
+  try {
+    proactiveAuditLog.append({
+      channel: 'chat-failed',
+      outcome: 'failed',
+      capability: null,
+      via: 'main',
+      proactive: !!(info && info.proactive),
+      offerKind: (info && info.offer && info.offer.kind) ? String(info.offer.kind) : null,
+      errorType: (err && err.errorType) ? String(err.errorType) : 'unknown_error',
+      status: (err && typeof err.status === 'number') ? err.status : null,
+      retryable: !!(err && err.retryable),
+    });
+  } catch { /* 审计写不进去也不能挡住错误上报 */ }
+}
+
+/** 把失败也送到对话窗（2026-10-19）。
+ *
+ *  ## 为什么审计还不够
+ *
+ *  审计落的是 `%APPDATA%\Life\agent-audit.jsonl` —— 那是**给我们排查用的**，
+ *  用户不会去翻。而头顶气泡 15 秒就收，主动搭话又恰恰发生在用户不在电脑前的时候。
+ *  于是「她每半小时试一次、每半小时被拒」这件事，用户仍然可能一整晚都不知道。
+ *
+ *  对话窗的注记行是**常驻**的（chat.js 的 chatNotice），关掉再开还在。
+ *  所以这里把失败清单一并推过去 —— 只推错误类别，不推报错原文：
+ *  用户需要知道的是「Key 失效，去换」，不是 `HTTP 401 [auth_failed] provider=…`。
+ *
+ *  ⚠️ 只推 auth_failed / network_error 两类。其余错误（解析失败、超长响应…）
+ *     属于偶发，写进对话窗等于用噪音换可见性，得不偿失。
+ *  ⚠️ 广播失败绝不能再抛：它已经在错误处理路径上了。 */
+function notifyChatFailureToWindows(err, info) {
+  const type = (err && err.errorType) || (err && err.name === 'TimeoutError' ? 'timeout' : 'unknown_error');
+  if (type !== 'auth_failed' && type !== 'network_error' && type !== 'timeout') return;
+  try {
+    broadcastToWindows('chat-failed', {
+      errorType: type,
+      proactive: !!(info && info.proactive),
+      status: (err && typeof err.status === 'number') ? err.status : null,
+    });
+  } catch { /* 广播失败不影响错误上报本身 */ }
+}
+
 function scheduleProactiveCheck(delayMs) {
   if (proactiveTimer) clearTimeout(proactiveTimer);
   proactiveTimer = setTimeout(() => {
@@ -958,6 +1071,13 @@ function checkAndPushProactive() {
     return;
   }
 
+  // 🔴 2026-10-19：感知与内稳态**先走**，与「要不要开口」解耦。
+  //
+  //   为什么必须把它们挪到退避检查之前：退避挡的是「别再去撞一扇关着的门」，
+  //   而 recordIdle 做的是**挂机计量**（内稳态静息回血 + environmental_silence 知觉）。
+  //   两者没有任何关系 —— 早期版本把退避检查放在这一段之前，
+  //   结果是 Key 失效的十分钟里她的生理恢复与知觉也一起断档，
+  //   等于「门锁坏了的十分钟里，连心跳也停了」。这是本次自查抓到的副作用。
   const at = Date.now();
   const lastAct = tracker ? tracker.lastInteractionAt : at;
   const idleMs = at - lastAct;
@@ -966,6 +1086,17 @@ function checkAndPushProactive() {
   // Phase 0.5: 桌面挂机事件直连 (带水位线防重复)
   if (tracker && idleMin >= 10) {
     tracker.recordIdle(idleMin, at);
+  }
+
+  // 🔴 2026-10-19：认证失败退避期内不再产出提案。
+  //   为什么不靠 evaluate() 自己挡：引擎不知道 Key 已经失效，它会照常提案，
+  //   于是 90 秒的自愈重排变成「每 90 秒打一次注定 401 的请求」。
+  //   退避只是把节奏从 90 秒放到 10 分钟 —— 调度本身**没有停摆**（仍会重排），
+  //   换 Key 走 config-set-key 的显式重排立刻解除（见 clearAuthFailureBackoff）。
+  //   ⚠️ 位置必须在上面的 recordIdle 之后：只挡「开口」，不挡「感知与内稳态」。
+  if (inAuthFailureBackoff()) {
+    scheduleProactiveCheck(AUTH_FAILURE_BACKOFF_MS);
+    return;
   }
 
   // 🔴 D-25：好奇破冰的事实随评估带入 —— 待问计数与队首原话，**只取不加工**。
@@ -1319,6 +1450,10 @@ ipcGuard.handle('config-set-key', (e, key) => {
   //     而如果填 Key 前已经挂机很久（典型：装好软件先去填 Key），
   //     那一等就是白等。45 秒既让评估尽快发生，又不至于「刚点完确定她就开口」。
   //     说不说仍由 evaluate() 独立判定：静默不够久就返回 null 并照常重排。
+  //
+  //   🔴 换 Key 必须同时解除认证失败退避：否则用户刚填的新 Key 会被
+  //     「上一把 Key 被拒」留下的退避挡住最多 10 分钟 —— 那正是同族的坑。
+  clearAuthFailureBackoff();
   scheduleProactiveCheck(COOLDOWN_MS);
 
   return { ok: true, hasKey: !!cfg.apiKey, keyEncrypted: persisted.encrypted };
@@ -1476,6 +1611,11 @@ ipcGuard.handle('connections:activate', (e, opts = {}) => {
   }
   cfg = r.cfg;
   brain = r.brain;
+  // 🔴 2026-10-19：换连接同样是「换了一把 Key」，必须解除认证失败退避并叫醒调度。
+  //   漏了它的表现与换 Key 那条一模一样：用户明明切到了能用的连接，她却因为
+  //   上一把 Key 留下的 10 分钟退避继续沉默，而界面上没有任何提示。
+  clearAuthFailureBackoff();
+  scheduleProactiveCheck(COOLDOWN_MS);
   return { ok: true, activeConnectionId: r.activeConnectionId, swapped: true };
 });
 
