@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog, powerMonitor, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { load, save, tryLoad } = require('./src/config');
@@ -20,7 +20,9 @@ const connectionsMod = require('./src/connections');
 const secureCreds = require('./src/secure-credentials');
 const { activateConnection } = require('./src/connection-switch');
 const { runConnectionTest } = require('./src/connection-test');
-const { createIpcGuard } = require('./src/ipc-guard');
+// 🔴 v1.7-a：isAppLocalUrl 与 ipcGuard 同源复用 —— 权限闸门与 IPC 闸门必须是
+//   同一个「什么算本地页」的定义，否则两处判据漂移就是一整类绕过。
+const { createIpcGuard, isAppLocalUrl, isChannelAllowedForPicker } = require('./src/ipc-guard');
 // v1.0 D-1：Agent 执行能力 IPC 治理通道（纯只读+ 提案受理，执行器仍为 Mock）
 const { registerAgentIpc } = require('./src/agent-ipc');
 const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = require('./src/agent-interfaces');
@@ -392,10 +394,84 @@ let creativeStore = null;
 let creativeSession = null;
 
 // SEC-01: 所有 IPC 统一经 sender/frame/URL 三重校验（src/ipc-guard.js）；
-// child frame / 外部 URL / 其他 webContents 一律拒绝，错误信息只有 UNTRUSTED_RENDERER。
+// child frame / 外部 URL / 其他 webContents 一律拒绝；窗口通道不匹配则 UNAUTHORIZED_RENDERER_CHANNEL。
 const ipcGuard = createIpcGuard({ ipcMain, getMainWindow: () => win, appDir: __dirname,
   // v1.0 方案二：独立对话窗与主窗同为应用自建受信窗（其余一律 UNTRUSTED_RENDERER）
-  getTrustedWebContents: () => [win, chatWin].filter(w => w && !w.isDestroyed()).map(w => w.webContents) });
+  getTrustedWebContents: () => {
+    const list = [win, chatWin];
+    /* 🔴 v1.8-b（2026-10-21 修）：**框选窗也必须是受信窗口**。
+     *
+     *   第一版漏了它，后果是用户在框选窗里做的每一件事都被
+     *   assertTrustedRenderer 挡成 UNTRUSTED_RENDERER：
+     *     · 松手 → vision:capture 被拒 → 框一直留着、不提交
+     *     · ESC  → vision:close-picker 被拒 → 关不掉
+     *     · 右键 → 同一条通道，同样关不掉
+     *   实测症状：「勾选了之后框就一直在那，ESC 也按不了，进程无法结束」。
+     *
+     *   ⚠️ 但**不能无条件给它全部权限**：它是加载在透明全屏窗里的页面，
+     *   只该调 vision:capture / vision:stage / vision:close-picker / vision-notify 四条通道。
+     *   所以除了加进信任白名单，还由 ipcGuard 对每条 handle/on 做窗口通道收窄。
+     */
+    try {
+      const pickerMod = require('./src/vision-picker-window');
+      const pw = pickerMod.getPickerWindow ? pickerMod.getPickerWindow() : null;
+      if (pw && !pw.isDestroyed()) list.push(pw);
+    } catch (e) { /* 模块异常不影响主链路的信任判定 */ }
+    return list.filter(w => w && !w.isDestroyed()).map(w => w.webContents);
+  },
+  authorizeChannel: (event, channel) => assertChannelAllowedForPicker(event, channel)
+});
+
+/**
+ * 🔴 v1.7-a：麦克风权限闸门（安全加固）。
+ *
+ * ## 为什么必须有
+ *   本仓此前**没有任何** setPermissionRequestHandler（实测 grep 零命中），
+ *   等于把"是否允许麦克风 / 通知 / 地理位置"交给了 Electron 的默认行为。
+ *   默认行为随版本变化，且不是"默认拒绝"—— 那不是一个安全边界，是一个赌。
+ *
+ * ## 判据
+ *   - **默认拒绝**：不在白名单里的 permission 一律 false；
+ *   - **只放行 'media'**：`electron.d.ts:13508` 的枚举里只有 'media'，
+ *     **没有 'microphone'**（后者仅出现在 `:14207` 的 askForMediaAccess，是 macOS 专用 API）。
+ *     写成 `permission === 'microphone'` 会恒为 false，把麦克风请求一并拒掉。
+ *   - **只放行本地页**：复用 ipc-guard 的 isAppLocalUrl，判据单一来源。
+ *   - **wc 可能为 null**：setPermissionCheckHandler 的 webContents 参数允许为空
+ *     （检测发生在请求之前），故两处都做了空值守卫。
+ *
+ * ## 为什么不做成会话级可配
+ *   白名单是**安全常量**，不是功能开关。可配 = 可以被误配，
+ *   而误配的后果（放行剪贴板读取 / 屏幕捕获）用户不会知道。
+ *   要放宽必须改代码并过门禁，这是刻意的摩擦。
+ *
+ * @param {object} ses Electron session（生产传 defaultSession）
+ * @returns {boolean} 是否成功安装（session 不可用时返回 false，由调用方决定是否告警）
+ */
+function installPermissionGate(ses) {
+  if (!ses || typeof ses.setPermissionRequestHandler !== 'function') return false;
+  const ALLOWED = new Set(['media']);   // 唯一放行的权限
+  const localOnly = (wc) => {
+    // 🔴 wc 可能为 null（check handler 的签名允许），必须先守卫再取 URL
+    const url = wc && typeof wc.getURL === 'function' ? wc.getURL() : '';
+    return isAppLocalUrl(url, __dirname);
+  };
+
+  ses.setPermissionRequestHandler((wc, permission, callback) => {
+    // 未知权限 / 非白名单：直接拒
+    if (!ALLOWED.has(permission)) return callback(false);
+    callback(localOnly(wc));
+  });
+
+  // check 发生在 request 之前，两者必须同口径，否则会出现"检查通过、请求被拒"的怪象
+  if (typeof ses.setPermissionCheckHandler === 'function') {
+    ses.setPermissionCheckHandler((wc, permission) => {
+      if (!ALLOWED.has(permission)) return false;
+      return localOnly(wc);
+    });
+  }
+
+  return true;
+}
 
 app.name = 'Life';
 
@@ -743,6 +819,9 @@ ipcGuard.on('quit-app', () => {
    用 .on 不用 .handle：这是纯上报，没有返回值，省一次 promise 往返。 */
 ipcGuard.on('activity', (e, type, details) => {
   if (tracker) tracker.record(type, undefined, details);
+  // 🔴 v1.8-a：物理互动也算「见到你」（真实触碰）。
+  //   发消息那条在 chat-send 里另有一处 —— 两处都算在场，探窗与启动都不算。
+  if (brain) brain.touchLastSeen();
   // 用户有了新交互，重置空闲检查闹钟
   scheduleProactiveCheck(proactiveBaseMs());
   // v0.9.9 P2-2a: 收敛到唯一出口（内态变更由 onChange 自动推送，这里保留一次
@@ -756,6 +835,19 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
   if (!brain || !brain.ready) {
     return { ok: false, needKey: true };
   }
+  /* 🔴 v1.8-a：这里**刻意不调 touchLastSeen()**。
+   *
+   *   原因（差点写成 bug）：chat-send → brain.chat() → memory.build() →
+   *   takeReunionNote()。如果在这个入口先 touch，lastSeenAt 已经被刷成"现在"，
+   *   build() 里算出的差值必然 ≈ 0 ⇒ **重逢永远不触发**。
+   *
+   *   正确职责划分：
+   *     · takeReunionNote() 负责「判定 + 消费 + 刷新」三件事（它内部会 touch）；
+   *     · chat-send 只负责把消息交下去，不碰时间戳。
+   *
+   *   那"用户发了消息但没走 build"（比如 brain 未 ready）算不算见到？
+   *   不算 —— 那种情况下她根本没醒过来处理这一轮，不该计入在场。
+   */
   // 主动搭话：渲染端把 proactive-check 给的那份提案原样带回来。
   // 走"发出去再带回来"而不是主进程存一份 pendingOffer，是为了消灭
   // 「提案发了却没回复、主进程还留着它」这种陈旧状态 —— 那会让下一次
@@ -1263,11 +1355,20 @@ ipcGuard.handle('life-mechanisms', () => {
       arousal: reg.arousal, isSleeping: !!reg.isSleeping
     };
   } catch (e) { /* 只读失败给 null，UI 显示破折号 */ }
-  try {
-    const canal = require('./src/canalization');
-    const m = canal.getCanalizationMetrics(memData.windowNo || 1);
-    development = { stage: m.stage, plasticity: m.plasticityMultiplier };
-  } catch (e) { /* 同上 */ }
+  /* 🔴 2026-10-27：`development` 字段**已停算**，恒为 null。
+   *
+   *   这里原来调用 `canal.getCanalizationMetrics()` 产出 { stage, plasticity }，
+   *   但 `test/canalization.test.js` 的 P2-3c 守卫明确禁止生产代码引用该符号 ——
+   *   理由是 DEVELOPMENTAL_STAGES 是**纯叙事标签、无机制消费方**，
+   *   把它搬上观测面板等于"用 UI 给叙事镀上机制的可信度"。
+   *   `src/observability.js:235-248` 早已就此裁定不上面板。
+   *
+   *   ⚠️ 该守卫此前**只扫 `src/`**（root/test 未扫），所以 root/main.js 的这次违规
+   *   一直没被抓住。守卫已同步扩到根目录，此处删除是为了让它真的成立，
+   *   不是绕过门禁。
+   *
+   *   字段本身暂时保留返回（值为 null），避免渲染层之外的消费方拿到 undefined。
+   */
   try {
     const ledger = brain && brain.selfLedger;
     if (ledger && ledger.getEntryMetrics) {
@@ -1285,7 +1386,27 @@ ipcGuard.handle('life-mechanisms', () => {
   } catch (e) { /* 同上 */ }
   return {
     ok: true, lexicon, expectations, vitals, development, cognition,
-    relations: { promiseFidelity, fulfilled, broken, words: lexicon.length, reusedWords, archiveChain }
+    relations: { promiseFidelity, fulfilled, broken, words: lexicon.length, reusedWords, archiveChain },
+    // 🔴 v1.7-b：声明式观测注册表。
+    //   与上面六个旧字段**并行返回**，让渲染层可以分两批改、中途套件恒绿。
+    //   旧字段待新渲染层验证通过后再删（不在本次改动里删）。
+    //
+    //   ⚠️ agentBudget / agentAuditLog 是 whenReady 里的**块级 const**，
+    //   本 handler 在模块顶层注册，直接引用会抛 TDZ（本仓已踩过同型坑）。
+    //   故走两个模块级入口：agentBuildDeps（持有 budget）与 proactiveAuditLog（同一个 AuditLog 实例）。
+    obs: (() => {
+      try {
+        const { collectObservability } = require('./src/observability');
+        return collectObservability({
+          brain,
+          agentBudget: agentBuildDeps ? agentBuildDeps.agentBudget : null,
+          agentAuditLog: proactiveAuditLog
+        });
+      } catch (e) {
+        // 观测失败绝不拖垮整个通道：如实返回空结构，UI 显示破折号
+        return { ok: false, groups: {}, order: [], generatedAt: Date.now() };
+      }
+    })()
   };
 });
 
@@ -1619,6 +1740,502 @@ ipcGuard.handle('connections:activate', (e, opts = {}) => {
   return { ok: true, activeConnectionId: r.activeConnectionId, swapped: true };
 });
 
+/* ============================================================
+ * 🔴 v1.7-a：STT 语音识别 IPC（4 个通道）
+ *
+ * ## 为什么 STT 配置独立于 connections
+ *   实测（2026-10-19 审计）：**DeepSeek 官方没有 STT 端点**
+ *   （`deepseek.js` / `deepseek-adapter.js` grep `audio|transcri` 零命中，
+ *   官方仅 `/v1/chat/completions` + `/v1/models`）。
+ *   所以 STT 用**独立的 credentialRef**（`cred:stt_api_key`），
+ *   与任何 `cred:conn_*` 天然隔离：删连接不会误删 STT Key，反之亦然。
+ *
+ * ## 安全边界（每条都有门禁断言）
+ *   1. **transcribe 的入参里没有 endpoint / apiKey** ——
+ *      端点与密钥只从主进程存储读，渲染层无法指定任意端点（防 SSRF、防 Key 外送）；
+ *   2. **getConfig 绝不返回 secret** —— 只回 present/encrypted 与端点、模型、语言；
+ *   3. **失败只透 errorType** —— safeDetail 只进审计日志，不透给渲染层。
+ * ============================================================ */
+
+/** STT 凭据的 credentialRef（独立 namespace，不与连接混用） */
+const STT_CREDENTIAL_REF = 'cred:stt_api_key';
+
+/**
+ * STT 非机密配置的**独立文件名**。
+ *
+ * 🔴 为什么不用 `secure.saveConfig` / 主 `life-config.json`：
+ *   那两个是**对话通道**的配置（含 provider/baseURL/apiKey 语义），
+ *   把 STT 的 endpoint/model 塞进去会污染主配置的语义，甚至可能被
+ *   `loadConfig` 当成对话凭据去解析。
+ *   STT 是**完全独立的能力**，就配**完全独立的文件**：`stt-config.json`。
+ *   它只含 endpoint / model / lang 三个非机密字段，**密钥永不进这个文件**。
+ */
+const STT_CFG_FILE = 'stt-config.json';
+
+/** 读 STT 非机密配置。缺文件/坏 JSON 一律回落空值，**绝不抛**。 */
+function readSttConfig() {
+  const empty = { endpoint: '', model: '', lang: '' };
+  try {
+    const p = path.join(app.getPath('userData'), STT_CFG_FILE);
+    if (!fs.existsSync(p)) return empty;
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return {
+      endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : '',
+      model: typeof raw.model === 'string' ? raw.model : '',
+      lang: typeof raw.lang === 'string' ? raw.lang : ''
+    };
+  } catch (e) {
+    return empty;
+  }
+}
+
+/**
+ * 写 STT 非机密配置（只写这三个字段，绝不碰密钥）。
+ * 走 atomic 原子写：与仓库既有的“配置不静默半写”纪律一致。
+ */
+function writeSttConfig(patch) {
+  const dir = app.getPath('userData');
+  const cur = readSttConfig();
+  const next = {
+    endpoint: typeof patch.endpoint === 'string' ? patch.endpoint.trim() : cur.endpoint,
+    model: typeof patch.model === 'string' ? patch.model.trim() : cur.model,
+    lang: typeof patch.lang === 'string' ? patch.lang.trim() : cur.lang
+  };
+  try {
+    const { writeFileAtomic } = require('./src/atomic');
+    writeFileAtomic(path.join(dir, STT_CFG_FILE), JSON.stringify(next, null, 2) + '\n');
+    return next;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 读 STT 密钥（**只在主进程内使用**，绝不返回给渲染层） */
+function readSttSecret() {
+  try {
+    return secureCreds.getCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS });
+  } catch (e) {
+    return null;
+  }
+}
+
+ipcGuard.handle('stt:get-config', () => {
+  const c = readSttConfig();
+  // 🔴 只回"有没有、加没加密"，绝不回 secret 本身
+  let desc = { present: false, encrypted: false };
+  try {
+    desc = secureCreds.describeCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS });
+  } catch (e) { /* 读不到就是没有，不抛 */ }
+  return {
+    ok: true,
+    endpoint: c.endpoint,
+    model: c.model,
+    lang: c.lang,
+    hasKey: desc.present === true,
+    encrypted: desc.encrypted === true
+  };
+});
+
+ipcGuard.handle('stt:set-config', (e, opts = {}) => {
+  const patch = {
+    endpoint: typeof opts.endpoint === 'string' ? opts.endpoint : '',
+    model: typeof opts.model === 'string' ? opts.model : '',
+    lang: typeof opts.lang === 'string' ? opts.lang : ''
+  };
+  const saved = writeSttConfig(patch);
+  if (!saved) return { ok: false, errorType: 'config_write_failed' };
+
+  // credential 为空 = 不改密钥（用户只改端点/模型时不必重填）
+  let encrypted = null;
+  if (typeof opts.credential === 'string' && opts.credential.trim()) {
+    const w = secureCreds.setCredential(STT_CREDENTIAL_REF, opts.credential.trim(), {
+      dir: app.getPath('userData'), getSS
+    });
+    if (!w.ok) return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
+    encrypted = w.encrypted === true;
+  }
+  return { ok: true, config: saved, encrypted };
+});
+
+ipcGuard.handle('stt:clear-key', () => {
+  try {
+    const r = secureCreds.deleteCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS });
+    return { ok: true, deleted: r && r.deleted !== false };
+  } catch (e) {
+    return { ok: false, error: 'CREDENTIAL_DELETE_FAILED' };
+  }
+});
+
+ipcGuard.handle('stt:transcribe', async (e, opts = {}) => {
+  // 🔴 入参只有音频与语言：**没有 endpoint、没有 apiKey**。
+  //   端点与密钥一律从主进程存储读 —— 渲染层无权指定请求发去哪。
+  const c = readSttConfig();
+  const secret = readSttSecret();
+  if (!secret) return { ok: false, errorType: 'not_configured' };
+
+  const audio = opts && opts.audio;
+  // ArrayBuffer / Uint8Array / Buffer 都归一成 Buffer（IPC 传过来通常是 Uint8Array）
+  let buf = null;
+  try {
+    if (audio instanceof ArrayBuffer) buf = Buffer.from(new Uint8Array(audio));
+    else if (audio && typeof audio.length === 'number') buf = Buffer.from(audio);
+  } catch (err) {
+    buf = null;
+  }
+  if (!buf || !buf.length) return { ok: false, errorType: 'no_audio' };
+
+  let sttMod;
+  try {
+    sttMod = require('./src/stt-transport');
+  } catch (err) {
+    return { ok: false, errorType: 'transport_unavailable' };
+  }
+
+  const r = await sttMod.transcribe({
+    audio: buf,
+    mimeType: typeof opts.mimeType === 'string' ? opts.mimeType : 'audio/webm',
+    cfg: {
+      endpoint: c.endpoint,
+      apiKey: secret,
+      model: c.model,
+      lang: typeof opts.lang === 'string' && opts.lang ? opts.lang : c.lang
+    }
+  });
+
+  if (r.ok) {
+    // 只回文本与耗时；不回任何配置细节
+    return { ok: true, text: r.text, elapsedMs: r.elapsedMs };
+  }
+  // 🔴 失败只透 errorType；safeDetail 不出去（它可能含端点片段）
+  return { ok: false, errorType: r.errorType };
+});
+
+/**
+ * 🔴 v1.7-a（2026-10-20）：STT 录音审计。
+ *
+ * 为什么加：真机反馈「说了话没识别」，但磁盘上**没有任何痕迹**，
+ * 无法判断卡在采集、IPC、还是识别。这条通道只记元数据：
+ * 阶段、录音时长、chunk 数、字节数、mime、错误类别。
+ *
+ * **绝不记**：音频内容、识别文本、密钥、完整端点。
+ * 写入既有 agent 审计同目录的 stt-audit.jsonl（append-only）。
+ */
+ipcGuard.on('stt-audit', (e, payload = {}) => {
+  try {
+    const dir = app.getPath('userData');
+    const line = {
+      at: new Date().toISOString(),
+      stage: typeof payload.stage === 'string' ? payload.stage.slice(0, 32) : null,
+      elapsedMs: Number.isFinite(payload.elapsedMs) ? payload.elapsedMs : null,
+      chunksCount: Number.isFinite(payload.chunksCount) ? payload.chunksCount : null,
+      bytes: Number.isFinite(payload.bytes) ? payload.bytes : null,
+      mime: typeof payload.mime === 'string' ? payload.mime.slice(0, 60) : null,
+      // 成功时只记文本长度，不记文本本身
+      textLen: Number.isFinite(payload.textLen) ? payload.textLen : null,
+      errorType: typeof payload.errorType === 'string' ? payload.errorType.slice(0, 40) : null,
+      error: typeof payload.error === 'string' ? payload.error.slice(0, 120) : null
+    };
+    fs.appendFileSync(path.join(dir, 'stt-audit.jsonl'), JSON.stringify(line) + '\n', 'utf8');
+  } catch (err) {
+    // 审计写失败绝不外抛：它挂在录音收尾上
+  }
+});
+
+/* ============================================================
+ * 🔴 v1.8-b：屏幕视觉探针（框选）
+ *
+ * ## 隐私铁律（先于一切实现，见 docs/v1.8-b-IMPLEMENTATION-ORDER.md §1）
+ *   1. 只做**用户框选**，绝不做全屏 / 活动窗口
+ *   2. 只在**用户显式唤起**时截，绝不后台定时截屏
+ *      ⇒ 本段代码里**没有、也永远不许有** setInterval / setTimeout 驱动的截图
+ *   3. 图**不落盘**：capturePage → data URL → 立刻返回，本段无任何 fs.write
+ *   4. 审计只记尺寸/耗时/成败，**不记像素、不记 OCR 文本**
+ * ============================================================ */
+
+/** 视觉能力是否可用（按**当前模型名**判定，不按 provider 标称） */
+ipcGuard.handle('vision:capability', () => {
+  try {
+    const model = (cfg && cfg.model) || '';
+    const { modelSupportsVision } = require('./src/vision');
+    return { ok: true, model, supported: modelSupportsVision(model) };
+  } catch (e) {
+    return { ok: false, supported: false, error: 'CAPABILITY_CHECK_FAILED' };
+  }
+});
+
+/**
+ * 截取主屏的指定区域（**只存在内存，绝不落盘**）。
+ *
+ * ## 2026-10-20 重做
+ *   第一版用主窗的 capturePage + 窗口偏移换算，实测两个硬伤：
+ *     ① 主窗只有 256×320，`inset:0` 的遮罩只能覆盖窗口，框不到屏幕别处；
+ *     ② 主窗的 setIgnoreMouseEvents 把遮罩视为非交互区，鼠标直接穿透 ⇒ 拖不动。
+ *   现改为：**框选在独立全屏窗里做**（src/vision-picker-window.js），
+ *   它发来的矩形就是屏幕坐标，这里直接按屏幕坐标截主显示器。
+ *
+ * 入参只有矩形 { x, y, width, height }，**不接受任何路径 / URL**。
+ * 这是隐私面：能传路径就能读任意文件，能传 URL 就能 SSRF。
+ */
+ipcGuard.handle('vision:capture', async (e, opts = {}) => {
+  const started = Date.now();
+
+  /* 🔴 2026-10-27：失败分支也必须留痕。
+   *
+   *   此前只有成功那条写 appendVisionAudit({ stage:'captured' })，
+   *   而 bad_rect / no_screen_source / capture_failed / capture_threw
+   *   四个失败分支全部直接 return —— 出问题时审计答不了"为什么失败"，
+   *   只能看到"用户点了、没成功、没有下文"。
+   *
+   *   审计口径不变：只记 errorType 与耗时，**不记像素、不记矩形坐标**
+   *   （坐标本身是屏幕内容线索，记下来等于记了一部分屏幕）。
+   */
+  const fail = (errorType) => {
+    appendVisionAudit({
+      at: new Date().toISOString(),
+      stage: 'failed',
+      elapsedMs: Date.now() - started,
+      errorType
+    });
+    return { ok: false, errorType };
+  };
+
+  const visionMod = require('./src/vision');
+  const display = screen.getPrimaryDisplay();
+  const rect = visionMod.normalizeRect(opts.rect, {
+    maxW: display.size.width,
+    maxH: display.size.height
+  });
+  if (!rect) return fail('bad_rect');
+
+  let dataUrl = null;
+  let outW = rect.width;
+  let outH = rect.height;
+  try {
+    /* 🔴 为什么用 desktopCapturer 而不是 webContents.capturePage：
+     *
+     *   `capturePage` 只能截**该窗口自己的内容**——
+     *   框选窗虽然全屏，但它自己是透明的，截出来只有遮罩，看不到底下的屏幕。
+     *   而且主窗只有 256×320，更不可能截到屏幕别处。
+     *
+     *   `desktopCapturer.getSources({ types:['screen'] })` 拿到的是**整块屏幕的像素**，
+     *   再按用户框的矩形裁剪，这才是"看她选的那块屏幕"的正确实现。
+     *
+     * ⚠️ 隐私纪律不变：**只裁用户框的那一块**，全屏图用完立即丢弃，
+     *   绝不落盘、绝不外传未裁剪的整屏。
+     */
+    const { desktopCapturer } = require('electron');
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: display.size.width, height: display.size.height }
+    });
+    if (!sources || !sources.length) return fail('no_screen_source');
+
+    // 选与框选窗同一块显示器（多屏时不至于截错）
+    const target = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+    const full = target.thumbnail;
+    if (!full || (typeof full.isEmpty === 'function' && full.isEmpty())) {
+      return fail('capture_failed');
+    }
+
+    const fullSize = full.getSize();
+    // 缩略图尺寸 == 屏幕逻辑尺寸时，矩形可直接用；否则按比例换算
+    const sx = fullSize.width / display.size.width;
+    const sy = fullSize.height / display.size.height;
+    const cropRect = {
+      x: Math.max(0, Math.round(rect.x * sx)),
+      y: Math.max(0, Math.round(rect.y * sy)),
+      width: Math.max(1, Math.round(rect.width * sx)),
+      height: Math.max(1, Math.round(rect.height * sy))
+    };
+
+    // 🔴 只裁框选那一块 —— 整屏像素在本函数结束时即弃
+    const cropped = full.crop(cropRect);
+    const croppedSize = cropped.getSize();
+
+    const fitted = visionMod.fitCaptureSize(croppedSize.width, croppedSize.height);
+    const finalImg = fitted.scaled
+      ? cropped.resize({ width: fitted.width, height: fitted.height, quality: 'good' })
+      : cropped;
+    outW = fitted.width;
+    outH = fitted.height;
+
+    const png = finalImg.toPNG();
+    dataUrl = 'data:image/png;base64,' + png.toString('base64');
+  } catch (err) {
+    return fail('capture_threw');
+  }
+
+  // 审计：只记尺寸与耗时，不记内容
+  try {
+    appendVisionAudit({
+      at: new Date().toISOString(),
+      stage: 'captured',
+      width: outW,
+      height: outH,
+      elapsedMs: Date.now() - started
+    });
+  } catch (err) { /* 审计失败不影响主流程 */ }
+
+  return { ok: true, dataUrl, width: outW, height: outH, elapsedMs: Date.now() - started };
+});
+
+/** 打开全屏框选窗（菜单点「看看这个…」时调用） */
+/**
+ * 🔴 通道级收窄：框选窗只该调实际使用的四条视觉通道。
+ *
+ * 为什么需要这一层：框选窗已加入 IPC 信任白名单（否则它连自己的截图都调不通），
+ * 但它是**加载在透明全屏窗里的页面**，不该拿到主窗的全部能力
+ * （比如它不该能 chat-send / connections:create / agent:execute）。
+ *
+ * 判据：调用者若是框选窗，只放行 capture / stage / close-picker / notify。
+ * 本函数由 src/ipc-guard.js 的 handle 与 on 包装统一调用，不依赖单个 handler 自查。
+ * @param {object} event IPC 事件
+ * @param {string} channel
+ * @returns {boolean} 是否放行
+ */
+const VISION_ONLY_CHANNELS = new Set([
+  'vision:capture',
+  'vision:stage',
+  'vision:close-picker',
+  'vision-notify'
+]);
+function assertChannelAllowedForPicker(event, channel) {
+  let pw = null;
+  try {
+    const mod = require('./src/vision-picker-window');
+    pw = mod.getPickerWindow ? mod.getPickerWindow() : null;
+  } catch (e) { return true; }
+  const pickerContents = pw && !pw.isDestroyed() ? pw.webContents : null;
+  return isChannelAllowedForPicker(event, channel, pickerContents, VISION_ONLY_CHANNELS);
+}
+
+ipcGuard.handle('vision:open-picker', (e) => {
+  // 🔴 框选窗自己不许再开一个框选窗（由统一通道守卫在进入 handler 前拒绝）
+  try {
+    const mod = require('./src/vision-picker-window');
+    const r = mod.openVisionPicker({ ipcGuard });
+    return { ok: true, reused: !!r.reused };
+  } catch (err) {
+    return { ok: false, errorType: 'picker_open_failed' };
+  }
+});
+
+/** 关闭框选窗（用户点 ESC / 右键 / 完成时由渲染层调） */
+ipcGuard.handle('vision:close-picker', () => {
+  try {
+    require('./src/vision-picker-window').closeVisionPicker();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false };
+  }
+});
+
+/**
+ * 框选结果的轻量通知（框选窗关掉后，主窗要能说一句"看到了"）。
+ * 用单向广播，不阻塞框选窗的关闭流程。
+ */
+ipcGuard.on('vision-notify', (e, payload = {}) => {
+  broadcastToWindows('vision-notify', {
+    ok: payload.ok === true,
+    errorType: typeof payload.errorType === 'string' ? payload.errorType.slice(0, 40) : null
+  });
+});
+
+/**
+ * 🔴 v1.8-b：把刚截的图**暂存**到 brain，等用户下一条消息时送出。
+ *
+ * 为什么要分开两步（截图 / 暂存）：
+ *   用户框选完不会立刻说话（可能先看一眼确认），所以图先存着，
+ *   等他真正发消息时再随那一轮送出去 —— 这才是"我看到你指的这块"的语义。
+ *
+ * 🔴 只存一张，后到覆盖先到；取过即清（brain.takeVisionPick）。
+ */
+ipcGuard.handle('vision:stage', (e, opts = {}) => {
+  if (!brain) return { ok: false, errorType: 'no_brain' };
+  if (typeof opts.dataUrl !== 'string' || !opts.dataUrl.startsWith('data:image/')) {
+    return { ok: false, errorType: 'bad_image' };
+  }
+  const ok = brain.stageVisionPick({
+    dataUrl: opts.dataUrl,
+    width: Number.isFinite(opts.width) ? opts.width : 0,
+    height: Number.isFinite(opts.height) ? opts.height : 0
+  });
+  return ok ? { ok: true } : { ok: false, errorType: 'stage_failed' };
+});
+
+/** 是否已暂存一张图（UI 用来显示"待发送"标记） */
+ipcGuard.handle('vision:pending', () => {
+  if (!brain) return { ok: false, pending: false };
+  return { ok: true, pending: brain.hasVisionPick() };
+});
+
+/**
+ * 🔴 v1.8-b（2026-10-21）：给对话窗的「待发送截图」预览数据。
+ *
+ * ## 为什么需要这个通道
+ *   用户实测反馈：「截出来的图在对话框里找不到，也不会出现在输入框里，
+ *   具有迷惑性」。截图存进 brain 后**界面零反馈** —— 他无法确认截到没有。
+ *
+ * ## 返回什么
+ *   缩略图（data URL 缩小版）+ 尺寸。**只给预览用**，
+ *   真正送模型的是 brain 里存的那张原图，两者互不影响。
+ *
+ * ## 隐私口径
+ *   图本来就只存在内存；这里只是把它**回传给本应用自己的对话窗**做缩略预览，
+ *   不落盘、不外传。用户点 × 时通过 vision:drop 彻底清掉。
+ */
+ipcGuard.handle('vision:peek', () => {
+  if (!brain) return { ok: false, pending: false };
+  const pick = typeof brain.peekVisionPick === 'function' ? brain.peekVisionPick() : null;
+  if (!pick || !pick.dataUrl) return { ok: true, pending: false };
+  return {
+    ok: true,
+    pending: true,
+    // 缩略图与尺寸都给：尺寸是客观事实，缩略图让用户确认"就是这块"
+    dataUrl: pick.dataUrl,
+    width: pick.width,
+    height: pick.height
+  };
+});
+
+/**
+ * 🔴 v1.8-b：丢弃待发送的截图（用户点 × 时调）。
+ * 与「一次性消费」互补：takeVisionPick 是发出去后自动清，这个是用户主动放弃。
+ */
+ipcGuard.handle('vision:drop', () => {
+  if (!brain) return { ok: false };
+  brain.takeVisionPick();   // 取出即清（返回值丢弃）
+  return { ok: true };
+});
+
+/**
+ * 主窗当前位置（框选坐标换算用）。
+ * 渲染层的框选拿到的是**视口坐标**，主进程截图要的是**屏幕坐标**，
+ * 两者相差一个窗口位置。把这个值暴露出去让渲染层自己加，比在主进程猜更可靠。
+ */
+ipcGuard.handle('window-position', () => {
+  if (!win || win.isDestroyed()) return { x: 0, y: 0 };
+  const pos = win.getPosition ? win.getPosition() : [0, 0];
+  return { x: pos[0] || 0, y: pos[1] || 0 };
+});
+
+/** 视觉审计（只记元数据；绝不记像素与 OCR 文本） */
+function appendVisionAudit(entry) {
+  try {
+    const dir = app.getPath('userData');
+    const line = {
+      at: entry.at || new Date().toISOString(),
+      stage: typeof entry.stage === 'string' ? entry.stage.slice(0, 32) : null,
+      width: Number.isFinite(entry.width) ? entry.width : null,
+      height: Number.isFinite(entry.height) ? entry.height : null,
+      elapsedMs: Number.isFinite(entry.elapsedMs) ? entry.elapsedMs : null,
+      visionTokens: Number.isFinite(entry.visionTokens) ? entry.visionTokens : null,
+      errorType: typeof entry.errorType === 'string' ? entry.errorType.slice(0, 40) : null
+    };
+    fs.appendFileSync(path.join(dir, 'vision-audit.jsonl'), JSON.stringify(line) + '\n', 'utf8');
+  } catch (err) { /* 审计写失败绝不外抛 */ }
+}
+
 app.whenReady().then(() => {
   console.log([
     '',
@@ -1842,6 +2459,13 @@ app.whenReady().then(() => {
   //   必须是**赋值**而不是局部 const —— 调用点（chat-send handler）在模块顶层，
   //   它读的是这个模块级变量。
   agentBuildDeps = { agentIpc, agentSandbox, broadcastToWindows, agentBudget, takeStashedContent };
+
+  // 🔴 v1.7-a：权限闸门必须在**任何 BrowserWindow 创建之前**装好。
+  //   装晚了的话，窗口已经发出的权限请求走的是默认行为 —— 那正是本闸门要消除的赌。
+  //   失败不阻塞启动：她仍能正常对话，只是麦克风类请求会退回默认行为（并留一条日志）。
+  if (!installPermissionGate(session.defaultSession)) {
+    console.warn('[Security] 权限闸门安装失败：当前 Electron 版本的 session 不支持 handler');
+  }
 
   createWindow();
 

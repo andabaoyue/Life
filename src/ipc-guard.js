@@ -10,7 +10,8 @@
  * 同时提供 navigation 守卫：非本地页面 will-navigate / will-redirect 一律
  * preventDefault，setWindowOpenHandler 默认拒绝新窗口。
  *
- * 错误消息只有 'UNTRUSTED_RENDERER' / 'UNTRUSTED_NAVIGATION'，不泄漏敏感信息。
+ * 错误消息只有 'UNTRUSTED_RENDERER' / 'UNAUTHORIZED_RENDERER_CHANNEL' /
+ * 'UNTRUSTED_NAVIGATION'，不泄漏敏感信息。
  *
  * ipcMain / 主窗口对象均由调用方注入 —— 本模块不 require electron，可在纯 Node 测试。
  */
@@ -39,7 +40,18 @@ function isAppLocalUrl(url, appDir) {
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 
-function createIpcGuard({ ipcMain, getMainWindow, appDir, getTrustedWebContents }) {
+/**
+ * 框选窗的纯通道策略：只有 picker 自己受限；主窗、对话窗沿用常规权限。
+ * pickerWebContents 为空时代表当前没有可识别的框选窗。
+ */
+function isChannelAllowedForPicker(event, channel, pickerWebContents, allowedChannels) {
+  if (!pickerWebContents) return true;
+  if (!event || !event.sender) return false;
+  if (event.sender !== pickerWebContents) return true;
+  return !!(allowedChannels && allowedChannels.has(channel));
+}
+
+function createIpcGuard({ ipcMain, getMainWindow, appDir, getTrustedWebContents, authorizeChannel }) {
   if (!ipcMain || typeof ipcMain.handle !== 'function' || typeof ipcMain.on !== 'function') {
     throw new Error('IPC_GUARD_REQUIRES_IPC_MAIN');
   }
@@ -68,19 +80,30 @@ function createIpcGuard({ ipcMain, getMainWindow, appDir, getTrustedWebContents 
     return true;
   }
 
-  /** ipcMain.handle 包装：校验失败则 handler 以 UNTRUSTED_RENDERER reject */
+  function assertAuthorizedChannel(event, channel) {
+    if (typeof authorizeChannel === 'function' && authorizeChannel(event, channel) !== true) {
+      const err = new Error('UNAUTHORIZED_RENDERER_CHANNEL');
+      err.code = 'UNAUTHORIZED_RENDERER_CHANNEL';
+      throw err;
+    }
+    return true;
+  }
+
+  /** ipcMain.handle 包装：先验证 renderer 身份，再验证窗口通道权限 */
   function handle(channel, fn) {
     ipcMain.handle(channel, (event, ...args) => {
       assertTrustedRenderer(event);
+      assertAuthorizedChannel(event, channel);
       return fn(event, ...args);
     });
   }
 
-  /** ipcMain.on 包装：校验失败静默丢弃（单向消息无返回通道） */
+  /** ipcMain.on 包装：身份或通道校验失败都静默丢弃（单向消息无返回通道） */
   function on(channel, fn) {
     ipcMain.on(channel, (event, ...args) => {
       try {
         assertTrustedRenderer(event);
+        assertAuthorizedChannel(event, channel);
       } catch {
         return;
       }
@@ -107,4 +130,4 @@ function createIpcGuard({ ipcMain, getMainWindow, appDir, getTrustedWebContents 
   return { assertTrustedRenderer, isTrustedRenderer, handle, on, attachNavigationGuard };
 }
 
-module.exports = { createIpcGuard, isAppLocalUrl };
+module.exports = { createIpcGuard, isAppLocalUrl, isChannelAllowedForPicker };

@@ -35,8 +35,12 @@ const INCLUDE = [
   // 运行入口与前端（与 electron-builder.yml 的 files 白名单同源）
   'main.js',
   'preload.js',
+  'vision-picker-preload.js',
   'index.html',
   'chat.html',
+  // v1.8-b：全屏框选窗（独立窗口，与 electron-builder.yml 的 files 白名单同步）
+  'vision-picker.html',
+  'vision-picker.js',
   'chat.js',
   'pet.js',
   'style.css',
@@ -52,6 +56,22 @@ const INCLUDE = [
   '.gitignore',
   '启动Life.vbs',
   '启动初澜.vbs',
+
+  /* 🔴 2026-10-27（P4-1 修订）：`known-prefixes.json` 必须**进公开集**。
+   *
+   *   为什么（这一条我第一版判断错了，审核纠正）：
+   *     · 它是 `test/tmp-hygiene` 的**运行时依赖**（双向差集断言的对照清单）；
+   *     · 若公开集里没有它，`tmp-hygiene` 会走「文件不存在」分支 ——
+   *       `archived = allPres.slice()`（自己等于自己）⇒ 双向差集**恒真**。
+   *       那条门禁在公开库里会**静默变松**，比直接报错更危险。
+   *
+   *   安全性已核：111 条全是测试前缀（形如 `agentcnf-app-`、`archive-test-`），
+   *   无盘符、无用户名、无绝对路径。
+   *
+   *   ⚠️ 必须放在 INCLUDE 而非靠 EXCLUDE 的 `!` 否定 ——
+   *      `classify()` 的实现是「EXCLUDE 用 find 取第一个命中」，**不支持否定语法**。
+   */
+  '.workbuddy/cleanup/known-prefixes.json',
 
   // 门面与合规文档（公开库的对外契约面）
   'README.md',
@@ -108,6 +128,28 @@ const EXCLUDE = [
   // —— 工具链配置 ——
   ['.pi/**', '内部 Agent 技能与模式配置（Pi/DSH 工具链专用，与软件运行无关）'],
   ['.agents/**', '内部 Agent 技能配置（与 .pi 同源）'],
+
+  /* 🔴 2026-10-27（P4-1 修订，最终版）：`.workbuddy/` **不写 EXCLUDE 规则**。
+   *
+   *   第一版把整个目录（含 known-prefixes.json）排除，理由是「绑定本机测试前缀，
+   *   对使用者无意义」。审核指出这与我同一笔提交里「它是门禁运行时依赖，所以入库」
+   *   的理由**自相矛盾**，而且后果更糟：公开集里没有它 ⇒ `tmp-hygiene` 走
+   *   「文件缺失」分支 ⇒ 双向差集断言**恒真**（自己等于自己），门禁静默变松。
+   *
+   *   ⚠️ 五条实测教训（全踩过，写下来免得重犯）：
+   *     ① `classify()` 用 `EXCLUDE_RE.find()` 取**第一个**命中 ⇒ 不支持 `!` 否定语法；
+   *     ② EXCLUDE **优先于** INCLUDE ⇒ 写 `*.json` 或 `.workbuddy/**` 通配会挡住例外；
+   *     ③ 拆成 11 条细排除 ⇒ 绝大多数零命中 ⇒ 集体被判**死规则** FAIL；
+   *     ④ 在 classify() 里用 Set 摘出例外 ⇒ `.workbuddy/**` 变零命中死规则 FAIL；
+   *     ⑤ 用 RegExp 负向断言表达例外 ⇒ **仍然零命中**，还是死规则 FAIL。
+   *        根因：`.workbuddy/` 下**只有 known-prefixes.json 一个文件被 git 跟踪**
+   *        （实测 `git ls-files .workbuddy` 仅此一条），而它正是要放行的那个。
+   *        所以任何"排除 .workbuddy"的规则在当前仓库形态下**必然零命中**。
+   *
+   *   最终结论：**这条 EXCLUDE 不该存在**。该文件已加入 INCLUDE；
+   *   将来 `.workbuddy` 下若有新文件入库，会被 classify() 判 UNCLASSIFIED
+   *   并让门禁 FAIL，强制显式表态 —— 这比一条永远零命中的通配规则更有效。
+   */
 
   // —— 内部实施报告与研究档案 ——
   ['docs/agent/**', '内部 Agent 实施报告（含内部工具链与私库改造细节）'],
@@ -178,8 +220,19 @@ const GLOB_ESCAPE = {
   '(': 1, ')': 1, '|': 1, '[': 1, ']': 1, '\\': 1
 };
 
-/** 把只支持 * 与 ** 的 glob 转成正则（不引入依赖：本仓 tools/ 零依赖是既定风格）。 */
+/**
+ * 把 glob 转成正则（不引入依赖：本仓 tools/ 零依赖是既定风格）。
+ *
+ * 🔴 2026-10-27（P4-1）：**允许直接传 RegExp**，原样使用。
+ *   为什么需要：glob 只支持 `*` / `**`，而「排除整个目录但放行其中一个文件」
+ *   这种语义没法用 glob 表达 —— 试过的三种写法全失败（实测）：
+ *     ① `!.workbuddy/...` 否定语法 → classify 用 find 取第一个命中，不支持；
+ *     ② `*.json` / `.workbuddy/**` 通配 → EXCLUDE 优先，把要放行的也挡了；
+ *     ③ 在 glob 里写负向断言 `(?!...)` → 被 GLOB_ESCAPE 转义成字面量，两条都 false。
+ *   所以加一条最小扩展：glob 为 RegExp 时直接用，不做转义。
+ */
 function globToRe(glob) {
+  if (glob instanceof RegExp) return glob;
   let s = '';
   for (const ch of glob) {
     if (ch === '*') { s += '*'; continue; }
@@ -244,6 +297,19 @@ function classify(files) {
   const unclassified = [];
   const hits = new Map();
   const bump = g => hits.set(g, (hits.get(g) || 0) + 1);
+
+  /* 2026-10-27（P4-1）最终状态：**本函数内没有任何例外逻辑，也不需要**。
+   *
+   *   `.workbuddy/cleanup/known-prefixes.json` 的放行完全由 INCLUDE 里那条精确条目
+   *   负责；EXCLUDE 里**不存在**任何能命中它的规则（那条 `.workbuddy/**` 及
+   *   其负向断言版本都已删除，因为它们必然零命中 —— 详见 EXCLUDE 段顶部注释）。
+   *
+   *   ⚠️ 此处曾有一条注释说「例外已由 EXCLUDE 的负向断言 `(?!...)` 表达」——
+   *   那是修复过程中的遗留：该规则后来被删了，注释没跟着删。
+   *   审核实测「EXCLUDE 段内 `(?!` 出现 0 次」把它抓了出来。
+   *   教训：**删代码时同步删/改注释**，否则注释会变成误导后来者的假事实。
+   */
+
   for (const f of files) {
     const ex = EXCLUDE_RE.find(r => r.re.test(f));
     if (ex) { excluded.push({ file: f, reason: ex.why }); bump(ex.glob); continue; }

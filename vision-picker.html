@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none';">
+<title>框选</title>
+<style>
+  /* 全屏框选页。
+     ## 为什么整页半透明
+     用户要能**看见底下的屏幕内容**才知道该框哪里 —— 遮罩不能遮死。
+     30% 的黑让选区外有明确"不在选中"的视觉，又不至于看不清内容。 */
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: rgba(8, 10, 16, 0.30);
+    cursor: crosshair;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* 选区：亮边 + 内部更透（让选区里的内容比外面清楚） */
+  #selBox {
+    position: fixed;
+    border: 2px solid #7fb3ff;
+    background: rgba(127, 179, 255, 0.10);
+    box-shadow: 0 0 0 9999px rgba(8, 10, 16, 0.30);
+    display: none;
+    pointer-events: none;
+  }
+  /* 提示条：告诉用户"拖框"，避免像上一版那样让人不知道要干什么 */
+  #hint {
+    position: fixed;
+    top: 24px; left: 50%; transform: translateX(-50%);
+    padding: 8px 16px;
+    background: rgba(14, 17, 27, 0.92);
+    border: 1px solid rgba(135, 175, 255, 0.28);
+    border-radius: 999px;
+    color: #dbe6ff;
+    font: 13px/1.4 "Segoe UI", "Microsoft YaHei", sans-serif;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  /* 底部状态：显示当前选区尺寸 */
+  #sizeTip {
+    position: fixed;
+    left: 50%; bottom: 28px; transform: translateX(-50%);
+    padding: 6px 14px;
+    background: rgba(14, 17, 27, 0.92);
+    border: 1px solid rgba(135, 175, 255, 0.2);
+    border-radius: 8px;
+    color: #9fb4d8;
+    font: 12px/1.4 Consolas, monospace;
+    pointer-events: none;
+    display: none;
+  }
+</style>
+</head>
+<body>
+  <div id="hint">拖一个框，只截你选的那块 · ESC 取消</div>
+  <div id="selBox"></div>
+  <div id="sizeTip"></div>
+  <script src="vision-picker.js"></script>
+</body>
+</html>

@@ -183,6 +183,7 @@ function tmpDir(prefix = 'canalization-test-') {
   // 的形状（叙事层比机制层厚）。这里把它物理锁死：生产代码不得引用它们。
   //（手法与 test/wardrobe.test.js「正则扫源码执法服装不碰人格」一致）
   const srcDir = path.join(__dirname, '..', 'src');
+  const rootDir = path.join(__dirname, '..');
   const offenders = [];
   // 剥掉注释再扫：守卫要拦的是「被引用/被升级为机制」，不是「被提及」。
   // 否则谁在注释里写一句 DEVELOPMENTAL_STAGES 就误报，守卫很快就没人信了。
@@ -197,13 +198,39 @@ function tmpDir(prefix = 'canalization-test-') {
       if (path.basename(p) === 'canalization.js') continue;   // 定义处本身豁免
       const text = stripComments(fs.readFileSync(p, 'utf8'));
       for (const sym of ['DEVELOPMENTAL_STAGES', 'getDevelopmentalStage', 'getCanalizationMetrics']) {
-        if (text.includes(sym)) offenders.push(path.relative(srcDir, p) + ' -> ' + sym);
+        if (text.includes(sym)) offenders.push(path.relative(rootDir, p) + ' -> ' + sym);
       }
     }
   };
   walkSrc(srcDir);
+
+  /* 🔴 2026-10-27：补扫**根目录的运行时入口**。
+   *
+   *   实测漏洞：本守卫原先只 walkDir(src)，而 main.js / preload.js / pet.js / chat.js
+   *   全在仓库根目录 —— `main.js:1358` 长期在调 `canal.getCanalizationMetrics()`
+   *   产出 { stage, plasticity } 喂给观测面板的「发育景观」区块，
+   *   正是本条守则要拦的形状，却因为扫不到而一直绿。
+   *
+   *   这不是"扩检查让红变绿"，是**把本来就该成立的规则补全**：
+   *   根目录那几个文件同样是生产代码，同样拿得到 canalization 模块。
+   */
+  const ROOT_RUNTIME_ENTRIES = ['main.js', 'preload.js', 'pet.js', 'chat.js'];
+  for (const name of ROOT_RUNTIME_ENTRIES) {
+    const p = path.join(rootDir, name);
+    if (!fs.existsSync(p)) continue;
+    const text = stripComments(fs.readFileSync(p, 'utf8'));
+    for (const sym of ['DEVELOPMENTAL_STAGES', 'getDevelopmentalStage', 'getCanalizationMetrics']) {
+      if (text.includes(sym)) offenders.push(name + ' -> ' + sym);
+    }
+  }
+
   check('P2-3c：DEVELOPMENTAL_STAGES 等不得被生产代码引用（杜绝拟人化伪生命）',
     offenders.length === 0, JSON.stringify(offenders));
+
+  // 反向对照：确认根目录入口确实被扫到了（否则上面那条对根目录恒真）
+  check('（对照）P2-3c 已覆盖根目录运行时入口',
+    ROOT_RUNTIME_ENTRIES.some((n) => fs.existsSync(path.join(rootDir, n))),
+    '一个根目录入口都不存在则本条无意义');
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

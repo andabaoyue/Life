@@ -18,6 +18,23 @@ const ROOT = path.join(__dirname, '..');
 let failures = 0;
 let skipped = 0;
 const skipList = [];
+/* 🔴 2026-10-27：套件**内部**的 SKIP（不是「整个套件跑不了」那种）。
+ *
+ *   为什么需要两个计数器：上面那个 `skipped` 只统计 `skip()` —— 即「套件整体
+ *   跑不了」（spawn 被禁 / 缺 python 依赖）。而套件自己也可能输出 `SKIP` 行
+ *   （例如 tmp-hygiene 在 git 不可用时跳过 mtime 检查），那些走的是套件的
+ *   结构化摘要 `ASSERT ... skipped=N`，**根本不会调用本文件的 `skip()`**。
+ *
+ *   实测缺陷（2026-10-27 审核发现）：只加 `skipped` 字段不消费它，聚合层就
+ *   完全看不到套件内部的 SKIP —— 无 git 环境下 tmp-hygiene 有 1 项未验证，
+ *   而 `npm test` 仍然只印「全部通过」。那正好违反本文件第 25-26 行的纪律：
+ *   「结尾必须单独汇总，避免『0 FAIL』被误读成『全绿』」。
+ *
+ *   ⚠️ 不能直接并进 `skipped`：两者的成因不同（一个是本机跑不了，一个是套件
+ *      自述某项环境不适用），混在一起会让人分不清该修环境还是该看代码。
+ */
+let innerSkipped = 0;
+const innerSkipList = [];
 function check(name, cond, extra) {
   console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (extra ? '  ' + extra : ''));
   if (!cond) failures++;
@@ -230,8 +247,29 @@ function countPass(out) {
     const total = parseInt(structured[1], 10);
     const passed = parseInt(structured[2], 10);
     const failed = structured[3] !== undefined ? parseInt(structured[3], 10) : (total - passed);
+    /* 🔴 2026-10-27：有结构化摘要时，**对账口径用 total 而不是 passed**。
+     *
+     *   为什么改：README 里的「N 项」指的是**这套测试有多少个断言**，
+     *   不随环境变化。而 SKIP（环境不适用）会让 passed 变小：
+     *     有 git：total=22 passed=22 skipped=0
+     *     无 git：total=22 passed=21 skipped=1
+     *   若仍用 passed 对账，README 只能写一个数 ⇒ 必然一边红（实测踩过）。
+     *
+     *   用 total 对账后：项数恒定，且 SKIP 仍然如实输出、不进 passed
+     *   —— 既不破坏项数稳定，也不冒充通过。
+     *
+     *   ⚠️ 兼容性：只有输出了结构化摘要的套件走这条路（目前 4 个：
+     *   experiences-archive / subject-state / replay-cancel / tmp-hygiene）。
+     *   其余套件仍走下面的文本行匹配，行为完全不变。
+     */
     return {
-      pass: passed,
+      pass: total,        // 对账口径：断言总数（含 SKIP）
+      passed,             // 真通过数（供需要时参考）
+      /* 套件内部跳过的项数。用 Math.max(0, ...) 兜底：
+       * 摘要畸形时（如 passed+failed > total，实测 total=10 passed=8 failed=5）
+       * 减法会得到负数。负数在这里没有意义，钳到 0 比让下游看到一个
+       * 「跳过 -3 项」更诚实 —— 那只会让人怀疑计数器坏了。 */
+      skipped: Math.max(0, total - passed - failed),
       fail: failed,
       structured: true,
     };
@@ -297,11 +335,19 @@ function countPass(out) {
     check(c.file + ' 全绿（0 项 FAIL）', r.fail === 0 && !runError, runError ? '子进程非零退出: ' + String(runError.message || runError).slice(0, 100) : ('FAIL=' + r.fail));
     check(c.file + ' 项数与 README 一致', r.pass === c.n,
       'README 写 ' + c.n + '，实际 ' + r.pass);
+    /* 累计套件内部自述的 SKIP（见文件头 innerSkipped 的注释）。
+     * 只收结构化摘要给出的数；文本行匹配分支没有这个字段，`|| 0` 兜住。 */
+    if (r.skipped) {
+      innerSkipped += r.skipped;
+      innerSkipList.push(c.file + ' —— ' + r.skipped + ' 项（套件自述环境不适用）');
+    }
   }
 
   /* 3. README 点名的文件都存在（运行期产物除外） */
   // 这些写在 userData 里，仓库里本来就没有；README 提它们是说明存储位置。
-  const RUNTIME = new Set(['life-config.json', 'life-key', 'gpt-girl-config.json', 'gpt-girl-key', 'wardrobe.json', 'self-ledger.json', 'experiences.jsonl', 'subject-state.json', 'stats.json', 'memory.json']);
+  // v1.7-a：stt-config.json 与上面同族 —— STT 的非机密配置（endpoint/model/lang），
+  //   写在 userData，仓库里不会有它。
+  const RUNTIME = new Set(['life-config.json', 'life-key', 'gpt-girl-config.json', 'gpt-girl-key', 'wardrobe.json', 'self-ledger.json', 'experiences.jsonl', 'subject-state.json', 'stats.json', 'memory.json', 'stt-config.json']);
   const walk = (dir, acc) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
@@ -334,7 +380,22 @@ function countPass(out) {
     console.log('\n---- 跳过明细（环境限制，非测试失败）----');
     skipList.forEach(s => console.log('  ' + s));
   }
+  /* 🔴 2026-10-27：套件内部的 SKIP 也必须出现在汇总里。
+   *
+   *   为什么单列一段：它与上面那批成因不同 —— 上面是「整个套件跑不了」，
+   *   这里是「套件跑完了，但其中几项因环境不适用没验」。对读者来说，
+   *   后者更隐蔽：套件是绿的、项数也对得上，只有它自己那一行 SKIP 在说真话，
+   *   而那一行埋在几百行输出中间。
+   *
+   *   实测缺陷（本次修复的起因）：无 git 环境下 tmp-hygiene 有 1 项未验证，
+   *   聚合层却只印「全部通过」—— 与第 25-26 行的纪律直接冲突。
+   */
+  if (innerSkipped) {
+    console.log('\n---- 套件内部跳过明细（跑完了，但有不适用项未验证）----');
+    innerSkipList.forEach(s => console.log('  ' + s));
+  }
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过')
-    + (skipped ? '（另有 ' + skipped + ' 项因环境限制跳过，未验证）' : ''));
+    + (skipped ? '（另有 ' + skipped + ' 项因环境限制跳过，未验证）' : '')
+    + (innerSkipped ? '（其中 ' + innerSkipped + ' 项因环境不适用跳过，未验证）' : ''));
   process.exit(failures ? 1 : 0);
 })();

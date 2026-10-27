@@ -111,6 +111,7 @@ Module._load = function (request, parent, isMain) {
     screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }) },
     shell: {}, Menu: { setApplicationMenu: () => {} }, Tray: function () { return {}; },
     globalShortcut: { register: () => {} }, nativeImage: {}, safeStorage: {},
+    session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
     dialog: {}, BrowserWindow2: null
   };
   return origLoad(request, parent, isMain);

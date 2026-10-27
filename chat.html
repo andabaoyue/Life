@@ -258,6 +258,48 @@
       margin: 0;
       word-break: keep-all;
     }
+
+    /* ---------------- v1.8-b：待发送截图预览条 ----------------
+       🔴 为什么必须有这条：用户实测「截出来的图在对话框里找不到、
+          也不会出现在输入框里，具有迷惑性」。截图存进 brain 后
+          界面零反馈 —— 他无法确认到底截到了没有。
+       这条给出三个确定信息：缩略图（截到了什么）、尺寸、可移除。 */
+    #visionBar {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-top: 1px solid rgba(135, 175, 255, 0.12);
+      background: rgba(22, 28, 44, 0.72);
+    }
+    #visionBar.hidden { display: none; }
+    #visionThumb {
+      width: 56px; height: 42px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid rgba(135, 175, 255, 0.32);
+      background: rgba(0, 0, 0, .3);
+      flex: none;
+    }
+    #visionMeta {
+      flex: 1;
+      min-width: 0;
+      font-size: 11.5px;
+      color: #9fb4d8;
+      line-height: 1.45;
+    }
+    #visionDrop {
+      flex: none;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.08);
+      color: #cfd8ea;
+      font-size: 13px; line-height: 1;
+      cursor: pointer;
+    }
+    #visionDrop:hover { background: rgba(231, 76, 60, .28); color: #ff9b9b; }
   </style>
 </head>
 <body>
@@ -269,7 +311,19 @@
       </div>
     </div>
     <div id="chatList"></div>
+    <!-- v1.8-b：待发送的截图预览条。
+         🔴 用户实测反馈：「截出来的图在对话框里找不到，也不会出现在输入框里，具有迷惑性」。
+         截图存进 brain 后界面上完全看不到 —— 用户无法确认"到底截到没有"。
+         这条让你看见：缩略图 + 尺寸 + 可移除。发出去或点 × 后消失。 -->
+    <div id="visionBar" class="hidden">
+      <img id="visionThumb" alt="">
+      <span id="visionMeta">—</span>
+      <button id="visionDrop" title="移除这张图">×</button>
+    </div>
     <div id="inputBar">
+      <!-- v1.7-a：语音输入按钮。默认 disabled —— 未配置 STT 服务时不可点，
+           配置存在才亮起（由 chat.js 的 syncMicState 驱动）。 -->
+      <button id="micBtn" class="mic-btn" disabled title="未配置语音识别服务">🎤</button>
       <textarea id="input" rows="1" spellcheck="false" autocomplete="off" maxlength="2000"></textarea>
       <button id="send" title="发送">↑</button>
     </div>

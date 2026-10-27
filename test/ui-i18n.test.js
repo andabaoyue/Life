@@ -111,7 +111,10 @@ check('12 全量防漂移门禁：全量 en 字典零中文残留、t() 插值�
     "t('say.pinOn'",
     "t('dreams.count'",
     "t('research.lexicon.empty'",
-    "t('research.vitals.line1'",
+    // ⚠️ 2026-10-27：原列了 t('research.vitals.line1' —— 该区块已随排版整改删除
+    //   （生理潮汐与机制遥测的 vitals.core 逐字重复，只保留遥测一处）。
+    //   这里换成同属遥测的新接线断言，保持"动态接线必须在用"的检查密度不降。
+    "t('obs.group.' + g",
     "t('chat.needKeyBubble'"
   ].every(pattern => petCode.includes(pattern));
 

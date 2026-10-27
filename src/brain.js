@@ -263,6 +263,16 @@ class Brain {
       }
     });
 
+    /* 🔴 v1.8-a：把「重逢事实」的取数权交给 brain（memory 不碰 stats）。
+     *
+     *   注意接线时机：必须在 stats 初始化之后 —— takeReunionNote 内部读 this.stats，
+     *   而 this.stats 在下面 306 行附近才赋值。这里只是注册一个**闭包**，
+     *   真正调用发生在 memory.build()（那时 stats 早已就位），所以顺序安全。
+     */
+    this.memory.setReunionProvider(() => this.takeReunionNote());
+    // 🔴 v1.8-b：视觉事实行同款注入（图本身由 brain 自己附加，这里只管那句说明）
+    this.memory.setVisionProvider(() => this.takeVisionNote());
+
     const currentWinNo = (this.memory.data && typeof this.memory.data.windowNo === 'number')
       ? this.memory.data.windowNo : 1;
 
@@ -930,6 +940,138 @@ class Brain {
     }
   }
 
+  /* ---------- 🔴 v1.8-a：重逢心境（主观时间）---------- */
+
+  /**
+   * 上次见到用户的时间戳；缺失或非法一律返回 null（= 首次见面）。
+   * @returns {number|null}
+   */
+  getLastSeenAt() {
+    const v = this.stats && this.stats.lastSeenAt;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  /**
+   * 记录「刚见到你」。
+   *
+   * 🔴 不需要另写节流：statsWriter 是 DeferredWriter（3 秒防抖 + 原子写 +
+   *   退出 flush），高频拖拽只会合并成一次落盘。
+   *
+   * @param {number} [at] 默认当前时刻（测试可注入）
+   */
+  touchLastSeen(at = Date.now()) {
+    if (!this.stats) return;
+    this.stats.lastSeenAt = Number.isFinite(at) && at > 0 ? at : Date.now();
+    // 走既有防抖通道，绝不为此新开一条写盘路径
+    if (this.statsWriter && typeof this.statsWriter.markDirty === 'function') {
+      this.statsWriter.markDirty();
+    }
+  }
+
+  /**
+   * 取出并**消费**本次重逢事实（一次性）。没有则返回 ''。
+   *
+   * ## 触发语义（v1.8-a 核心纠偏）
+   *   由 memory.build() 在「你这一轮开口」时回调 —— 不是应用启动时。
+   *   桌宠常驻不重启，绑进程事件会让这个功能几乎永不触发。
+   *
+   * ## 消费即刷新
+   *   一旦判定为重逢，立刻 touchLastSeen(now)，保证同一次离开只说一次。
+   *   这与 D-13 便签的 drained 语义同族。
+   *
+   * @param {number} [now]
+   * @returns {string} 事实行或 ''
+   */
+  takeReunionNote(now = Date.now()) {
+    let mod;
+    try {
+      mod = require('./reunion');
+    } catch (e) {
+      return '';
+    }
+
+    const last = this.getLastSeenAt();
+    const verdict = mod.evaluateReunion(last, now);
+
+    // 🔴 冷启动：首次见面不注入任何事实行，只初始化时间
+    //   （否则新用户第一句会听到「你离开了 20 年」）
+    if (verdict.coldStart) {
+      this.touchLastSeen(now);
+      return '';
+    }
+
+    if (!verdict.isReunion) {
+      // 未达阈值 / 时钟回拨：也要刷新，否则这个时间会一直停在很久以前
+      this.touchLastSeen(now);
+      return '';
+    }
+
+    this.touchLastSeen(now);
+    return mod.formatReunionLine(verdict.awayMs);
+  }
+
+  /* ---------- 🔴 v1.8-b：屏幕视觉探针 ---------- */
+
+  /**
+   * 暂存一张待送的框选截图（由主进程在用户框选后调用）。
+   *
+   * 🔴 只存**一张**，后到的覆盖先到的 —— 绝不让图片在内存里堆积。
+   * @param {{dataUrl:string, width:number, height:number}} pick
+   */
+  stageVisionPick(pick) {
+    if (!pick || typeof pick.dataUrl !== 'string' || !pick.dataUrl.startsWith('data:image/')) {
+      this._visionPick = null;
+      return false;
+    }
+    this._visionPick = {
+      dataUrl: pick.dataUrl,
+      width: Number.isFinite(pick.width) ? pick.width : 0,
+      height: Number.isFinite(pick.height) ? pick.height : 0
+    };
+    return true;
+  }
+
+  /**
+   * 取出并**清空**暂存的截图（一次性）。
+   * 取过即清：同一次框选不会在连续两轮里都被送出去（省 token）。
+   * @returns {{dataUrl:string, width:number, height:number}|null}
+   */
+  takeVisionPick() {
+    const p = this._visionPick || null;
+    this._visionPick = null;
+    return p;
+  }
+
+  /** 是否存在待送截图（只读，不消费） */
+  hasVisionPick() {
+    return !!(this._visionPick && this._visionPick.dataUrl);
+  }
+
+  /**
+   * 🔴 v1.8-b（2026-10-21）：只读地看一眼待发截图（**不消费**）。
+   *
+   * 为什么单独开这个方法而不是让调用方直读 `_visionPick`：
+   *   1. `_visionPick` 是私有字段，外部直读会让"谁能改它"变得不可控；
+   *   2. 这里返回**副本**，调用方改返回值不影响内部状态。
+   *
+   * 用途：对话窗要显示「待发送截图」缩略预览 —— 用户实测
+   *   「截出来的图在对话框里找不到，具有迷惑性」，需要看得见才敢确认。
+   *
+   * @returns {{dataUrl:string, width:number, height:number}|null}
+   */
+  peekVisionPick() {
+    const p = this._visionPick;
+    if (!p || !p.dataUrl) return null;
+    return { dataUrl: p.dataUrl, width: p.width, height: p.height };
+  }
+
+  /** 取出本次视觉事实行（一次性；供 memory 的 provider 回调使用） */
+  takeVisionNote() {
+    const n = this.pendingVisionNote || '';
+    this.pendingVisionNote = '';
+    return n;
+  }
+
   flushAll() {
     if (this.memory && typeof this.memory.flush === 'function') this.memory.flush();
     if (this.selfLedger && typeof this.selfLedger.flush === 'function') this.selfLedger.flush();
@@ -1305,8 +1447,56 @@ class Brain {
     }
     this.pendingUser = true;
 
+    /* 🔴 v1.8-b：视觉探针。若本轮带了一张图，把它附加到最后一条 user 的 content 数组。
+     *
+     *   三条边界：
+     *     1. **只影响本次请求**：attachImageToLastUser 返回新数组，
+     *        memory.history 里那条仍是纯字符串（图不进历史）；
+     *     2. **能力前置**：模型不支持 vision 时**显式失败**，绝静默丢图
+     *        （丢图后她仍会回答，但答的是"没看到"，那是假装看过）；
+     *     3. **一次性**：取过即清，绝不连续两轮都带同一张图。
+     *
+     * 🔴🔴 顺序铁律（2026-10-27 修复「事实行错位一轮」）：
+     *   **必须先决定图与事实行，再调 memory.build()**。
+     *
+     *   原实现把 `pendingVisionNote = formatVisionNote(...)` 写在 build **之后**，
+     *   而 build 内部的 `_visionNote()` → `takeVisionNote()` 会把 pendingVisionNote
+     *   取走并清空 ⇒ 赋值永远晚一步，事实行被**下一轮**取走。实测三种后果：
+     *     ① 带图那轮模型收不到尺寸（不知道看的是多大一块）；
+     *     ② 下一轮没图，却收到上一轮的尺寸 —— **诱导编造看到了什么**（违反「数据不伪造」）；
+     *     ③ 连续带图时尺寸错配（第 N 轮收到第 N-1 轮的尺寸）。
+     *
+     *   为什么不能只把赋值提前、其余不动：
+     *     事实行要进 build 的 tail，就必须在 build 之前写好；
+     *     而 attachImageToLastUser 改的是 build 的**产出**，必须仍在 build 之后。
+     *     两件事因此被拆成前后两段 —— 这是有意的，不是漏改。
+     *
+     *   ⚠️ 失败语义：build 抛错时 pick 已被消费（取过即清是铁律 3），
+     *      事实行也已在 tail 里，与 reunion 的「失败即丢、不补发」同款。
+     *      宁可不补，也不在下一轮补一句过期的观察。
+     */
+    const visionPick = this.takeVisionPick();
+    const visionMod = visionPick && visionPick.dataUrl ? require('./vision') : null;
+    const visionUsable = !!(visionMod && visionMod.modelSupportsVision(this.cfg && this.cfg.model));
+    if (visionPick && visionPick.dataUrl) {
+      if (!visionUsable) {
+        // 显式失败：把错误挂到一个可被上层读到的位置，绝不静默
+        this.lastVisionError = 'MODEL_HAS_NO_VISION';
+        this.pendingVisionNote = '';
+      } else {
+        // 必须在 build 之前写：build 内部的 _visionNote() 会取走它
+        this.pendingVisionNote = visionMod.formatVisionNote(visionPick.width, visionPick.height);
+        this.lastVisionError = null;
+      }
+    }
+
     // 动态将瞬时上下文注入到本轮 API 请求的最后一条 user 消息副本中，不污染 this.memory.data.history
-    const messages = this.memory.build(dynamicContext);
+    let messages = this.memory.build(dynamicContext);
+
+    // 图本身附加在 build 的产出上（必须在 build 之后）
+    if (visionUsable) {
+      messages = visionMod.attachImageToLastUser(messages, visionPick.dataUrl);
+    }
 
     const ctrl = new AbortController();
     this.ctrl = ctrl;

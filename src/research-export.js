@@ -26,9 +26,50 @@ function getAppVersion() {
   return pkg.version;
 }
 
+/**
+ * CSV 单元格转义（含**公式注入防护**）。
+ *
+ * ## 为什么需要公式注入防护（2026-10-20 GPT 审计发现，实测确认）
+ *   实测：`quote: '=1+1'` 导出后单元格原样是 `=1+1`。
+ *   Excel / WPS / Numbers 打开 CSV 时，以 `=` `+` `-` `@` 开头的单元格
+ *   **会被当成公式执行**。这里有一条真实的攻击链：
+ *   她说过的话（`evidence.quote`，来自对话，内容不可信）
+ *     → 落进 experiences / evidence
+ *     → 用户导出 CSV 用 Excel 打开
+ *     → `=cmd|' /C calc'!A1` 这类 DDE 载荷被执行
+ *   这不是"数据看着怪"，是**本地代码执行**。
+ *
+ * ## 防护做法
+ *   对以危险字符开头的值，前置一个单引号 `'`（Excel 的"强制文本"前缀），
+ *   并照常加引号包裹。这样：
+ *     - 电子表格里显示的是原文（前缀被 Excel 吃掉，不显示）；
+ *     - 任何解析器都不会把它当公式。
+ *
+ * ⚠️ 也被**制表符/回车/换行开头**的载荷绕过（实测 `\t=1+1`），
+ *   所以判定前先剥掉前导空白再检查首字符，但**保留原值**（不清洗内容，
+ *   只加前缀 —— 数据不伪造）。
+ *
+ * @param {*} val
+ * @returns {string}
+ */
+const CSV_FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r'];
+
 function escapeCsvCell(val) {
   if (val === null || val === undefined) return '';
-  const str = String(val);
+  let str = String(val);
+
+  // 1. 公式注入防护：先看"剥掉前导空白后的首字符"是不是危险字符
+  const lead = str.replace(/^[\s]+/, '');
+  const dangerous = lead.length > 0 && (
+    CSV_FORMULA_PREFIXES.includes(lead[0])
+    || CSV_FORMULA_PREFIXES.includes(str[0])
+  );
+  if (dangerous) {
+    // 前置单引号强制成文本；不清洗原文，只加前缀（数据不伪造）
+    str = "'" + str;
+  }
+
+  // 2. 标准 CSV 转义
   if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
     return '"' + str.replace(/"/g, '""') + '"';
   }
@@ -44,11 +85,15 @@ function exportStateTrajectory(trajectoryItems, format = 'json') {
     const lines = [headers.join(',')];
     for (const row of trajectoryItems) {
       lines.push([
-        row.windowNo ?? row.window ?? '',
+        escapeCsvCell(row.windowNo ?? row.window ?? ''),
         escapeCsvCell(row.trait),
-        row.previousValue ?? row.previous ?? 0,
-        row.delta ?? 0,
-        row.newValue ?? 0
+        // 🔴 2026-10-20：这三个字段**原本是裸拼进 CSV 的**（以为"都是数字所以安全"）。
+        //   实测 `newValue: '=1+1'` 原样落盘 —— 上游若把字符串塞进来，
+        //   就绕过了全部转义。CSV 的输入不可信假设必须覆盖每一个格子，
+        //   不能因为"它本应是数字"就免责。
+        escapeCsvCell(row.previousValue ?? row.previous ?? 0),
+        escapeCsvCell(row.delta ?? 0),
+        escapeCsvCell(row.newValue ?? 0)
       ].join(','));
     }
     return lines.join('\n');

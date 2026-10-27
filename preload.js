@@ -96,6 +96,42 @@ contextBridge.exposeInMainWorld('deskpet', {
     activate: (connectionId) => ipcRenderer.invoke('connections:activate', { connectionId })
   },
 
+  // 🔴 v1.7-a：STT 语音识别（凭据只进不出 —— 可写入密钥，绝无回读）。
+  //   ⚠️ transcribe 的入参**不含端点、不含密钥**：两者由主进程从存储里读，
+  //   渲染层无法指定任意端点（防 SSRF、防密钥外送）。
+  //   ⚠️ 本文件**永不出现密钥字段名**（test/secure.test.js 有全文扫描守卫）。
+  stt: {
+    getConfig: () => ipcRenderer.invoke('stt:get-config'),
+    setConfig: (opts) => ipcRenderer.invoke('stt:set-config', opts),
+    clearKey: () => ipcRenderer.invoke('stt:clear-key'),
+    transcribe: (opts) => ipcRenderer.invoke('stt:transcribe', opts)
+  },
+  // 🔴 2026-10-20：STT 录音审计（fire-and-forget）。
+  //   真机反馈"说了话没识别"却查不到痕迹，故加这条留痕通道。
+  //   只上报元数据（阶段/时长/字节数/mime/错误类别），**不含音频与文本**。
+  sttAudit: (payload) => ipcRenderer.send('stt-audit', payload),
+
+  // 🔴 v1.8-b：屏幕视觉探针（框选）。
+  //   ⚠️ capture 的入参**只有矩形**，不接受路径 / URL ——
+  //      能传路径就能读任意文件，能传 URL 就能 SSRF。
+  vision: {
+    capability: () => ipcRenderer.invoke('vision:capability'),
+    capture: (opts) => ipcRenderer.invoke('vision:capture', opts),
+    stage: (opts) => ipcRenderer.invoke('vision:stage', opts),
+    pending: () => ipcRenderer.invoke('vision:pending'),
+    // 🔴 2026-10-20 重做：框选改在独立全屏窗里做（主窗只有 256×320，框不到屏幕）
+    openPicker: () => ipcRenderer.invoke('vision:open-picker'),
+    closePicker: () => ipcRenderer.invoke('vision:close-picker'),
+    // 2026-10-21：对话窗显示「待发送截图」预览（否则用户看不到、以为没截到）
+    peek: () => ipcRenderer.invoke('vision:peek'),
+    drop: () => ipcRenderer.invoke('vision:drop')
+  },
+  // 框选窗关掉后，主窗用它说一句"看到了"
+  visionNotify: (payload) => ipcRenderer.send('vision-notify', payload),
+  onVisionNotify: (cb) => ipcRenderer.on('vision-notify', (e, p) => cb(p)),
+  // 主窗位置（框选坐标换算用：视口坐标 + 窗口位置 = 屏幕坐标）
+  windowPosition: () => ipcRenderer.invoke('window-position'),
+
   // Agent 治理 + 受控执行通道（D-1 建管道 / D-3 加确认 / D-4 加执行）。
   // 🔒 execute 存在，但它**不是万能钥匙**：主进程侧是三重默认关闭
   //   （killSwitch=true + allowed=[] + 无 scope 根），默认状态下必然被拒。

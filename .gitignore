@@ -47,6 +47,24 @@ temp/
 tmp/
 coverage/
 dist/
+# Build verification output (dist-offline-* / dist-release-* etc.).
+#   2026-10-28: packaging checks left dist-offline-verification-20261028/ (321 MiB)
+#   and dist-release-verification-20261028/ (660 MiB) untracked at repo root.
+#   A careless `git add .` would commit an Electron runtime; once pushed those
+#   blobs stay in history forever. Block it at the source.
+#
+#   Three points, all measured on git 2.56.0:
+#     1. The leading slash is required: `dist-*/` also ignores same-named
+#        directories in SUBdirectories (sub/dist-bbb was ignored), while
+#        `/dist-*/` applies to the repo root only (sub/dist-bbb stays visible).
+#     2. The trailing slash limits the match to directories, so a plain file
+#        with the same name is not affected.
+#     3. This rule only hides these directories from `git status`; it does NOT
+#        free disk space. Deleting them is a separate destructive action.
+#
+#   Complementary to `dist/` above, not a replacement: `/dist-*/` matches only
+#   names starting with `dist-` and does not cover `dist/` itself. Keep both.
+/dist-*/
 build/
 .cache/
 *.zip
@@ -58,7 +76,22 @@ Thumbs.db
 .idea/
 
 # WorkBuddy local workspace (audit evidence, cleanup scripts, memory) — never belongs in the repo
-.workbuddy/
+#
+# ⚠️ Git 忽略语义的坑（2026-10-27 实测，共试了 4 种写法，只有最后一种成立）：
+#   ① `.workbuddy/`（整目录忽略）+ 后置 `!`            → 无效：Git 不进该目录，`!` 救不回
+#   ② `.workbuddy/`（整目录忽略）+ 前置 `!`            → 无效：同上，顺序无关
+#   ③ `.workbuddy/*` + 直接 `!` 到文件                 → 无效：`cleanup/` 本身仍被忽略，进不去
+#   ④ `.workbuddy/*` + `!.workbuddy/cleanup/`（放行目录入口）
+#      + `.workbuddy/cleanup/*`（再忽略其内容）
+#      + `!.workbuddy/cleanup/known-prefixes.json`     → ✅ 成立（当前写法）
+#
+#    为什么它是例外：该文件是**门禁的运行时依赖**（test/tmp-hygiene.test.js 会读写它），
+#    不纳入版本控制会导致换机器后该套件行为漂移。PENDING-TASKS 6.2（2026-10-27 处置）。
+.workbuddy/*
+# 放行 cleanup/ 目录入口（不放行的话 Git 根本不进该目录，`!` 对文件无效）
+!.workbuddy/cleanup/
+.workbuddy/cleanup/*
+!.workbuddy/cleanup/known-prefixes.json
 .npmcache/
 
 # Scratch reports / prompts produced during review rounds

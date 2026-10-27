@@ -120,10 +120,35 @@ try {
 /* 12. 生产源码静态审计：main.js 的 saveChatBounds 必须使用 writeJsonAtomic 写入 chat-window.json */
 {
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  const chatSaveUsesAtomic = mainSrc.includes('writeJsonAtomic') &&
-    /saveChatBounds[\s\S]*?writeJsonAtomic/.test(mainSrc) &&
-    !/saveChatBounds[\s\S]*?fs\.writeFileSync/.test(mainSrc);
-  check('main.js saveChatBounds 使用 writeJsonAtomic 确保原子写', chatSaveUsesAtomic);
+
+  /**
+   * ⚠️ 判据校正（2026-10-20）：
+   *   旧判据用 `/saveChatBounds[\s\S]*?fs\.writeFileSync/` —— 它是**从函数名一直扫到文件末尾**的。
+   *   v1.7-a 在 1761 行新增了 STT 配置的 `fs.writeFileSync` 回退写（一个**完全无关**的函数），
+   *   于是这条守卫把别人的写操作算到了 saveChatBounds 头上，**假红**。
+   *
+   *   守卫要守的是「这个函数自己怎么写」，不是「这个文件里还有没有别人写文件」。
+   *   所以先取出 saveChatBounds **自身的函数体**再判，范围才指向被测对象。
+   */
+  const fnBodyOf = (src, name) => {
+    const re = new RegExp('function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{');
+    const m = re.exec(src);
+    if (!m) return '';
+    const start = m.index + m[0].length - 1;
+    let depth = 0;
+    for (let i = start; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
+    }
+    return src.slice(start);
+  };
+
+  const chatSaveBody = fnBodyOf(mainSrc, 'saveChatBounds');
+  const chatSaveUsesAtomic = chatSaveBody.length > 0 &&
+    chatSaveBody.includes('writeJsonAtomic') &&
+    !chatSaveBody.includes('fs.writeFileSync');
+  check('main.js saveChatBounds 使用 writeJsonAtomic 确保原子写', chatSaveUsesAtomic,
+    chatSaveBody.length ? '' : 'saveChatBounds 函数体未取到（判据失效）');
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

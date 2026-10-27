@@ -189,9 +189,24 @@ check('22 空表守卫：两段皆不注入（不给模型幻觉素材）',
 // 23 看板护栏：守信率除零守卫文案在册（不许蹦 NaN%）
 const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 const petSrc23 = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
-check('23 守信率除零守卫：main 出 null + pet 出「—（暂无约定结算）」（跨两文件钉死）',
+const obsSrc23 = fs.readFileSync(path.join(__dirname, '..', 'src', 'observability.js'), 'utf8');
+const i18nSrc23 = fs.readFileSync(path.join(__dirname, '..', 'ui-i18n.js'), 'utf8');
+/* 🔴 2026-10-27：本项判据随排版整改更新（**不是放宽，是承认渲染位置变了**）。
+ *
+ *   改动前：pet.js 手写 rRelList，直接把「—（暂无约定结算）」硬编码在渲染里。
+ *   改动后：关系与存在区块与机制遥测的 memory.relation 逐字重复，手写渲染已删；
+ *           数值改由注册表统一取。所以这条断言改为同时钉住三件事：
+ *             · 除零守卫的**计算**仍必须有 null 分支（main.js 与 observability.js 各一处）
+ *             · 「无数据」的**文案**留在 i18n 字典（pet.js 通过 t() 取，不再硬编码）
+ *             · 渲染侧确实还在用 t()，不是裸写字符串
+ *   判据强度不降，只是渲染位置从 pet 硬编码移到 i18n key。
+ */
+check('23 守信率除零守卫：计算侧出 null + 无数据文案在册（跨三文件钉死）',
   mainSrc.includes('promiseFidelity') && /fulfilled \+ broken\) > 0/.test(mainSrc)
-  && petSrc23.includes('—（暂无约定结算）'));
+  && /settled > 0 \? fulfilled \/ settled : null/.test(obsSrc23)
+  && i18nSrc23.includes('—（暂无约定结算）')
+  && petSrc23.includes("t('obs."),
+  '计算 null 分支 + i18n 文案 + t() 取用，三者缺一不可');
 
 // 24 看板护栏：经历链只读尾锚计数，life-mechanisms 口绝不 readAll 大档（防 I/O 阻塞）
 const lmBlock = (mainSrc.split("ipcGuard.handle('life-mechanisms'")[1] || '').split('\n});')[0] || '';

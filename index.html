@@ -54,6 +54,7 @@
         <div class="panel-nav">
           <div class="pnav-item on" data-sec="conn" id="secConn">连接</div>
           <div class="pnav-item" data-sec="memory" id="secMemory">记忆</div>
+          <div class="pnav-item" data-sec="voice" id="secVoice">语音</div>
           <div class="pnav-item" data-sec="timezone" id="secTimezone">时区</div>
           <div class="pnav-item danger" data-sec="danger" id="secDanger">危险区</div>
         </div>
@@ -191,6 +192,54 @@
             </div>
           </div>
 
+          <!-- ③.5 语音（v1.7-a：从沙盒里独立出来的专属分区）
+               为什么单独成一个左侧分区而不是塞在别的分区底下：
+               语音识别是**与对话通道完全独立的能力**（DeepSeek 无 STT 端点，
+               必须另配 Whisper 兼容服务）。把它埋在「连接」或「记忆」底下，
+               用户会以为它跟当前对话 Key 有关，然后拿对话 Key 去填，
+               在 401 上困惑。独立分区本身就是一句"这是另一件事"。 -->
+          <div class="psec" data-sec="voice">
+            <div class="fgroup" id="sttFgroup">
+              <div class="fg-title" id="sttTitle">语音识别（可选）</div>
+              <div class="hint" id="sttHint" style="color: #8ea1cb; margin-bottom: 10px;">DeepSeek 不提供语音识别，需另配 Whisper 兼容服务。填入任意 Whisper 兼容端点即可启用麦克风。</div>
+              <div class="row">
+                <label id="sttPresetLabel">服务商预设</label>
+                <select id="sttPreset">
+                  <option value="">— 请选择 —</option>
+                  <option value="siliconflow">硅基流动（国内直连 · 有免费额度）</option>
+                  <option value="groq">Groq（极速 · 免费层充裕）</option>
+                  <option value="openai">OpenAI 官方</option>
+                  <option value="local">自定义 / 本地 whisper.cpp</option>
+                </select>
+              </div>
+              <div class="row">
+                <label id="sttUrlLabel">接口地址</label>
+                <input id="sttUrl" type="text" placeholder="https://.../v1/audio/transcriptions" spellcheck="false">
+              </div>
+              <div class="row">
+                <label id="sttModelLabel">模型</label>
+                <input id="sttModel" type="text" placeholder="whisper-1" spellcheck="false">
+              </div>
+              <div class="row">
+                <label id="sttKeyLabel">密钥（仅写入，不回显）</label>
+                <input id="sttKey" type="password" placeholder="仅写入，不回显；与对话 Key 相互独立" spellcheck="false">
+              </div>
+              <div class="row">
+                <label id="sttLangLabel">语言</label>
+                <select id="sttLang">
+                  <option value="">自动判定</option>
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+              <div class="row btns">
+                <button id="sttSave" class="btn">保存</button>
+                <button id="sttClearKey" class="btn">清除密钥</button>
+              </div>
+              <div class="hint" id="sttStatus">未配置</div>
+            </div>
+          </div>
+
           <!-- ④ 危险区（操作不可逆，与常规操作彻底隔离） -->
           <div class="psec danger-zone" data-sec="danger">
             <div class="hint danger-hint" id="dangerHint">以下操作不可逆，请确认后再动手</div>
@@ -232,22 +281,40 @@
         </div>
 
         <div id="rPaneState" class="r-pane">
-          <div class="r-section-title" id="rStateTitle">初澜主体状态 (Trait Bounds: [-999, 999])</div>
-          <div id="rTraitsList" class="r-traits-grid"></div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rVitalsTitle">生理潮汐（只读）</div>
-          <div id="rVitalsList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rDevTitle">发育景观（只读）</div>
-          <div id="rDevList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rCogTitle">认知张力（只读）</div>
-          <div id="rCogList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rRelTitle">关系与存在（只读）</div>
-          <div id="rRelList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rLexiconTitle">她的词汇（只读）</div>
-          <div id="rLexiconList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rExpectTitle">预期账本（只读）</div>
-          <div id="rExpectList" class="r-table-container">—</div>
-          <div class="r-section-title" style="margin-top: 8px;" id="rHistoryTitle">特质跃迁与演化历史</div>
-          <div id="rTraitHistory" class="r-table-container">—</div>
+          <!-- 🔴 2026-10-27 排版整改：本页原有 9 个区块竖排、且其中 4 块与机制遥测重复。
+               现拆成两个子标签，避免"同一份数字在一屏里出现两遍"：
+                 · 主体状态 —— 特质 8 维、她的词汇、预期账本、特质跃迁史
+                 · 机制遥测 —— src/observability.js 注册表的 16 项，按 8 组折叠
+               删掉的 4 块：
+                 · 生理潮汐 / 认知张力 / 关系与存在 —— 与注册表逐字重复，
+                   其数值现在只由遥测渲染一次；
+                 · 发育景观 —— 不是重复，而是**口径冲突**：它显示的 DEVELOPMENTAL_STAGES
+                   是纯叙事标签、无机制消费方，`test/canalization.test.js` 的 P2-3c
+                   守则明确禁止生产代码引用（该守卫此前只扫 src/，漏了根目录 main.js）。
+                   `src/observability.js:235-248` 早已裁定"不上面板"，此处与之一致。 -->
+          <div class="r-subtabs" id="rStateSubtabs">
+            <button class="r-subtab active" data-subtab="subject">主体状态</button>
+            <button class="r-subtab" data-subtab="obs">机制遥测</button>
+          </div>
+
+          <!-- 子页 A：主体状态（非遥测项） -->
+          <div id="rSubPaneSubject" class="r-subpane">
+            <div class="r-section-title" id="rStateTitle">初澜主体状态 (Trait Bounds: [-999, 999])</div>
+            <div id="rTraitsList" class="r-traits-grid"></div>
+            <div class="r-section-title" style="margin-top: 8px;" id="rLexiconTitle">她的词汇（只读）</div>
+            <div id="rLexiconList" class="r-table-container">—</div>
+            <div class="r-section-title" style="margin-top: 8px;" id="rExpectTitle">预期账本（只读）</div>
+            <div id="rExpectList" class="r-table-container">—</div>
+            <div class="r-section-title" style="margin-top: 8px;" id="rHistoryTitle">特质跃迁与演化历史</div>
+            <div id="rTraitHistory" class="r-table-container">—</div>
+          </div>
+
+          <!-- 子页 B：机制遥测（按 src/observability.js 的声明式注册表动态生成，
+               不在这里手写区块 —— 新增机制只需注册一行，两端自动跟上） -->
+          <div id="rSubPaneObs" class="r-subpane hidden">
+            <div class="r-section-title" id="rObsTitle">机制遥测（全量 · 只读）</div>
+            <div id="rObsGroups"></div>
+          </div>
         </div>
 
         <!-- 2. Window 浏览器面板 -->
@@ -377,6 +444,10 @@
       <div data-act="wardrobe">衣橱</div>
     <div data-act="panel">设置</div>
     <div data-act="research">个体观测</div>
+    <!-- v1.8-b：屏幕视觉探针入口（框选一块给她看）。
+         隐私口径：只有用户点这里、再亲手拖出矩形，才会截一次图。
+         绝无定时截屏，绝不截全屏。 -->
+    <div data-act="vision" id="menuVision">看看这个…</div>
     <div data-act="pin" id="menuPin">固定在最前</div>
     <div data-act="outline">切换描边</div>
     <div data-act="quit">退出</div>

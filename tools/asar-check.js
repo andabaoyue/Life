@@ -33,8 +33,12 @@ const ROOT = path.resolve(__dirname, '..');
 const REQUIRED_FILES = [
   'main.js',          // 主进程入口（package.json main）
   'preload.js',       // 两个窗口共用的 contextBridge 桥
+  'vision-picker-preload.js', // 框选窗最小权限 contextBridge 桥
   'index.html',       // 主窗页面
   'chat.html',        // 独立对话窗页面
+  // v1.8-b：全屏框选窗（独立窗口，不能寄生主窗 —— 主窗只有 256x320）
+  'vision-picker.html',
+  'vision-picker.js',
   'style.css',        // 样式与动画
   'pet.js',           // 桌宠渲染层
   'chat.js',          // 对话窗交互层

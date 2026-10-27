@@ -97,6 +97,7 @@ Module._load = function (request) {
     shell: { openPath: () => {} },
     Menu: { setApplicationMenu: () => {} },
     safeStorage: null,
+    session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
   };
   // 抓住 main.js 自己 new 出来的引擎实例
   if (request === './src/trigger') {

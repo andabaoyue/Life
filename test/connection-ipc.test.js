@@ -86,6 +86,7 @@ Module._load = function (request) {
     shell: { openPath: () => {} },
     Menu: { setApplicationMenu: () => {} },
     safeStorage: fakeSS,
+    session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
   };
   return origLoad.apply(this, arguments);

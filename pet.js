@@ -807,38 +807,171 @@ async function refreshLifeMechanisms() {
       if (!ex.children.length) ex.textContent = t('research.expect.empty', '（暂无）');
     }
     // 生命看板（v1.0 §4.7 方向一+三）：真数据直读 + 真算术派生；null 出破折号，绝不造数
+    //
+    // 🔴 2026-10-27：这里原有 vitals / development / cognition / relations 四块手写渲染，
+    //   已全部删除，原因是两类：
+    //     · vitals / cognition / relations —— 与 src/observability.js 注册表**逐字重复**，
+    //       同一份数字会在同一屏出现两遍。现在只由 renderObsGroups 渲染一次。
+    //     · development —— **口径冲突**，不是重复。它显示的 DEVELOPMENTAL_STAGES 是纯叙事
+    //       标签、无机制消费方，test/canalization.test.js 的 P2-3c 禁止生产代码引用它
+    //       （该守卫此前只扫 src/，漏了根目录 main.js）。src/observability.js:235-248
+    //       早已裁定不上面板，此处与之一致。
     const setLines = (id, lines) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.textContent = '';
       lines.forEach((line) => { const row = document.createElement('div'); row.textContent = line; el.appendChild(row); });
     };
-    const v = r.vitals;
-    setLines('rVitalsList', v ? [
-      t('research.vitals.line1', '精力 {energy} / 疲惫压力 {pressure} / 觉醒度 {arousal}', {
-        energy: Math.round(v.energy),
-        pressure: Math.round(v.restPressure),
-        arousal: Math.round(v.arousal)
-      }),
-      t('research.vitals.phasePrefix', '相位：') + (v.isSleeping ? t('research.vitals.deepSleep', '深度休眠') : (v.restPressure >= 70 ? t('research.vitals.weary', '倦怠') : t('research.vitals.awake', '清醒')))
-    ] : ['—']);
-    const dv = r.development;
-    setLines('rDevList', dv ? [
-      t('research.dev.plasticity', '可塑性 {val}', { val: (Number(dv.plasticity)).toFixed(2) }),
-      t('research.dev.stage', '阶段：{stage}', { stage: dv.stage })
-    ] : ['—']);
-    const cg = r.cognition;
-    setLines('rCogList', cg ? [
-      t('research.cog.confidence', '自我确信度 {val}', { val: (Number(cg.confidence)).toFixed(2) }),
-      t('research.cog.revisionPressure', '反思压力 {val}', { val: (Number(cg.revisionPressure)).toFixed(4) })
-    ] : ['—']);
-    const rel = r.relations || {};
-    setLines('rRelList', [
-      t('research.rel.promise', '守信契约 {val}', { val: (rel.promiseFidelity == null ? t('research.rel.noPromise', '—（暂无约定结算）') : Math.round(rel.promiseFidelity * 100) + '%') }),
-      t('research.rel.fingerprint', '语言指纹 {words} 词（复用 {reused}）', { words: rel.words || 0, reused: rel.reusedWords || 0 }),
-      t('research.rel.archiveChain', '经历链 {chain} 拍', { chain: rel.archiveChain || 0 })
-    ]);
+    // 🔴 v1.7-b：全量机制遥测（声明式注册表驱动）
+    renderObsGroups(r.obs);
   } catch (e) { /* 只读渲染失败不影响面板其余部分 */ }
+}
+
+/**
+ * v1.7-b：把 `observability.collectObservability()` 的结果渲染成 DOM。
+ *
+ * 设计要点（为什么不是手写区块）：
+ *   - 手写渲染 = 新增机制时必忘。这里是**遍历 groups**，注册表加一行就自动出现；
+ *   - 容器也动态建：否则"注册了但没容器画"又是一处漏观测点；
+ *   - 全程 textContent / createElement，**绝不用 innerHTML**（防注入，与本文件既有风格一致）。
+ *
+ * 空值口径：`null` / `undefined` 一律显示破折号，**绝不显示 0**
+ * —— 0 和"没有数据"是两件事，后者不能被伪装成前者。
+ *
+ * @param {object|null} obs 来自 life-mechanisms 的 `obs` 字段
+ */
+function renderObsGroups(obs) {
+  const box = document.getElementById('rObsGroups');
+  if (!box) return;
+  box.textContent = '';
+
+  const dash = t('obs.dash', '—');
+
+  if (!obs || !obs.groups || typeof obs.groups !== 'object') {
+    const row = document.createElement('div');
+    row.className = 'r-table-container';
+    row.textContent = dash;
+    box.appendChild(row);
+    return;
+  }
+
+  const groupLabel = (g) => t('obs.group.' + g, g);
+
+  // 按 order 渲染；order 缺失时退回 Object.keys，绝不丢数据
+  const order = Array.isArray(obs.order) && obs.order.length ? obs.order : Object.keys(obs.groups);
+
+  for (const g of order) {
+    const items = obs.groups[g];
+    if (!Array.isArray(items) || !items.length) continue;
+
+    /* 🔴 2026-10-27：每组改成可折叠，且**默认收起**。
+     *
+     *   为什么默认收：16 项一次铺开会把页面拉到很长，"扫一眼看全貌"反而更难。
+     *   收起后每组只占一行（组名 + 项数），点开才展开数值。
+     *
+     *   ⚠️ 只用 textContent / createElement，绝不 innerHTML（防注入，与全文件同口径）。
+     */
+    const wrap = document.createElement('div');
+    wrap.className = 'obs-group';
+    wrap.dataset.obsGroupWrap = g;
+
+    const title = document.createElement('button');
+    title.type = 'button';
+    title.className = 'obs-group-head collapsed';
+    title.dataset.obsGroupToggle = g;
+    title.setAttribute('aria-expanded', 'false');
+    // 组名 + 项数徽标（项数是纯计数，不含任何内容，符合"遥测不展示内容"口径）
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'obs-group-name';
+    nameSpan.textContent = groupLabel(g);
+    const countSpan = document.createElement('span');
+    countSpan.className = 'obs-group-count';
+    countSpan.textContent = String(items.length);
+    title.appendChild(nameSpan);
+    title.appendChild(countSpan);
+    wrap.appendChild(title);
+
+    const list = document.createElement('div');
+    list.className = 'r-table-container obs-group-body hidden';
+    list.dataset.obsGroup = g;   // 门禁按它做双向差集
+
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.dataset.obsId = it.id || '';
+
+      const label = document.createElement('span');
+      label.className = 'obs-label';
+      label.textContent = t(it.labelKey || '', it.text || it.id || '');
+      row.appendChild(label);
+
+      const val = document.createElement('span');
+      val.className = 'obs-value';
+      val.textContent = ' ' + formatObsValue(it.value, dash);
+      row.appendChild(val);
+
+      list.appendChild(row);
+    }
+    wrap.appendChild(list);
+    box.appendChild(wrap);
+  }
+
+  if (!box.children.length) {
+    const row = document.createElement('div');
+    row.className = 'r-table-container';
+    row.textContent = dash;
+    box.appendChild(row);
+  }
+
+  /* 🔴 2026-10-27：折叠交互用**事件委托**挂在容器上，不逐组绑。
+   *
+   *   原因：本函数每次刷新都会重建整个子树（先清空 box 再重建）。
+   *   逐组绑定会在每次刷新时叠加监听器（旧节点虽被丢弃，但写法容易漏改），
+   *   委托则天然只有一条，且新增组自动可用。
+   */
+  if (!box.dataset.obsDelegate) {
+    box.dataset.obsDelegate = '1';
+    box.addEventListener('click', (ev) => {
+      const head = ev.target && ev.target.closest
+        ? ev.target.closest('[data-obs-group-toggle]') : null;
+      if (!head || !box.contains(head)) return;
+      const wrap = head.parentElement;
+      const body = wrap ? wrap.querySelector('.obs-group-body') : null;
+      if (!body) return;
+      const collapsed = body.classList.toggle('hidden');
+      head.classList.toggle('collapsed', collapsed);
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+  }
+}
+
+/**
+ * v1.7-b：把一个观测值格式化成一行可读文本。
+ *
+ * 只做**呈现**，不做推断：数值原样带出，布尔转成中英文标记，对象展开成 k=v。
+ * 空值统一破折号。
+ *
+ * @param {*} value 任意可 JSON 化的值
+ * @param {string} dash 破折号文案
+ * @returns {string}
+ */
+function formatObsValue(value, dash) {
+  if (value === null || value === undefined) return dash;
+  if (typeof value === 'boolean') return value ? t('obs.yes', '是') : t('obs.no', '否');
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : dash;
+  if (typeof value === 'string') return value || dash;
+  if (Array.isArray(value)) return value.length ? value.join(', ') : dash;
+  if (typeof value === 'object') {
+    const parts = [];
+    for (const k of Object.keys(value)) {
+      const v = value[k];
+      // 嵌套对象不展开（避免一行过长），只标类型
+      if (v === null || v === undefined) parts.push(k + '=' + dash);
+      else if (typeof v === 'object') parts.push(k + '=' + (Array.isArray(v) ? '[' + v.length + ']' : '{…}'));
+      else parts.push(k + '=' + v);
+    }
+    return parts.length ? parts.join(' · ') : dash;
+  }
+  return dash;
 }
 
 const tzLabel = document.getElementById('tzLabel');
@@ -874,6 +1007,7 @@ function renderTimezonePanel() {
     setV('tzSync', '● ' + t('tz.synced'));
   }
   renderSandboxPanel();
+  refreshSttPanel();
 }
 
 async function renderSandboxPanel() {
@@ -920,6 +1054,7 @@ function renderI18nPanel() {
   setText('panelTitle', 'panel.title');
   setText('secConn', 'sec.conn');
   setText('secMemory', 'sec.memory');
+  setText('secVoice', 'sec.voice');
   setText('secTimezone', 'sec.timezone');
   setText('secDanger', 'sec.danger');
   setText('wardrobeTitle', 'sec.wardrobe');   // 衣橱面板标题
@@ -966,6 +1101,16 @@ function renderI18nPanel() {
   setText('sandboxTitle', 'panel.sandboxTitle');
   setText('sandboxPathLabel', 'panel.sandboxPathLabel');
   setText('sandboxWarning', 'panel.sandboxWarning');
+  // v1.7-a：STT 设置面板文案
+  setText('sttTitle', 'stt.title');
+  setText('sttPresetLabel', 'stt.presetLabel');
+  setText('sttUrlLabel', 'stt.urlLabel');
+  setText('sttModelLabel', 'stt.modelLabel');
+  setText('sttKeyLabel', 'stt.keyLabel');
+  setText('sttLangLabel', 'stt.langLabel');
+  setText('sttHint', 'stt.hintBottom');
+  setText('sttSave', 'stt.save');
+  setText('sttClearKey', 'stt.clearKey');
   setText('panelCloseHint', 'panel.closeHint');
   setText('connDelete', 'conn.delete');
   setText('resetSelf', 'danger.resetSelf');
@@ -994,10 +1139,9 @@ function renderI18nPanel() {
   // 个体观测面板子标题与静态区
   setText('rDreamsTitle', 'research.dreams.title');
   setText('rStateTitle', 'research.state.title');
-  setText('rVitalsTitle', 'research.state.vitals');
-  setText('rDevTitle', 'research.state.dev');
-  setText('rCogTitle', 'research.state.cog');
-  setText('rRelTitle', 'research.state.rel');
+  // 🔴 2026-10-27：rVitalsTitle / rDevTitle / rCogTitle / rRelTitle 四个标题已随区块删除。
+  //   对应 i18n key（research.state.vitals/dev/cog/rel）保留在 ui-i18n.js 里不删：
+  //   它们是历史文案，且 obs.* 系列现有独立文案；删 key 会让既有 i18n 门禁项数漂移。
   setText('rLexiconTitle', 'research.state.lexicon');
   setText('rExpectTitle', 'research.state.expect');
   setText('rHistoryTitle', 'research.state.history');
@@ -1058,7 +1202,7 @@ function renderI18nPanel() {
 
 /* ---------- 设置面板两栏导航（v1.0 用户设计） ----------
    左栏四区点击切换 + 右侧详情；记住上次分区（localStorage，UI 状态）。 */
-const PANEL_SECTIONS = ['conn', 'memory', 'timezone', 'danger'];   // v1.0 分区重构后换血（时区点不出的病根）
+const PANEL_SECTIONS = ['conn', 'memory', 'voice', 'timezone', 'danger'];   // v1.7-a 补 voice（防漏白名单导致点不出）
 function selectPanelSection(key) {
   const k = PANEL_SECTIONS.includes(key) ? key : 'conn';
   for (const it of document.querySelectorAll('.pnav-item')) it.classList.toggle('on', it.dataset.sec === k);
@@ -1550,6 +1694,7 @@ function openPanel() {
   refreshMem();
   refreshWardrobe();
   renderSandboxPanel();
+  refreshSttPanel();
 }
 
 /* 长期记忆可视化。文本一律用 textContent 写入 ——
@@ -1943,6 +2088,113 @@ async function doDeleteConnection() {
   await refreshConnections();
 }
 armDangerButton(document.getElementById('connDelete'), doDeleteConnection);
+
+/* ============================================================
+ * v1.7-a：STT（语音识别）设置面板
+ *
+ * 🔴 安全口径：密钥**只进不出**。
+ *   - 保存时把明文 Key 交给主进程写 DPAPI，UI 立刻清空输入框；
+ *   - 读取只拿 `hasKey / encrypted` 布尔，**永不回显**；
+ *   - 状态行如实显示「加密」还是「明文降级」，绝不冒充已加密。
+ * ============================================================ */
+
+/** 四家预设：只填端点与模型，**不填 Key**（Key 必须用户自己填） */
+const STT_PRESETS = {
+  siliconflow: {
+    endpoint: 'https://api.siliconflow.cn/v1/audio/transcriptions',
+    model: 'FunAudioLLM/SenseVoiceSmall'
+  },
+  groq: {
+    endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
+    model: 'whisper-large-v3-turbo'
+  },
+  openai: {
+    endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+    model: 'whisper-1'
+  },
+  local: {
+    endpoint: 'http://127.0.0.1:8080/v1/audio/transcriptions',
+    model: 'whisper-1'
+  }
+};
+
+/** 把当前配置刷到面板上（**不含密钥**） */
+async function refreshSttPanel() {
+  if (!api || !api.stt || typeof api.stt.getConfig !== 'function') return;
+  const statusEl = document.getElementById('sttStatus');
+  let r = null;
+  try { r = await api.stt.getConfig(); } catch (e) { r = null; }
+  if (!r || !r.ok) {
+    if (statusEl) statusEl.textContent = t('stt.statusNone', '未配置');
+    return;
+  }
+  const el = (id) => document.getElementById(id);
+  if (el('sttUrl')) el('sttUrl').value = r.endpoint || '';
+  if (el('sttModel')) el('sttModel').value = r.model || '';
+  if (el('sttLang')) el('sttLang').value = r.lang || '';
+  // 密钥输入框永远是空的：不回显
+  if (el('sttKey')) el('sttKey').value = '';
+
+  if (statusEl) {
+    if (!r.hasKey) statusEl.textContent = t('stt.statusNone', '未配置');
+    else if (r.encrypted) statusEl.textContent = t('stt.statusReadyEnc', '已配置（加密）');
+    else statusEl.textContent = t('stt.statusReadyPlain', '已配置（明文降级）');
+    // 如实反映安全状态：明文降级用警示色，不静默假装安全
+    statusEl.style.color = r.hasKey && !r.encrypted ? '#e09f3e' : '';
+  }
+}
+
+/** 保存：只提交这三项 + 可选的新密钥 */
+async function saveSttConfig() {
+  if (!api || !api.stt || typeof api.stt.setConfig !== 'function') return;
+  const el = (id) => document.getElementById(id);
+  const patch = {
+    endpoint: el('sttUrl') ? el('sttUrl').value.trim() : '',
+    model: el('sttModel') ? el('sttModel').value.trim() : '',
+    lang: el('sttLang') ? el('sttLang').value : ''
+  };
+  const key = el('sttKey') ? el('sttKey').value.trim() : '';
+  if (key) patch.credential = key;   // 空则不提交，避免把已有 Key 覆盖成空
+
+  let r = null;
+  try { r = await api.stt.setConfig(patch); } catch (e) { r = null; }
+  const statusEl = document.getElementById('sttStatus');
+  if (r && r.ok) {
+    if (el('sttKey')) el('sttKey').value = '';   // 写完立刻清空，绝不留在 DOM 里
+    if (statusEl) statusEl.textContent = t('stt.saved', '已保存');
+    await refreshSttPanel();
+  } else if (statusEl) {
+    statusEl.textContent = r && r.errorType === 'config_write_failed'
+      ? t('stt.configSaveFailed', '语音识别设置保存失败')
+      : ((r && r.error) ? String(r.error) : t('stt.failed', '识别失败'));
+  }
+}
+
+/** 清除密钥（只清凭据，端点/模型保留） */
+async function clearSttKey() {
+  if (!api || !api.stt || typeof api.stt.clearKey !== 'function') return;
+  try { await api.stt.clearKey(); } catch (e) { /* 清不掉就下次再清，不弹窗 */ }
+  await refreshSttPanel();
+}
+
+{
+  const presetEl = document.getElementById('sttPreset');
+  if (presetEl) {
+    presetEl.addEventListener('change', () => {
+      const p = STT_PRESETS[presetEl.value];
+      if (!p) return;
+      const url = document.getElementById('sttUrl');
+      const model = document.getElementById('sttModel');
+      if (url) url.value = p.endpoint;
+      if (model) model.value = p.model;
+    });
+  }
+  const saveBtn = document.getElementById('sttSave');
+  if (saveBtn) saveBtn.addEventListener('click', saveSttConfig);
+  const clearBtn = document.getElementById('sttClearKey');
+  if (clearBtn) clearBtn.addEventListener('click', clearSttKey);
+  refreshSttPanel();
+}
 
 refreshConnections();
 
@@ -2584,6 +2836,30 @@ function switchResearchTab(tabName) {
   if (paneMap[tabName]) paneMap[tabName].classList.remove('hidden');
 }
 
+/**
+ * 🔴 2026-10-27：研究面板「主体状态」页的二级子标签。
+ *
+ * ## 为什么要拆
+ *   该页原有 9 个区块竖排，其中 4 块与机制遥测重复 —— 用户滚下去会看到
+ *   同一份数字出现两遍，且没有导航，找东西只能靠滚。
+ *
+ * ## 与一级 tab 的关系
+ *   一级 tab（switchResearchTab）控制整个面板的六个大分区；
+ *   这里只控制「主体状态」这一个分区内部的切换，层级更低，互不干扰。
+ *
+ * @param {'subject'|'obs'} which
+ */
+function switchStateSubtab(which) {
+  const name = which === 'obs' ? 'obs' : 'subject';
+  document.querySelectorAll('.r-subtab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.subtab === name);
+  });
+  const sub = document.getElementById('rSubPaneSubject');
+  const obs = document.getElementById('rSubPaneObs');
+  if (sub) sub.classList.toggle('hidden', name !== 'subject');
+  if (obs) obs.classList.toggle('hidden', name !== 'obs');
+}
+
 async function startReplay(opts = {}) {
   if (!api || !api.research) {
     alert(t('research.replay.previewAlert', '预览模式不支持真实 Replay 推演'));
@@ -2725,6 +3001,11 @@ document.getElementById('rRefreshBtn')?.addEventListener('click', loadResearchDa
 
 document.querySelectorAll('.r-tab').forEach(btn => {
   btn.addEventListener('click', () => switchResearchTab(btn.dataset.rtab));
+});
+
+// 🔴 2026-10-27：主体状态页的二级子标签（主体状态 / 机制遥测）
+document.querySelectorAll('.r-subtab').forEach(btn => {
+  btn.addEventListener('click', () => switchStateSubtab(btn.dataset.subtab));
 });
 
 document.querySelectorAll('.r-seg-btn').forEach(btn => {
@@ -2906,6 +3187,16 @@ menu.addEventListener('click', (e) => {
 if (act === 'wardrobe') return toggleWardrobe();   // v1.0：衣橱自设置独立，入菜单
   if (act === 'panel') return (panel && !panel.classList.contains('hidden')) ? closePanel() : openPanel();   // v1.0 toggle：再点即收
   if (act === 'research') return (researchPanel && !researchPanel.classList.contains('hidden')) ? closeResearchPanel() : openResearchPanel();   // v1.0 toggle：再点即收
+  // 🔴 v1.8-b：屏幕视觉探针入口。
+  //   ⚠️ 2026-10-20 重做：第一版把遮罩画在主窗里，用户实测「直接出了个小方块、
+  //      然后不可操作」——主窗只有 256×320，且鼠标穿透把拖拽废了。
+  //      现改为**开一个独立全屏窗**来框选（src/vision-picker-window.js）。
+  if (act === 'vision') {
+    if (api && api.vision && typeof api.vision.openPicker === 'function') {
+      api.vision.openPicker();
+    }
+    return;
+  }
   if (act === 'pin') {
     if (!api) return say(t('say.pinPreview', '预览模式没有窗口可固定'));
     api.togglePin().then((on) => {
@@ -3127,3 +3418,16 @@ window.addEventListener('beforeunload', () => {
   if (behaviorScheduler) behaviorScheduler.destroy();
   if (animController) animController.destroy();
 });
+
+/* 🔴 v1.8-b：框选窗关掉后的回执。
+ *   框选在**独立全屏窗**里发生（主窗只有 256x320，框不到屏幕），
+ *   主窗只负责说一句结果 —— 成功或失败都给客观反馈，不弹窗、不打断对话。 */
+if (api && typeof api.onVisionNotify === 'function') {
+  api.onVisionNotify((p) => {
+    try {
+      if (p && p.ok) say(t('vision.staged', '看到了。你说吧。'));
+      else say(t('vision.failed', '没截到'));
+    } catch (e) { /* 提示失败不影响主流程 */ }
+  });
+}
+

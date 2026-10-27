@@ -1129,7 +1129,27 @@ class Memory {
     //   ⚠️ 顺序：bedside（用户留的）在前、selfNote（她自己写的）在后 ——
     //      对当前这一轮来说，用户的话优先于她自己的旧字。
     const selfNote = this._drainSelfNotes();
-    const tail = [bedsideNote, selfNote, suffix].filter(Boolean).join('\n\n');
+    /* 🔴 v1.8-a：重逢（主观时间事实）。与上面两个同一个挂点。
+     *
+     *   为什么必须挂尾部而不是 system：
+     *     它的值是**每轮都可能变**的（离开时长随此刻变化），
+     *     进 system 会让前缀缓存每次都失效。
+     *
+     *   为什么由 provider 注入而不是 memory 自己读：
+     *     memory 不该知道 stats 在哪、也不该持有 brain 实例。
+     *     brain 初始化时 setReunionProvider(() => this.takeReunionNote())，
+     *     build() 时回调取一次；单测可直接注入 mock。
+     *
+     *   ⚠️ 顺序由远及近：bedside（你留的）→ selfNote（她写的）→ reunion（当下物理事实）。
+     */
+    const reunionNote = this._reunionNote();
+    /* 🔴 v1.8-b：视觉事实。与 reunion 同一个挂点。
+     *
+     *   ⚠️ 顺序由远及近：bedside → selfNote → reunion → **vision** → suffix。
+     *      视觉是**当下这一秒**发生的事，比"你离开了多久"更贴近此刻，故排在 reunion 之后。
+     */
+    const visionNote = this._visionNote();
+    const tail = [bedsideNote, selfNote, reunionNote, visionNote, suffix].filter(Boolean).join('\n\n');
 
     /* 挂点判据：挂在**最后一条 user** 之后。
      *
@@ -1260,6 +1280,65 @@ class Memory {
   pendingSelfNotes() {
     if (!Array.isArray(this.data.selfNotes)) return [];
     return this.data.selfNotes.filter((n) => n && n.drained !== true);
+  }
+
+  /* ---------- 🔴 v1.8-a：重逢心境（主观时间）---------- */
+
+  /**
+   * 注入「重逢事实」的提供者。
+   *
+   * 为什么用依赖注入而不是让 memory 直接读 stats：
+   *   1. memory 不该知道 stats 存在哪，也不该持有 brain 实例；
+   *   2. 单测可以直接 setReunionProvider(() => '【你离开了 8 小时】')，
+   *      不必造一整套 stats 夹具。
+   *
+   * @param {Function|null} fn 返回字符串或空串；传 null 表示取消
+   */
+  setReunionProvider(fn) {
+    this._reunionProvider = typeof fn === 'function' ? fn : null;
+  }
+
+  /**
+   * 取一次重逢事实（**一次性**，由 provider 内部负责消费语义）。
+   *
+   * 失败绝不影响 build：provider 抛错就当作没有这一次重逢。
+   * @returns {string} 事实行或空串
+   */
+  _reunionNote() {
+    if (typeof this._reunionProvider !== 'function') return '';
+    try {
+      const v = this._reunionProvider();
+      return typeof v === 'string' ? v : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * 🔴 v1.8-b：注入「视觉事实」的提供者（与 reunion 同款依赖注入）。
+   *
+   * 与 reunion 的分工：视觉**必须在本轮 build 之前**就决定要不要带图
+   * （图要附加到 messages 副本里，那步在 brain 侧做），
+   * 这里只负责那句"你看到了多大一块"的客观说明。
+   *
+   * @param {Function|null} fn
+   */
+  setVisionProvider(fn) {
+    this._visionProvider = typeof fn === 'function' ? fn : null;
+  }
+
+  /**
+   * 取一次视觉事实行（一次性）。失败绝不影响 build。
+   * @returns {string}
+   */
+  _visionNote() {
+    if (typeof this._visionProvider !== 'function') return '';
+    try {
+      const v = this._visionProvider();
+      return typeof v === 'string' ? v : '';
+    } catch (e) {
+      return '';
+    }
   }
 
   /**

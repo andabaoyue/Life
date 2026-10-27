@@ -62,6 +62,16 @@ Module._load = function (request) {
     screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }) },
     shell: { openPath: () => {} },
     Menu: { setApplicationMenu: () => {} },
+    // 🔴 v1.7-a：main.js 现在会在 createWindow 之前装权限闸门，
+    //   它需要 session.defaultSession 上的两个 handler 注册方法。
+    //   桩里必须提供 → 否则读到 undefined 会在启动路径上抛，
+    //   整个 main.test.js 一条都跑不出来（实测过：0 项通过）。
+    session: {
+      defaultSession: {
+        setPermissionRequestHandler: () => {},
+        setPermissionCheckHandler: () => {}
+      }
+    },
     // safeStorage 缺失 = 加密不可用，走明文降级那条已测过的路
     safeStorage: null
   };

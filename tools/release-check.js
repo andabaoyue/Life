@@ -309,6 +309,26 @@ function checkPackageLock() {
         report('FAIL', '门面版本对齐', `README.en.md 首行未对齐至 v${pkg.version}: "${enFirstLine.trim()}"`);
       }
     }
+    /* 🔴 2026-10-27 补：README.md 首行也必须对齐。
+     *
+     *   为什么单独补一条：此前**只有 README.en.md 被校验**，中文 README 的首行是盲区。
+     *   而它恰恰是仓库首页最显眼的那一行（`# Life v1.6.1`）。
+     *   实测：2026-10-27 审核时全仓 grep `README.md` + `首行` 零命中 ——
+     *   改版本号漏改这一行，没有任何门禁会拦。
+     *   ⚠️ 与 en 的格式不同：中文首行只有 `# Life vX.Y.Z`，不带 ` — Chulan` 后缀，
+     *      故正则用 `(?:\s+|$)` 收尾即可，比 en 更宽松是对的（不限定后面跟什么）。 */
+    const zhReadmePath = path.join(ROOT, 'README.md');
+    if (fs.existsSync(zhReadmePath)) {
+      const zhFirstLine = fs.readFileSync(zhReadmePath, 'utf8').split(/\r?\n/)[0] || '';
+      const V = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const zhOk = new RegExp('^# Life v' + V + '(?:\\s+|$)').test(zhFirstLine);
+      if (zhOk) {
+        report('PASS', '门面版本对齐（中文 README）', `README.md 首行已对齐至 v${pkg.version}`);
+      } else {
+        report('FAIL', '门面版本对齐（中文 README）',
+          `README.md 首行未对齐至 v${pkg.version}: "${zhFirstLine.trim()}"`);
+      }
+    }
   } catch (e) {
     report('FAIL', '环境锁定解析错误', e.message);
   }
@@ -338,7 +358,9 @@ function checkConfigDefaults() {
  * 而所有门禁仍然全绿。这里把「真实入口清单」钉死成断言。
  */
 const RUNTIME_ENTRIES = [
-  'main.js', 'preload.js', 'index.html', 'chat.html', 'style.css',
+  'main.js', 'preload.js', 'vision-picker-preload.js', 'index.html', 'chat.html', 'style.css',
+  // v1.8-b：全屏框选窗（独立窗口）
+  'vision-picker.html', 'vision-picker.js',
   'pet.js', 'chat.js',
   'ui-i18n.js', 'ui-chat-store.js', 'ui-chat-render.js',
   'ui-provider-presets.js', 'ui-outfit-complete.js', 'ui-agent-confirm.js',

@@ -95,7 +95,14 @@ body.outline #sprite {
 
 /* ---------------- 换装分层渲染 ----------------
    图层顺序由数据层 layers() 决定（pet.js 写入 z-index），CSS 只负责
-   「同画布对齐」：所有资源共用 760x1000 画布，等比铺满即天然对齐。
+   「同画布对齐」：所有资源共用 64x80 画布，等比铺满即天然对齐。
+   （2026-10-27 订正：原文写「760x1000 画布」是上一代已退役口径。
+    实测 assets/character/ 下共 34 个 PNG，其中 **33 个为 64x80**，
+    唯一例外是 base/base_legacy_full.png（760x1000，已退役）；
+    另有归档目录 character-archive-760x1000/ 下 7 张 760x1000。
+    两者均被 asar-check.js 的 RETIRED_PATTERNS 挡在包外，不参与任何运行时路径。
+    ⚠️ 上一版此处曾写「全部 34 个图层均为 64x80」—— 与同一段的 base_legacy_full.png
+    自相矛盾，是照抄旧文档没重新数的结果，2026-10-27 审核发现并订正。）
    任何一件图缺失时 pet.js 会摘掉 .layered，回到单张 pet.png —— 
    桌宠永远不会变成空白。 */
 #layers {
@@ -273,42 +280,22 @@ body[data-motion-state="icon_climbing"] #shadow { opacity: .18; transform: trans
 @keyframes sway   { 0%,100%{transform:rotate(0) translateY(0)} 50%{transform:rotate(-2deg) translateY(2px)} }
 @keyframes shake  { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
 
-/* ---------------- 输入区 ---------------- */
-#inputBar {
-  position: absolute;
-  left: 8px; right: 8px; bottom: 8px;
-  display: none;
-  gap: 6px;
-  z-index: 15;
-}
-body.talking #inputBar { display: flex; }
+/* ---------------- 输入区（已移除，2026-10-20） ----------------
+   🔴 这里原本有一组 `#inputBar` / `#input` / `#send` / `body.talking #inputBar` 规则，
+   是宠物气泡时代留下的：主窗下方弹一个输入条。
+   但现在的架构早就变了 —— 对话搬进了独立窗口 chat.html，**index.html 里
+   根本没有 #inputBar / #input / #send 这三个元素**（实测 grep 零命中）。
 
-#input {
-  flex: 1;
-  min-width: 0;
-  background: rgba(255,255,255,.94);
-  border: none;
-  border-radius: 16px;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: #2f3340;
-  outline: none;
-  font-family: inherit;
-}
-#input::placeholder { color: #9aa2b5; }
+   而 chat.html 也引入了 style.css，于是这组死规则**反过来污染了对话窗**：
+   `#inputBar { position: absolute; bottom: 8px }` 覆盖掉 chat.html 自己的
+   `flex: none`，把输入栏从正常文档流里拽出来、**盖在她的回话上面**。
 
-#send {
-  width: 32px;
-  border: none;
-  border-radius: 16px;
-  background: #5b6b8c;
-  color: #fff;
-  font-size: 15px;
-  cursor: pointer;
-  flex: none;
-}
-#send:hover { background: #4a5a7a; }
-#send:disabled { background: #aab; cursor: default; }
+   症状：对话窗底部的输入框压住了最后一行聊天文字。
+
+   处置：整组删除。对话窗的输入区样式全部由 chat.html 自己的 <style> 负责
+   （见 #inputBar { flex: none } 那一段），不需要这里提供第二份定义。
+   ⚠️ 若将来主窗又要输入区，请**新加独立类名**（如 .pet-inputbar），
+   不要复用 #inputBar —— 那个 id 已经被对话窗占用了。 */
 
 /* ---------------- 记录 ---------------- */
 /* 衣橱（v1.0 独立面板）：与 #log 同规格满幅玻璃 */
@@ -984,6 +971,80 @@ body.showlog #bubble { display: none !important; }
   white-space: nowrap;
 }
 .r-seg-btn.active { background: rgba(120,160,255,.24); border-color: rgba(140,180,255,.5); color: #e0ebff; }
+
+/* ---------- 🔴 2026-10-27：主体状态页二级子标签 + 机制遥测分组折叠 ----------
+   背景：该页原有 9 个区块竖排，其中 4 块与注册表重复，且无导航只能靠滚。
+   这里补两级控制：子标签（主体状态 / 机制遥测）+ 组内折叠（默认收起）。 */
+.r-subtabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.r-subtab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #8fa0c5;
+  padding: 4px 9px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.r-subtab:hover { color: #d0dbf2; }
+.r-subtab.active {
+  color: #e0ebff;
+  border-bottom-color: rgba(140,180,255,.75);
+  font-weight: 600;
+}
+.r-subpane { display: block; }
+.r-subpane.hidden { display: none; }
+
+/* ⚠️ `.r-pane` 是 `display:flex; flex-direction:column; gap:6px`，
+   而子页现在是它的子节点 —— 若不还原，子页会变成**单个 flex 项**，
+   内部的标题/容器全部挤在一条，且 gap 不再是"每块之间 6px"。
+   这里把子页自己也变成同样的纵向 flex 列，保持原有视觉节奏不变。 */
+#rPaneState > .r-subpane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#rPaneState > .r-subpane.hidden { display: none; }
+
+/* 机制遥测：每组一个可点标题条，收起时只占一行 */
+.obs-group { margin-bottom: 3px; }
+.obs-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 4px;
+  color: #b9c6e0;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.obs-group-head:hover { background: rgba(255,255,255,.09); color: #e0ebff; }
+.obs-group-head.collapsed::before { content: '▸ '; color: #7f8cab; }
+.obs-group-head:not(.collapsed)::before { content: '▾ '; color: #7f8cab; }
+.obs-group-name { flex: 1 1 auto; }
+.obs-group-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: #7f8cab;
+  background: rgba(255,255,255,.06);
+  border-radius: 8px;
+  padding: 0 6px;
+  margin-left: 6px;
+}
+.obs-group-body { margin-top: 2px; }
+.obs-group-body.hidden { display: none; }
+
 .r-rounds-list {
   background: rgba(0,0,0,.2);
   border-radius: 6px;
@@ -1294,3 +1355,44 @@ body.pixel-sprite #sprite, body.pixel-sprite #layers img { image-rendering: pixe
 }
 .r-preview-ops { display: flex; gap: 6px; }
 
+
+/* ---------------- v1.7-b 机制遥测（声明式注册表驱动） ----------------
+   行内容由 pet.js 的 renderObsGroups 动态生成，这里只负责排版。
+   label 用低对比度、value 用高对比度，便于在长列表里快速扫值。 */
+#rObsGroups .obs-label { color: rgba(255,255,255,.62); }
+#rObsGroups .obs-value { color: rgba(255,255,255,.92); word-break: break-word; }
+#rObsGroups > .r-table-container { line-height: 1.75; font-size: 12.5px; }
+#rObsGroups > .r-table-container > div { padding: 3px 0; }
+#rObsGroups > .r-table-container > div + div { border-top: 1px solid rgba(255,255,255,.05); }
+
+/* ---------------- v1.7-a 语音输入按钮 ----------------
+   #micBtn 与 #input、#send 同在 #inputBar 内。
+   四态：disabled（置灰不可点）/ idle / recording（红点脉冲）/ transcribing（转圈）。 */
+.mic-btn {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  margin-right: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08);
+  color: #dce3f5;
+  font-size: 15px; line-height: 1;
+  cursor: pointer;
+  transition: background .15s ease-out, border-color .15s ease-out, opacity .15s ease-out;
+}
+.mic-btn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+.mic-btn:disabled { opacity: .38; cursor: not-allowed; }
+/* 录音中：红点亮起并脉冲，给用户"正在采集"的确定反馈 */
+.mic-btn.mic-recording {
+  background: rgba(220,60,60,.85);
+  border-color: rgba(255,120,120,.9);
+  color: #fff;
+  animation: mic-pulse 1.1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220,60,60,.55); }
+  50%      { box-shadow: 0 0 0 7px rgba(220,60,60,0); }
+}
+/* 识别中：不可点，轻微呼吸 */
+.mic-btn.mic-busy { opacity: .6; animation: mic-breathe 1.4s ease-in-out infinite; }
+@keyframes mic-breathe { 0%, 100% { opacity: .5; } 50% { opacity: .85; } }

@@ -15,8 +15,12 @@ directories:
 files:
   - "main.js"
   - "preload.js"
+  - "vision-picker-preload.js"
   - "index.html"
   - "chat.html"
+  # 🔴 v1.8-b：全屏框选窗（独立窗口，不能寄生在主窗里 —— 主窗只有 256x320）
+  - "vision-picker.html"
+  - "vision-picker.js"
   - "style.css"
   - "pet.js"
   - "chat.js"

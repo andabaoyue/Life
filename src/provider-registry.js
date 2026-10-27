@@ -77,7 +77,15 @@ registerProvider({
   providerId: 'deepseek',
   providerType: 'cloud-direct',
   adapterFactory: createDeepSeekAdapter,
-  capabilities: { streaming: true, usage: true, systemMessage: true, vision: false, tools: false, jsonMode: false },
+  // 🔴 2026-10-20 更正：此前的 `vision: false` 是**过期信息**。
+  //   实测（真实 Key + deepseek-flash）：带 image_url 的请求返回 200，
+  //   发 1×1 红色 PNG 问颜色，回复「粉色」，prompt_tokens 223（纯文本仅几十）。
+  //   官方文档确认 deepseek-flash 支持 JPEG/PNG/GIF/WebP。
+  //
+  //   ⚠️ 但**不是所有 DeepSeek 模型都支持**：deepseek-v4-pro 仍为纯文本（发图 400）。
+  //   所以这里标 true 只表示"该 provider 存在支持 vision 的模型"，
+  //   具体能不能用图片，必须再经 `modelSupportsVision(cfg.model)` 逐模型判定。
+  capabilities: { streaming: true, usage: true, systemMessage: true, vision: true, tools: false, jsonMode: false },
   credentialPolicy: 'deepseek-api-key',
   display: { name: 'DeepSeek', note: 'UI display metadata only — not research truth' }
 });
