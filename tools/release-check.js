@@ -297,26 +297,13 @@ function checkPackageLock() {
     } catch (e) {
       report('FAIL', '版本唯一来源检查错误', e.message);
     }
-    // 门面文档版本一致性检查：README.en.md 首行应严格对齐 package.json 版本（防 -dev / -rc 后缀残留）
-    const enReadmePath = path.join(ROOT, 'README.en.md');
-    if (fs.existsSync(enReadmePath)) {
-      const enFirstLine = fs.readFileSync(enReadmePath, 'utf8').split(/\r?\n/)[0] || '';
-      const V = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const facadeOk = new RegExp('^# Life v' + V + '(?:\\s+|$)').test(enFirstLine);
-      if (facadeOk) {
-        report('PASS', '门面版本对齐', `README.en.md 首行已对齐至 v${pkg.version}`);
-      } else {
-        report('FAIL', '门面版本对齐', `README.en.md 首行未对齐至 v${pkg.version}: "${enFirstLine.trim()}"`);
-      }
-    }
-    /* 🔴 2026-10-27 补：README.md 首行也必须对齐。
+    /* 🔴 2026-10-29：README.en.md 已删除（英文内容并入 README.md 的 `## English` 段），
+     *   原来那条「README.en.md 首行对齐」检查随之移除 —— 文件不在了，用 existsSync 包着
+     *   只会变成一条永远不报的**死检查**，看起来有门禁其实什么都没查。
+     *   英文段不再单独维护版本号：它和中文共用一个文件，首行只有一处。
      *
-     *   为什么单独补一条：此前**只有 README.en.md 被校验**，中文 README 的首行是盲区。
-     *   而它恰恰是仓库首页最显眼的那一行（`# Life v1.6.1`）。
-     *   实测：2026-10-27 审核时全仓 grep `README.md` + `首行` 零命中 ——
-     *   改版本号漏改这一行，没有任何门禁会拦。
-     *   ⚠️ 与 en 的格式不同：中文首行只有 `# Life vX.Y.Z`，不带 ` — Chulan` 后缀，
-     *      故正则用 `(?:\s+|$)` 收尾即可，比 en 更宽松是对的（不限定后面跟什么）。 */
+     *   历史注记（保留原因）：此前**只有 README.en.md 被校验**，中文 README 的首行是盲区，
+     *   2026-10-27 审核时补上了下面这条中文检查。现在两个门面合成一个，这条成了唯一出处。 */
     const zhReadmePath = path.join(ROOT, 'README.md');
     if (fs.existsSync(zhReadmePath)) {
       const zhFirstLine = fs.readFileSync(zhReadmePath, 'utf8').split(/\r?\n/)[0] || '';

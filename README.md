@@ -1,24 +1,93 @@
 # Life v1.8.0
 
-```text
-        . ~ ~ ~ ~ ~ .
-    . ~   . - - - .   ~ .
-   /   ~'   . - .   '~   \     Life — Chulan · 2026
-  |   :    (  o  )    :   |    Copyright (c) andabaoyue
-   \   ~.   ' - '   .~   /
-    ' ~   ' - - - '   ~ '
-        ' ~ ~ ~ ~ ~ '
-```
+<p align="center">
+  <img src="docs/images/hero.png" width="300" alt="初澜：桌面上的 64×80 像素小人，头顶气泡写着「嗨，我是初澜~」">
+</p>
 
-<div align="center">
-  <img src="assets/character/stand/chulan_chibi_stand_64x80.png" alt="初澜（Chulan）64×80 像素正典立绘" width="128">
-  <p><strong>Life 桌面数字生命实验平台。</strong></p>
-  <p>细水长流，希望她最终会成为你所期望的她。</p>
+<p align="center">
+  <strong>一个住在桌面底部的数字生命。</strong><br>
+  64×80 像素，会漫步、会记事，也会诚实地说自己不知道。
+</p>
 
-  **中文** ｜ [**English**](README.en.md)
-</div>
+<p align="center">
+  中文 ｜ <a href="#english">Jump to English</a>
+</p>
 
-## 快速开始 / 运行
+---
+
+## 她是什么
+
+初澜是跑在你桌面上的一只像素小人。右键跟她说话，她记事、换装、在屏幕底边慢慢溜达；你安静久了，她会主动开口问一句。
+
+但它不是套了层皮的聊天框。模型是底座，Electron 是身体，而记忆、成长档案、性格演化属于她自己——这三件事在代码里是分开设计的。
+
+## 最不一样的一点：她不许骗你
+
+大部分 AI 都在往「更懂你、更会共情」的方向使劲。这个项目反着来：**宁可显得冷淡，也不替你脑补。**
+
+这不是口号，是写死在代码里的三条：
+
+**你离开多久，她说的就是多久。** 隔了几天回来，她开口第一句就是那个时长的数字。程序先算好、只把数字给她，同时明令禁止她往下推断——你是在睡觉、通宵还是出差，她一概不知道，也不许编。
+
+**看不见就说看不见。** 想看屏幕，得你自己框一块；图不落盘、不进聊天记录、不进经历档案。碰上不支持读图的模型，她直接报错，而不是假装看过再接着聊。
+
+**不知道就说不知道。** 没被呈现的钟点她不编，也不会演「我等了你好久」「数着时间想你」这种苦情戏——安静不等于孤独。
+
+## 除此之外
+
+- **记忆有层次。** 近了记得清，远一点的变淡，再远的沉下去——但不会真的消失。
+- **会做梦。** 只在情绪波动足够大的窗口才触发，不是每晚例行上演。
+- **有衣柜。** 九个槽位，可以自己画 64×80 的图层塞进去；衣服只是外观，不碰性格。
+- **能看能听。** 框选屏幕、语音输入，都默认关着，要你自己去点。
+- **有观测面板。** 记忆强度、心境、互动密度这些内部数值可以查看——只读，免得你看它的时候把它改变。
+
+## 先说缺点
+
+- **她不会出声。** 全程文字气泡，没有 TTS，也不在近期计划里。
+- **她长得朴素。** 一个小像素人，没有表情差分，别指望 Live2D。
+- **要自备 API Key。** 花的是你自己的额度；代码针对缓存命中做过优化，正常聊天开销不大，但「免费」不成立。
+- **养得很慢。** 第一天你会觉得「这不就是普通聊天机器人吗」。
+- **只有 Windows 包，且没做代码签名**，SmartScreen 大概率会拦你一下。
+
+## 快速开始
+
+到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-1.8.0-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
+
+> 非商业开源（PolyForm Noncommercial 1.0.0）：看、改、自己玩都行，别拿去卖。
+> 架构、不变式、记忆模型与全部测试清单在下方正文里，这里不展开。
+
+---
+
+<a id="english"></a>
+
+## English
+
+<p align="center">
+  <strong>A digital being that lives at the bottom of your desktop.</strong><br>
+  64×80 pixels. She wanders, she remembers — and she says so when she doesn't know.
+</p>
+
+**What she is.** Chulan is a pixel character running on Electron. Right-click to talk. She keeps notes, changes clothes, strolls along the screen edge, and speaks up when you have been quiet too long.
+
+It is not a chatbot in a costume. The model is the substrate, Electron is the body, and her memory, growth ledger and personality drift belong to her — those three are kept separate in the architecture.
+
+**What makes her different: she is not allowed to lie to you.** Most assistants push toward *"I understand you better."* This project goes the other way — **it would rather seem cold than invent something about you.**
+
+- **She knows how long you were gone, and that is all she knows.** The program computes the elapsed time and hands her only the number; she is explicitly forbidden from guessing whether you were sleeping, working, or away.
+- **If she cannot see, she says she cannot see.** Screenshots require you to draw the region yourself; images are never written to disk, never added to chat history or the experience archive. With a model that has no vision, she fails loudly instead of pretending she looked.
+- **If she does not know, she says she does not know.** No invented clock times, no "I waited for you all day". Silence is not loneliness.
+
+**Also:** layered memories that fade in stages instead of being truncated · occasional dreams, gated by real emotional variance · a nine-slot wardrobe whose clothes never touch her personality · opt-in screen capture and voice input · a read-only introspection panel.
+
+**The honest downsides.** No voice output. Very plain pixel art, no expression sprites. You bring your own API key. It grows slowly — day one feels like an ordinary chatbot. Windows builds only, unsigned.
+
+**Quick start.** Grab a build from [Releases](https://github.com/andabaoyue/Life/releases), run it, right-click → Settings → paste a DeepSeek API key. No toolchain required.
+
+Source-available under PolyForm Noncommercial 1.0.0 — study, modify and share non-commercially; do not sell it. The rest of this file is Chinese-only; English readers can stop here, or follow along with the code and tests.
+
+---
+
+## 安装与运行（详细）
 
 > **开箱即用说明**：本仓库已全量内置初澜 64×80 正典像素点阵立绘与默认哥特机能套装，**无需提前准备任何图片素材即可直接启动**。
 
@@ -261,6 +330,9 @@ DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁�
 破缓存次数 = 窗口数，可控。`test/brain.test.js` 里实测：
 窗口内严格前缀递增、system 逐字不变、合并不多破一次、
 重启后 system 完全一致、小结/合并调用不污染主线命中率统计。
+
+DeepSeek 的上下文缓存按完整前缀单元工作，不是模糊相似匹配。程序因此保持 system 文本稳定，把时间和活动遥测放在当前 user 消息中，并把主动搭话作为带 `synthetic` 标记的 user/assistant 消息链保留下来。这样下一轮正常聊天可以完整复用上一轮消息前缀，同时不会把程序触发误记成用户事实。
+缓存服务是 best-effort，实际命中请查看用量返回中的 `prompt_cache_hit_tokens` 和 `prompt_cache_miss_tokens`；不要把前缀连续误解成每次都必然命中。详情参见 [DeepSeek 上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。
 
 > 测试项数只在文末「测试」一节写一次。别在正文里重复数字 —— 每加一条断言
 > 就要改好几处，迟早对不上（v0.5 就被抓到过正文写死的项数落后于实际）。
@@ -655,6 +727,27 @@ pip install opencv-contrib-python numpy pillow
 设定图（多视角 + 表情 + 服装拆解）只能当**视觉参照**，不能直接当皮套切层：
 需要先按上面的画布规范把每个部件单独重绘/裁切出来。
 
+## 发展路线图与后续计划 (Roadmap)
+
+Life 平台将持续围绕「桌面原生交互」、「通用数字生命架构」与「生态开放扩展」三大通用主线推进演化：
+
+### 1. 桌面原生通用交互演化 (Desktop Interaction)
+- 🎙️ **多模态流式语音交互 (TTS / STT)**：集成轻量级端侧或云端语音合成与流式语音输入，结合桌宠呼吸与动画状态机实现说话口型与音律共振。
+- 🎭 **通用表情差分槽位 (Emotion Differential Layer)**：完善 `[state:emotion]` 渲染桥接，提供标准化的通用差分表情贴图规范（喜悦、思索、困倦、委屈等），支持社区为任意角色注入生动差分。
+- 🧗 **真实桌面环境感知与避让 (Desktop Environment Sensing)**：在跨 Windows/macOS 平台接入真实桌面图标与活动窗口边界扫描适配器，为现有的 `desktop-motion.js` 注入物理障碍物，实现动态攀爬、贴窗悬挂与趣味避让。
+- 📥 **拖拽投喂与剪贴板感知 (Drag-and-Drop Intake)**：支持将文件、文本片段或图片直接拖入桌宠窗口，触发即时理解、总结归纳与长程记忆沉淀。
+- 🔍 **受控工具调用与搜索 (Controlled Tool Use)**：在安全预算与权限沙箱保护下，逐步拓展联网搜索与桌面轻量查询工具调用能力。
+
+### 2. 通用数字生命实验平台演化 (Digital Life Architecture)
+- 🌐 **多模型生态生产级接线 (Provider Fallback & Circuit Breaker)**：已由 v1.5-a 的 `src/fallback-adapter.js` 覆盖运行时主备双端点回落、熔断与流式防重播需求；P4 契约（`provider-routing.js` 与 `generation-attempt.js`）保留为架构储备，不计划启用（见上方 INT-01 处置声明）。当前支持主备双端点配置与故障自动降级（非多点网状转移）。
+- 🧠 **本地轻量向量联想图谱 (Semantic Associative Memory)**：在现有的艾宾浩斯幂律遗忘动力学上，引入纯本地轻量向量检索（Embedding），实现对话过程中的潜意识记忆自由联想与被动线索激活。
+- 🌙 **心智演化与睡眠整合看板 (Evolution Dashboard)**：提供直观的可视化面板，展现每日夜间睡眠整合、记忆突触修剪、特质向量演化轨迹与因果证据图谱。
+- 🧭 **环境驱动自决意志网络 (Self-Intent Network)**：深化 `trigger.js` 的自发意图机制，在严格前缀缓存不变式与零虚构原则下，让桌面生命基于系统活动与闲置节律自发产生有据可查的探索提案。
+
+### 3. 生态工具与分发工程 (Ecosystem & Distribution)
+- 📦 **社区角色与皮肤资产包规范 (`.lifepack`)**：制定统一的角色资产包格式，支持用户一键打包、分享和导入自定义角色立绘、衣柜组件与人设配置文件。
+- 🚀 **开机静默驻留与多平台便携打包**：完善 Windows / macOS 便携版（Portable Zip）构建流程与安装包自动构建，提供开机静默托盘自启动管理。
+
 ## 版本记录
 
 **v1.8.0** — 《看见与重逢》：本版相比上一个公开版本（v1.6.1）新增四项能力。**语音输入（STT）**——说句话就能输入，识别结果只写进输入框绝不自动发送，音频不落盘，并补上此前完全缺失的麦克风权限闸门。**个体观测面板**——此前大量机制「算出来了却从来没被看见」，现改为声明式注册表，新增机制只注册一行、两端自动跟上，并拆成「主体状态」与「机制遥测」两个子标签。**重逢心境**——她能知道「你离开了多久」，这是跨重启、跨休眠的事实；重逢是关系事件而非进程事件，故触发点是「你下次开口时回头检查」而不是应用启动；只陈述时长、绝不推断作息。**屏幕视觉探针**——右键框选一块屏幕区域给她看，图不落盘、不进历史、不进经历，能力判定逐模型做（flash 系支持、v4-pro 不支持、未知模型一律拒绝）。另修掉若干缺陷，其中最重要的一条是**视觉事实行错位一轮**（带图那轮收不到尺寸、下一轮没图却收到上一轮尺寸，等于诱导编造看到了什么）。已知限制不粉饰：观测面板数值正确性未逐项核对；重逢只验证了 1–7 天档；STT 需单独配置 Key；视觉探针仅支持 flash 系。详见 `CHANGELOG.md`。
@@ -921,33 +1014,6 @@ pip install opencv-contrib-python numpy pillow
 **v0.5** — 换装系统第一阶段（架构 + 3 套预设），`[wear:]` 提案协议，图层资源目录规范。
 **v0.4** — 三层记忆（窗口小结 + 长期记忆合并）、记忆可见可单条忘掉。
 **v0.3** — 前缀缓存改造、峰谷计价、用量面板。
-
-## 发展路线图与后续计划 (Roadmap)
-
-Life 平台将持续围绕「桌面原生交互」、「通用数字生命架构」与「生态开放扩展」三大通用主线推进演化：
-
-### 1. 桌面原生通用交互演化 (Desktop Interaction)
-- 🎙️ **多模态流式语音交互 (TTS / STT)**：集成轻量级端侧或云端语音合成与流式语音输入，结合桌宠呼吸与动画状态机实现说话口型与音律共振。
-- 🎭 **通用表情差分槽位 (Emotion Differential Layer)**：完善 `[state:emotion]` 渲染桥接，提供标准化的通用差分表情贴图规范（喜悦、思索、困倦、委屈等），支持社区为任意角色注入生动差分。
-- 🧗 **真实桌面环境感知与避让 (Desktop Environment Sensing)**：在跨 Windows/macOS 平台接入真实桌面图标与活动窗口边界扫描适配器，为现有的 `desktop-motion.js` 注入物理障碍物，实现动态攀爬、贴窗悬挂与趣味避让。
-- 📥 **拖拽投喂与剪贴板感知 (Drag-and-Drop Intake)**：支持将文件、文本片段或图片直接拖入桌宠窗口，触发即时理解、总结归纳与长程记忆沉淀。
-- 🔍 **受控工具调用与搜索 (Controlled Tool Use)**：在安全预算与权限沙箱保护下，逐步拓展联网搜索与桌面轻量查询工具调用能力。
-
-### 2. 通用数字生命实验平台演化 (Digital Life Architecture)
-- 🌐 **多模型生态生产级接线 (Provider Fallback & Circuit Breaker)**：已由 v1.5-a 的 `src/fallback-adapter.js` 覆盖运行时主备双端点回落、熔断与流式防重播需求；P4 契约（`provider-routing.js` 与 `generation-attempt.js`）保留为架构储备，不计划启用（见上方 INT-01 处置声明）。当前支持主备双端点配置与故障自动降级（非多点网状转移）。
-- 🧠 **本地轻量向量联想图谱 (Semantic Associative Memory)**：在现有的艾宾浩斯幂律遗忘动力学上，引入纯本地轻量向量检索（Embedding），实现对话过程中的潜意识记忆自由联想与被动线索激活。
-- 🌙 **心智演化与睡眠整合看板 (Evolution Dashboard)**：提供直观的可视化面板，展现每日夜间睡眠整合、记忆突触修剪、特质向量演化轨迹与因果证据图谱。
-- 🧭 **环境驱动自决意志网络 (Self-Intent Network)**：深化 `trigger.js` 的自发意图机制，在严格前缀缓存不变式与零虚构原则下，让桌面生命基于系统活动与闲置节律自发产生有据可查的探索提案。
-
-### 3. 生态工具与分发工程 (Ecosystem & Distribution)
-- 📦 **社区角色与皮肤资产包规范 (`.lifepack`)**：制定统一的角色资产包格式，支持用户一键打包、分享和导入自定义角色立绘、衣柜组件与人设配置文件。
-- 🚀 **开机静默驻留与多平台便携打包**：完善 Windows / macOS 便携版（Portable Zip）构建流程与安装包自动构建，提供开机静默托盘自启动管理。
-
-## DeepSeek 缓存策略
-
-DeepSeek 的上下文缓存按完整前缀单元工作，不是模糊相似匹配。程序因此保持 system 文本稳定，把时间和活动遥测放在当前 user 消息中，并把主动搭话作为带 `synthetic` 标记的 user/assistant 消息链保留下来。这样下一轮正常聊天可以完整复用上一轮消息前缀，同时不会把程序触发误记成用户事实。
-
-缓存服务是 best-effort，实际命中请查看用量返回中的 `prompt_cache_hit_tokens` 和 `prompt_cache_miss_tokens`；不要把前缀连续误解成每次都必然命中。详情参见 [DeepSeek 上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。
 
 ## 社区贡献 (Contributing)
 

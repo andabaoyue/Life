@@ -130,10 +130,17 @@ CSV 导出公式注入、STT 配置写失败静默、对话窗输入栏遮挡。
 
 ## 发布流程（下次照做）
 
+> ⚠️ 这份文档会随公开库发布（`docs/**` 在 `public-export` 白名单内），而剥离门禁禁止开发机
+> 绝对路径。所以下面的公库路径一律写成 `<公库工作树>` 占位，不写盘符——本机实际是与私库
+> 同级的 `LIFE-public`，换台机器只是填不同的目录，流程不变。
+>
+> 🔴 教训（2026-10-29）：这段原本写的是真实盘符路径，`release-check` 与 `public-export.test`
+> 因此**双双变红**——账本写好一周后才发现，账本自己成了发布门禁的拦路虎。
+
 ```bash
 # ── 阶段 1：版本收口（私库）
 # 1. package.json / package-lock.json（🔴 lock 只改根包两处，别动依赖自身的版本）
-# 2. README.md / README.en.md 首行
+# 2. README.md 首行（v1.8.0 起中英合成一份，README.en.md 已删除）
 # 3. CHANGELOG.md 补 [X.Y.Z]，按功能线归纳，不逐笔列提交
 # 4. 校验：node tools/release-check.js 应 0 FAIL
 
@@ -144,14 +151,14 @@ node tools/release-check.js     # 0 FAIL
 node test/artifact-freshness.test.js  # stale=[] missing=[]
 
 # ── 阶段 3：物化公库并验证（不碰远端）
-node tools/public-export.js --sync D:/GAME/LIFE-public          # 先预演
-node tools/public-export.js --sync D:/GAME/LIFE-public --yes    # 再执行
-cd D:/GAME/LIFE-public && node test/docs.test.js                # 公库形态必须全绿
+node tools/public-export.js --sync <公库工作树>          # 先预演
+node tools/public-export.js --sync <公库工作树> --yes    # 再执行
+cd <公库工作树> && node test/docs.test.js                # 公库形态必须全绿
 
 # ── 阶段 4：提交与推送
-git -C D:/GAME/LIFE-public add -A
-git -C D:/GAME/LIFE-public commit -m "feat(release): 同步私库 vX.Y.Z —— ..."
-git -C D:/GAME/LIFE-public log --oneline -2   # 🔴 确认父节点是上一次的 HEAD
+git -C <公库工作树> add -A
+git -C <公库工作树> commit -m "feat(release): 同步私库 vX.Y.Z —— ..."
+git -C <公库工作树> log --oneline -2   # 🔴 确认父节点是上一次的 HEAD
 git push public public-main:main              # 普通 push，不 force
 git tag vX.Y.Z <提交号> && git push public vX.Y.Z
 

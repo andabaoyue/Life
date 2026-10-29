@@ -74,8 +74,11 @@ const INCLUDE = [
   '.workbuddy/cleanup/known-prefixes.json',
 
   // 门面与合规文档（公开库的对外契约面）
+  // ⚠️ 2026-10-29：README.en.md 已删除（内容并入 README.md 的英文段）。
+  //    这里的 INCLUDE 条目必须同步摘掉 —— classify() 会把零命中的 include 规则
+  //    判成 deadRules，而 test/public-export.test.js 断言「真实仓库零死规则」，
+  //    留着它会让剥离门禁自己变红。
   'README.md',
-  'README.en.md',
   'CHANGELOG.md',
   'CONTRIBUTING.md',
   'CODE_OF_CONDUCT.md',
