@@ -379,17 +379,27 @@ function checkBuilderClosure() {
   else report('PASS', '发布白名单闭包', `${RUNTIME_ENTRIES.length} 个运行入口全部在 files 白名单内，且无死条目`);
 }
 
-/* 8. README 文档与测试集完整性 */
+/* 8. 文档与测试集完整性
+ *
+ * 🔴 2026-10-30：测试清单搬出 README（README 只留门面，逐条说明进
+ *   docs/TEST-INVENTORY.md）。门禁判据一条没改，只换读取的文件：
+ *   仍然要求「## 测试 + bash 块」存在、每个 test/ 文件都被点名。
+ *   ⚠️ 不能改成「README 里提到文件名就算数」—— 那样就不再核对项数了。 */
 function checkDocsAndTestSuites() {
   const readmePath = path.join(ROOT, 'README.md');
   if (!fs.existsSync(readmePath)) {
     report('FAIL', '项目文档', 'README.md 不存在');
     return;
   }
-  const readme = fs.readFileSync(readmePath, 'utf8');
-  const block = readme.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
+  const inventoryPath = path.join(ROOT, 'docs', 'TEST-INVENTORY.md');
+  if (!fs.existsSync(inventoryPath)) {
+    report('FAIL', '项目测试文档', 'docs/TEST-INVENTORY.md 不存在');
+    return;
+  }
+  const inventory = fs.readFileSync(inventoryPath, 'utf8');
+  const block = inventory.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
   if (!block) {
-    report('FAIL', '项目测试文档', 'README.md 未包含 ## 测试 代码块');
+    report('FAIL', '项目测试文档', 'docs/TEST-INVENTORY.md 未包含 ## 测试 代码块');
     return;
   }
   const claims = [...block[1].matchAll(/((?:node|python3)\s+(test\/[\w.-]+))\s*#+\s*(\d+)\s*项/g)]
@@ -398,11 +408,11 @@ function checkDocsAndTestSuites() {
   const testDirFiles = fs.readdirSync(path.join(ROOT, 'test'))
     .filter(f => /\.(js|py)$/.test(f) && f !== 'docs.test.js');
 
-  const unmentioned = testDirFiles.filter(f => !readme.includes(f));
+  const unmentioned = testDirFiles.filter(f => !inventory.includes(f));
   if (unmentioned.length > 0) {
-    report('FAIL', '测试目录文档覆盖', `test/ 下存在未在 README 中被点名的测试: ${unmentioned.join(', ')}`);
+    report('FAIL', '测试目录文档覆盖', `test/ 下存在未在测试清单中被点名的测试: ${unmentioned.join(', ')}`);
   } else {
-    report('PASS', '测试目录文档覆盖', `test/ 下全部 ${testDirFiles.length} 个测试均在 README.md 完整登记并标明用例项数 (共 ${claims.length} 条测试套件声明)`);
+    report('PASS', '测试目录文档覆盖', `test/ 下全部 ${testDirFiles.length} 个测试均在 docs/TEST-INVENTORY.md 完整登记并标明用例项数 (共 ${claims.length} 条测试套件声明)`);
   }
 }
 

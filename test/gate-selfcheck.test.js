@@ -94,18 +94,20 @@ if (fs.existsSync(DS)) {
   check('deepseek.test.js 改走异步 spawn', /\bspawn\s*\(/.test(fs.readFileSync(DS, 'utf8')));
 }
 
-/* 6. 排版自检：README 测试块里**不能给本文件标项数** ——
+/* 6. 排版自检：测试清单里**不能给本文件标项数** ——
     docs.test.js 的回收正则要求「文件 + # + N项」，标了项数就会被它当普通套件跑，
     而本文件断言的是 docs.test.js 自己的设计，会形成不必要的自举。
-    注意：README **必须**提到本文件名（否则 release-check 与 docs.test.js
-    的「每个测试都被点名」会 FAIL），只是不标项数 —— 与 docs.test.js 自身的做法一致。 */
-const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-const block = readme.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
-check('README 有「测试」代码块', !!block);
+    注意：清单**必须**提到本文件名（否则 release-check 与 docs.test.js
+    的「每个测试都被点名」会 FAIL），只是不标项数 —— 与 docs.test.js 自身的做法一致。
+
+    🔴 2026-10-30：清单从 README 搬到 docs/TEST-INVENTORY.md，本条判据跟着换出处。 */
+const inventory = fs.readFileSync(path.join(ROOT, 'docs', 'TEST-INVENTORY.md'), 'utf8');
+const block = inventory.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
+check('测试清单有「测试」代码块', !!block);
 const selfName = path.basename(__filename);
 const selfLine = block ? block[1].split('\n').find(l => l.includes(selfName)) : null;
-check('README 已登记本文件（否则门禁报「未被点名」）', !!selfLine, selfName || '');
-check('README 没给本文件标项数（否则被 docs.test.js 回收自举）',
+check('测试清单已登记本文件（否则门禁报「未被点名」）', !!selfLine, selfName || '');
+check('测试清单没给本文件标项数（否则被 docs.test.js 回收自举）',
   !!selfLine && !/(\d+)\s*项/.test(selfLine), selfLine ? selfLine.trim() : '');
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

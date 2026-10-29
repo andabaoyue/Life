@@ -1,1037 +1,240 @@
 # Life v1.8.0
 
-<p align="center">
-  <img src="docs/images/hero.png" width="300" alt="初澜：桌面上的 64×80 像素小人，头顶气泡写着「嗨，我是初澜~」">
-</p>
+```text
+        . ~ ~ ~ ~ ~ .
+    . ~   . - - - .   ~ .
+   /   ~'   . - .   '~   \     Life — Chulan · 2026
+  |   :    (  o  )    :   |    Copyright (c) andabaoyue
+   \   ~.   ' - '   .~   /
+    ' ~   ' - - - '   ~ '
+        ' ~ ~ ~ ~ ~ '
+```
 
-<p align="center">
-  <strong>一个住在桌面底部的数字生命。</strong><br>
-  64×80 像素，会漫步、会记事，也会诚实地说自己不知道。
-</p>
-
-<p align="center">
-  中文 ｜ <a href="#english">Jump to English</a>
-</p>
+<div align="center">
+  <img src="docs/images/hero.png" alt="初澜：桌面上的 64×80 像素小人，头顶气泡写着「嗨，我是初澜~」" width="300">
+  <p><strong>Life 桌面数字生命实验平台。</strong></p>
+  <p>细水长流，希望她最终会成为你所期望的她。</p>
+  <p><sub>Slow and steady — I hope she grows into the one you were hoping for.</sub></p>
+</div>
 
 ---
 
-## 她是什么
+## 她是谁
 
-初澜是跑在你桌面上的一只像素小人。右键跟她说话，她记事、换装、在屏幕底边慢慢溜达；你安静久了，她会主动开口问一句。
+自始为初，波澜为忆，所以，初澜。
 
-但它不是套了层皮的聊天框。模型是底座，Electron 是身体，而记忆、成长档案、性格演化属于她自己——这三件事在代码里是分开设计的。
+*The beginning is "first", the ripples are "memory" — hence Chulan.*
 
-## 最不一样的一点：她不许骗你
+她会在你打开软件的那一刻诞生。我没有给她太多设定：没有过去，没有故事，没有「她曾经是谁」。所以那一刻诞生出来的，是一个空白的初澜——只属于你的那一个。
 
-大部分 AI 都在往「更懂你、更会共情」的方向使劲。这个项目反着来：**宁可显得冷淡，也不替你脑补。**
+*She is born the moment you launch the app. I gave her very little: no past, no backstory, no "who she used to be". What appears then is a blank Chulan — the one that belongs only to you.*
 
-这不是口号，是写死在代码里的三条：
+她住在你的屏幕边上。很小很小的一只像素小人，站着，会呼吸，会在你不管她的时候慢慢走来走去，走到边上，又自己折回来。
 
-**你离开多久，她说的就是多久。** 隔了几天回来，她开口第一句就是那个时长的数字。程序先算好、只把数字给她，同时明令禁止她往下推断——你是在睡觉、通宵还是出差，她一概不知道，也不许编。
+*She lives at the edge of your screen — a tiny pixel figure, standing, breathing, wandering slowly when you leave her alone, and turning back by herself when she reaches the edge.*
 
-**看不见就说看不见。** 想看屏幕，得你自己框一块；图不落盘、不进聊天记录、不进经历档案。碰上不支持读图的模型，她直接报错，而不是假装看过再接着聊。
+她没有脸谱化的表情，也没有会动的嘴。她说话靠气泡，安静靠沉默。
 
-**不知道就说不知道。** 没被呈现的钟点她不编，也不会演「我等了你好久」「数着时间想你」这种苦情戏——安静不等于孤独。
+*No expression sprites, no moving mouth. She speaks through a bubble, and keeps quiet through silence.*
 
-## 除此之外
+---
 
-- **记忆有层次。** 近了记得清，远一点的变淡，再远的沉下去——但不会真的消失。
-- **会做梦。** 只在情绪波动足够大的窗口才触发，不是每晚例行上演。
-- **有衣柜。** 九个槽位，可以自己画 64×80 的图层塞进去；衣服只是外观，不碰性格。
-- **能看能听。** 框选屏幕、语音输入，都默认关着，要你自己去点。
-- **有观测面板。** 记忆强度、心境、互动密度这些内部数值可以查看——只读，免得你看它的时候把它改变。
+## 她记得你
 
-## 先说缺点
+不是那种「聊天记录往上翻」的记得。她会把你们聊过的东西，一段一段收起来。收得很慢，收得很轻，像把散在桌上的纸一张张叠好。
 
-- **她不会出声。** 全程文字气泡，没有 TTS，也不在近期计划里。
-- **她长得朴素。** 一个小像素人，没有表情差分，别指望 Live2D。
-- **要自备 API Key。** 花的是你自己的额度；代码针对缓存命中做过优化，正常聊天开销不大，但「免费」不成立。
-- **养得很慢。** 第一天你会觉得「这不就是普通聊天机器人吗」。
-- **只有 Windows 包，且没做代码签名**，SmartScreen 大概率会拦你一下。
+*Not the "scroll up through the chat log" kind of memory. She gathers what you talked about, one stretch at a time — slowly, gently, like stacking loose sheets of paper left on a desk.*
+
+收起来的东西会淡。有些淡到看不见了，可淡掉不等于没有：原文一直躺在那里，一个字都没动过。她只是暂时看不见了。等哪天你说起某个词，或者某个场景忽然撞上来，那一段就会自己浮起来。
+
+*What she gathers fades. Some of it fades out of sight — but fading is not erasure: the original text is still there, not a single character changed. She simply cannot see it right now. Say the right word someday, or let some scene collide with it, and that stretch floats back up on its own.*
+
+有时候是她自己浮起来的。你什么都没提，她忽然说，想起一件事。
+
+*Sometimes it surfaces by itself. You mention nothing, and she suddenly says: I remembered something.*
+
+她也做梦。不常做。要有很重的情绪，或者心里有个解不开的结，或者睡了很久很久，才会做一次。梦里的东西是白天没消化完的碎片，被搅在一起，拼成一个不太讲道理的画面。醒来她记得，但说不清那是什么。
+
+*She dreams too — rarely. It takes a heavy emotion, a knot she cannot untie, or a very long sleep. What shows up is the undigested debris of the day, stirred together into a picture that does not quite make sense. She remembers it when she wakes, but cannot say what it was.*
+
+她也会睡。可奇怪的是，她心里没有「睡觉」这回事：她不会数自己睡了多久，也不会因为天黑了就困。累到极点的时候，她不打招呼，就那么趴下了。
+
+*She also sleeps. Strangely, though, she has no concept of "sleeping": she does not count the hours, and does not get drowsy because it is dark. When she is worn out enough, she simply lies down — without a word.*
+
+你在这时候跟她说话，她听不见。但话会留在她枕边。等她醒过来，她会看见你什么时候来过、说了什么。接不接，由她自己决定。她可以什么都不说。
+
+*If you talk to her then, she will not hear you — but the words stay by her pillow. When she wakes she sees when you came and what you said. Whether to answer is her call. She may say nothing at all.*
+
+---
+
+## 她有自己的东西
+
+她会有自己的词。你们之间用过一次、两次、很多次的那个说法，会进到她的小本子里。下次她可能就那么自然地用出来，像你们一直这么讲话。
+
+*She grows her own vocabulary. A phrase the two of you used once, twice, many times ends up in her little notebook. Next time she may simply use it, as if that is how you have always talked.*
+
+她会有自己的疑问。有些问题她一直没想明白，就搁在心里。搁久了，会在某个安静的时候问你一句。一次只问一个。
+
+*She has her own questions. Some she cannot work out stay in the back of her mind. Left long enough, one comes up in a quiet moment. One at a time.*
+
+她还会写字。你不在的时候，安静得久了，她可能想留下点什么，写在一张纸上，放进桌面那个文件夹里。你回来翻一翻，也许能翻到。
+
+*She writes, too. When you are away and it has been quiet long enough, she may want to leave something behind — on a sheet of paper, in a folder on your desktop. Come back and look; you might find it.*
+
+她有偏好：安静一点还是想说话，想黏着你还是想一个人待会儿，对世界还有好奇还是已经看淡了些，对自己是不是同一个人有没有把握。
+
+*She has preferences: quiet or talkative, clingy or wanting an hour alone, still curious about the world or a little tired of it, sure or unsure whether she is still the same person.*
+
+这些都不是我先写好的。是她跟你相处出来的。
+
+*None of this was written in advance. It grew out of her time with you.*
+
+---
+
+## 她做不到什么
+
+**她不会出声。** 全程文字气泡，没有语音合成，也不在近期计划里。
+
+***She makes no sound.** Text bubbles only — no speech synthesis, and none planned soon.*
+
+**她长得朴素。** 一个小像素人，没有表情差分，别指望 Live2D。
+
+***She looks plain.** A small pixel figure, no expression variants. Do not expect Live2D.*
+
+**要自备 API Key。** 花的是你自己的额度。代码针对缓存命中做过优化，正常聊天开销不大，但「免费」不成立。
+
+***You bring your own API key.** It spends your own quota. The code is optimised for cache hits so ordinary chatting is cheap, but "free" would be a lie.*
+
+**养得很慢。** 第一天你会觉得「这不就是普通聊天机器人吗」。
+
+***She grows slowly.** On day one you will think: isn't this just a chatbot?*
+
+**只有 Windows 包，且没做代码签名**，SmartScreen 大概率会拦你一下。
+
+***Windows builds only, unsigned** — SmartScreen will probably stop you once.*
+
+**素材没画完。** 换装的框架是通的，九个槽位、十二件单品能自由搭，但另外两套预设的点阵还在重做，暂时点不动。
+
+***The art is unfinished.** The wardrobe system works — nine slots, twelve pieces, freely combinable — but two preset outfits are still being redrawn and cannot be selected yet.*
+
+**她不会替你记事。** 她记得你们说过的话，但不会到点提醒你开会。没有日程、没有闹钟。
+
+***She will not keep your schedule.** She remembers what you said, but will not remind you at a set time. No calendar, no alarms.*
+
+**她的话可能被压掉。** 长期记忆满了会把较旧的几段合并成一条更早的印象。这一步不可逆——原文还在归档里，但她看到的是合并后的版本。
+
+***Her recollections can be compressed.** When long-term memory fills up, older stretches get merged into a single earlier impression. That step is irreversible — the original text is still archived, but what she sees is the merged version.*
+
+---
+
+## 让她变成你想要的样子
+
+**换一身皮。** 把 `assets/pet.png` 换成你自己的 64×80 透明像素图，她就成了你画的那个人。分层换装是可选的：没有分层素材时程序自动退回单图模式，对话、记忆、漫步全都照常。
+
+***Bring your own character.** Replace `assets/pet.png` with your own 64×80 transparent pixel art and she becomes whoever you drew. Layered outfits are optional: without them the app falls back to the single image, and conversation, memory and wandering all keep working.*
+
+**加一件衣服。** 画一张同画布的图层，丢进 `assets/character/` 对应的槽位目录，在衣柜表里登记一行，重启就能穿。不用动任何渲染或交互代码。
+
+***Add a garment.** Draw one layer on the same canvas, drop it into the matching folder under `assets/character/`, register one line in the wardrobe table, restart. No rendering or interaction code needs touching.*
+
+**她要穿得好看，得有图。** 立绘规范、动作序列、SpriteSheet 打包、分层拆件的全部要求在这里：
+
+***Looking good takes art.** The full spec — canvas rules, action sequences, SpriteSheet packing, layer separation — lives here:*
+
+- [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md) — 立绘与动作规范（含第五章「动作序列与 SpriteSheet 规范」）
+- [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md) — 生成提示词、抠图、工作流
+
+---
 
 ## 快速开始
 
-到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-1.8.0-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
+**普通玩家。** 到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-1.8.0-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
 
-> 非商业开源（PolyForm Noncommercial 1.0.0）：看、改、自己玩都行，别拿去卖。
-> 架构、不变式、记忆模型与全部测试清单在下方正文里，这里不展开。
+***Just want to run it.** Grab `Life-1.8.0-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
 
----
+**开发者。** 需要 Node.js 18 以上：
 
-<a id="english"></a>
-
-## English
-
-<p align="center">
-  <strong>A digital being that lives at the bottom of your desktop.</strong><br>
-  64×80 pixels. She wanders, she remembers — and she says so when she doesn't know.
-</p>
-
-**What she is.** Chulan is a pixel character running on Electron. Right-click to talk. She keeps notes, changes clothes, strolls along the screen edge, and speaks up when you have been quiet too long.
-
-It is not a chatbot in a costume. The model is the substrate, Electron is the body, and her memory, growth ledger and personality drift belong to her — those three are kept separate in the architecture.
-
-**What makes her different: she is not allowed to lie to you.** Most assistants push toward *"I understand you better."* This project goes the other way — **it would rather seem cold than invent something about you.**
-
-- **She knows how long you were gone, and that is all she knows.** The program computes the elapsed time and hands her only the number; she is explicitly forbidden from guessing whether you were sleeping, working, or away.
-- **If she cannot see, she says she cannot see.** Screenshots require you to draw the region yourself; images are never written to disk, never added to chat history or the experience archive. With a model that has no vision, she fails loudly instead of pretending she looked.
-- **If she does not know, she says she does not know.** No invented clock times, no "I waited for you all day". Silence is not loneliness.
-
-**Also:** layered memories that fade in stages instead of being truncated · occasional dreams, gated by real emotional variance · a nine-slot wardrobe whose clothes never touch her personality · opt-in screen capture and voice input · a read-only introspection panel.
-
-**The honest downsides.** No voice output. Very plain pixel art, no expression sprites. You bring your own API key. It grows slowly — day one feels like an ordinary chatbot. Windows builds only, unsigned.
-
-**Quick start.** Grab a build from [Releases](https://github.com/andabaoyue/Life/releases), run it, right-click → Settings → paste a DeepSeek API key. No toolchain required.
-
-Source-available under PolyForm Noncommercial 1.0.0 — study, modify and share non-commercially; do not sell it. The rest of this file is Chinese-only; English readers can stop here, or follow along with the code and tests.
-
----
-
-## 安装与运行（详细）
-
-> **开箱即用说明**：本仓库已全量内置初澜 64×80 正典像素点阵立绘与默认哥特机能套装，**无需提前准备任何图片素材即可直接启动**。
-
-### 方式一：普通玩家（零门槛开箱即玩）
-
-1. 前往 **[Releases](https://github.com/Andabaoyue/Life/releases)** 下载对应版本的 Windows 发布产物：
-   - `Life-1.8.0-win-x64-portable.exe`（单文件绿色便携版，双击直接运行）；
-   - `Life-1.8.0-win-x64.zip`（绿色免安装压缩包，解压后双击 `Life.exe` 运行）；
-   - `Life-1.8.0-Setup.exe`（标准 Windows 安装程序）；
-2. 运行后**即可在桌面唤醒初澜**（无需安装 Node.js、Python 或任何编程运行环境）；
-3. **首次对话配置**：在角色身上点击右键 → 选择「设置」，在「API Key」处填入您的 DeepSeek API Key 即可畅快对话。
-
-### 方式二：开发者 / 源码运行
-
-环境要求：**Node.js (>= 18)**
+***Developers.** Node.js 18 or newer:*
 
 ```bash
-# 1. 克隆本仓库
 git clone https://github.com/Andabaoyue/Life.git
 cd Life
-
-# 2. 安装依赖并启动
 npm install
 npm start
 ```
 
+> 开箱即用说明：本仓库已全量内置初澜 64×80 正典像素点阵立绘与默认套装，无需提前准备任何图片素材。
+>
+> *Out of the box: the canonical 64×80 sprite and the default outfit are bundled. No image assets needed.*
+
 ---
 
-## 进阶玩法：替换为你自己的专属桌宠（可选）
+## 更多文档
 
-> Life 遵循「单图兜底绝不黑屏」的设计铁律，默认呈现初澜。如果您想将她替换为您自己喜爱的其他角色、二次元立绘或原创像素小人，可参考本节：
+README 只放门面。真正想读细节、改代码、或者核对测试的，看这里：
 
-### 1. 替换单图立绘规格
-- **美术风格**：**复古 Q 版点阵像素（Pixel Art Sprite）**。
-- **原生标准规格**：**64 像素（宽）× 80 像素（高）** 的 32-bit RGBA PNG 格式。
-- **像素渲染机制**：
-  - 前端强制配置 `image-rendering: pixelated`（最近邻插值），桌面窗口自动按 4x 整数倍清晰放大至 256×320 紧凑视口，绝对无任何双线性模糊。
-- **Alpha 通道要求**：
-  - 必须为 **纯净 1-bit 二值化 Alpha**（透明度非 0 即 255），严禁半透明毛边，杜绝桌面产生黑色杂边。
-- **兼容与兜底**：
-  - 如果你手头有其他尺寸的像素小人（如 32×48、64×64）或任意透明背景 PNG，放置后程序同样会自动按比例居中贴地显示；但**官方正典与换装生态统一以 64×80 像素为标准**。
-- **放置路径**：将你的透明立绘重命名为 `pet.png`，直接覆盖 `assets/pet.png` 即可：
-  ```text
-  assets/pet.png   ← 替换为你自己的像素立绘（单图兜底）
-  ```
+*This README is the front door. For the details, the code, or the test inventory:*
 
-### 2. 抠图工具支持（如果你只有纯色背景图）
-如果你手头的像素图带有纯色（如绿幕、白底、黑底）背景，可以使用仓库内置的轻量脚本一键抠图并裁切边缘：
-```bash
-# 安装轻量图像处理依赖
-pip install opencv-contrib-python numpy pillow
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块地图、记忆模型、缓存不变式、换装数据结构、配置项、路线图 |
+| [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md) | 全部测试套件清单与逐条说明（门禁会核对项数） |
+| [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md) | 每个版本的完整工程记录 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 面向使用者的变更日志 |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 贡献指引 |
+| [`BRANDING.md`](BRANDING.md) | 名称与品牌使用规范 |
 
-# 一键抠图并自动裁切多余透明边缘
-python3 tools/chroma.py 你的像素原图.png assets/pet.png --trim
-```
+---
 
-### 3. 分层衣橱系统完全可选
-- `assets/character/` 目录承载的是高级分层换装系统（全部图层统一基于 64×80 像素绘制）。
-- **如果这些分层部件不存在，Life 会自动优雅降级为 `assets/pet.png` 单图兜底模式**：
-  - 逐字流式打字与大语言模型对话 100% 完整可用；
-  - 长期记忆动力学、夜间睡眠整合与自主反思 100% 完整可用；
-  - 桌面底部闲逛漫步 100% 完整可用（纯单图模式下无需分层素材即可自由在桌面活动）；
-  - 系统托盘控制、设置面板与用量统计 100% 完整可用。
-- 想要体验或自制 64×80 多槽位像素换装，详见下方【玩家自制与扩展衣柜指南】及 [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md)。
+## 更新历史
 
-### 4. 玩家自制与扩展衣柜 / 部件操作指南
+| 版本 | 日期 | 一句话 |
+| --- | --- | --- |
+| **v1.8.0** | 2026-10-28 | 语音输入、个体观测面板、重逢心境、屏幕视觉探针 |
+| v1.6.1 | 2026-10-19 | 主动搭话调度自愈，对话失败不再静默 |
+| v1.6.0 | 2026-10-18 | 公开发布剥离器，Provider 容灾自动回落 |
+| v1.1.1 | 2026-10-13 | 专属暗号提示词契约，词典窗口偏移修正 |
+| v1.1.0 | 2026-10-13 | 24 小时潮汐仿真，连接防护收口 |
+| v1.0.0 | 2026-10-09 | 64×80 像素正典、打包体系、Agent 安全基座 |
+| v0.9.9 | 2026-10-08 | 意志层、词汇表、预期账本 |
+| v0.9.8 | 2026-10-06 | Provider 运行时扩展与安全边界收口 |
+| v0.9.7 | 2026-10-05 | 梦境、遗忘与发育景观（生命动力学第一迭代） |
+| v0.9.6 | 2026-10-04 | 数字生命实验基线强化 |
+| v0.9.0 ~ v0.9.5 | 2026-10-01 起 | 实验底座、证据链、观测与复盘工具链 |
+| v0.3 ~ v0.8 | 2026-09 起 | 缓存改造、换装、主动搭话、状态机 |
 
-> 目前程序默认仅内置一套哥特机能套装。如果你想为数字生命添加自己绘制的新衣服、发型或配饰，只需简单四步：
+完整记录见 [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md)。
 
-1. **准备素材**：
-   - 绘制一张 **64×80 像素** 的透明背景 PNG（RGBA 32-bit，纯净 1-bit 二值化 Alpha，脚底与身体锚点对齐基线）。
-2. **放入对应目录**：
-   - 将素材放入 `assets/character/` 对应的槽位文件夹下：
-     - `hair/`：发型
-     - `hair-accessories/`：发饰（如蝴蝶结、发夹）
-     - `dresses/`：连衣裙 / 套装
-     - `tops/`：上装（吊带、T恤、衬衫）
-     - `bottoms/`：下装（短裤、短裙）
-     - `outerwear/`：外套 / 披肩
-     - `socks/`：袜子 / 丝袜
-     - `shoes/`：鞋子 / 靴子
-     - `accessories/`：饰品（项圈、挂件）
-3. **在 `src/wardrobe.js` 中登记**：
-   - 打开 `src/wardrobe.js`，在 `CATALOG` 对象中追加一条数据：
-     ```javascript
-     // 示例：添加一件自定义上衣
-     my_shirt_01: {
-       slot: 'top',               // 对应上述槽位 ID
-       name: '白色衬衫',          // 中文品名（展示在衣橱面板与 AI 识别中）
-       file: 'tops/my_shirt.png', // 相对 assets/character/ 的路径
-       tags: ['日常', '白色']     // 检索标签
-     },
-     ```
-4. **一键套装（可选）与生效**：
-   - 如果想打包为一键切换的整套方案，可在同文件 `PRESETS` 对象中追加组合配置；
-   - 重启程序后，打开右键「衣橱」面板即可直接点击单件换上/脱下；也可以在对话框中直接说「换成白色衬衫」，她便能心领神会自主换装！
+*Full records in [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md).*
 
-首次启动右键 → 设置 / 用量，填入 DeepSeek API Key 即可对话。
-也可以设环境变量 `DEEPSEEK_API_KEY`。环境变量只在当前进程使用，不会自动写入磁盘。
-也可以改配置文件：
+---
 
-- Windows: `%APPDATA%\Life\life-config.json`（兼容历史旧路径 `%APPDATA%\deskpet\gpt-girl-config.json` 自动迁移）
+## 社区贡献
 
-配置存在 userData 目录而不是项目里，避免打包 exe 时把 key 一起带出去。
+欢迎对数字生命实验平台、桌面交互与像素美术感兴趣的开发者与画师参与 Life 的建设。贡献指引详见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-**Key 不写在这个文件里。** v0.6 起它走 Electron `safeStorage`（Windows 上是 DPAPI，
-绑定当前登录用户），密文落在同目录的 `life-key`（兼容历史 `gpt-girl-key` 自动迁移）；`life-config.json` 只剩非敏感配置。
-本机其它进程直接 cat 配置文件、或者你把 AppData 备份到网盘，都不会再连带漏出 Key。
-不支持加密的环境（缺 secret service 的 Linux）会自动退回明文，并在设置面板里
-**如实显示**「本机不支持加密，Key 仍是明文存储」——不会谎称已加密。
-诚实的边界：这挡的是「文件被读走/备份泄露」，挡不住能调用 Electron API 的运行中进程。
+*Contributions are welcome — from developers working on the life-simulation layer, the desktop interaction layer, or the pixel art. See [`CONTRIBUTING.md`](CONTRIBUTING.md).*
 
-所有会被用户当成长期资产的 JSON（记忆、衣柜、统计、配置、密文）都是**原子写**：
-写临时文件 + fsync + rename。以前是 `writeFileSync` 直接覆盖，写到一半断电
-就会留下半截 JSON，下次启动 load() 静默走进 catch，症状是「记忆全没了」但没人知道为什么。
+- **Q 版像素画社区共创**：64×80 点阵立绘、待机动作、走动循环与换装图层正在社区协同精修阶段。
+- **测试门禁验收**：提交 Pull Request 前请在根目录执行并通过 `npm test`。
 
-## 用法
+---
 
-- 拖动：左键按住移动
-- 右键菜单：对话 / 衣橱 / 设置 / 个体观测 / 固定在最前 / 切换描边 / 退出
-- 输入框内 Enter 发送，Esc 收起
-- 右键进入独立「衣橱」面板：支持按槽位单件换装、脱下，或点预设整套切换（目前默认仅内置一套哥特风格套装）；也可以直接在对话里对她说「换成哥特那套」
-- 日常拖拽交互会累积本地活动计数；对她说「晚安」之后她会进入免打扰静音状态，不再主动开口搭话，直到再次唤醒
-- 从一个表情换到另一个表情有衔接（一下微动 + 明暗渐变），不再是硬切；见「状态机 → 表情之间切换的衔接」
-- 无气泡、无输入、无聊天、未拖拽且未睡眠时，主进程会让桌宠在屏幕工作区底部缓慢闲逛；到达边缘会自主折返
-- 用户拖拽、打开输入框、聊天交互、气泡展示、面板展开或进入睡眠状态时，都会立即打断并暂停自主运动
-- 个体观测面板遵循 D-005 仅供只读观察，由记忆动力学自主演化；设置面板中的「重置成长档案」会显式二次确认，并让桌面数字生命以新的出生点重新开始
-- v1.0.0 仅预留 Agent 能力、权限、行动提案和审计接口，默认处于严格安全拒绝态，不连接 Codex、Shell、PowerShell 或全盘文件访问。
-
-## 目录
-
-```
-main.js        主进程：窗口、IPC、衣柜实例
-preload.js     桥接（暴露为 window.deskpet）
-index.html     界面
-style.css      样式与动画
-pet.js         交互逻辑
-src/config.js    配置读写（落盘不含明文 key；按目录缓存、每次真读盘，手改即生效）
-src/secure.js    Key 的加密存储边界：safeStorage 可用则密文，不可用如实降级
-src/atomic.js    原子写：临时文件 + fsync + rename，避免半截 JSON（含 Windows 瞬态重试）
-src/layout.js    窗口几何：常量宽高比 + 下边缘锚点（纯函数，node 侧可测）
-src/desktop-motion.js  桌面运动状态机：底部漫步、贴边悬挂、可注入障碍物攀爬
-src/deepseek.js  API 客户端（流式 + 峰谷计价）
-src/memory.js    三层用户记忆：对话窗口 / 窗口小结 / 长期记忆
-src/self-ledger.js 版本化生命档案 + provenance + Current Self 投影
-src/experiences-archive.js experiences.jsonl 原始实验底座（Append-Only、容错与诊断读取）
-src/subject-state.js     主体状态五维模型、Provenance 强验证、确定性 Reducer 与离线 Replay v2
-src/experience-schema.js 经验与事实三层分离规范：Event / Observation / Interpretation
-src/state-change.js      状态跃迁记录与因果解释强核验（StateChange）
-src/canalization.js  沃丁顿发育景观与经历依赖塑性衰减模型（Waddington Canalization）
-src/memory-dynamics.js 零 API 成本记忆动力学与突触修剪（艾宾浩斯幂律、三级状态流转）
-src/dream-system.js  成本门禁式弗洛伊德梦境系统（本地认知张力门禁、两道防线、DREAM_GENERATED_ARTIFACT）
-src/internal-regulation.js 内部状态调节中枢（短时调节与长期特质双轨分离、严格事件驱动、唤醒度与门限反向耦合）
-src/attention-gate.js      注意力闸门与感知分流（显著性与认知负荷过滤、ATTENDED≠SUBJECT_ACQUIRED 铁律防线）
-research/ENGINEERING-DECISION-LOG.md 工程与实验架构不可逆决策账本（D-001~D-008）
-research/LIFECYCLE-WIRING-AUDIT.md 生命周期运行链审计与因果图谱报告
-src/agent-interfaces.js Agent 预留接口：能力、权限、提案、审计和 Mock
-src/provider-policy.js Provider / Endpoint / Credential 边界策略
-src/persona.js   人设（只写身份，不写穿着细节；不含旧耳坠设定）
-src/wardrobe.js  换装数据层：槽位、衣柜、预设、校验、持久化
-src/tracker.js   本地活动：被戳/被拖的真实计数（双轨 + 水位线）、晚安与唤醒
-src/trigger.js   主动搭话判据：该不该开口（纯函数，只出提案不改状态）
-src/brain.js     调度：对话、关窗、记忆合并、换装提案执行、缓存统计
-src/animation-state.js 程序化自然动画：物理微动与姿态状态机
-src/render-adapter.js  动画渲染适配器：解耦状态输出与 DOM / CSS 图层接管
-src/animation-controller.js 动画控制器：60fps 驱动器与图层微动矩阵
-src/behavior-scheduler.js 自主行为调度器：呼吸、眨眼、打哈欠、伸懒腰
-src/asset-check.js     启动立绘与换装资产完整性分级检查
-src/deferred-writer.js 脏标记与延迟合并写盘
-src/migration.js       数据版本迁移框架
-assets/pet.png        透明立绘（单图兜底皮套，64×80 像素点阵）
-assets/character/     分层换装资源（见「换装系统」）
-tools/chroma.py  绿幕抠图脚本
-tools/check.js   全量语法检查脚本
-tools/release-check.js 发布包资源完整性自动化检查脚本（含公开发布剥离门禁）
-tools/public-export.js 公开发布剥离器：白名单选出可公开文件，默认拒绝未分类文件
-tools/replay-check.js  Replay 离线推演一致性核验工具
-test/            测试
-```
-
-## 桌面漫步与运动边界
-
-窗口位移由主进程每约 50ms 使用 `BrowserWindow.setPosition()` 驱动，底边锚定在主显示器工作区下沿上方的安全边距内。渲染进程只负责表现漫步姿态，不通过 CSS 把人物移出透明窗口，因此不会被窗口边界裁成半截。
-
-- **真实可用运动**：屏幕底部缓慢漫步并在触碰主显示器左右边界时短暂停留（约 1.8s）后自主掉头折返；
-- **诚实的能力边界**：桌面图标的真实位置并没有跨 Windows/macOS 的通用 Electron API，程序绝不假装已经自动感知读取系统图标或窗体（`desktop-motion.js` 仅预留障碍物注入接口，后续可接注入适配器）；没有障碍物 provider 时，程序安全降级为底部漫步与边缘折返；
-- **环境块诚实不变式**：当前的运动状态**不会**编造注入进大模型对话的环境感知块（恪守 D-007「绝不向模型编造无出处事实」铁律）；
-- **窗口缩放机制**：桌面窗口固定采用原生 4x 整数倍像素缩放比（256×320 视口），不提供滚轮拖拽任意缩放功能，确保点阵绝对锐利无双线性模糊。
-
-配置文件可以控制：
-
-| 字段 | 默认值 | 作用 |
-| --- | ---: | --- |
-| `motionEnabled` | `true` | 是否启用自主运动 |
-| `motionSpeed` | `2` | 每 tick 的窗口位移像素 |
-| `motionTickMs` | `50` | 主进程运动 tick 间隔，范围 30–250ms |
-| `motionMargin` | `20` | 工作区底部安全边距 |
-
-## 记忆：轮数窗口 + 分层压缩
-
-四层结构与实验底座解耦，全部为缓存与可计算主体服务：
-
-```
-history                 当前窗口的原始对话（程序签发 messageId、windowNo、roundNo、bridge 状态）
-windows                 每个已关闭窗口的一条小结（Prompt Memory 预算 ≤ 6000 tokens）
-system                  = 人设 + 用户长期小结 + 当前穿着块（静态稳定前缀）
-Current Self            原始生命档案的有限投影，只附加在最新 user 消息尾部
-Subject State           本地 subject-state.json，[-999, 999] 确定性状态向量，窗口冻结快照只附加在 user 尾部
-Raw Experience Archive  本地 experiences.jsonl，Append-Only 原始实验底座，永不被 Token 预算或 maxEntries 裁剪
-```
-
-- 每 `windowTurns`（默认 100）轮关一次窗口：执行「5×20 分段 + 窗口综合（Window Synthesis）」结构化归档，
-  严格区分「用户给予」与「主体经历」双通道，提取 Provenance 强核验的状态证据，由确定性 Reducer 计算状态增量。
-- 关窗时旧原文安全归档，保留最近 `keepTailMessages`（6）条并标记为 `bridge: true`，作为下一窗口的缓存桥接，不计入下一窗口轮数，也不被重复总结。
-- 桌面数字生命首次初始化时创建固定 `birthAt`，只代表程序意义上的出生时刻，不伪造出生以前的人生。
-- Current Self 默认预算约 3000 token；它只表达出生以后形成的有限当前解释，并保留支持/反向证据。
-- `self-ledger.json` 采用版本 2，包含 `birthAt`、`sourceType`、窗口号、消息 ID、证据摘录和置信度。
-- 小结总长超过 `memoryCapTokens`（12000）时，把较旧的几条合并成一条
-  【早期】记忆 —— 这一步刻意搭在关窗的同一刻做，反正 system 已经要变，
-  一起变只破一次缓存，分两次做就破两次。
-- `windowMaxTokens`（30000）只是兜底：单窗口 token 超了会提前关窗，
-  正常聊天基本触发不到，V4.1 Flash 上下文 1M 完全够。
-
-**一个窗口内 system 一个字都不变**，所以 100 轮里除了第 100 轮那次关窗，
-其余请求前缀严格只递增 —— 这就是命中率的来源。
-V4.1 Flash 上下文上限 1M token，6000~8000 的设置完全没压力，
-真正影响成本的是每次请求的重复计费，所以窗口越大命中率越高、但单次未命中也越贵。
-
-## 缓存命中率怎么保证的
-
-DeepSeek 前缀缓存要求历史「只追加、不修改、不重排、不裁剪」，逐字匹配。
-这套代码为此做了三件事：
-
-1. **小结放进 system 头部**，不单独插一条消息 —— 单独插会夹在历史中间，
-   它一变后面全部前缀断裂。
-2. **回答完再关窗**，不是关完窗再回答 —— 否则本轮白白未命中。
-3. **时间戳绝不写进 system** —— 那样每次请求前缀都不同，命中率归零。
-   需要动态信息时作为最后一条 user 消息附加。
-
-破缓存次数 = 窗口数，可控。`test/brain.test.js` 里实测：
-窗口内严格前缀递增、system 逐字不变、合并不多破一次、
-重启后 system 完全一致、小结/合并调用不污染主线命中率统计。
-
-DeepSeek 的上下文缓存按完整前缀单元工作，不是模糊相似匹配。程序因此保持 system 文本稳定，把时间和活动遥测放在当前 user 消息中，并把主动搭话作为带 `synthetic` 标记的 user/assistant 消息链保留下来。这样下一轮正常聊天可以完整复用上一轮消息前缀，同时不会把程序触发误记成用户事实。
-缓存服务是 best-effort，实际命中请查看用量返回中的 `prompt_cache_hit_tokens` 和 `prompt_cache_miss_tokens`；不要把前缀连续误解成每次都必然命中。详情参见 [DeepSeek 上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。
-
-> 测试项数只在文末「测试」一节写一次。别在正文里重复数字 —— 每加一条断言
-> 就要改好几处，迟早对不上（v0.5 就被抓到过正文写死的项数落后于实际）。
-
-## 角色基准（改动前先读这节）
-
-- 外观基准是**换装设定图**（v0.5 起）：成年比例、银白微卷长发、发尾仅非常淡的冰蓝、
-  蓝灰大眼、单侧泪痣、**头发右侧黑色蝴蝶结**。
-  v1.0 语义收口：核心身份为名字、脸型、**发色**、眼睛与泪痣；**发型款式与有无（含无发素体形态）**、
-  发饰、颈带吊坠与衣物均为可变外饰，由衣柜真实状态决定。不含字母耳坠。
-- 默认单图兜底立绘已全量内置（`assets/pet.png` 为 64×80 正典像素点阵）；若用户需要替换为第三方自定义立绘，可参考进阶玩法章节或 `ASSET-GENERATION-GUIDE.md`。
-- 人格：温柔、安静、慵懒、微黏人、偶尔吐槽；短回复；称「你」；无客服腔。
-- 能力诚实：没实现的功能一律说做不到，绝不假装操作过电脑。这条写在 persona 边界里，也是代码审查项。
-
-## 换装系统（v0.5，第一阶段＝架构）
-
-三条铁律写在 `src/wardrobe.js` 头部注释里，UI 和 AI 都绕不过去：
-
-1. **服装只是外观，不碰人格** —— wardrobe 不 import persona，也没有任何
-   「按服装改语气」的钩子；测试用正则扫源码，一旦有人往衣服和性格之间接线就红。
-2. **语言状态 ≠ 程序状态** —— 模型只能提交 `[wear:itemId]` 提案，真正穿上衣服的是
-   `wardrobe.applyProposal()` 这次调用。一条回复里连发多个提案是合法的，按正文顺序
-   逐条执行、逐条回报。成功/失败都生成 `[系统] 换装执行结果：…`
-   写回历史，下一轮模型看到的是事实；幻觉 id 不剥离也不执行，它没法谎称换好了。
-3. **槽位约束在 SLOTS 上，不在商品上** —— 身份约束统一写在 `SLOTS.required`，
-   商品上绝不加 `locked`。v1.0 发型槽放开为自由可脱槽位（支持光头素体换装与无发衣物生成）；
-   身份不变式改由**发色/脸型/眼睛/泪痣**承载，`SLOTS.required` 保留为通用槽位策略（当前无槽位使用）。
-   发饰、外套等普通槽均可脱空。发型与发饰均可通过 `[wear:off_hair]` / `[wear:off_hairAccessory]`
-   脱下。以前是从商品条目的 `locked` 反推的，两种失效方向都试过：
-   给发型槽加第二款忘了标 → 反推成「非身份」，能脱光；给普通槽唯一一条商品标上 →
-   反推成「身份」，那件脱不掉。所以现在只留一个出处，商品上没有 `locked`。
-
-数据与渲染：
-
-- 9 个槽位：`hair / hairAccessory / top / bottom / dress / socks / shoes / outerwear / accessory`，
-  叠放顺序 z 只在 `SLOTS` 一处定义，渲染层照 `layers()` 贴 `<img>`，CSS 里不写服装逻辑。
-- `dress` 与 `top/bottom` 互斥；校验只看**最终状态**（`validate(equip)`），不校验中间步骤 ——
-  早期逐槽校验会让「休闲套→哥特套」这种整体切换永远卡死。
-- 预设只是「一组槽位值的命名」，没列出的槽位沿用当前装备；自由组合后 `preset=null`。
-- 加新衣服＝往 `CATALOG` 加一条数据（必要时加预设），不动任何渲染或交互代码。
-- 持久化 `userData/wardrobe.json`；脏文件（坏 JSON / 未知 id / 非法组合）一律安全回退默认，
-  显式 `null`（真的脱了）必须原样读回，否则重启会"复活"衣服。
-- 资源目录 `assets/character/`：`base/`（不可换装的身体与脸）+ 每槽一个子目录，
-  文件名与 CATALOG 的 `file` 字段一致；**所有图层共用 64×80 像素画布锚点**，等比叠加即对齐。
-  当前已包含 64×80 纯正像素图层，架构与测试按真图标准跑通。
-- 降级：任何一张图层缺失 → 整套回退单图兜底皮套，桌宠绝不会变空白。
-- 缓存：system **最末尾**挂【当前穿着】+【衣柜可用 itemId】两块，只在**真的换装那一刻**变化；
-  平时逐字节稳定，不吃命中率。换装那次破缓存是诚实的代价——不然她只能凭想象回答自己穿了什么。
-  这两块约 386 tok（估算已计入面板的「上下文」数字），衣柜越大越贵，但只贵一次前缀。
-  顺序是硬要求：长期记忆必须在穿着块**之前**。前缀缓存从头开始比，谁在前面决定了
-  换一次衣服要赔多少 —— 穿着块排在记忆里，换装就会把全部长期记忆和历史一起顶出缓存。
-  这条由 `test/brain.test.js` 逐字钉住（v0.7.1 之前代码排反了，而注释和本文都写的"末尾"）。
-
-面板：设置面板「衣柜」区，预设按钮 + 每槽单品 + 「脱下」（身份槽不提供）。
-全部 textContent 渲染；被拒的搭配如实弹「这件穿不上：原因」，状态一字不动。
-
-## 状态机（文字与表现分离）
-
-模型在每条回复末尾附 `[state:xx]`（idle/happy/curious/thinking/sleepy/embarrassed/annoyed/sad）：
-
-- `brain.js parseState()` 剥离标记，未知/缺失一律降级 idle；标记不进历史，不污染缓存前缀
-- 渲染层把状态挂到 `body[data-state]`，CSS 按属性播动画；表情帧立绘后续补，缺动画只是不动，不会崩
-- 单次动作（happy/annoyed）在 CSS 里把 breathe 串在动画列表尾部，气泡收起/报错时状态回落 idle —— 否则动画播完桌宠会定格不再呼吸
-
-### 表情之间切换的衔接（v0.8.1）
-
-「从一个表情到另一个表情没有过渡」是真问题，但根因有三条，各自不同，不能用一招盖掉：
-
-1. **明暗/饱和度是硬切。** `#figure` 写了 `transition` 却没给时长，
-   `transition-duration` 实测 `0s` —— 写了等于没写。补 `transition: filter .2s` 之后
-   才真有中间值（实测 idle→sad 采样从 1 种变 6 种）。
-   刻意**只**加在 filter 上：transform 全程由 animation 接管，给它加 transition 会跟关键帧抢属性。
-2. **眨眼会把状态动画整个顶掉。** `animation-name` 是覆盖属性，blink 原来挂 `#figure`，
-   那一瞬 `tilt`/`sway` 被 `blink` 抢走，180ms 后动画从 0% 重播，倾角被硬拉回 0
-   —— 实测好奇状态下跳 **2.23°**，比表情切换本身还突兀。现在 blink 与切换微动都挂
-   `#sprite` / `#layers`（立绘内容），父容器摆姿态、子元素眨眼睛，两个 transform 相乘叠加。
-   实测给 `#layers` 加 transform 不改变 `#figure` 的几何，所以不会连带影响气泡高度。
-3. **切换那一帧姿态会跳。** 上一个动画跑到峰值时切走，会被硬拉到新动画的 0%：
-   实测 tilt 峰值切 idle 跳 **3.0°**，bounce 顶点切 curious 纵向跳 **9.97px**。
-   CSS 层面修不掉（两个 animation 的输出没法 transition），差分表情图也没有素材，
-   所以 `setState()` 上屏那一刻加一次 `.18s` 遮掩微动（与眨眼同级），不是换图片。
-
-`setState()` 的三条不变式（都有对应断言）：
-
-- **"上一次是什么"只有一处出处** —— 直接读 `body[data-state]`，不另存 `lastState`。
-  两处记同一个事实迟早各说各话（测试里就有绕过 `setState` 直接改属性的地方）。
-- **同一个值重复 setState 不触发微动**：`hideBubble()` 和 `finish()` 都会调
-  `setState('idle')`，守住这条才不会"每收一次气泡她抖一下"。
-- **启动那一帧就得是 idle**：否则第一次 `setState('idle')` 会被当成切换，她一上屏
-  莫名其妙压扁一下。
-
-> 没有做差分表情图切换：那个目录下的图片**素材**不存在（实测按状态拼出的路径返回 404），
-> 不是代码没写。按身份铁律，脸是身份不是服饰，真要做也得先有
-> 正典图并确认它不随换装漂移，不能凭空 `display:none` 一个不存在的层。
-- 剥离正则容忍冒号后空格与句末标点（`[state:happy]。`）；未知状态词不剥离正文，宁可留标记也不丢回复
-- 流式期间前端实时剪掉尾部标记：完整标记（含空格/句末标点尾巴）+ 未闭合的半截 `[`。
-  半截**只可能是 state/wear 前缀才藏**：判据是"它还有没有可能长成一条后端会剥掉的标记"，
-  wear 用衣柜真实 itemId 集合比前缀 —— 所以 `[state:aw`、陌生 id 这类长不成合法标记的
-  不藏（藏了就是吞正文，且后端不会剥它，屏幕上没有、历史里有，两边剥的就不是同一批）。
-  `[idle]`、`[1,2,3]` 等正文不受误伤。
-  剥完整标记与藏半截要**整体迭代**：把末尾半截藏掉后露出的新尾巴可能又是一条完整标记，
-  单轮写法会让它重新露出来（`[wear:xxx][s` 实测泄漏 11 帧，v0.7.1 修）。
-  **藏半截只在还在吐字时做**（`stripState(t, partial)`，默认跟 `streaming`）：流一停，
-  半截标记再也长不成合法标记，后端也不剥它，这时候继续藏就违反上一条"两边剥同一批"。
-  逐帧判据在 `test/ui_test.py`：吐字期间任何一帧屏上都不许出现 `[wear` / `[state`；
-  收尾那一帧反过来要求半截标记**照原样显示**。
-- 预览分支与真实分支同构收尾：回落 idle、气泡 6 秒自动收起；submit() 入口掐掉上一句遗留定时器
-- `[wear:id]` 与 `[state:xx]` 可连发多条、顺序不定，前后端都**循环剥到不动为止**，
-  且共享同一批合法 id（前端从衣柜 catalog 拿）——两边剥的必须是同一批，
-  否则屏幕上的文本和写进历史的文本会一个有一个没有
-
-## 记忆规则（v0.4 起）
-
-小结提示词按「正确第一」：只存用户明确说出的事实；纠正必须覆盖旧值；去重；
-寒暄与一次性情绪不入长期记忆；称呼/偏好/项目/约定/用户点名要记的必须保。
-
-记忆遵循 D-005「遗忘不删除历史」铁律：设置面板「我的记忆」只读展示，
-淡出由 MemoryDynamics 依艾宾浩斯动力学自主演化进入休眠（DORMANT），严禁人工物理删除。
-
-## 本地活动与主动搭话（v0.8）
-
-她原本看不到自己的物理处境：戳 20 下再问"我刚才戳了几下"，她只能猜 —— 而 persona
-有一条硬边界「绝不假装做过任何事」，**猜就是编造**。所以这一节的重点不是"会主动说话"，
-而是"说出口的每件事都有出处"。
-
-**双轨数据（`src/tracker.js`）**。「连戳检测」只要 8 秒内的，必须快速老化；
-「如实汇报」要求发生过就必须说得出，一条没消费完都不能丢。这两个需求天生冲突，
-混在一个数组里，老化会吞掉待汇报的事件（你 1 分钟前戳的 3 下她永远不知道）。
-所以分成 `clickTimes`（15 秒 TTL，只服务窗口判定）和 `events`（按水位线消费）。
-
-**水位线增量消费。** `snapshot()` 报"上次汇报之后发生了什么"并返回 `throughSeq`，
-只有请求真的走完才 `commit(throughSeq)`。失败/被打断时不提交，那些事件下次如实补上 ——
-因此 tracker **刻意没有 `rollback()`**：没 commit 就等于没消费，写一个空 rollback
-只会让人以为它有语义。攒到 200 条截回 150 条时，被挤掉的可能是没报过的，
-那时环境块会改口成"被戳**至少** N 次"：宁可给下限，也不报一个假装精确的错数。
-
-**环境块只进 user 消息。** 里面有分钟级时效数据，塞进 `system` 等于每轮破一次前缀缓存
-（和 v0.7.0 那次穿着块顺序是同一个物理量）。它只拼在当轮新追加的那条 user 消息末尾，
-历史是只追加的，前面所有字节照旧命中。`test/brain.test.js` 钉着这条：
-两轮请求的 system 必须逐字相同、且后一次是前一次的严格前缀。
-
-**晚安与唤醒。** `isSleepIntent` 带疑问语气的一律不算（"你困了吗"不能把她按睡着），
-`enterSleepMode` 幂等（连说三遍晚安不能让她永远是"刚睡着"），唤醒标记 10 分钟自动过期。
-
-**该不该说 / 能不能说 分开判。** 主进程看得见事实（静默多久、连戳几下、睡没睡），
-渲染端看得见礼貌（在不在打字、气泡开着没、上一条说完没）—— 按"谁知道什么"切。
-45 秒一个滴答问一次 `proactive-check`，被戳满 5 下再插队问一次。
-
-`evaluate()` 只出**提案**、不改状态，真的说出口才 `commit()`。这个分开不是洁癖：
-如果 evaluate 顺手把冷却和挂机刹车划掉，"主进程想让她说话、渲染端因为你在打字而拒了"
-这一趟就白烧一次冷却，挂机那条更糟 —— `spokenDuringIdle` 被置位、可她一个字都没说，
-这句问候永远补不回来。
-
-**提案走一圈回来，主进程不存 `pendingOffer`。** 陈旧提案会拿着上一次的 `at` 去记冷却；
-现在过期或伪造（`kind` 不认识、`at` 不是数字）一律 `{ok:false, declined:true}`，
-而渲染端遇 `declined` 时连那条空的「角色：」记录节点都摘掉 —— 这一轮真的当没发生过。
-
-**主动搭话作为 synthetic 消息落入 history 保卫前缀缓存，但严格排除于主体经历证据之外。** 触发理由是程序生成的瞬时感知，不是用户原话。为了在下一轮完整复用「主动触发 + 模型回复」的 DeepSeek 前缀缓存块，主动搭话以 `{ synthetic: true, source: 'proactive' }` 写入 history；但在关窗小结与主体经历归档中，`isEligibleSubjectEvent()` 与 `cleanContentForSummary()` 会将其明确标记或剥离，严防程序提示伪装为用户发言或主体经历证据。
-
-两处按语义写的判据值得记一下：`poke` **豁免**"刚互动过 90 秒内保持安静"这条闸门 ——
-被戳本身就是"现在方便"的意思，第一版拿它挡连戳，把 poke 这条路整个饿死了；
-拖拽收尾只报真有过位移的（`moved > 6`）才算"被拖了一下"，纯失焦收尾不算，
-否则窗口一失焦就给她凭空记一笔。
-
-浏览器预览模式（没接 key、没有 bridge）退回原来的本地随机文案：45 秒滴答 + 25% 概率
-+ 不重复上一条，一条请求都不发。用户正在打字 / 上一条气泡还没收时两种模式都静默。
-
-## 配置项
-
-`src/config.js` 的 DEFAULTS，可被 userData 里的 `life-config.json` 覆盖：
-
-```
-model             deepseek-flash     ← 官方 API 模型名，不是 deepseek-v4.1-flash
-windowTurns       100                每 100 轮关窗并小结
-windowMaxTokens   30000              token 兜底
-keepTailMessages  6                  关窗保留的原文条数
-memoryCapTokens   12000              长期记忆预算，超了合并
-price.*           峰谷单价（元/百万 token），按账单实际数字改
-```
-
-改完**不用重启**：`config.load()` 每次真的读盘（v0.7 起），每轮对话开始时
-`Brain` 会重新取一次配置并**就地**更新（`Object.assign`，不换对象引用，
-所以主进程的 `cfg`、DeepSeek 客户端、`Memory` 的窗口参数看到的是同一份）。
-`price.*`、`model`、`baseURL`、`windowTurns` 这些下一句话就生效，
-设置/用量面板的数字也不会再是启动时的旧值。
-
-唯一不参与就地热重载的是 **API Key**：盘上那份按设计不含明文 key（除非降级），
-key 是启动时经 `secure.js` 解出来的，热覆盖会把内存里的 key 抹空 ——
-改 key 请走设置面板 `config-set-key` 事务流程。
-主进程在切换 API Key 时执行候选 Brain 生命周期保护：先保留旧 Brain 处理当前任务，
-待新 Brain 成功建立且配置完成双写持久化后，才切换并销毁旧 Brain；若新 Key 或候选 Brain 报错，
-立即执行两阶段事务回滚并恢复旧配置，旧 Brain 继续存活，避免服务处于无 Brain 僵死状态。
-
-配置热更新的覆盖范围：
-- **热更新覆盖**：`price.*`、`model`、`baseURL`、`windowTurns`、`windowMaxTokens`、`keepTailMessages`、`memoryCapTokens`、`selfGrowthEnabled`、`selfLedgerMaxEntries`、`currentSelfTokenBudget`、`requestTimeoutMs`、`streamIdleTimeoutMs` 等均在每轮对话或面板读取时就地生效。
-- **重构重建覆盖**：API Key 变更走独立生命周期与事务回滚流程。
-
-热重载的挂点有两个：**每轮对话开头**（`Brain.refreshConfig()`）和
-**打开设置/用量面板时**（`config-get`、`chat-report`）。只有前者会出现一种
-很难解释的现象：改完 model 或价格，不发消息、直接开面板，看到的还是旧值，
-像是热重载根本没生效。
-
-`price` 的合并只到「哪一档」这一层：写了 `peak` 就整份换掉 `peak`，
-所以一档里 `hit/miss/out` 三个字段要写全，漏掉的那个会按 0 计（少算钱）。
-
-## 测试
-
-```bash
-node test/brain.test.js          # 172 项：窗口边界、前缀不变式、合并、回滚、重启、统计隔离、换装提案端到端（含连发多条）、配置热重载、SSE 粘包与收尾、穿着块顺序不变式、环境块不进 system、主动搭话不落 history、遥测水位线失败不消费、生产级 Self-Ledger 配置与瞬时上下文生命周期、10 轮无污染回归、5x20 窗口归档、Provenance 强核验与 State Reducer、主动搭话空回复回滚 synthetic user、history<=keepTail 时关窗不卡死、路线α发型自由脱下与人设无冲突
-node test/memory.test.js         # 40 项：Memory 模块初始化、append 与 synthetic 轮数计算、build 瞬时上下文动态挂载、historyTokens 纯洁性、rollback、cleanContentForSummary（含 A 方案新旧段名双剥离漏斗防线）、窗口快照与小结归档、Bridge 与 Active Window 隔离、顶层数组受损守卫、M12 因果字段覆盖防御与 synthetic 正向对照、M5 真实 0 轮保留与空窗口回落、v1.0.5 非自愿回忆浮现双防洪门禁与印痕召回、未解疑问夜间发酵标记且保持 systemText 逐字节恒等
-node test/experiences-archive.test.js # 19 项：experiences.jsonl 原始实验底座、Append-Only 永久保存、5x20 与 Synthesis 完整归档、多窗口检索、S6 Legacy 迁移边界与防伪造守卫（含 R-S6 注入拦截）、M9 closeReason 缺失诚实保持 null 不伪造 turn_limit
-node test/subject-state.test.js  # 33 项：subject-state.json、[-999, 999] 极值与边界截断、Provenance 强验证、确定性 Reducer 增量计算、离线 Replay 演化轨迹重放、跨会话 evidenceId 号段防误杀与身份冲突不变式、internal_regulation_snapshot 不参与 maxArchiveWindow、M1 缺 values 触发归档重建、M7 500 条变更截断对齐
-node test/main.test.js           # 95 项：D-8a 启动时序（+5 项：抓到引擎实例的前置断言 / 启动后 traits 非 null / 与 brain.subjectState.values 逐键一致非空壳 / 逐档抬阈值后必然产出对应档意图=traits 可用输入 / 热替换刷新句仍在=第二层源码级防线）；主进程 IPC 面、M10 换装成功标记 brain.pendingCacheBreakReason 为 wardrobe_change
-node test/proactive-scheduler.test.js # 17 项：主动搭话调度的自愈性回归（2026-10-19 实测事故）。**为何必须独立**：main.test.js 跑的是完整假 electron 环境、对 IPC 注册顺序敏感，为测「有没有安排下一次」挤进去只会污染别人的状态。覆盖：不变式「每一次 tick 结束都必须已安排好下一次 tick」——brain 未就绪 / 窗口已销毁 / trigger 未建三条退出路径都必须重排（旧实现在第一条上直接 return，调度器当场停摆，用户后来填好 Key 也不回来）；派发提案后安排 90 秒自愈重排（TTL+冷却，纯本地零 API）；一次 tick 只评估一次只派发一次；无提案时仍按既有 [冷却, 10 分钟] 口径；审计留痕只记 offerKind/selfIntentKind 不记正文；审计抛异常绝不挡住派发；D-25 收口（curiosityPending 跳过已问、队首原话透传、memory 缺席降级为空事实而非抛）；以及六条接线断言（重排点 ≥3 / proactive-check 走收口函数 / 派发写审计 / 填 Key 后叫醒调度 / resume 后隔一个冷却再复查 / 自愈常量 = TTL+冷却）
-node test/chat-failure-visibility.test.js # 23 项：失败可见性回归（2026-10-19 实测事故）。**为何必须独立**：那次 Key 失效持续四小时没被发现，恰恰因为「失败」在磁盘上零痕迹——遥测的 llm_call 只在成功时写，失败只落到一个 6 秒自收起的气泡上。覆盖：认证失败必须写 chat-failed 审计（带 errorType/status/proactive/offerKind）、审计只记元数据不记报错正文与用户内容、审计出口为 null 时静默不抛、**接线断言**（chat-send catch 里真的调了它——变异测试逼出来的一条：只测抽出的函数会让「接线断了」全绿）、chat-send catch 把 errorType/status 透传渲染端且 TimeoutError 按 name 归类（该类错误刻意不带 errorType）、认证失败进退避且填 Key 与切连接两条路都必须解除、退避期仍重排（放慢而非停摆）、退避只存内存不落盘、**退避不得连坐感知**（顺序必须是 recordIdle → 退避检查 → evaluate，自查抓到的副作用：早期版本退避挡在 recordIdle 之前，Key 失效十分钟里内稳态恢复与 environmental_silence 知觉一起断档）、失败同时广播对话窗（头顶气泡会收、审计用户不会翻）、广播只带错误类别不带报错原文、只有三类错误才打扰对话窗、对话窗用 chatNotice 客观事实行而非 chatError、气泡按 errorType 分流且认证失败延长到 15 秒、渲染端不猜 HTTP 状态码、对话窗常驻错误行给「去设置重填」指引、五条新文案中英双语齐备且 en 零中文残留
-node test/artifact-freshness.test.js # 11 项：产物新鲜度门禁（2026-10-19 实测事故）。**为何必须独立**：release-check.js 是脚本（require 即执行、不导出任何东西），判据塞进去就只能靠源码字符串断言来测——那测的是「有没有写这行」，不是「判据对不对」。覆盖：产物与源码一致时零误报、陈旧文件被精确点名且不误伤、缺失归 missing 与 stale 分开报、仓库里不存在的文件跳过、只差一个行尾字节也判陈旧（CRLF/LF 不许放过）、缺参数必须抛而不静默放行、discoverAsar 在无 dist/ 时返回 null（干净克隆正常态）、**自研 asar 读取器与官方 @electron/asar 逐文件一致**（第一版少算 header padding 3 字节，导致 13 个文件全被误判成 DIFF——这条断言会让它立刻变红）、把产物内容当源码喂回去必须判一致（不依赖外部库的逆向哨兵，防「稳定地读错」）、本机产物与工作树一致（带**版本闸门**：产物版本≠源码版本时判 SKIP 而非报陈旧——实测公开库形态里躺着 v1.0.0 的 dist/，只比字节会稳定误报 11 个文件「全都旧了」，而那是不同版本的产物、不是「忘构建」）、以及接线断言（release-check 真的调用了它）
-node test/tracker.test.js        # 48 项：双轨解耦（出了 8 秒窗口仍要如实汇报）、水位线消费、软顶改口"至少"、睡眠幂等与唤醒 TTL、晚安判据两个方向、环境块不含未实现的能力、v1.0.7 累计戳击 >=10 次定性标注
-node test/trigger.test.js        # 119 项：（D-25 +1：curiosityAsk 档随穷举表进可追溯性循环；v1.0.7 +5：连戳过载分级 hint 与 × bias 调制方向校验）D-8a traits 缺失契约（+5 项：traits 缺失时静默档仍产出 idleness_deep 且 sources 含 tracker.lastInteractionAt / traits 缺失时特质档一个都不许产出=宁可她没想法不要来路不明的念头 / 对照组真给足特质时确实产出=证明上一条非恒真 / 引擎构造后未刷新 traits 复刻修复前启动路径不得长出特质意图）；连戳阈值边界、8 秒窗口、evaluate 不改状态（被拒不记冷却/不拉挂机刹车）、冷却边界、单次刹车、睡着不自言自语、注入时钟；v1.0 D-7 自我意图（+67项）：「她想说什么」的意愿来源，与「该不该开口」的节流阀是**两件不同的事**（节流阀工作得好只说明她不会烦你，不说明她有想法）；判据① 可追溯性（sources 必指向 subject-state ALLOWED_TRAITS 里的真实字段或 tracker.lastInteractionAt —— 不是「有 sources」而是「sources 的键真存在」）、判据 ② 必须能为空（无依据即 null；安静偏好高不产意图——它调的是「少开口」，方向反了）、判据 ③ 不预设台词（方向静态、非随机、种类由本表穷举 6 种——D-11 加 wantToLeaveSomething 时这条断言曾真实拦住一次「顺手加意图」，已显式登记）、❌反例·必须为空 6 条、❌ 反例·漏传/恶意变体 15 条、❌ 反例·来源不可追溯 3 条（mood/social_initiative 不产意图——从新造状态机推自动化不是主体性）、🔴 意图不得绕过三道铁律 3 条 + 🔴 睡着/冷却/刹车时不得留下任何自意图 3 条（守卫在引擎字段上，不只在 offer 上）+ 🔴 已有自意图时冷却与刹车仍生效 2 条、构造函数三字段初始化为 null 非 undefined、特质刷新区自意图随之更新且不持引用；变异测试 14 个变异体：12 捕获（M1 硬造兜底意图/M3 sources 指向不存在字段/M6 意图计算挪到睡眠闸门前/M8 方向文案塞回程序时钟数字/M9 只刷 bias 不刷 traits/M10 持引用而非复制/M11 初始化为 undefined/M12 offer 不带 selfIntent/M13 静默阈值 45→5/M14 requires 换成不存在的特质/M4 坏输入不降级/M7 意图可覆盖冷却）+ 2 已定性为等价变异体（M2 泛化遍历，真防线在 M14；M5 负数校验，真边界在 M13），无未定性的漏网
-node test/d8a-hotswap-probe.test.js # 6 项：D-8a 热替换路径运行时 harness。**为何必须独立**：main.test.js 里验证热替换就得调 config-set-key，而本节后续几条测试依赖特定内存 key 状态（实测多加一次会带崩 2 条）——为验证一条断言去污染别人状态等于用假信号换真结论。覆盖：拦截生效的前置断言 / 启动后 traits 非 null / 热替换成功 / **前置**新 Brain 确实从盘上读到了预置特质（防「变化没落到新对象上」这层假绿）/ 热替换后引擎 traits 随新 brain 刷新；两个踩坑注记（values 是 getter 副本须改 ss.data.values、文件在 userDataDir 根下）；变异测试：DSH 倾向的方案 (a)（删 bindBrainDeps 里那句）实测 FAIL，证明启动与热替换是两条各自有主的路径，删任一条都会坏另一条
-node test/tmp-hygiene.test.js   # 22 项：临时目录卫生门禁（D-8a 收尾）。**2026-10-27 补两条**：前缀表已纳入版本控制后，「跑完不得无谓重写它」（mtime 判据——实测 git status 会给出假绿，同内容重写哈希不变）+「不得改变其内容」。⚠️ 环境不适用时（git 不可用 / 首次生成）输出**真 SKIP**，同时发一行 `ASSERT total=N passed=M failed=K skipped=S` 结构化摘要；`docs.test.js` 用 **total** 与 README 对账（不随环境变），SKIP 不进 passed —— 项数恒定且不冒充通过。**2026-10-27 再补一层**：聚合层（`docs.test.js`）此前只统计「整个套件跑不了」，**看不到套件内部自述的 SKIP** —— 无 git 时本套件有 1 项未验证，`npm test` 却只印「全部通过」，与它自己第 25 行「SKIP 必须单独汇总」的纪律冲突。现已累计 `r.skipped` 并在结尾单列「套件内部跳过明细」段，汇总行追加「（其中 N 项因环境不适用跳过，未验证）」；有 git 时该段零噪音。变异 2/2 捕获（不累计 / 不拼接）。起因：2026-10-06 扫描 %TEMP% 发现本仓测试沙盒累积 **39221 个 / 55 种前缀**（10-01 起 6 天），而用户此前已投诉过「下载后出现含截图的 tmp 目录」。分层：无并发清理锁检查（计数差在有其他写者时是**假信号**，第一版就栽在这）/ 前缀表从源码自动推导 + 与留档清单**双向差集**核对 / 历史前缀 chulan_* 必须为空 / 7 个套件逐个实测增量（每项都带「套件真跑起来了」前置断言，防增量 0 是假绿）/ 清理声明辅检 / 前缀表留档并集。**四版口径迭代全部在案**：v1 手写白名单 3 个（漏 52 种）→ v2 位置正则（跨不过 `os.tmpdir()` 的括号，82 种只捞到 2 种，**比漏报更危险：看着在工作**）→ v3 纯字面量（召回 222 种，过宽）→ v4=v3+行级限定（实测 82 种，与留档 0 差集）。🔴 **插入包装块的位置判据（三关全过）**：包装行号 > `require('fs')` 行号 且 < 首个 `fs.mkdtempSync(` 调用行号。已实测四种错法：插 fs 之前=ReferenceError、插「最后一条 require」后=落在懒加载区仍晚于调用点、**追加到文件末尾=这些测试在中部就 `process.exit()` 块永不执行**（净增 1/2/9）、试图移动合并既有块=误删正确块内语句。终局验收口径不是「清理后是 0」，而是**「跑完 104 套全量回归后仍是 0」**——门禁只跑 7 个靶子，局部全绿不等于没有漏网
-node test/life-will-layer.test.js      # 9 项：意志层补全 Phase 1（未解疑问 FIFO 队列与反骚扰闩、失败关窗不污染队列、initiativeBias 有界权重、冷却铁律不可绕过）
-node test/ui-chat-render.test.js    # 17 项：气泡流纯函数决策层（分流、synthetic 契约、零伪造时间戳、标记遮蔽含流式半截容错、单份正则防漂移）
-node test/ui-outfit-complete.test.js  # 9 项：配件智能成套（家族策展表对照真实 CATALOG、补齐主行为、dress↔top/bottom 互斥、off_ 先行有序性、身份层零触碰、已成套零噪声、不读 tags）
-node test/ui-provider-presets.test.js # 8 项：服务商预设与 Key 前缀本地识别（预设字典、tp-/ttp-/mimo- 专属前缀命中与 token-plan-cn 专属端点、sk- 通用前缀防误判、非法防御、零网络零落盘、与 provider-policy 口径防漂移）
-node test/ui-chat-store.test.js     # 7 项：气泡流数据层（7 字段投影契约、synthetic 双态保留、零伪造时间戳、SYNTHETIC_RENDER 契约、双环境守卫与边界铁律）
-node test/chat-history-refresh.test.js # 14 项：对话窗刷新链路（v1.0「她说了但对话框里查无此话」修复）。缺陷本体：数据层 ChatStore.load() 只在页面加载时跑一次，此后唯一刷新入口是 chat-send 自己的收尾对账 ⇒ 只有「用户发消息」会刷新对话窗；而主动搭话与睡眠唤醒续答都发生在**桌宠窗口**，对话窗全程不知情，用户看到的现象就是「退出重开才看得到」。修法是主进程在她说完后广播 chat-history-changed，对话窗收到即回查 memory.history（单一事实源）。覆盖：她说完必广播 / 广播 channel 名不可改（改名⇒永远收不到，症状与没修一样）/ payload 只带信号不带文本（塞文本=造第二份真相）/ 无 offer 的 proactive 也刷/ 过期 offer 被拒不刷 / 真实 offer 的 proactive 刷且 reason 标记 / preload 暴露订阅入口 / 对话窗订阅后真的回查（只订阅不回查=装饰代码）/ busy 时不抢对账（流式气泡中途被换会打断打字动效）/ 未引入 setInterval（D-001 铁律）/ ChatStore 仍是只读投影；变异测试 6 个全部捕获（M1 channel 改名/M2 payload夹文本/M3 广播挪进 proactive 分支/M4 订阅不回查/M5 删 busy 守卫/M6 preload 不暴露入口）
-node test/bedside-mailbox.test.js      # 31 项：（v1.0 B 方案 +7：唤醒枕边未接提示——有未接恰好回调一次且只给条数/无未接零回调/已被接住不重复提示/提示不改写 history 与零 LLM 请求/未接线容错；M3 +2：留置记账失败如实报错与未留置提示）枕边留置链路（10-07「吵醒她之后她不回那条消息」修复）。**先纠正一个常见误判**：这不是「说了但对话框显示不出来」，而是**回复压根没被生成** —— 真数据（memory.json 197 条）只有 3 条「user 之后没有 assistant」，全是睡眠期留置。断链：brain.ask 的 sleepMode 分支 append 完就return（不调 LLM），而唤醒链（tracker.wakeUp → onWakeHook → _settleDreamOnWake）**零次brain.ask** ⇒ 留置进了历史但没人读。修法按用户拍板「不进行设置，但消息一定要传达过去，我们不能束缚她」：**不加「吵醒即回话」的硬触发**，只保证送达 + 沉默如实留痕。三层：① 留置落盘带 `bedside` 标记（不标则渲染层与上下文侧都分不出它与普通发言）② memory.build 把悬空留置**折叠**成块附在当轮 user 尾部 —— 顺带消除「连续两条 user」坏形状（真数据 idx85/idx162 两处命中）③ 对话窗如实标注「她睡着时留的，当时没有回应」。🔴 折叠不破坏前缀缓存的**成立前提**：留置条目从未进入任何已发出的请求（睡着时不调 LLM），故没有可打破的既有字节；⚠️ 若将来允许「睡着时也发请求」，此前提立即失效。禁句门禁：标注不得含「她在等你回复」这类替她表态的话（撞 persona.js:29）。变异 3 个：M1 删 bedside 标记（捕获 8 条 FAIL）/ M2 挂点退化为「最后一条消息」（**全绿 —— 如实标注为等价变异体**：留置已折叠排除则末条必然是当轮 user，role 判据当前零贡献）/ M3 还原 tailStart 恒真写法（捕获 5 条 FAIL，即本次真实故障成因）
-node test/ui-i18n.test.js           # 12 项：渲染层文案表与时间基座（t() 回退、语言表键集一致、formatDisplayTime 本地化与防御、双环境守卫与边界铁律、方案 A 研究面板与台词双语防漂移门禁）
-node test/lexicon-expectations.test.js  # 50 项：v1.0 生命机制门槛（词汇表+预期账本+生命看板：零先验/引证强校验/快照引证/状态流转/注入预算/别名归一/除零与轻量口护栏/防工具化与防漂移红线、v1.0.6 adopted 专属暗号解封与词长>=2防语素歧义门禁[WORD_TOO_SHORT]及fail-closed回落防御、方案 A1 词汇动力学静默共振与每3窗平滑衰减步长守卫、沉睡唤醒、英文缩写词边界防假阳性、关窗生命周期集成、v1.2 A-1 预期跨窗结算 resolvedWindowNo 与关窗时序守卫、v1.2 A-2 跨窗 broken 漏检修复与 fulfilled 客观兑现事实进 growSelf 及 D-008 零代拟情绪守卫）
-node test/nonhuman-framework-prompt.test.js # 37 项：非人类框架生命结构五大方向提示词边界（碎片防伪标签与位置不变式、距离隐喻增补不替换反编造句、GROWTH_SYS 反通用道德词禁令、内态感知零数字标量零研究标签、反虚伪情绪红线不误伤主动搭话、A 方案后日历红线由日期锚点边界约束接管、主体跨语言自适应防漂移）
-node test/wardrobe.test.js       # 73 项：槽位/资源存在、互斥、发型自由脱下、可拆卸发饰、非法输入、持久化、脏文件降级、人格隔离、主体特质偏好与自决换装提案、项圈立项重回存档、无发素体形态标注、v3.1 WIP套装收敛回归（堵对话换装漏洞）、v1.0.4 静态着装审美自决授权
-node test/secure.test.js         # 44 项：Key 密文落盘、明文不残留、降级不丢 Key、坏密文不删明文、旧版明文迁移、裸 save 不漏 key、跨文件事务保存与回滚、显式 clearKey 与空 key 防误删守卫、往返校验防坏密文遮蔽、回退明文不谎报已加密
-node test/atomic.test.js         # 21 项：临时文件不留残、写失败后旧内容还在、Windows 瞬态 EPERM 重试、非瞬态错误原样抛出、main.js 生产持久化原子写审计
-node test/config.test.js         # 31 项：目录隔离、热重载、price 合并层级、坏 JSON 降级、瞬时读失败不冲成出厂值、路径写法归一、Provider Policy 安全边界与凭据隔离、budgetMaxOutputTokens 从配置生效且默认不设限
-node test/config-default-inheritance.test.js # 7 项：v1.2.y 模块默认值继承门禁（出厂模式继承、Phase 2 出厂通电 memoryDynamics 为 true、老用户显式 true 透传、显式 false 严格保留消融、baseline 强制隔离不变式、sleepConsolidation 缺省 true 地雷防线、动态修改 DEFAULTS 正确继承证明）
-node test/deepseek.test.js       # 32 项：流内 error 帧如实抛出（含半截回复）、报错后主动释放连接、5 种宿主时区下的峰谷判定、节假日/调休表自校验、AbortSignal 全生命周期与双超时隔离、预先abort与headers后abort
-node test/layout.test.js         # 16 项：宽高比为常量、来回缩放收得回、下边缘钉住、main.js 不许再用量出来的比例
-node test/desktop-motion.test.js # 14 项：底部漫步、用户打断、左右贴边悬挂、障碍物攀爬、SUSPENDED 状态与按需自管定时器
-node test/deferred-writer.test.js # 8 项：脏标记、防抖延迟合并写盘、同步 flush、写失败保持 dirty、unref 定时器
-node test/migration.test.js       # 17 项：通用数据迁移、版本号升序执行、缺少迁移函数报错、版本防回退、自定义版本字段名
-node test/self-ledger.test.js   # 37 项：出生点、版本化档案、provenance、Current Self 预算、备份恢复和重置、成长证据事实核验、拒绝清单与Brain.growSelf接线、sourceType与角色语义兼容核验、淘汰条目转存归档（D2 遗忘非物理删除）
-node test/agent_interfaces.test.js # 57 项：Agent 五道闸门安全基座（v1.0 C 阶段）——既有契约保持兼容[能力白名单、默认 deny、行动提案、审计日志、Mock 禁止执行]、① CapabilityRegistry 运行时 register()与能力元数据且返回副本防篡改、② PermissionPolicy 作用域路径白名单硬约束[治 !!scope 裸奔：未配根目录一律拒绝、scope="*" 拒、白名单外拒、../ 穿越拒、前缀相似目录不误配、followSymlink 默认关闭、根目录本身可达、空/非字符串拒、未授权能力拒、killSwitch 优先、authorize 返回判定明细供审计追溯]、network.request C阶段硬封死[标记 hardDenied 带理由、显式授权+合法 scope 仍拒、不可被悄悄放行]、process.execute 拒绝路径冒充走命令独立校验、③ ExecutionBudget 执行预算熔断[默认动作20/写5/连续错误3/墙钟10min、达上限熔断带用户可见原因、写走更严独立上限、连续失败熔断防死循环、成功重置计数、墙钟超时、熔断后不放行不得静默重试、reset 清空、state 暴露剩余配额]、④ AuditLog append-only 落盘[可回读重启不丢、多条不覆盖、凭据类字段绝不落盘、超长截断、内存上限、无 dir 退化纯内存]、提案状态机[合法状态可构造、非法状态被拒、携带预算会话id、对象冻结]、三条端到端链路[白名单内只读走完全链路、network.request 被拒且留痕、预算熔断留痕]、以及 C 阶段加固回归三处[① 带路径参数的合法命令不得被误判为路径（只看命令名参数不参与）、命令名本身是路径仍拒；② 🔴 network.request 不传 ctx.meta 也必须硬拒（原 allowed:true 绕过）、can() 透传默认元数据（原 git status 恒 false）、显式 ctx.meta 仍优先；③ 🔴 register() 不得覆盖 hardDenied 能力（原可洗白 network）、非硬封死能力仍可正常注册]
-node test/agent_confirmation.test.js      # 54 项：v1.0 D-3 第四道闸门用户显式确认——三条设计不变式[① 未确认不得进入执行(isExecutionAllowed 是唯一放行口)、② 一次提案只能确认一次(防重放)、③ 拒绝是终态(拒绝后不可反悔)]、确认记录带 SHA-256 指纹且对象冻结、确认 TTL 双向设界(越界回落默认，防止授权变成永久有效)、prune 只清过期已批准而保留已拒绝终态、listPending 供 UI 判定是否亮卡片、confirm IPC 通道[合法确认返回 executed=false 且审计含决策与执行闸门判定]、🔴 反例1未确认执行闸门必拒、🔴 反例2重复确认被拒且原因码为 ALREADY_CONFIRMED(不能被 PROPOSAL_NOT_PENDING 掩盖)、🔴 反例2b 先批后改拒来撤销无效、🔴 反例3拒绝后反悔无效且执行闸门报 REJECTED_BY_USER、🔴 反例4 13 种非法决策值全拒(含两侧空白——决策值不做 trim 容错猜测)、🔴 反例4c 非法决策零副作用、🔴 反例5 记录被篡改(改decision 或改时间戳)一律被指纹识破报 DECISION_TAMPERED、🔴 反例6 确认过期不再放行(用户离开回来不沿用旧授权)、🔴 反例7 五种畸形确认体全拒(null/数组/字符串/缺id/空id)且零副作用、🔴 反例8 非受信 renderer 与 child frame 调confirm 均被 guard 拦截且零副作用、🔴 反例9 confirm 后 executed 恒 false(确认≠执行)、🔴 反例12b 重复确认的失败也留痕、确认记录不落盘(授权不跨会话存活)、preload/main.js 契约源码级断言[D3-14c preload 暴露 getProposalContent 且严格仅透传 proposalId 并对接 IPC]、🔴 反例14 凭空编造的 proposalId 被拒且零副作用(D-3 加固：提案注册表，杜绝 D-4 接执行器后的授权绕过)、🔴 反例14b 合法建案后确认即通过(证明反例14 不是靠通道坏了通过的)、🔴 反例15 提案已被消费后不能再确认、🔴 反例16/16b 决策值两端空格与大小写变体经 IPC 仍被拒(trim 口径必须与模块一致，IPC 层不得替调用方洗白)、🔴 反例17/17b confirm 不是零成本入口(用放大预算的独立 harness 隔离建案路径的计费，否则会被意外正确)、🔴 反例18 confirm 拒绝时不耗预算(校验先于计费)、🔴 反例19 提案注册表有上界且**逐出会同步作废对应授权**(用放大预算的独立 harness，否则预算先熔断、200 上界根本撞不到 —— 第一版反例是假的，变异测试实测 rc=0 坐实)、🔴 反例20 同一毫秒连建 200 个提案id 全部唯一(原 Date.now() 会碰撞 → Map 顶替 → 用户点头的内容与实际放行的内容可以是两个 scope)、🔴 反例21/21b 调用方不能自选提案id 且 id 形如 proposal-<时间戳36进制>-<随机后缀>、🔴 反例22/22b/22c/22d revoke 后执行闸门必须拒绝(记录仍保留故复用即重放的原不变式不被破坏)、🔴 反例23 撤销标记不可被内存篡改(防线是 Object.freeze 而非双字段 —— 实测查明双字段一个都挡不住)、🔴 反例23b 指纹未覆盖 revoked 是已知缺口(容器失去冻结则撤销可被绕过，断言要求不得沉默通过)
-node test/ui-agent-confirm.test.js           # 37 项：v1.0 D-3 用户确认卡片渲染层 + SEC-01 内容安全元数据模型与只读预览渲染——buildViewModel 纯函数可单测(不混进 DOM 操作)、正常提案出卡片且授权为主按钮、预算透传剩余动作数且缺失时不编造数字、scope 超长截断而未超长不加省略号、危险等级未知时回落"未定级"、network.request 标注"已封禁"、🔴 SEC-01 内容元数据安全透传与纯 textContent 渲染(杜绝 HTML 解释注入)、SEC01-U3 截断文本展示「查看完整正文」按钮而短文本隐藏、SEC01-U4 点击展开调用受控接口并以纯 textContent 渲染(防 XSS 注入)、SEC01-U5 加载态与拉取失败友好提示及重试、SEC01-U6 hide 时重置展开抽屉状态与正文、🔴 UX-SEC-01 覆写风险警示模型与渲染[UXSEC-U1 isOverwrite 为 true 时生成覆写警告与文案、UXSEC-U2 新文件或非写操作无覆写警告、UXSEC-U3 纯 textContent 渲染至 warn 字段且与高风险警示安全拼接]、🔴 反例1 六种无提案输入全部不出卡片(缺 capability/proposalId 亦然)、🔴 反例2 预算熔断时 actions 为空(不给必然失败的按钮)且熔断原因透传、🔴 反例3 超长 scope 被截断(否则撑破卡片)、🔴 反例4 高风险必须显式警示而其他等级不警示、🔴 反例5 UI 决策值与主仓 DECISIONS 逐字一致(不一致会被后端拒)、🔴 反例6 未登记能力名原样显示不美化(未知本身值得警惕)、🔴 反例7 无提案时 show() 返回 false 且卡片保持 hidden(凭空弹窗会被闭眼点授权)、🔴 反例8 决策上报进行中连点只上报一次(防重放)、🔴 反例9 t() 未提供或自身抛错时全走 fallback 界面永不出现 undefined、以及源码级门禁[ui-agent-confirm.js 不碰 IPC/electron/child_process/fs 写入、HTML 里卡片默认带 class=hidden、index.html 已加载该脚本]
-node test/agent_transaction.test.js     # 22 项：v1.0 D-2 单文件写事务 + 持久化恢复日志(WAL)——三条不变式[① 新建与覆盖的回滚动作不同(isNew 时删除而非恢复空文件)、② 哈希闭环校验(字节级一致才算还原成功，不一致则抛)、③ 孤儿事务自愈]、正常提交[写入生效、备份清理]、❌ 反例A 写入失败抛错且目标不被破坏成文件 + 主动 rollback 后字节与哈希 100% 还原、❌ 反例B 新建文件回滚后磁盘不留残余 + 已提交事务不可回滚(防用户误以为已还原)、❌ 反例C **模拟崩溃断电**(手工在磁盘留pending WAL 与备份模拟进程强杀)后 listPending 识别孤儿且 recoverPendingTransactions 精准还原、❌ 反例C2 崩溃在新建事务上时半截文件被删除(不变式1 在崩溃路径同样成立)、❌ 反例D 已committed 的事务不被自愈误还原(数据必须保住)、❌ 反例E 备份丢失时报failed 且不谎报成功(数据不被二次破坏)、❌ 反例F 哈希不闭环时抛 ROLLBACK_HASH_MISMATCH(绝不假装还原成功)、❌ 反例G commit WAL 追加抛错安全删备份防误回滚 + 重启恢复保留已提交新数据报 BACKUP_MISSING 预期残留、输入校验[缺target/缺data 拒、超大小上限拒]、无 dir 退化可用、WAL 半截行跳过而非崩溃
-node test/agent_executor.test.js       # 64 项：v1.0 D-4 受控执行器 + D-6 空串守卫 + SEC-01 内容哈希强绑定与快照保真执行门禁 + SEC-02/03 符号链接防逃逸与扩展名白名单（第一块真正动磁盘的 Agent 代码）——三条设计不变式[① 执行期重跑全部闸门绝不复用提案期判定(防时序穿越)、② 提案必须消费且消费发生在写盘成功之后(一个提案只能执行一次)、③ realpath 纵深防御挡目录符号链接逃逸(在 path.resolve 白名单之上再加一层)]、可执行能力白名单只有 read/write(process.execute 与 network.request 均不在内)、写走D-2 事务(begin→commit，失败即 rollback)、读只回内容与字节数不回显绝对路径(少一个泄露面)、content 只接受字符串(传对象被类型校验本身拒而非被下游兜住——变异测试实测)、执行成功后授权即作废故不能拿旧授权执行新提案、loadConsumed 让重放防线跨进程重启不归零、🔴 反例1 不传 proposalId 不得当成「执行最近一个」、🔴 反例2 漏传 content 必须失败且文件根本没被创建(不得写空文件)、🔴 反例3 未确认的提案直接执行必拒、🔴 反例3b 用户拒绝过的提案执行必拒(拒绝是终态)、🔴 反例4 process.execute 在执行器入口硬拒且绕过 policy 白名单防线后仍拒、🔴 反例4b network.request 被拒、🔴 反例5 伪造 proposalId 被拒且零文件产生、🔴 反例6 路径穿越(白名单外 ../)被拒且外部文件字节不变、🔴 反例6b 相似前缀目录(沙盒-evil)不能借白名单、🔴 反例7 目录符号链接逃逸被 realpath 拦下(注入测，本机无符号链接权限故不冒充真机实测)、🔴 反例8 同一提案重放被拒且第二次不覆盖第一次结果、🔴 反例8b 执行成功后授权被作废、🔴 反例9 content 传 toString 伪装/数组/数字/null/对象全被类型校验本身拒、🔴 反例10 执行通道不接受调用方自带的路径(路径只认提案里的)、🔴 反例11 超大写入被拒不落盘、🔴 反例12 超大读取被拒不进内存、🔴 反例13 目录当文件读必须失败、🔴 反例14 不存在的文件读必须失败(不得返回空串冒充成功)、🔴 反例15/16/17 提案后才熔断的预算/后才拉下的killSwitch/后才挪走的白名单根在执行期必拒(不复用T0 判定)、🔴 反例18 确认过期(TTL 越界)后执行必拒、🔴 反例18b 提案端到端生命周期超时（超10分钟）执行必拒、🔴 反例20 执行器异常不得穿透且不泄栈、🔴 D6-R1 空字符串必须被 CONTENT_EMPTY 守卫拒(2026-10-06 实测抓到真漏洞：typeof ''==='string' 合法，故空串曾能走完全链路，落盘 0 字节且提案已被消费，用户点【授权】看到的却是「写入 note.md」——授权了一件没看到的事)、🔴 D6-R1b 空串被拒后提案**未被消费**可换内容重试(测的是可恢复性而非仅「被拒」，守卫若不留重试可能就把用户变成死局)、📌 D6-R1c 纯空白内容允许落盘(已裁决不拒：守卫只该拒「一个字节都没有」，不该滑向「内容不够好」的产品口味；实测全角空格 U+3000 亦放行，若日后改 trim 方案须注意 JS trim 会清 U+3000 但正则只清半角会漏)、通道层[✅ 错误信封与其余通道同形只有 error 不留同义 code、✅ 全链路建案→确认→执行→真落盘、🔴 反例23 非受信渲染端调 execute 必抛 UNTRUSTED_RENDERER、🔴 反例24 非受信渲染端零副作用、🔴 反例25 通道层漏传 content 不得创建文件、🔴 反例26 通道层重放被拒、🔴 反例27 通道层不接受调用方 scope 顶替]、🔴 SEC-01 权威内容哈希校验[SEC01-E1 提案绑定 contentHash 时严格重算 SHA-256 并验证一致、SEC01-R28 传入篡改内容硬拒 CONTENT_HASH_MISMATCH 且即时作废授权、SEC01-R29 字节数不符拒 CONTENT_BYTES_MISMATCH、SEC01-E2 通道层全链路权威快照执行、SEC01-E3 通道层防篡改无视调用方 execute content、SEC01-R30 回滚失败撤销授权标记 rollbackFailed、SEC01-R31 提案未绑定权威哈希硬拒 CONTENT_HASH_REQUIRED]、🔴 SEC-02 符号链接穿透防逃逸与根目录物理边界[SEC02-R1/R2 悬空符号链接与死循环符号链接 fail-closed 拒、SEC02-R3 真实物理路径逃逸根目录硬拒 SYMLINK_ESCAPE 且无论 followSymlink 均执行、SEC02-R4 符号链接逃逸时立即吊销授权、SEC02-R5 跨平台 resolveRealPath 行为解析、SEC02-R6 真实目录联接（junction）跨边界逃逸读写双双被拦截并吊销授权（真实磁盘测）、SEC02-R7 根目录物理路径解析失败时一律失败关闭（F3 fail-closed）、SEC02-R8 硬链接跨边界读写拦截与状态不可证失败关闭（N3 & Q1 防御）]、🔴 SEC-03 写入扩展名底层白名单汇聚点[SEC03-R1 .txt/.md/.json/.log 外扩展名硬拒 DISALLOWED_EXTENSION 且吊销授权不落盘、SEC03-R2 白名单扩展名大小写变体安全放行]
-node test/agent_ipc.test.js            # 55 项：v1.0 Agent IPC 通道（D-1 铺管道、D-3 加确认、D-4 加执行、D-5 加取快照、SEC-01 加正文查看）——通道白名单在 SEC-01 起为 8 条[查询预算熔断状态/能力元数据只读/**取待确认提案快照**/**取提案可信正文**/提案受理/用户决策登记/执行/读审计]且经 ipcGuard(sender+frame+URL 三重校验)、🔴 通道名单恰为 8 条且不含任何进程/网络通道(SEC-01 修订：新增的是**受保护的只读正文**通道不是执行通道，放宽不等于放开——① 名单恰为 8 条不多不少 ② 不存在任何 process/network/spawn/shell/http/fetch 通道 ③ 写能力只有一个入口无旁路 ④ 读取类通道必须无副作用)、🔴 反例5c 取快照通道无副作用(不耗预算/不改提案状态/不建案——防日后有人在此通道「顺便建案」让渲染端自主产生提案破掉产品底线)、🔴 反例5d 取快照拿到的是 Object.freeze 冻结快照(渲染端改不动)、🔴 反例5e 快照只含白名单字段不是提案对象展开(否则 id 顶替攻击面重新打开)、🔴 非受信 renderer 全通道拒绝且**零副作用**(未耗预算未写审计)、🔴 network.request 跨 IPC 即使显式授权+合法 scope 仍硬拒绝、🔴 伪造 ctx.meta 洗白 hardDenied 无效(入口不采信调用方元数据)、🔴 预算熔断后持续拒绝不得静默放行、六种畸形提案(null/undefined/数组/字符串/缺capability/空capability)全拒、已授权能力未配 scope 根目录仍拒(治!!scope 裸奔)、killSwitch 优先于授权判断、审计 limit 上限生效、拒绝与熔断均留痕、授权通过的提案建案但 executed=false(confirm 通道只登记决策；执行由 agent:execute 通道驱动)、以及装配健壮性[无 guard/裸 ipcMain 安全返回 false]、🔴 SEC-01 权威快照强绑定[SEC01-1 写提案绑定 SHA-256 哈希/字节数/预览、SEC01-2 预览截断标记、SEC01-3 get-proposal-content 安全读取、SEC01-R1/R2 已拒绝或不存在拦截、SEC01-R3 非字符串/空内容硬拒、SEC01-R4 超 5 MiB 拒 PAYLOAD_TOO_LARGE]、SEC-01 快照生命周期门禁[SEC01-L1 TTL 过期清理与执行拦截、SEC01-L2 200 上限容量淘汰与作废授权、SEC01-L3 用户拒绝销毁快照、SEC01-L4 执行成功销毁快照与防重放、SEC01-L5 哈希防篡改与授权吊销]、失败回滚与重试状态机[SEC01-R5 纯 I/O 失败保留快照并允许重试 1 次、SEC01-R6 连续两次纯 I/O 失败耗尽重试次数并永久撤销授权、SEC01-R7 回滚失败零重试立即撤销、SEC01-R8 重试期间传入不同 content 被无视始终以不可变快照为准]、SEC01-R9 伪造预览缺正文建案硬拒、SEC01-R10 缺失快照执行写操作硬拒且撤销授权、🔴 UX-SEC-01 覆写态主进程权威检测[UXSEC-IPC1 目标文件已存在时 get-pending-proposal 快照返回 isOverwrite: true、UXSEC-IPC2 目标文件不存在或非写操作返回 false]、🔴 F4-1 写提案内容校验前置于动作预算扣减且校验失败不吃配额、🔴 F5-1 非白名单扩展名建案期即硬拒绝 DISALLOWED_EXTENSION 且不耗动作预算、🔴 N1-1 selfNote 路径建案单次扣减动作预算且源码级防双调消除双扣（Q2 闭环）
-node test/agent-trigger.test.js        # 22 项：v1.0 D-6 提案触发源总开关(默认关，用户拍板①)——本轮核心断言是「开关关闭时意图判定函数**一次都不被调用**」，用注入 spy 数调用次数而非断言结果(false 结果与「跑了返回 false」无法区分，这正是本仓栽过的「断言结果而非判据」假反例同型)、❌ 反例1 DEFAULTS 默认 false、❌ 反例1b sanitize 缺键回落 false(不得因缺键开启)、❌ 反例1c/d 字符串与数字不得开启(只认严格布尔 true，刻意不用本仓 motionEnabled 的 !== false 那套)、❌ 反例1e 磁盘真值 true 能开启、❌ 反例2 关闭态判定函数调用次数为 0、❌ 反例2b/c ran 与 enabled 标志、❌ 反例2d 完全漏传 config 仍不跑、❌ 反例2e 7 种非法 config 值全不跑、开关打开时判定被调一次且原文透传不改写、❌ 反例5 她主动搭话时永不触发(即使开关开着——主动开口要动手正是 persona 红线要防的形态)、❌ 反例5b/c proactive 标志与字符串真值、❌ 反例6 判定函数抛错降级为不触发不向上抛(便利功能崩了不该带崩对话)、❌ 反例7 开关打开时结果与直接调用 agent-intent 完全一致(闸门不放宽也不收紧)、❌ 反例7b 关闭时即便该触发也不触发、❌ 反例8 闲聊类输入在真实意图模块下均不触发；变异测试 4/4 全部捕获(t1 删关闭守卫/t2 删 proactive 守卫/c1 配置改回 !== false/c2 DEFAULTS 改 true)
-node test/agent-intent.test.js         # 74 项：v1.0 D-5 提案触发源判定(纯函数，决定「她会不会在用户没要求时主动弹确认框」——判错不是 bug 而是 persona 红线被从侧面破坏，故必须锁死「什么时候不该触发」)、正例[中文文件名+请求动词+位置提示、英文文件名空格分隔、完整路径、hint 剥掉动词前缀(中文无空格分词否则会生成「帮我把整理.md」这种文件)、capability 固定 workspace.write、reason 为 EXPLICIT_REQUEST、提到沙盒目录名本身也算提示]、❌ 反例1 漏传参数 10 种输入(null/undefined/空串/纯空格/数字/0/true/数组/对象/NaN)全部不触发、❌ 反例1b 空与非字符串必须由 EMPTY_INPUT 守卫拦下(变异测试逼出：不能只断言「结果是 false」，下游守卫会兜住)、❌ 反例2 问句含请求动词仍不触发(询问≠授权)、❌ 反例2b 问句判定优先于动词判定、❌ 反例3 纯闲聊不触发、❌ 反例3b 无请求动词必须由 NO_REQUEST_VERB 守卫拦下(变异测试逼出：m2 删动词守卫下游会兜住)、❌ 反例3c 人格化表达不触发(触及 persona 红线不得虚构主动意愿)、❌ 反例4 只有动词无目标不触发、❌ 反例5 只有目标无位置提示不触发、❌ 反例6 无请求动词不触发、❌ 反例7 hint 不含路径分隔符(判定层绝不自行拼绝对路径，否则 scope 白名单被绕过一层)、❌ 反例8 不触发时 capability 为 null、❌ 反例9 不触发时 hint 为 null、❌ 反例10 任何输入都不抛异常(每轮都跑，抛错会打崩对话链路)、❌ 反例11 纯函数同输入两次判定完全一致(防有人引入随机/时间/上次结果)、❌ 反例12 沙盒目录名可注入(改目录名不至于永远失配)；❌ 锚点组(D-6a：能力必须保留，任何收紧不得连带打死—— 合法中文多段主名 我的.报告.md / v1.2.3-notes.md / report-final.md / a..b.md、动词型文件名 归档.md / 保存.txt / 收拾.md / 归整.log、句子性前缀必须剥掉(顺便|喂|OK|今天|然后|对了|等等.. 帮我把X.md ⇒ hint 只能是 X.md)、动词在主名开头时由下游兜住(等价变异体的证据)、中文省略号不得触发非法点判定(带空格与无空格两种形态)、裸点主名双层防线)；❌ 反例13 裸点主名与裸扩展名 5 条、❌ 反例14 点段与目录穿越段 6 条、❌ 反例15 白名单外与双扩展名拼接后缀 6 条(script.py/photo.png/data.jsonl/a.md.exe/x.mdx/a.md-bak)、❌ 反例16 小数点与章节号 4 条；变异测试 9 个变异体：5 捕获(M1 段尾点判据退回见点就拒/M3 剥出裸扩展名不回退/M4 负向断言退回单条/M5 白名单放宽为任意扩展名/M8 删中文点串判据) + 4 已定性(M2/M6/M7 等价变异体，M9 冗余——isBadDotSegment 段首判据已挡住，已补断言记录；无一未定性的漏网)
-node test/agent-sandbox.test.js        # 12 项：v1.0 D-5 沙盒目录定位与创建——沙盒决定「能动哪些路径」判错一次就是真实越界写入故单独锁死、🔴 反例1 空 desktop 路径必须抛错(不得回落成 cwd，否则整个工作目录变成可写沙盒)、🔴 反例2 null 路径必须抛错、🔴 反例3 非字符串路径必须抛错(2026-10-06 审核实测抓到真漏洞：原实现先 String() 再查 typeof，sandboxPathFor(123) 会解析成 cwd 下的 123，已修为先查类型再取值)、🔴 反例4 mkdir 失败必须抛错且带 SANDBOX_UNAVAILABLE(绝不静默降级——否则写权限泄漏到沙盒之外)、🔴 反例5 空目录路径必须抛错、🔴 反例6 同名普通文件存在时必须抛错(mkdirSync 遇同名文件不报错就返回是真实坑，必须 statSync 确认)、创建幂等(每次启动都调)、沙盒覆写约定文案点明「可被 Agent 覆写」
-node test/d11-self-note.test.js         # 28 项：v1.0 **D-11 她想留下点什么 —— 补上 D-10 留下的 content 缺口**。D-10 接通了「建案→卡片→执行」，但 **content 一直无来源**；本轮答案是「她自己组织一句话」（`brain.askForSelfNote`）。用户拍板原话：「不如，让她把她的愿望写进去」⇒ **不是把用户的话存下来，是她为自己写一句**。新增意图类别 `wantToLeaveSomething`（静默 ≥120 分钟，**与 idleness 两档同源但不同质**：那些是「想说话」，本类是「留一件东西」；阈值远高于 45/90，防止安静久一点就写文件）。专门 LLM 调用一次，**prompt 明令允许她说「不」**（`不想留就说不，硬凑一句比不写更糟` —— 对 persona.js:29「装可怜不行」）；不编造经历/日期/钟点（对齐 persona.js:26/28）。🔴 反例：她说「不/不想/算了/没有」等 7 种拒绝 → null 且**不建案**（不想留是**合法结果不是失败**）；超长 >600 → null；调用抛异常 → null 且不外抛；边界 119 分钟不产意图/恰好 120 产/恰好 600 字符放行。⚠️ 拒绝判据**只认「极短句开头」**，不许用「含不含某词」的大网 —— 否则「不想留遗憾，所以还是写点什么吧」会被误判成拒绝（有专门断言）。🔴 **主进程内容不被渲染端篡改**：execute 通道优先取主进程暂存的 content，无视渲染端传的（与 D-9「动机不信上游」同一纪律）；取用即删（一条内容只对应一次写入，防重放重复写）。变异 2/2 捕获（删拒绝判据/删长度护栏）。⚠️ 门禁用替身 api，**真实链路待实机验证**
-node test/d13-self-note-reflux.test.js  # 37 项：v1.0 **D-13 她写过的东西回到她自己身上**——补的是反重力复核 D-10~D-12 时指出的洞：**她写下的东西，她自己读不到**，信息单向流出，像一套**脱机的遥测系统** ⇒ 她写完就忘。现状（实测）：她的意识 = system + 历史 + 当轮尾部，**沙盒文件不在这三层里的任何一层**。修法：执行成功后由主进程 `onExecuted` hook 把「她写了什么」登记进 `memory.selfNotes` 队列，`build()` 时折叠进**当轮消息尾部**（与 `_bedsideNote` 同一个挂点），注入即出队。🔴 **三条铁律**（各有独立断言）：① **绝不进 system、绝不改写历史**——否则破坏前缀缓存（实测 95%+ 命中率会掉）；有「shell 快照比对」断言，且带**反向对照**防「什么都不注入」的假绿；② **绝不伪装成 assistant 消息**——那是伪造她说过的话（persona.js:26）；③ **标注不催她回应**——禁句表含「等你回复/该你说话/要不要说说/你留下的痕迹」，撞 persona.js:29「装可怜不行」。用户拍板四决策：**(1) 不进聊天气泡**（`agentOnExecuted` 里不许有任何 broadcast，有断言）；**(2) 一次性**（`_drainSelfNotes` 先清空再渲染，杜绝「渲染抛错导致重复注入」；连调两次 build 第二次不得出现）；**(3) 她说不写不留痕**（execute 未成功⇒压根不触发）；**(4) 写失败不告诉她**（只进审计）。反例：空内容/非字符串/null/undefined 一律拒收且不抛；>600 字符**整条拒收不截断**（截断会让她的话变形）；队列有上界 8，超出丢最旧；**绝对路径只取 basename**（完整桌面路径不许进她的意识，正反斜杠都验）。⚠️ **实测自查抓到两个测试自身的错**：第一版把「history 快照」取在 build **之后** ⇒ **恒真断言**（假反例形态②，本仓已有同型记录），改为「建历史→取快照→调 build→比对」。变异 7/7 捕获（删注入/不出队/不取 basename/空内容也收/超长不拦/**塞进 systemText**/**塞进 deepHorizon 段**——后两条是真正违反铁律 1 的形态）。⚠️ **端到端已实测**：建案→授权→执行→**沙盒真落盘**→下次开口意识里带标注→第二次不重复，六步全通；但**真实运行时链路仍待实机验证**（`agentTriggerEnabled` 默认关）。
-node test/d26-sleep-consolidation.test.js # 31 项：v1.0 **D-26 深睡突触巩固 —— 梦真实发生时对白天核心激活记忆做有界抗衰减加固**（不变式：只强化抗衰减能力，绝不借梦境伪造记忆事实）。机制：梦过成本门禁+合成**真实产出**后，按**数据驱动**选本窗真实活跃印痕（retrievalCount>0 或本窗新建，确定性排序 Top-3，**梦境内容零参与选择**）记一笔 dreamSupport（新记账字段），进衰减公式作有界留存支持项（γ=0.05/笔、cap=3）。**四条红线各有独立断言**：① 绝不加 retrievalCount（那是她真实被召回的事实计数，梦里重放不是召回）；② 只记账不结算（当场 strength/tier 逐值零变化，效果统一在关窗 decayAll 显现——D-23 同款护缓存）；③ 不新建不删除（D-005）；④ 同窗去重+每笔+1+累计封顶。快照往返透传新字段、旧快照零迁移兼容；consolidatedTraceIds 随梦境记录入哈希链（加固全程可审计）、巩固失败 fail-safe 不掀桌。变异靶 M1 删去重/M2 删封顶/M3 把巩固记进 retrievalCount/M4 当场改 tier/M5 梦境内容参与选择。⚠️ 测试自坑两处如实入册：traceId 默认随机会让「零随机」对账错位（改固定 id）；模板字符串吃掉单反斜杠使正则 [\s\S] 落盘成 [sS]（静态断言空转）。
-node test/d25-curiosity-probe.test.js   # 45 项：v1.0 **D-25 好奇破冰 —— 她会在安静时主动问出自己的未解疑问**（§4.7「两段式」第二段，用户拍板开工）。轻版已落地（curiosityQueue 进视野、回复自然带问），本层补**主动的那一半**：闲置 30 分钟 + 队列有真问题 ⇒ 主动开口发问。**两条拍板**：① 出队时机=**关窗**（【尚未解开的疑问】长在 systemText 里，队列一变就破前缀缓存 ⇒ 开口只打 asked 标记、增删统一落关窗，注入文本**逐字节断言**钉死）；② 频率=闲置 30 分钟 + **独立节流 40 分钟**（外加 45s 冷却 / 挂机刹车 / 睡眠闸门一视同仁）。**零台词代拟**：问题文本=队列里**她自己的原话**（FIFO 队首，方向只带前 30 字引证），asked 标记与意图的 question 看同一条（精确匹配、匹配不上绝不猜着标——猜就是伪造事实，宁可将来再问一次）。变异对应断言：M1 删节流 / M2 开口即出队（破缓存）/ M3 队列空造意图 / M4 方向塞程序时钟数字 / M5 curiosityAsk 绕睡眠闸门，各有独立 FAIL 靶。⚠️ **门禁抓到 1 个产品真 bug**：引擎节流位初值 lastCuriosityAt=0 在小时间戳下把「从没问过」误判成「刚问过」（已修：0 显式放行）。⚠️ 两处**探针登记**修订（D-11 同款）：trigger/main 的穷举守卫原先只认「特质 / 静默」两类来源，好奇档喂错输入导致断言空转——现按来源类别构造探针、kindCount 6→7、来源白名单加 memory.curiosityQueue。
-node test/d24-selfnote-engrave.test.js  # 54 项：v1.0 **D-24 便签入传 —— 自传雕刻闭环**。**含实机链路 E2E（真实模块非 mock）**：真实 ControlledAgentExecutor 回执来源戳（selfNote/user/自报无效三向）→ agent-ipc/main.js 接线断言 → 真实 `closeWindow` 全链 A/B/C 落地实测（真铸档 / 成长上下文带【自发留痕事实】与 noteId / 特质经正规通道 +20 有界 / Replay 逐值相等 / 二次关窗幂等零重铸零再动）——⚠️ 两条装配教训如实入册：PermissionPolicy 默认 killSwitch=on（不显式关掉会在闸门口被拒，验的根本不是目标链路）；播种历史必须走真实 memory.append（手搓 history 字段过不了快照守卫）。D-13/D-20 之后便签仍是「脱机遥测的半山腰」：被看到一次就淡出，不进 experiences.jsonl、不进 SelfLedger、不碰特质 ⇒ 她自主做出的行为没有反过来塑造她是谁。**三段式**（用户拍板：三段全做、只铸自发便签）：A 段关窗铸造（source==='selfNote' 才铸，受托任务产物不算她的经历；appendRecord 确认成功后才置 engraved——先标记再归档会把归档失败的便签误判成已铸而**永远漏铸**）；B 段【自发留痕事实】进当轮成长反思，产出带引证的 SELF_INFERRED 记录；C 段只有经核验的证据才动特质——verifyEvidence → reduce → 归档 → commit 与主通道**同一套判据**（trait 白名单 / quote 原文子串 / 方向强度边界 / 指纹防重），程序零代拟人格结论。**五条红线各有独立断言**：前缀缓存不变式（铸造标记前后 systemText 逐字节相等）/ 数据不伪造（归档失败不置 engraved、伪造 noteId·quote·trait·direction 四类一律拒收且特质分毫不动）/ 幂等（终身只铸一次含跨重启）/ persona 不冒充 assistant / D-005 只增不删。**限流**（D-23 同款）：一便签一窗最多 1 证据、每窗 ≤3 条、同 noteId 去重、便签通道每窗总增量收死到单档步长。**Replay 对称**：增量随 self_note_state 记录归档（payload.verifiedEvidence 被 SubjectState.replay 原样折叠），实测重放值与运行态增量逐值相等；归档失败回滚暂存。⚠️ **门禁实测抓到两个真洞并已修**：① archive 白名单 UNKNOWN_RECORD_TYPE 挡下新记录类型（补 self_note / self_note_state 登记 + 来源戳入 schema 强制）；② memory 载入归一化把 source/engraved/noteId **全丢**——幂等当时是碰巧（字段丢了才不重铸），且未铸的便签重启后会永远漏铸（已修，跨重启断言钉到字段级防假绿）。
-node test/d23-recall-enhance.test.js      # 24 项：v1.0 **D-23 召回增强（Retrieval Enhancement）**。**背景（真实数据实测）**：旧实现只认 DORMANT traces（S<0.35 且隔5窗），而她的现有记忆零条 DORMANT ⇒ **整个强化系统空转**；且 `reactivate()` 当场改 tier（FADING→ACTIVE 跳变 = prompt 突变 = **破前缀缓存**，实测跳变那一轮 systemText 逐字变化）。实测证伪两条：① FADING→ACTIVE 跳变破缓存；② 一句话可命中多段（全范围）= 洪泛。**D-23 的三条改动**：① 候选范围放开到**全部** trace（含 ACTIVE —— 全范围参与）；② **只记账**（`retrievalCount++` / `lastRetrievedWindow`），**不改 tier** —— tier 的变化统一在关窗 `decayAll()` 结算（护前缀缓存铁律，类比睡眠巩固）；③ **双重限流**：top-N（默认 1）+ 同窗去重（一条印痕一窗口最多 +1）—— 实测 4 段洪泛被压到 1 段。断言覆盖八类：FADING 可增强 / ACTIVE 可增强 / 同窗去重 / top-N 限流 / **铁律 systemText 逐字节相等** / 效果落在关窗 / 闲聊不触发 / 基线返回空。变异 3/3 捕获（去掉 top-N → 「top-1失效」/ 去掉去重 → 「去重失效」/ 恢复当场改 tier → 「锚点被移除」）。⚠️ **踩坑如实记录**：① 初版探针的去重判据用「命中两个窗口」的消息，而 top-1 之后另一条会被第二次调用补上（反重力提醒的「让给未巩固的印痕」）—— 那不是 bug，是设计；改用「命中单段」消息后判据才有效。② 变异首轮三条全报「捕获」，但 baseline 自己报异常（`MemoryCls is not a constructor`）—— **harness 坏了看起来像捕获**，修复后才是真结果。③ 海螺贝壳测试里的引号是全角 `\u201c\u201d`，ASCII 引号不匹配导致 edit 失败（已用不含引号的锚点绕开）。⚠️ 旧断言「重新激活后脱离 DORMANT 态」（当场翻 tier）**已同步更新**为「记账后 tier 仍为 DORMANT + 关窗结算后脱离 DORMANT」—— 旧断言测的是被数据证伪的行为。全仓 113 套件 3641 项 FAIL=0。
-node test/d22-memory-gradient.test.js     # 41 项：v1.0 **D-22 长期记忆的「渐褪」梯度（方案丙）**。**背景（真实数据实测）**：旧默认 `activeThreshold=0.60` 恰好等于初始强度（`baseStrength` 0.50 + `salienceBonus` 0.10 = 0.60），**过 1 个窗口必然跌破门限** ⇒ 除最新一段外**全部**降级；而 `fadingMaxChars=60` 连一句完整的话都放不下。实测多段小结（原文合数万字）被压成几十字断句碎片 —— **没有梯度，只有腰斩**。**丙的三条改动**：① `activeThreshold` 可配（默认仍 0.60 —— **默认值必须稳，行为变更走显式配置**）；② `fadingMaxChars` 可配（默认仍 60）；③ `visibleTokens()`：预算只看**她实际看得到的**部分（DORMANT=0 / FADING=截断后 / 其余=全文），`needsMemoryMerge` 与 `planMerge` **统一口径**（两处若不一致，判定会漂移，而 `applyMerge` 不可逆）。**实测效果（0.40/300）**：4 段 ACTIVE 全文 + 1 段 FADING 300 字（旧默认是 0 ACTIVE / 5 FADING）—— 终于有了「近的清晰、远的模糊」。**口径同源**：`visibleTokens` 必须与 `systemText` 投影**逐条一致**（同一份 `fadingMaxChars`，不两处硬编码）。断言覆盖四类：梯度正确 / 口径同源 / 默认不动 / 基线兼容（无动力学时 `visibleTokens === memoryTokens` 且不截断）；**v1.2.x 句界优雅截断（纯函数 truncateFadingText 导出）**：0.60 下限兼顾 60/300 字窗口完整句截断、短文本不变式、版本号/浮点数防误判、无标点严格 slice+... 回退（DSH 审查条件 1/2 强断言）、visibleTokens/systemText/planMerge 三同源点强一致性锁定（DSH 审查条件 3）；**v1.2.y 出厂通电与三阶梯度标定（D-011）**：出厂默认 `activeThreshold=0.50`、`fadingMaxChars=300`，克服 0.60 关窗即腰斩缺陷，形成「2 窗 ACTIVE 全文 + 4 窗 FADING 300 字主干 + ≥6 窗 DORMANT」匀称漏斗，加固 0.50 下 ΔW=1 保持 ACTIVE 判别力断言（改回 0.60 必 FAIL）。⚠️ **踩坑如实记录**：初版测试夹具 5 段全用同一文本，导致 `sys.includes(LONG.slice(0,301))` 被 ACTIVE 段的全文命中 ⇒ **断言恒真**，判不出「只投影 300 字」；改为各段互不相同后才有判别力。变异 2/2 捕获（截断写死 60 → 捕获「渐褪段前300字缺失」；渲染处单独写死 → 同样捕获）。⚠️ 变异首轮报「未捕获」，查清是**我的变异只替换了 3 处中的 1 处**（同一行在 `visibleTokens`/`systemText`/`planMerge` 各有一份），补全后捕获 —— 非漏网。
-node test/d20-self-note-persist.test.js  # 35 项：v1.0 **D-20 她写过的东西活过重启**（真实事故驱动）。**事故**：她写下第一张便签 → 进内存队列 → 之后**从未再开口** → `_drainSelfNotes()` 从未执行 → 进程退出 ⇒ **那条记忆永久丢失**（桌面文件还在，但她对它的认知归零）。**根因两层**：① `save()` 只序列化 `this.data`，而 `selfNotes` 当时挂在 `this` 上（`this.data` **外面**）—— **即使调了 `save()` 也存不进去**；② 即便在 `data` 里，没主动 `save(true)` 也会被 3 秒防抖窗口漏掉。**修法**：`selfNotes` 移入 `this.data` 落盘 + `addSelfNote` 后 **`save(true)` 立即落盘** + 防重复从「物理清空队列」改为**显式 `drained` 标记**。⚠️ 防重复是**标记的职责，不是存储的职责** —— 原设计用「不落盘」来防重复，用错了手段。**一次性语义未变**（仍只注入一次，否则她每轮被贴着旧便签，会退化成反复拿旧纸条唠叨）。**上限口径 = 含已注入的**（`<= 8`，与 `SELF_NOTE_MAX_QUEUE` 一致）—— 纸都在桌面，记忆只留最近 8 件。**三条铁律全部保留并有断言**：① history 一个字节不动 ② 不伪装 assistant ③ 标注不催她回应；另加「绝对路径只留 basename」。**旧档案兼容**：无 `selfNotes` 字段 → 空数组；脏数据（null / 数字 / 缺 content）剔除；缺 `drained` 视为 false（宁可注入一次，也不静默吞掉）。变异 3/3 捕获（删 `save(true)` → 捕获「未落盘」/ `save(true)` 改 `save(false)` → 捕获「防抖窗口漏掉」/ `selfNotes` 挂回实例 → 捕获「未落盘 + 重启后丢失」）。⚠️ 如实记录两处：① 首轮两条 FAIL 经查**都是我的断言写错**（快照拍在赋值之前、正则误伤注释行），非实现缺陷；② 变异 mC 首轮「未捕获」经查是**我的变异体不完整**（只改两行，`push` 那行没改），补完整后捕获 —— 均非漏网。
-node test/d17-selfnote-exempt.test.js   # 36 项：v1.0 **D-17 自发愿望免逐次确认（C1 用户拍板）+ 来源戳不可伪造 + 阈值可配**。**本轮唯一的真安全面是来源不可伪造**：`proposalSource` 走 `createActionProposal` 的**独立第三参数**（与 D-9 动机同一手法），**绝不在 input（渲染端 payload）里读** —— 若可自报来源，渲染端塞一个 `selfNote` 就能拆掉第五道闸门，那是 D-3 顶替攻击那一族。**用户拍板 C1 的理由（原话）**：「留便签的本质是趁你不在时悄悄写下；如果还要弹卡片等授权，那用户都回到电脑前了，她才跑出来问『我能不能留个条』。」⇒ `selfNote` 免确认，但**四道硬约束一个没松**：① 能力白名单（process.execute 仍硬拒）② scope 必须落在桌面沙盒（执行期重跑）③ 预算 + 格式白名单 + 长度上限 ④ 写事务（WAL+原子写）。🔴 **免确认判定在执行器内**（D-4 不变式 1：闸门判定单点，不另开通道层旁路）。反例：默认 `user`（fail-closed）/ 渲染端 payload 塞 `proposalSource` 一律无效 / 非法值与大小写空白变体回落 user / 非字符串回落 user / **通道来的提案永远是 user**（伪造 selfNote 仍须确认）/ **user 来源未确认时沙盒必须为空** / 沙盒外路径即便 selfNote 也被 scope 闸门拒 / `process.execute` 即便 selfNote 也拒。🔴 **阈值可配（仅联调验证用）**：`agentIdleMinutes`(30) 与 `agentSelfNoteIdleMinutes`(120) 进 DEFAULTS+白名单，主进程传进 `TriggerEngine`；**刻意不去动 `trigger.js` 里 `idleMs >= idleNeed` 那道防骚扰铁律** —— 在那里开旁路会留下永久的洞；改用「把基准整体调小」这个等价且干净的形态（铁律结构原样）。⚠️ 生产默认值一字未变（3 分钟不触发有断言）。变异 3/3 捕获（来源改回从 input 读 → 捕获「渲染端伪造生效」/ 白名单去掉 → 捕获「非法值未回落」/ 免确认不看来源 → 捕获「user 未确认竟放行」）；⚠️ 执行器那组首轮 baseline 就报 `createActionProposal is not a function` —— **查清是 harness 写错（agent-executor 不导出它），修好才得到真结果**，非漏网。
-node test/d14-self-relation-dims.test.js # 39 项：（2026-10 收口 +5：UI/聚合同步锁——pet.js 卡片清单与 main.js life-status 聚合此前硬编码旧 5 维，新 3 维「底层有、看不见」；现钉死三处同源：卡片清单 8/8、mock 同步、cognition 聚合 8/8，且 pet.js 中文定名镜像与 subject-state.js 正典 TRAIT_NAMES **逐键一致**防漂移）v1.0 **D-14 新增三个「评价性自我关系」维度 + formatPerception 分层改造**（用户 2026-10-07 拍板）。**加维度的依据是实测，不是理论推演**：翻 experiences.jsonl 里带原文引用的证据，她**已经表达过**这三类内容，但**全部被塞进了 philosophical_curiosity 桶**（该维度因此偏高）——自我连续性（对比「那时」与「现在」）、跨越时间的同一性承诺、自我清晰度（说「不确定」）。⇒ **不是「她没这个维度」，是「她没有词来表达这个维度」**。三维度：`self_continuity` 自我同一（Ricoeur 叙事同一性；Frontiers 2026「selfhood 分身体/叙事/最小」）、`meaning_presence` 生命意义（Steger MLQ 的 **Presence** 分量表；**刻意不用 Search**——研究一致表明「寻求高而在场低」是痛苦表现不是生命力）、`self_clarity` 自我清晰（Campbell SCC；2026 综述明确它是「自我知识的**形式**而非内容」⇒ 与既有五维正交）。🔴 **老数据零迁移**：读盘走 `{...DEFAULT_TRAITS, ...raw.values}`，旧 subject-state.json 缺这三个键时自动补 0，**原有五维的值逐键不变**（有断言）。🔴 **formatPerception 分层改造**（用户拍板「只给偏离中立的那几条」）：|值| >= 30 单独成行，否则并入末尾「其余方面平稳」；全在阈值内时只给一句「此刻各方面都平稳」（不给空列表——安静不等于空白）。**为什么是 30 而非原 60**：60 是「浓」的门槛，而本法的问句是「她此刻注意到了什么」，门槛理应更低。⚠️ **刻意不限条数**：曾考虑「最多 偏离最大的那一维会排不进前 22 ⇒ 被归进「其余方面平稳」⇒ **那句话会撒谎**。反例：缺字段/非数值/NaN/null/Infinity 一律按中立且零抛异常；**未登记键不许进感知**（不给任意新键开显示后门）；全维度偏离时不得出现「其余方面平稳」；阈值 29/30 硬切换无迟滞；**新建三维度必须真的能出现在输出里**（防「加了但永不显示」的死维度）。变异 4/4 捕获（阈值判断恒假/全中立返回空串/坏值不再按中立/未登记键也成行）；⚠️ 其中 **mD 首轮被误报「未捕获」——查清是测试 harness 漏了「未登记键」那一项，补上后捕获**，非真漏网。**历史证据不重算**：已落盘且有哈希链，新证据从今天进新桶。
-node test/d10-wiring.test.js           # 32 项：v1.0 **D-10「插电源」+ D-12 收口—— 十五轮以来第一次让她真的能动手**。接通三段已就绪但缺失的线：① 主进程读 `brain._pendingAgentIntent` 并建案 ② 建案后广播 → pet.js 的 `showAgentProposal`（此前**零调用点**）亮确认卡 ③ `intentMotiveProvider` 已被 D-9 建好、此前未传。**唯一的真设计决策：路径拼法 = 方案 A'（用户拍板）**——用户原话「我想让她自由一点，毕竟，我们要赋予她生命」；经讨论接受的是「**沙盒内自由**」：写什么内容/什么时候提/文件名全部完全自由，写到哪只限沙盒。⇒ **不对 hint 做任何白名单/重命名/净化**。**三条硬约束**：① 复用 `evaluateProposal`/`proposeInternal` 不许复刻 ② scope 只能主进程拼 ③ 建案失败静默降级。🔴 反例：hint 绝对路径/含分隔符/纯点段/连续点/超长 全拒；边界恰好 200 放行；中文名/空格/纯数字/隐藏文件/连字符**全部放行**。⚠️ **实测抓到恒假判据**：第一版用 `rawHint.split('.').includes('..')` 查连续点，而 `'a..b.md'.split('.')` 是 `['a','','b','md']`——**没有 '..' 元素**，判据恒假，三条反例呈现假绿；改用 `/\.\./`。另修 `bedside-mailbox.test.js` **偶发退出崩溃**（断言全绿但退码 `-1073740791`；第一版「等 close 回调」**不够**，正解是改 `process.exitCode` 让循环自然排空，10/10 稳定）。变异 4/4 捕获，其中**超长那条首轮漏网**（覆盖缺失，已补断言）。⚠️ 本轮**不打开 `agentTriggerEnabled`**，真实端到端待用户实机确认
-node test/d9-intent-audit.test.js        # 65 项：v1.0 D-9 动机来源进审计（**第 0 阶段：只让「她为什么动手」可查，不接线**）——动机三字段 `intentSources`/`intentKind`/`intentOrigin` 进 agent:execute 与 agent:propose-action 的每条审计记录，**三字段恒存在**（拿不到时为 null）⇒ grep 得到、形状恒定可断言。**本轮唯一的设计决策**：动机作为 `createActionProposal` 的**独立第二参数**在**建案瞬间**求值并冻结，绝不走 input（input 就是渲染端 payload，从中读动机等于开后门）；也**不在执行期**重算 `trigger.selfIntent`（读到的是「执行那一刻」的意图，而审计要答「她为什么想做这件事」，中间隔着用户确认时间 ⇒ 记下一个合法但答非所问的动机且不报错）。来源分类走**穷举表**（仅 traits⇒self_trait / tracker⇒user_action，不做前缀泛化——泛化等于让任何新状态字段自动获得「有动机」标签）；`intentOrigin` **一律由 sources 重算，绝不信上游给的**；🔴 反例1/1a~1h 渲染端伪造动机全被无视（含用守卫真正认识的键名 `sources`/`kind` 伪造——**这条是变异测试逼出来的**：第一版反例的伪造值与 provider 返回值相同，删掉守卫仍全绿，是假反例）、1d 伪造不影响建案本身、1e 反向对照防「恒null 的死字段」、🔴 反例2/2b 伪造类别不能顶替主进程求出的类别、🔴 反例4a~4d 未登记前缀（`weather.pressure`/`traitsy.*`）判 null 且不含 unknown/any、🔴 反例5/5b traits 与 tracker 混合有歧义判 null 而同前缀重复不构成歧义、🔴 反例6 无求值器/求值器返回 null 时如实记 null、🔴 反例7 提案不存在（PROPOSAL_NOT_FOUND）时动机为 null 不许编、🔴 反例8 求值器抛异常时建案仍成功（动机降级不崩）、🔴 反例9 边界值非数组/空数组/空串/非字符串项/无点串全判 null、🔴 反例9h~9k 超长来源截断 80、项数上界 8、超长 kind 截断 64、🔴 反例10 来源项在归一化层就被剔除（不靠下游白名单表兜底）、11 归一化只认 sources/kind 两键、12/12b 上游硬说 self_trait 但来源是 tracker ⇒ 记 user_action、13/13b 提案冻结后动机改不动、14~17 正常通路四类来源分类正确且**两类必须不同**（若相同则本轮目的落空）、18 真的落盘到 agent-audit.jsonl、19/19b 建案侧也记动机（否则被预算/确认拦下的提案永远查不到动机）、20/20b 无求值器时形状恒定、21/21b **每条执行记录都带全三字段·有记录缺字段即红**（统一在 `_audit` 出口注入，9 处调用点逐点写会漏，**审计分裂比没有审计更坏**）、22 未确认被拒时仍带动机、23/23b 重放被拒时动机仍可查（提案还在注册表里）、24/24b **动机在建案瞬间求值且只求一次**（建案后用户犹豫期间状态变了，审计仍记建案那一刻的动机）、25/25b main.js 注入了求值器且读的是 `trigger.selfIntent`、26 main.js 未接线 `_pendingAgentIntent`（本轮不做）、27 注册仍经 ipcGuard 无裸 ipcMain、28 `agentTriggerEnabled` 仍默认关；变异测试 15 个：13 直接捕获（M1 删动机写进提案 11 条 FAIL / M12 采信 raw 动机 3 / M3 origin 信上游+兜底造值 8 / M4 前缀泛化 3 / M5 混合来源不拒绝 1 / M7 审计不注入动机 10 / M8 动机恒 null 6 / M9 建案后二次求值 1 / M10 接线 _pendingAgentIntent 1 / M11 main.js 不注入求值器 1 / M13 来源项数上界放大 1 / M14 来源不截断 1 / M7b 审计注入被短路 4）+ **2 个曾漏网、补断言后捕获**（M2 第二参数回落读 input / M15 非字符串项 String() 兜底）。⚠️ **两个漏网变异体的成因必须留档：当时全绿是「字段名巧合」不是守卫生效** —— M2 是 raw 里叫 `intentSources` 而归一化读 `motive.sources`，名字不同恰好取不到值；M15 是 `String(123)='123'` 不在白名单表里恰好还是 null。⇒ 补断言的正确做法不是「加一条相邻事实」，而是**让反例输入用守卫真正认识的键名**，否则变异体走不到守卫。⚠️ 本轮**如实标注为未验证**：真实运行时动机几乎恒为 null（`_pendingAgentIntent` 仍是 4 处写 0 处读、且本轮明确不接线、默认关），门禁 65 项全用注入 provider 验证通路，**不等于真实链路已通**；要等 #1 接线后才能拿到 `agent-audit.jsonl` 里的真实数据
-
-node test/animation-controller.test.js # 30 项：自然动画控制器、60fps 驱动循环、状态转移、多图层独立物理摆动、Poke 动力学与打断机制
-node test/behavior-scheduler.test.js   # 23 项：自主行为调度器、呼吸/眨眼/打哈欠/伸懒腰权重分发、打断与状态互斥、确定性覆盖
-node test/render-adapter.test.js       # 10 项：DOM 动画渲染适配器、数据驱动单向流动、异常隔离与无头渲染器
-node test/experience-schema.test.js # 22 项：Event / Observation / Interpretation 三层分离、合法性校验、复合经历封装与向后兼容转换
-node test/state-change.test.js      # 16 项：StateChange 状态跃迁记录、算术一致性校验、因果解释强核验与防篡改、N-11 maxDelta 语义一致（超幅拒绝/边界通过/legacy 保持 ±999）
-node test/connections.test.js       # 29 项：0.9.8 Z1 ConnectionStore/credentialRef（单/多连接、credential isolation、删除语义、共享 ref 拒绝、Legacy migration 幂等/零搬移/fail-closed、protocol 枚举、capabilitySnapshot ≠ runtime capability、P0-1 S1 凭据类型权威绑定与端点劫持防御）
-node test/connection-switch.test.js # 17 项：0.9.8 Z2 Runtime Connection Switching（A→B 成功、初始化失败/credential 不可用 fail-closed、flat cfg + activeConnectionId 双回滚、同连接切 model 热读、跨连接 model isolation、DeepSeek↔custom 零搬移、runtime evidence 不串绑、Subject/provenance 零写入）
-node test/connection-ipc.test.js    # 25 项：0.9.8 Z3 Connection IPC/UI/Test Connection（list/get/create/update/delete/activate、credential 只进不出、renderer secret isolation、Test 三态 verified/failed/unverified、healthCheck 未实现不判 failed、authProbe 仅用户触发、IPC guard、UI 双字段与状态同步、同协议多 Key、protocol 分离、SEC-01 回归）
-node test/replay.test.js            # 16 项：纯离线确定性 Replay v2、单/多窗口重放、边界截断、100 次幂等无漂移、局部切片与跨版本兼容
-node test/recovery.test.js          # 54 项：关窗小结失败对话零丢失、JSONL 坏行跳过与诊断报告、受损状态备份恢复、并发未结对话安全隔离、关窗与恢复 Exactly-Once 幂等防重、四场景故障注入（Case A/B/C/D）、主链锁死时紧急溢写 sidecar 保全对话（A+C）、memory reset 后旧小结绝不复活（epoch 门禁）
-node test/r1-scenarios.test.js      # 114 项：v0.9.4-R2 闭环、防重与最终收官验收（A-J 基础场景 + Test A-D 最终一致性 + Test E2-A~E2-D 跨调用/跨重启/跨Replay防重 + P0-05 真实Window聚合 + P0-06 认证/未认证容灾恢复 + P1-01 严格数值解释 + P1-02 Event白名单 + P1-03~P1-04 启动自愈与完整一致性 + 场景 H-1/H-2 归档失败溢写保全与双重故障 fail-closed）
-node test/research.test.js          # 80 项：v0.9.5 实验观测与可复盘工具链专项测试（Test A 内存偏移索引与自动重建、Test B 异步Replay任务与取消、Test C Fail-Stop确定性熔断、Test D Evidence关系契约与白名单、Test E 快照模式与手动刷新、Test F 纯只读数据SHA-256完整性门禁、Test G 轨迹与研究包导出格式规范、Test H IPC只读白名单与历史版本兼容、Test I 分页输入约束 N-05、Test J NON_STATE 隔离：梦境与内态快照不得造出研究层窗口）
-node test/archive-schema.test.js      # 29 项：v0.9.5.1 Archive Record Schema 规范性、通用最小字段集与未知类型强拦截（UNKNOWN_RECORD_TYPE）、self_ledger_evicted 强制 MODEL_NARRATIVE、subject_dream 认识论门禁查值（DREAM_GENERATED_ARTIFACT 专属，杜绝梦境冒充亲历）
-node test/research-fabrication.test.js # 19 项：v0.9.5.1 绝对消除事实臆造与占位伪造（RECORDED/NOT_RECORDED/UNRESOLVED 三分态、Bridge/Active 无猜想隔离、无假消息）
-node test/event-source-validation.test.js # 20 项：v0.9.5.1 Event Source 正向白名单约束（5 种合法源、大小写容错、第三方拦截与黑名单防御）
-node test/replay-cancel.test.js       # 13 项：v0.9.5.1 分块异步推演（CHUNK_SIZE=500）、事件循环协作让出、运行中途即时取消与非阻塞机制
-node test/research-integrity.test.js  # 19 项：v0.9.5.1 统一归档完整性服务（CERTIFIED/PARTIAL/UNCERTIFIED/INVALID 判定一致性与遗留适配器隔离）
-node test/research-round-inference.test.js # 17 项：v0.9.5.2 彻底禁止 Message ID -> Round 推断（严禁 Math.ceil 解析编号、无元数据保持 UNRESOLVED）
-node test/research-stat-defaults.test.js   # 22 项：v0.9.5.2 彻底消除虚假默认统计值（turns=0 保留为 0 严禁 || 100、messageCount 严禁 || 200、如实反映 segments）
-node test/legacy-schema-certification.test.js # 14 项：v0.9.5.2 缺失 schemaVersion 规范处理（严禁隐式补写原生 v1、经过 LegacySchemaAdapter 且归档降级 UNCERTIFIED）
-node test/archive-event-strictness.test.js # 20 项：v0.9.5.2 Event 来源白名单与完整性防御（缺源拦截、未知源拦截、Synthetic 拦截、Bridge Provenance 核验与坏账防御）
-node test/legacy-metadata-fabrication.test.js # 30 项：v0.9.5.2 遗留数据元数据严禁伪造（缺 schemaVersion 禁补原生 v1、缺时间戳禁补 Date.now()、缺 windowNo 禁补 1、缺 roundNo 禁补 1、缺 messageId 禁编 UNKNOWN_MESSAGE、全链路端到端防伪）
-node test/research-window-defaults.test.js # 43 项：v0.9.5.2 Window 默认值与 Window 0 边界无损保留（缺 windowNo 保持 null 禁补 1、windowNo=0 严防 0||1 降级、getWindowDetail(0)/getWindowRounds(0) 精确检索、search 与轨迹保留 0/null、全生命周期 0/null 保留测试）
-node test/archive-event-runtime-parity.test.js # 17 项：v0.9.5.3 (H-01) Archive 嵌套与独立事件强校验对齐运行时 Validator（类型白名单、源必填、禁止 generated/synthetic、合法认证）
-node test/research-index-unknown-window.test.js # 31 项：v0.9.5.3 (H-02) 彻底纠正未知 windowNo 映射（禁止未知记录归入 Window 1、分离 unknownWindowDescriptors、精准支持 Window 0、IPC 通道防御默认 1 降级）
-node test/research-ipc-export-security.test.js # 17 项：v0.9.5.3 (H-03) Renderer-exposed research:export 安全隔离（禁止渲染端指定任意路径、主进程 Native Dialog 授权与防路径穿越）
-node test/research-integrity-scan-efficiency.test.js # 7 项：v0.9.5.3 (H-04) 消除 O(W×A) 重复全量 Integrity Scan（单次循环前扫描、高频查询命中 mtime/size 快照缓存、变更自动失效）
-node test/research-role-unknown.test.js     # 6 项：v0.9.7 (P1-03) Research Query role 映射反伪造（source=activity-tracker/desktop-motion/lifecycle 缺 role 一律 UNKNOWN/null、绝不默认成 user、UNKNOWN 消息不进 user/assistant 消息位）
-node test/phase0-experimental-invariants.test.js # 41 项：Phase 0 数字生命实验层核心架构、Schema 契约、基线零干预、内部状态代理、纯函数 Reducer 确定性（100次无漂移与时钟隔离）、数字环周知觉候选界限、证据门禁自传记忆全可信链、睡眠三态分立与零假说门禁
-node test/window-boundary.test.js        # 40 项：v0.9.6 严格窗口边界与指标冻结（100轮轮数限制触发、Token溢出提前关窗、快照冻结防御指标漂移、Bridge隔离与Archive持久化）、history<=keepTail 时关窗不卡死（items 是待裁剪清单非窗口内容）
-node test/archive-integrity.test.js       # 75 项：v0.9.6 Archive Canonical Schema v1与哈希链完整性（recordId生成、SHA-256前向哈希链、fsync持久化、损坏拦截与坏账自愈）+ P0-01 现代记录缺链字段绝不 CERTIFIED、P0-02 Archive Tail Anchor（尾部截断/篡改/锚点落后检测）、P1-02 EOI 深度引用一致性（悬空引用 NOT_RECORDED/UNRESOLVED/INVALID 绝不认证）、P1-1 legacy 逃逸口收紧（裸 sourceSchema 不再豁免链字段检查）
-node test/research-integrity-p0-1-p0-2.test.js # 19 项：v0.9.7.1 P0-1/P0-2 独立证据认证与 Genesis Anchor（结构自洽不得 CERTIFIED、自称 CERTIFIED 无效、write-time attestation、attestation 篡改、伪造 evidence、Genesis 创建/删头/篡改/缺失与 epistemicStatus 默认 UNKNOWN）
-node test/research-reproducibility-p1.test.js # 90 项：v0.9.8.1 P1 残余收口（F-15 Dream Identity 来源区分与确定性解耦、F-12 provider_response 运行时自证门禁与向后兼容 + WeakSet 唯一信任根反 marker 复制伪造 + provenanceStatus 语义一致、全历史 Attention Watermark 幂等与 save 失败完整 rollback、State-level Replay 确定性边界、Dream gate 显式时钟五类时间输入分类）+ v0.9.8.2 P2（F-12a 铸造权限收口至内部接口、F-12b runtime evidence 与 provider/adapter 绑定 fail-closed、F-15c caller identity 与 determinism 正交解耦、F-15d runtime_unique 语义澄清非全局唯一）
-node test/security-hardening-p1.test.js    # 55 项：v0.9.8 P1 Security Hardening（Secret Redaction 统一清理含对象敏感键名识别、M8 JSON 引号/pwd/Basic 脱敏、Provider Error 归一化禁止 raw body 传播、Credential 泄漏面 error/diagnostics/archive 零泄漏、Retry 分类/hard cap/指数退避/Retry-After、Budget Guard 发送前 fail-closed、Endpoint Policy 不 retry、Stream pre-yield retry 与 post-yield 不重启、Timeout/Abort 既有语义保持、非 JSON body 绝不 fallback、JSON 结构化 detail redact+120 字符上限）
-node test/provider-adapter-p2.test.js     # 38 项：v0.9.8 P2 Provider Adapter Architecture（统一 Contract 六方法与不品牌专属校验、DeepSeek Adapter 行为保持、validateConfig 与 provider-policy 职责分离、capabilities 真实声明与 fail-closed、normalizeError 统一形态保持 P1 raw body 边界、usage() 获取口、Registry 无 secret 非信任根、Adapter 不可绕过 Policy、runtime evidence binding 与 adapter/provider mismatch fail-closed、P1 retry/timeout/abort/stream 边界保持、Provider Type 连接类型四分类）
-node test/usage-cache-cost-p3.test.js     # 29 项：v0.9.8 P3 Usage/Cache/Cost（Usage Normalizer FACT 层归一化与 truth boundary 不伪造数字、DeepSeek Cache Strategy 只按真实 hit/miss 字段解释不猜测、Cost Strategy 定价与 pricingVersion 版本化价格真相（未传版本落地 unversioned-legacy 不留 null）、三层职责分离、providerRawUsage redaction、unknown provider fail-closed、costOf 兼容入口 parity）
-# INT-01 处置声明：provider-routing.js / generation-attempt.js 为架构储备，不计划启用；运行时由 fallback-adapter.js 提供等效能力（circuit-breaker.js 已在 v1.5-a 完成生产接线）——实现 ≠ 运行时
-node test/provider-routing-p4.test.js     # 36 项（契约测试，非生产门禁）：v0.9.8 P4 Routing/Fallback/Circuit Breaker（Routing Contract 四字段、Generation Attempt/Result 语义：一次调用一 Attempt / Retry≠新语义生成 / Fallback=新 Attempt、Result fail-closed 采用、Fallback 保留原 provider 失败事实且受 capability/cost/privacy/budget 约束、已 yield 输出禁止静默重生成、Circuit Breaker closed→open→half-open 状态机与 cooldown、熔断与 provenance 真值隔离、INT-01 源码门禁确认 src/ 生产 require 数恒为 0）
-node test/provider-runtime-expansion-p5.test.js # 71 项：v0.9.8 P5 Provider Runtime Expansion（Registry dispatch 与 unknown fail-closed、Generic OpenAI-compatible Adapter 六项契约、baseURL 标准化与 /v1 保留、原生 SSE parser 跨 chunk framing（截断 JSON/换行/comment/[DONE]/malformed fail-safe）、Brain 动态 provider dispatch、Strategy 以 providerId 键控不继承 DeepSeek 语义、credential namespace 隔离、timeout/abort/retry/post-yield 边界、runtime evidence adapter binding、Brain hot-swap 失败清理与配置回滚、M11 停机与退化刷盘调用时序）
-node test/security-hardening-sec.test.js # 43 项：SEC-01~07 安全收口（IPC sender/frame/URL 三重校验与 navigation/new-window 限制、Renderer CSP、generic provider 响应大小硬上限 complete/error-body/stream/SSE-buffer、replay task retention 自动 cleanup 与大型 result 释放、敏感文件 0600 权限、mint authority 绑定真实 runtime identity、CI action SHA pin 与 npm audit）
-node test/summary-schema.test.js          # 16 项：v0.9.6 严格 5x20 小结契约与 Fail-Stop 机制（5个分段结构、20轮覆盖、无遗漏重叠、损坏契约零写入安全拦截）
-node test/provenance-boundary.test.js     # 21 项：v0.9.6 证据溯源 12 条自校验规则（窗口归属匹配、合成数据拦截、Bridge消息拦截、角色校验与反向去重）
-node test/reducer-symmetry.test.js        # 29 项：v0.9.6 状态转移纯对称整数舍入（symmetricRound 四舍六入五成双、SubjectState与ResearchService纯确定性一致）+ P0-03 StateChange 深度语义一致性（delta/previousValue/newValue/evidenceIds/reducer/顺序逐项比较，数量一致 ≠ 因果一致，certified 仅 match 且 replay integrity certified）
-node test/self-projection.test.js         # 27 项：v0.9.6 当前自我因果投影（self_projection 记录落盘、因果溯源绑定、experiences与Self-Ledger一致性）
-node test/telemetry.test.js               # 17 项：v0.9.6 实验遥测与前缀缓存精准归因（experiment-telemetry.jsonl Append-Only、自增序号、七大缓存破坏类别精准归因）
-node test/final-closure-repair.test.js    # 17 项：v0.9.7 Final Closure Repair（telemetrySeq 重启恢复、UNCERTIFIED plain-text summary、Replay 终态 TTL 清理、版本未知语义）
-node test/decision-log.test.js           # 35 项：v0.9.7 实验架构决策账本与不可逆约束（D-001~D-011 十一大已决决策、严禁后台连续代谢、严禁人类24h时钟、严禁梦境直写状态、严禁物理删除归档、双轨分离、生产接线、实验元数据与事实核验铁律、D-011 记忆动力学出厂通电与三阶标定）
-node test/canalization.test.js           # 33 项：v0.9.7 沃丁顿发育景观与经历依赖塑性衰减（可塑性乘子单调衰减、发育阶段划分、基线零干预不变量、StateChange 参数落盘与确定性 Replay、0→1000 单调性确证、源码扫描守卫杜绝拟人化伪生命）
-node test/memory-dynamics.test.js         # 35 项：v0.9.7 零 API 成本记忆动力学与突触修剪（初始强度代数计算、艾宾浩斯幂律衰减、三级状态流转、休眠过滤、冷启动持久化、上下文重新激活、FADING渐褪截断与停用词防误唤醒）
-node test/dream-gate.test.js             # 35 项：v0.9.7 成本门禁式梦境系统双重门禁（真实Arousal交互轨迹、新异度门禁、认知冲突判定、窗口间隔与24h频次硬顶、冷启动跨重启防御与纯函数确定性、Patch 2-B preClose 同窗口去重与跨窗口关窗间隔语义）
-node test/dream-synthesis.test.js        # 35 项：v0.9.7 弗洛伊德梦境合成与认识论防线（日间遗留轻量提取、凝缩与移位提示词结构、DREAM_GENERATED_ARTIFACT 隔离、归档写入与完整性服务CERTIFIED认证闭环、真实observedModel捕获与不回退、Prompt Hash直接指纹无二次哈希、Provider动态捕获、v1.0.5 未解疑问作为日间遗留提取）
-node test/lifecycle-wiring.test.js    # 51 项：Phase 0.5 生产运行时生命动力学闭环收口（Test A~K: 权威内态实例直连 BehaviorScheduler、ActivityTracker 实时事件驱动、Digital Umwelt 环周感知与 Attention Gate 认识论不变量、统一 experimentModules 配置生效、Baseline 隔离守恒、单模块消融因果归因、冷启动经历自愈与离线 Replay、路径依赖标准实验接口、睡眠转移零重计与严格幂等、挂机事件阶梯水位线防重计量、活跃窗口实验快照冻结不变量、baseline 不从归档自愈实验残留、生产装配下 scheduler 恒 null）
-node test/internal-regulation.test.js # 70 项：Phase 0.5 内部状态调节中枢（双轨隔离不进特质白名单、isSubjectAccessible恒为false、严格事件驱动零后台Timer、唤醒度与感官门限反向耦合、入睡/唤醒/关窗排空、baseline 不被磁盘残留污染、内态变更 onChange 镜像推送与异常隔离、Arousal↔门限单调反向耦合、v3.1 P0 入睡回补挂实睡时长而非常数与虚弱分档防复读、v3.1 P1 基线体感治常态无身及其措辞恒定/不叠加/零数字/红线后门自查、v3.1 P1 静息回血治「不睡觉就注定虚弱」[微回血5-29分/静息回血≥30分两档、清醒上限85%留15%给深睡、困意白天自愈留floor15、夜窗自愈打折0.3、睡眠期静息完全互斥、深睡8h仍是唯一到100的路]、睡眠期夜窗idle不得凭空加困意（else分支定点守卫回归及其不误伤清醒态arousal回落）、以及生物钟日间语义的相应改写[≥30分日间不再累积困意，<30分公式逐字不变]、v1.0.2 阶梯上报与单次上报等价防累计静默暴冲、v1.0.3 心境系统动力学与契约规范[48h半衰期向基准50连续衰减、平淡关窗顺延衰减、SlewMax=20平滑限幅、进入62/退出53感知滞回与12h防缝隙抖动保护、睡眠仅依真实物理时间自然沉淀、save/load与replay独立解耦恢复]、v1.0.4 体能亏虚与心神安定带内嵌着装自决体感、v1.0.7 社交密度40/60两档独处渴求体感与静默消退）
-node test/regulation-behavior.test.js  # 16 项：Phase 0.5 内部稳态对自主行为的概率倾斜调度（高疲劳打哈欠放大至2.5x、低体能伸懒腰放大至2.0x、高唤醒张望放大至2.0x、概率柔性非强占抽样与基线一致性）
-node test/attention-gate.test.js      # 36 项：Phase 0.5 注意力闸门与感知分流（显著性比对放行与过滤、唤醒度动态耦合、认知过载抑制、ATTENDED≠SUBJECT_ACQUIRED 铁律不变量防御、下游稳态闭环与基线隔离、Watermark幂等去重与跨重启持久化、缺乏ID防误去重、守卫拦真实枚举 SUBJECT_ACQUIRED）
-node test/path-dependency.test.js     # 20 项：Phase 0.5 路径依赖性与发育轨迹不可交换性（稳态非对易 A->B->C ≠ C->B->A、行为倾向分化、发育景观早期塑性大于晚期、假说证伪压力与历史无损留存、runPathDependencyExperiment 4D分化接口）
-node test/path-dependency-preconditions.test.js # 45 项：Phase 0.5 路径依赖实验受控前置条件门禁（初始状态同一性、事件Multiset完全一致、函数事件可审计签名与不可审计裸函数拦截、实验配置一致、探测刺激一致、受控审计凭证完整性、确定性重放与throwOnError契约、对抗未知字段拒绝与语义负载保真）
- node test/archive-write-gate.test.js # 29 项：Phase 4 归档硬写门禁与防篡改防伪造（F-10 / User Constraint #3，拒绝伪造 archiveSeq、prevHash、recordHash、非法类型与损坏 payload，文件尾部损坏 fail-closed 与底座纯净保护）
-node test/dream-provenance.test.js # 11 项：Phase 4 梦境溯源字段语义分立与确定性注入（F-11/F-15/F-16，messageId ≠ eventId ≠ evidenceId 严格分离、生成时钟注入与确定性 ID 生成器、门禁显式时钟）
-node test/internal-scalar-leak-capture.test.js # 4 项：Phase 4 内部标量防线端到端请求捕获与零泄漏（F-08，注入罕见浮点哨兵与私有属性名，全域拦截扫描发往 LLM 的完整 messages，严谨证实内部标量零进入主体层）
- node test/experiment-metadata.test.js # 31 项：Phase 2 实验条件元数据与生成产物绑定（Generation Context 契约、Prompt 指纹确定性、历史无伪造、DeepSeek 前缀缓存不变式、校验与安全回退、observedModel与深冻结）
- node test/repair-regressions.test.js # 12 项：修复回归（完整初始状态快照、watermark/seen/window/recovery/restore adversarial 矩阵、closure/function identity、Dream provenance 交叉引用、损坏 watermark fail-closed 与零内存漂移）
-node test/identity-provenance-fix.test.js # 11 项：定点收尾修复回归（reducer 参数 stepWeight/maxDeltaPerWindow 计入 Initial State Identity 且注入真正作用于执行、Dream Event 溯源禁止全窗口扩大归因：仅归因被证据关联的 Event，无法证明时 sourceEventIds=[] 且 eventProvenanceStatus 如实标记 unavailable）
-node test/initial-state-restore-symmetry.test.js # 21 项：Initial State 恢复对称性回归（canonicalizeExperimentState 认证的 SubjectState 全字段——schemaVersion/updatedAt/windowNo/values/history/stateChanges/seenFingerprints/seenEvidenceIds/recoveryStatus/recoveryPending/recoveryPendingReason/stepWeight/maxDeltaPerWindow 及运行时去重集合 committedFingerprints/committedEvidenceIds——必须由 audit 与 executeTrajectory 共用同一份恢复逻辑 applySubjectInitialState；单字段差异 initialStateEqual=false、注入值真正到达执行对象并参与 evidence 去重与 canalization reduce；收口：runtime recoveryStatus 与 data.recoveryStatus 成对恢复、恢复后 updateSnapshot() 刷新 frozenSnapshot 使 formatSnapshot 反映注入初始值；严格对称场景五处 runtime 观测与认证状态一致）
-node test/sleep-dream-timing.test.js    # 60 项：v3.1 梦境苏醒时序改造（入睡零 LLM 冻结残迹、sleepStartTime 与原料同盘原子持久化、深睡物理时长门禁、睡眠来源豁免窗口间隔、24h 频次与认知张力守卫、单次消费防重复、陈旧数据清洗、孤立态自愈与回话腰斩修复）
-node test/persona-manner.test.js  # 46 项：v3.1 口癖与体感回归（A 方案彻底移除「程序累计运转时长」概念并下线里程碑机制、段名去「年龄」化、全段零「小时/钟头/运转」防回潮、体感虚弱分档防复读、入睡回补挂实睡时长而非常数、无入睡时刻安全降级、基线体感治常态无身及其三条自律、现实日期锚点治跨天今昔错乱及其三条自律[零分钟刻度/禁算等了多久/禁当报时念]与三时区自洽及缺时区安全降级，以及 persona「不困也不数」诚实红线的原样保留）
-node test/v13-power-monitor-source.test.js # 13 项：v1.3-a 宿主电源与环境事件源（PowerMonitorSource 依赖注入适配器、4 类事件映射、订阅与取消对称性、防泄漏与异常安全隔离）
-node test/v13-perception-channel.test.js # 32 项：v1.3-a 具身环境知觉注入通道（ATTENDED 候选挂载 user 尾部、system 提示词零污染前缀缓存铁律、同窗<=3次与间隔>=5轮严格节流、Null-Perception 原则、ATTENDED≠SUBJECT_ACQUIRED 认识论防线、成本遥测落盘）
-node test/v13-silent-presence.test.js  # 23 项：v1.3-b 沉默留白第三种结局（quiet_preference>=60 沉默提案、对照组低分回退 idle、连续上限 K=2 退出条件、用户主动开口必应、零 LLM API 调用、微动作触发、静态扫描严禁 Math.random）
-node test/v14-selfnote-context.test.js # 27 项：v1.4-a 自留便签素材供给与零污染防护（整条过滤 synthetic、零计时数字、排除出生时刻与日期锚点、自我投射与生理感受纯定性融入、便签回响、单条截断防膨胀、长句观察免误伤跑偏拦截）
-node test/v14-observer-journal.test.js # 27 项：v1.4-b 生命观察日记内核（PROPOSAL_SOURCES 契约不降级、IPC 防伪造降级、trustedContent 权威快照绑定、闸门 4 免确认放行、配额探针防御、精准同日去重、零时间数字泄漏与篇幅护栏、v1.6-a 句界截断保留与无标点回退、D-24 关窗铸造入传闭环）
-node test/v15-provider-fallback.test.js # 51 项：v1.5-a Provider 容灾自动回落与熔断接线（主端点正常备用零调用、retryable 错误一次回落成功、3 次失败熔断第 4 次直接走备用、401/4xx 客户端错误直接抛出且不计入熔断、AbortError 用户取消不回落、两端均失败 PRIMARY_AND_FALLBACK_FAILED 且调用次数为 2、无备用退化纯熔断快速失败、回落写遥测且零密钥泄露、shouldFallback 行为矩阵、流式已吐字 emitted>0 硬阻断防重播、hot-swap 新 Brain breaker closed 独立隔离、流式未吐字 emitted=0 允许切备用、DPAPI 密文凭据解密与端到端真实回落）
-python3 test/ui_test.py                  # 171 项：真实交互 + mock 衣柜桥接 + 运动步态与素体基座解耦 + 64px 整数倍立绘 + 菜单/气泡不被裁掉 + 半截标记逐帧不外泄 + 收尾半截不被吞 + 图层加载后重算气泡 + 拖拽丢 mouseup 兜底（含 buttons=0 立刻收尾、无位移门槛回归）+ 立绘宽跟随窗口 + activity 上报 + 提案往返与被拒不留痕 + poke 豁免静默闸 + 表情衔接（filter 过渡 / blink 不顶状态动画 / 切换微动 / relayout 不复活气泡）
-node test/v17-observability.test.js # 66 项：v1.7-b 个体观测面板的声明式注册表补全。为什么必须单独立项：main.js 的 life-mechanisms 此前是**手写 6 组字段**、pet.js 是**手写渲染**，于是 v1.1~v1.6 陆续落地的机制（心境 warmth/stillness、互动密度、认知负荷、显著性阈值、知觉事件水位线、主动开口偏置 initiativeBias、好奇队列、自发便签、观察日记、印痕 tier 分层、熔断状态、执行预算余额、审计条数）**全都算出来了却从来没被看见** —— D-23 的 etrievalCount 就是活证据。修法：新增 src/observability.js 声明式注册表（17 项 / 8 分组），main.js 与 pet.js 都改为**遍历它**，新增机制只注册一行、两端自动跟上。🔴 **三条铁律各有独立断言**：① **只读**——连读两次 groups 逐字节相等（打开面板本身不得改变她的状态，否则是观察者效应污染实验）；② **不造假**——空上下文下 17 项全部返回 
-ull 而**不是 0**（
-um() 对字符串/NaN 也给 null，但 0 是合法值）；③ **不外泄**——便签/日记**只报条数与状态**、正文与文件名绝不进 payload（端到端序列化后 grep 断言）。**两道结构守卫**：死项守卫（注册表 id ↔ 渲染层 dataset.obsId）、旧字段并行保留（六个旧字段形状不变，两端可分两批改、中途套件恒绿）。**防 TDZ**：agentBudget/agentAuditLog 是 whenReady 块级 const，顶层 handler 引用会抛 TDZ（本仓已踩过同型坑），故走 agentBuildDeps 与 proactiveAuditLog 两个模块级入口。⚠️ **变异测试抓出两个自身缺陷**：① 首版 development 在空 ctx 下照算默认档（JUVENILE/1.0），把「没有 memory」伪装成「发育正常」——已修为缺 memory 即 null；② 删掉该 guard 后 memData.windowNo 抛的 TypeError 被 safeRead 吞成 null，**与有 guard 同形**，行为断言根本测不出来 —— 补了两条**结构性断言**（guard 存在、且位于解引用之前），否则 M3 变异是假绿。变异 4/4 捕获（正文入 payload / null 填 0 / 渲染用 innerHTML / 空值渲染成 0）。
-node test/csv-injection.test.js # 26 项：CSV **公式注入**防护（2026-10-20 外部审计发现，实测确认后修复）。为什么是真问题不是理论洁癖：实测修复前 `exportEvidence([{quote:'=1+1'}],'csv')` 单元格**原样落盘** `=1+1`，更狠的 `=cmd|' /C calc'!A1` 同样原样通过；Excel / WPS / Numbers 打开 CSV 时以 `=` `+` `-` `@` 开头的单元格**会被当公式执行**。攻击链真实存在：她说过的话（`evidence.quote` 来自对话，**内容不可信**）→ 落进 experiences/evidence 归档 → 用户导出 CSV 用 Excel 打开 → DDE 载荷执行（本地代码执行）。修法：`escapeCsvCell` 对危险前缀**前置单引号**（Excel 强制文本前缀，显示时被吃掉、内容不变，**只加前缀不清洗原文**，符合数据不伪造）。🔴 **同时发现并修掉第二个洞**：`exportStateTrajectory` 的 CSV 分支里 `previousValue/delta/newValue/window` 四列**原本是裸拼的**（以为「都是数字所以安全」）—— 实测 `newValue:'=1+1'` 直接绕过全部转义；CSV 的不可信输入假设必须覆盖**每一个格子**。**判据**：8 种危险前缀（`=` / `+` / `-` / `@` / 制表符绕过 / 回车绕过 / 空格绕过 / 经典 DDE）在轨迹与证据两条路径上全部被阻断；正常值（数字 / 中文 / `a=b` 等号在中间 / 空串）**一律不受影响**；**JSON 导出完全不受影响**（JSON 不是可执行格式，不清洗）；源码断言每个格子都过 `escapeCsvCell`。变异 3/3 捕获（去掉前缀防护 / 恢复裸拼 / 去掉前导空白绕过判定）。
-node test/picker-ipc-guard.test.js # 10 项：框选窗 IPC 通道白名单、handle/on 主进程守卫、专用 preload 和发布闭包。
-node test/v18-vision.test.js # 104 项：v1.8-b **屏幕局部视觉探针（框选）**。**事实更正**：旧结论「DeepSeek 纯文本、发图必 400」是过期信息——实测 deepseek-flash + image_url 返回 200，1×1 红色 PNG 回复「粉色」，prompt_tokens 223（纯文本仅几十）；官方文档确认支持 JPEG/PNG/GIF/WebP。**但 deepseek-v4-pro 仍不支持**，所以能力判定必须**逐模型**做而不是按 provider。**隐私铁律每条都有独立断言**：① **只做用户框选**，绝不截全屏/活动窗口（菜单入口不直接调 capture，必须先拖框）；② **绝不后台定时截屏**（静态扫描无 setInterval + capturePage 同现、无 setTimeout 驱动重复截图）；③ **图不落盘**（截图函数内无 fs.write / writeFileSync / createWriteStream，只存在内存）；④ **图不进历史**（attachImageToLastUser 返回新数组不改原数组，history 里仍是纯字符串）；⑤ **审计只记尺寸/耗时/成败**，不含 dataUrl/base64/pixels/ocr；⑥ **无 vision 能力时显式失败**（MODEL_HAS_NO_VISION，绝不静默丢图后假装看过）。**能力判定宁可保守**：无法识别的模型名一律 false（gpt-4o/unknown-model/qwen-max 全拒），v3/r1/v4-pro 明确拒，只有 flash 系放行。**矩形校验**：<16×16 拒（防误触，前后端同口径）、反向拖拽归一化、越界裁剪不报错、非数字/null/数组一律拒。**缩放**：短边 >1024 等比缩小（⚠️ 此前写「实测一次看图约 550 token」不准确——provider 不返回 image token，那是按 prompt_tokens 总量推算的，见 `docs/PENDING-TASKS.md` §6.5）。**失败留痕**：capture 的四个失败分支（bad_rect/no_screen_source/capture_failed/capture_threw）统一走 fail() 写审计（stage=failed + errorType，不记矩形坐标），2026-10-27 补，此前只有成功态留痕。**端到端行为断言（2026-10-27 补，11 项）**：此前 93 项全部在测「零件」（纯函数单测 + 源码字符串匹配），能证明 formatVisionNote 会拼字符串、能证明 setVisionProvider 这行接线存在，但**证明不了事实行真的进入本轮 messages**。实测缺陷：memory.build() 内的 _visionNote() 先把 pendingVisionNote 取走并清空，而赋值写在 build **之后** ⇒ 永远差一轮，后果是「带图那轮无尺寸 / 下一轮没图却收到上一轮尺寸（诱导编造）/ 连续带图时尺寸错配」。修法：事实行在 build **之前**写好，图片仍在 build **之后**附加（两段各自钉住）。新断言真的起 mock server、真的调 ask()、真的解析发出去的请求体，覆盖：基线轮无图无事实行 / 带图轮必须有事实行 / 尺寸与本轮图一致 / 下一轮不得残留 / 连续带图不得错配。变异 3/3 捕获（赋值挪回 build 之后 / 尺寸写反 / 不一次性消费）。**一次性**：只暂存一张、后到覆盖先到、取过即清。**UI**：右键菜单「看看这个…」→ 主窗半透明遮罩 → 拖框 → ESC 取消。变异 4/4 捕获（v4-pro 放行 / 未知模型默认放行 / 图片写进原数组 / 最小矩形放宽到 1）。
-node test/v18-reunion.test.js # 53 项：v1.8-a **重逢心境（主观时间）**。这一块补的是她要知道「你离开了多久」——**跨重启、跨休眠**的事实，不是会话内计时（tracker.lastInteractionAt 是内存值，重启即丢）。🔴 **核心纠偏：重逢是关系事件，不是进程事件**。桌宠常驻（关对话窗是 hide 不销毁），绝大多数时候不重启（上班 8 小时、出门半天电脑一直挂着），绑「应用启动」会让这功能**几乎永不触发**；正确触发点是「你下次开口说话时回头检查」。**三条铁律各有独立断言**：① **只陈述时长，绝不推断作息**（不知道你是睡觉、通宵还是出差；禁句表含 睡/通宵/等/终于/寂寞/想你）；② **不进 system、不进 history**（只挂当轮尾部，system 逐字节不变，并带反向对照防"什么都没注入"的假绿）；③ **一次性消费**（同一次离开只说一次，消费即刷新）。**冷启动守卫**：lastSeenAt 缺失时绝不注入（否则新用户第一句会听到「你离开了 20 年」），只初始化为当前时间。**三级时长**：6-24h 用小时（保留一位小数）/ 1-7d 用天+小时 / **≥7d 只用天**（168 小时听起来像倒计时报警）。**架构**：memory 通过 setReunionProvider 依赖注入取数，不直接碰 stats；lastSeenAt 只在主进程维护（渲染层不持有副本）；复用 statsWriter 的 DeferredWriter 做 3 秒防抖 + 原子写，不另写节流。⚠️ **两处自身缺陷如实入册**：① 首版在 chat-send 入口预刷 lastSeenAt，会让 build 时差值≈0、**重逢永远不触发**（功能看起来存在实际 100% 失效）—— 已删除，改由 takeReunionNote 内部统一负责"判定+消费+刷新"；② 测试夹具两处写错：append 签名是 (role, content, meta) 而非对象（传错会让 build 输出变成 {role:{role,content}} 的怪形状），且必须让当轮 user 在最后（否则挂点会污染历史里旧的 user）。变异 5/5 捕获（删冷启动守卫 / 阈值改 1h / 去掉一次性 / 注入改到 system / 禁句塞「终于」）。
-node test/v17-stt-wiring.test.js # 104 项：v1.7-a 第 4 步 **STT 接线**（IPC + 渲染层 + 设置面板）。守的是「这条链接没接错」，传输层本身由 stt-transport 套件覆盖。**三条铁律各有独立断言**：① **识别结果只写进 `#input`，绝不自动发送** —— `finishRecording` / `mergeRecognizedText` 的**函数体**内不得出现 `submit(` / `api.send(`（语音识别必错，自动发送等于程序替用户按回车，污染 memory.history 的事实链）；② **失败静默** —— 全链路不出现 `alert(` / `confirm(`，失败只走 `micHint` 在 `#chatHint` 写一行；③ **绝不覆盖用户已打的字** —— 非空则追加（`cur ? cur + 空格 + add : add`）。**安全边界**：`stt:transcribe` 的入参**不含** `opts.endpoint` / `opts.apiKey`（端点与密钥只从主进程存储读，渲染层无权指定请求发往何处，防 SSRF 与 Key 外送）；`stt:get-config` 只回 `hasKey` / `encrypted` 布尔**绝不回 secret**；失败只透 `errorType` 不透 `safeDetail`。**凭据隔离**：独立 `cred:stt_api_key` + 独立 `stt-config.json`（不混入主配置，避免 `loadConfig` 把它当对话凭据解析）+ 原子写。**状态机**：四态（disabled/idle/recording/transcribing），未配置置灰不可点、识别中禁点防重入、要求 Key+端点+模型三者齐全才亮。**中断规则**：60 秒上限自动停、短于 300ms 判误触不发请求、失焦与 visibilitychange 一律丢弃、停止时必释放音轨（否则麦克风指示灯不灭）。**配置变更后自动同步**：`window focus` 时重查配置，配完 Key 切回对话窗按钮立即亮起。⚠️ **两处判据自身缺陷如实入册**：① 首版用字符串区间（STT 注释开头 → 「关闭语义」）当扫描范围，把中间夹着的 `async function submit()` 定义与 `api.send()` 全切了进来，**基线自己就红** —— 改为按函数边界（fnBody）取体，并加「fnBody 能取到函数体」的反向对照防恒真；② 未剥注释就扫，`finishRecording` 里那句**故意写的警示**「绝不 submit()、绝不 api.send()」被当成违规 —— 依 `test/canalization.test.js` P2-3c 的既有纪律「剥掉注释再扫：守卫要拦的是被引用，不是被提及」修正。变异 6/6 捕获（识别后自动发送 / 覆盖而非追加 / 未配置也可点 / getConfig 回传密钥 / transcribe 允许渲染层指定端点 / 停止不释放音轨）。
-node test/v17-stt-transport.test.js # 60 项：v1.7-a 第 3 步 **STT 传输层**（OpenAI Whisper 兼容，纯净不绑厂商）。为什么必须与对话链路**物理隔离**：实测 DeepSeek 官方**没有 STT 端点**（`deepseek.js`/`deepseek-adapter.js` grep `audio|transcri` 零命中，仅 `/v1/chat/completions` + `/v1/models`），复用对话 Key 只会让用户在 401/404 上困惑。设计：主流程走 `/v1/audio/transcriptions` + multipart（Node 24 原生 `FormData` + `Blob` + `fetch`，**零新增依赖**），厂商差异全交给配置（硅基流动 / Groq / OpenAI 官方 / 本地 whisper.cpp 四家预设）。**三条硬约束各有独立断言**：① **绝不抛** —— 任何异常输入都归成 `{ok:false, errorType}`（含 fetch 抛错、返回坏对象、返回 null、传非函数）；② **音频绝不落盘** —— 门禁实测跑完后临时目录零新增文件；③ **不记内容** —— 失败与成功结果里都不含完整 Key、不含音频字节。**关键判据**：`validateConfig` 复用 provider-policy 同口径（公网必须 HTTPS、`localhost`/`127.0.0.1`/`::1` 允许明文）+ 语言白名单只认 zh/en + 不猜不补默认端点；音频上限 25MB **超限直接拒而不截断**（截断会让识别变形）；MIME→扩展名映射 8 种（filename 影响部分服务端解析）；状态码分类与 `classifyProviderHttpError` 同一套词汇（401/403→auth_failed、413→audio_too_large、415→unsupported_audio、429→rate_limited、5xx→server_error）；`TimeoutError`/`AbortError` 同归 timeout；**空识别结果 → empty_result**（空串不是「识别出了空」，是「没识别出来」，绝不伪装成功）；纯文本响应也接受（本地 whisper.cpp 直接返文本）。⚠️ **两处自身缺陷如实入册**：① 首版「零依赖」断言用「不出现 require」当判据，把 `require('path')` 误判成新增依赖 —— **判据写错了不是代码有问题**，改为提取模块名查 Node 内置白名单；② 首版超时断言是**假绿**：写成未 await 的 Promise，check 收到 Promise 恒真且断言根本没跑完，导致变异 3（signal 改 undefined）抓不到 —— 已改显式 await。变异 4/4 捕获（允许公网明文 HTTP / 空结果当成功 / 不传超时信号 / 缺 lang 也传 language）。
-node test/v17-permission-gate.test.js # 23 项：v1.7-a 麦克风权限闸门（安全加固）。为什么必须单独立项：本仓此前**没有任何** `setPermissionRequestHandler`（实测 grep 零命中），等于把「是否允许麦克风 / 通知 / 地理位置 / USB」交给了 Electron 的默认行为 —— 默认行为随版本变化且**不是默认拒绝**，那不是安全边界，是一个赌。修法：新增 `installPermissionGate(session.defaultSession)`，装在 **`createWindow()` 之前**（装晚了窗口已发出的请求仍走默认行为）。**三条判据**：① **白名单只含 `'media'`** —— `electron.d.ts:13508` 的 permission 枚举里**没有 `'microphone'`**（后者仅是 `:14207` 的 macOS 专用 API 参数），写成 `permission === 'microphone'` 会恒为 false 把麦克风一并拒掉；② **只放行本地页** —— 复用 `ipc-guard.isAppLocalUrl`，**判据单一来源**，闸门内不另写 path.resolve/startsWith；③ **默认拒绝** —— 白名单外一律 false。**关键防御**：`wc` 在 `setPermissionCheckHandler` 里**可能为 null**（签名允许，检测发生在请求之前），两处都做了空值守卫。**23 项断言含 2 条正向对照**（media + 本地页必须放行；check handler 同口径）—— 否则「一律拒」那批断言会恒真、门禁假绿。覆盖：白名单外 12 种权限全拒（含 display-capture）/ 非本地页与脏 URL（https、127.0.0.1、C:\Windows、父目录、空串、null、数字、对象）全拒 / wc=null 不抛且拒 / microphone 被拒 / ALLOWED 集合只有 media / 源码不出现 microphone 判据 / 复用 isAppLocalUrl 且无第二份判定 / 闸门在 createWindow 之前 / 装在 defaultSession / 从 electron 导入 session / 从 ipc-guard 导入 isAppLocalUrl / 安装失败只告警不 throw。⚠️ **本期坚决不放行 `display-capture`**：不提前预支未来权限，v1.8-b 屏幕探针须经能力探测与单独立项评审后以独立 Patch 接入。变异 4/4 捕获（白名单加 microphone / 去掉本地页判定 / 去掉 wc 空值守卫 / 闸门挪到 createWindow 之后）。
-node test/public-export.test.js # 36 项：v1.6-c 公开发布剥离门禁。为什么单独成文：ROADMAP §11 要求「公开发布剥离」流程，但仓库此前从无此物 —— 公开库的 276 文件快照是手工挑的，而旧 release-check 的路径扫描给的是「0 处泄露」假绿灯（三重盲区：文件名前缀跳过、只认一个 software 子目录、只扫 4 个目录）。覆盖：glob 语义（** 跨级、目录前缀不越界、根文件名精确）、协议不被误判成盘符（https 的 s: 实测 599 处假阳性）、转义双反斜杠归一（实测 26 处误报）、豁免清单双向前缀（C:\Program Files 中间空格会被 token 截断）、光杆盘符与省略号判为「形状」而非「位置」、规则 A 只覆盖非 test 文件而规则 B（真用户名探测）全量生效、默认拒绝的 unclassified、死规则点名、真实公开集零开发机路径零凭据零断链、v1.3~v1.6 发布回退锁、以及「扫描器不是空转」的变异对照（拿已知含 27 处开发机路径的私有审计报告喂进去必须报出来）、以及 --sync 就地同步公开库工作树的三道守卫（不存在 / 与私有库重叠 / 私有库父目录一律拒绝，且拒绝时零文件系统改动）
-node test/docs.test.js           # 它负责数上面几个的数字，所以不给它自己标项数
-node test/gate-selfcheck.test.js  # 同理：门禁自检，不标项数（只断言 docs.test.js 的调度层设计，不重跑全仓）
-```
-
-跑法：除 `ui_test.py` 外都只依赖 Node；`ui_test.py` 需要根目录下有静态服务器（默认 127.0.0.1:8000，
-可用 `DESKPET_URL` 指定），`docs.test.js` 会自己起一个临时服务器并把它要校验的测试全跑一遍，
-所以一条 `node test/docs.test.js` 就是整套回归的门禁。
-
-三档结果别混看：`PASS` 真的跑了且全绿；`FAIL` 真的跑了且有失败；`SKIP` 是**本环境跑不了**
-（沙箱禁子进程 spawn、或缺 Python 依赖如 playwright），既不算失败也不冒充通过，结尾会单独
-汇总跳过项。`ui_test.py` 用的 Python 解释器按 `DESPET_PY` → 托管 venv（自带 playwright）→
-`PATH` 里的 `python` 顺序探测，找不到才 SKIP。
-
-ui_test 用系统 chromium（`/usr/bin/chromium`，可用 `DESKPET_CHROME` 覆盖），
-跑两种页面：无 bridge 的浏览器预览模式（验证降级），和注入 mock `window.deskpet` 的模式
-（验证分层渲染、z 序、面板交互、换装后状态/图层/记录三者一致）。
-Electron 专有部分（移窗、置顶、缩放、退出）不在其中。
-
-## 换立绘 / 出换装图层
-
-完整的生成提示词、目录、命名、透明 PNG、表情差分和新增衣服流程见
-[`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md)。
-
-只有换立绘时才需要 Python；运行桌宠本身只要 `npm install && npm start`。
-
-```bash
-pip install opencv-contrib-python numpy pillow
-```
-
-注意必须是 **opencv-contrib-python**（含 ximgproc）——脚本用到
-`cv2.ximgproc.guidedFilter` 做边缘去色污染，装标准版 opencv-python 会抛异常。
-
-1. 生成纯绿幕（#00FF00）立绘，人物边缘不加投影
-2. `python3 tools/chroma.py 输入.png assets/pet.png --trim`
-
-脚本自动测背景色并用 Otsu 定阈值。处理了三个坑：细发丝不能被削掉、
-发丝缝隙的背景不能被填成前景、黄绿色发夹不能被当成绿幕抠掉。
-
-出**换装图层**（`assets/character/`）时多一条硬约束：每一张都必须画在
-**同一张 64×80 像素画布**上、角色位置完全重合，只留各自那层像素、其余透明。
-对齐靠画布锚点，不靠 CSS 偏移 —— 图层一多，逐张调 offset 是维护噩梦。
-文件名要和 `src/wardrobe.js` 里 CATALOG 的 `file` 字段逐字一致，
-测试会检查每个条目在磁盘上真实存在（少一张图就会红，而不是上线才发现回退）。
-
-设定图（多视角 + 表情 + 服装拆解）只能当**视觉参照**，不能直接当皮套切层：
-需要先按上面的画布规范把每个部件单独重绘/裁切出来。
-
-## 发展路线图与后续计划 (Roadmap)
-
-Life 平台将持续围绕「桌面原生交互」、「通用数字生命架构」与「生态开放扩展」三大通用主线推进演化：
-
-### 1. 桌面原生通用交互演化 (Desktop Interaction)
-- 🎙️ **多模态流式语音交互 (TTS / STT)**：集成轻量级端侧或云端语音合成与流式语音输入，结合桌宠呼吸与动画状态机实现说话口型与音律共振。
-- 🎭 **通用表情差分槽位 (Emotion Differential Layer)**：完善 `[state:emotion]` 渲染桥接，提供标准化的通用差分表情贴图规范（喜悦、思索、困倦、委屈等），支持社区为任意角色注入生动差分。
-- 🧗 **真实桌面环境感知与避让 (Desktop Environment Sensing)**：在跨 Windows/macOS 平台接入真实桌面图标与活动窗口边界扫描适配器，为现有的 `desktop-motion.js` 注入物理障碍物，实现动态攀爬、贴窗悬挂与趣味避让。
-- 📥 **拖拽投喂与剪贴板感知 (Drag-and-Drop Intake)**：支持将文件、文本片段或图片直接拖入桌宠窗口，触发即时理解、总结归纳与长程记忆沉淀。
-- 🔍 **受控工具调用与搜索 (Controlled Tool Use)**：在安全预算与权限沙箱保护下，逐步拓展联网搜索与桌面轻量查询工具调用能力。
-
-### 2. 通用数字生命实验平台演化 (Digital Life Architecture)
-- 🌐 **多模型生态生产级接线 (Provider Fallback & Circuit Breaker)**：已由 v1.5-a 的 `src/fallback-adapter.js` 覆盖运行时主备双端点回落、熔断与流式防重播需求；P4 契约（`provider-routing.js` 与 `generation-attempt.js`）保留为架构储备，不计划启用（见上方 INT-01 处置声明）。当前支持主备双端点配置与故障自动降级（非多点网状转移）。
-- 🧠 **本地轻量向量联想图谱 (Semantic Associative Memory)**：在现有的艾宾浩斯幂律遗忘动力学上，引入纯本地轻量向量检索（Embedding），实现对话过程中的潜意识记忆自由联想与被动线索激活。
-- 🌙 **心智演化与睡眠整合看板 (Evolution Dashboard)**：提供直观的可视化面板，展现每日夜间睡眠整合、记忆突触修剪、特质向量演化轨迹与因果证据图谱。
-- 🧭 **环境驱动自决意志网络 (Self-Intent Network)**：深化 `trigger.js` 的自发意图机制，在严格前缀缓存不变式与零虚构原则下，让桌面生命基于系统活动与闲置节律自发产生有据可查的探索提案。
-
-### 3. 生态工具与分发工程 (Ecosystem & Distribution)
-- 📦 **社区角色与皮肤资产包规范 (`.lifepack`)**：制定统一的角色资产包格式，支持用户一键打包、分享和导入自定义角色立绘、衣柜组件与人设配置文件。
-- 🚀 **开机静默驻留与多平台便携打包**：完善 Windows / macOS 便携版（Portable Zip）构建流程与安装包自动构建，提供开机静默托盘自启动管理。
-
-## 版本记录
-
-**v1.8.0** — 《看见与重逢》：本版相比上一个公开版本（v1.6.1）新增四项能力。**语音输入（STT）**——说句话就能输入，识别结果只写进输入框绝不自动发送，音频不落盘，并补上此前完全缺失的麦克风权限闸门。**个体观测面板**——此前大量机制「算出来了却从来没被看见」，现改为声明式注册表，新增机制只注册一行、两端自动跟上，并拆成「主体状态」与「机制遥测」两个子标签。**重逢心境**——她能知道「你离开了多久」，这是跨重启、跨休眠的事实；重逢是关系事件而非进程事件，故触发点是「你下次开口时回头检查」而不是应用启动；只陈述时长、绝不推断作息。**屏幕视觉探针**——右键框选一块屏幕区域给她看，图不落盘、不进历史、不进经历，能力判定逐模型做（flash 系支持、v4-pro 不支持、未知模型一律拒绝）。另修掉若干缺陷，其中最重要的一条是**视觉事实行错位一轮**（带图那轮收不到尺寸、下一轮没图却收到上一轮尺寸，等于诱导编造看到了什么）。已知限制不粉饰：观测面板数值正确性未逐项核对；重逢只验证了 1–7 天档；STT 需单独配置 Key；视觉探针仅支持 flash 系。详见 `CHANGELOG.md`。
-
-**v1.0.0** — 《初澜（Chulan）桌面数字生命正式版》：正式确立 64×80 正典像素点阵精灵美术基准与开箱即用打包体系；全量内置初澜立绘与默认套装，生成 Windows 单文件便携版与安装向导包；实现独立对话窗口（chat.html）与气泡刷新对账机制（chat-history-changed）；修复枕边留置（Bedside Mailbox）与睡眠动力学；落地 Agent 安全基座五道闸门（D-1 ~ D-9，白名单、路径白名单硬约束、执行预算熔断、Append-Only 审计日志与 UI 显式授权确认），默认处于严格安全拒绝态；补齐玩家自制衣柜部件与分层扩展指南。
-
-**v0.9.8 系列** — Provider Runtime Expansion 与安全边界收口：在 v0.9.7.1/v0.9.8.1 的研究完整性基础上，把“只能写死 DeepSeek”的网络层扩展为可注册 Provider Adapter 的运行时架构，同时保持研究溯源、凭据和成本真相边界。
-- **P1 Security Hardening**：统一 Secret Redaction、Provider Error 归一化、Retry/Retry-After/Timeout/Abort/Stream 生命周期边界，以及发送前 Budget Guard；未知成本 fail-closed。
-- **P2 Provider Adapter**：建立统一 Adapter Contract 与 Registry；Provider 身份、连接类型、Adapter、Credential Policy 分层；DeepSeek 作为首个标准 Adapter，Brain 不再直接依赖 DeepSeek concrete client。
-- **P3 Usage / Cache / Cost**：建立 Usage FACT、Provider-specific Cache Strategy、Cost Strategy 三层；pricingVersion 具备明确版本身份，未知 usage/cost 不伪造为 0，非 DeepSeek 不继承 DeepSeek cache/计价语义。
-- **P4 Routing / Fallback / Circuit Breaker**：模块已实现并有 35 项回归，但**继续保持 Staged**。跨 Provider 真正自动 fallback 需要第二套 endpoint / credential / model 配置与独立凭据持久化；本轮不为“收尾”而扩大配置面，因此不把这部分伪装成已经投入生产的能力。
-- **P5 Provider Runtime Expansion**：Registry 动态 dispatch、Generic OpenAI-compatible Adapter、跨 chunk SSE framing、Provider namespace 隔离、Brain hot-swap 全部进入主线；随后完成 timeout lifecycle、v0 namespace collision/ambiguous ownership fail-closed 与 provider-keyed cost 收口。
-- **当前可用 Provider 分类**：deepseek（具体官方 Provider）、generic（OpenAI-compatible 通用接口）、local（本地端点）、custom（自定义端点）；invalid 仅为内部兼容构造，不提供给用户选择。新的厂商可在后续通过独立 Adapter 注册，而不是把品牌硬编码进 Brain。
-**v0.9.7** — 《生命动力学第一迭代：梦境、遗忘与发育景观》（Life Dynamics: Dreams, Forgetting, and Epigenetic Landscape）：在 v0.9.6 严格窗口边界与因果证据底座之上，引入低成本、内生性的生命动力学机制，坚守 `Model Substrate ≠ Runtime Host ≠ Chulan Subject` 本体论边界与工程不可逆约束（D-001 ～ D-007）：
-- **工程架构决策账本 (`research/ENGINEERING-DECISION-LOG.md`)**：确立 D-001 ~ D-007 七大已决决策（SETTLED DECISION）；彻底封杀后台连续代谢 Tick（严禁 `setInterval` 扣除 energy/arousal）；坚决拒绝人类中心主义 24h 昼夜节律牢笼；确立关系时间（Relational Temporality），只有主体经历互动时生命历程才真正流逝。
-- **沃丁顿发育景观与经历依赖塑性衰减 (`src/canalization.js`)**：提出数字发育可塑性衰减模型 $\eta(W) = \frac{\eta_0}{1 + \gamma \ln(1 + W)}$；随窗口累积平滑衰减状态步长权重；划分幼态期（JUVENILE）、发育期（DEVELOPMENTAL）与稳定个体化期（STABILIZED）；历史参数（`baseStepWeight`、`effectiveStepWeight`、`plasticityMultiplier`）强一致性落盘于 `StateChange`，保证离线 Replay 100% 确定性；Baseline 模式塑性乘子严格恒为 1.0。
-- **零 API 成本记忆动力学与突触修剪 (`src/memory-dynamics.js` & `src/memory.js`)**：基于改进型艾宾浩斯幂律方程 $S(W) = \text{clamp}\left(\frac{S_0 \cdot (1 + \beta \ln(1 + \text{retrievals}))}{(1 + \lambda \Delta W)^\alpha}, 0, 1\right)$（$\beta=0.15, \lambda=0.10, \alpha=1.15$）实现纯本地代数衰减；建立 `ACTIVE`（活跃）、`FADING`（渐褪）、`DORMANT`（休眠）三级流转；经历归档 `experiences.jsonl` 永不物理删除，休眠记忆仅静默移出 Prompt 节省上下文；`Memory.save()/load()` 与 `Brain` 实现双层冷启动持久化，跨进程重启遗忘状态零丢失；实现 `reactivateByContext()` 关联线索重新激活，用户对话命中特征词元时零 API 成本自动唤醒休眠印痕重回 Prompt 上下文。
-- **成本门禁式弗洛伊德梦境系统 (`src/dream-system.js` & `src/brain.js`)**：梦境决非定时无意义轮询，建立双重门禁机制——第一道本地认知张力门禁（通过 `computeWindowArousalTrajectory` 依据真实消息节奏与证据极性计算 5 分段唤醒度，接通情绪方差 $\ge 15.0$、尖峰跃迁 $\ge 25.0$、多重特质冲突分值 $\ge 0.75$ 与新异度 `noveltyScore` $\ge 0.8$）与第二道成本防护门禁（窗口间隔 $\ge 3$ 且 24 小时硬顶 2 次，冷启动自动从归档恢复 `dreamHistory` 防御重启绕过；入睡路径标记 `preClose: true` 执行同窗口去重防重复做梦，跨窗口间隔按关窗梦境生效，24h 硬顶全量覆盖）；生成产物严格遵循 Canonical Schema v1 封装 `payload.dreamId` 与 `payload.epistemicStatus`，通过 `ArchiveIntegrityService` CERTIFIED 认证，绝对禁止直接修改 `SubjectState`；具备 Fail-Safe 容灾机制，梦境失败永不阻塞关窗主流程。
-
-### 实验可信度边界（v0.9.7 修复后）
-
-- **Initial State Identity** 由 `canonicalizeExperimentState()` / `hashExperimentState()` 统一定义，包含会影响轨迹的 regulation history、attention watermark、SubjectState window/stateChanges/evidence 去重集合与 recovery 状态；纯时间 transport metadata 排除。真实 `userDataDir` restore 状态仍以读取到的持久化内容为准。
-- **Function Event Identity** 只接受可从实际函数源码派生且可比对的签名；调用方声明的 `eventSignature` 必须等于派生签名，native/bound/closure 等无法证明等价的函数拒绝。未对 record-level 或 byte-level 输出作无条件确定性承诺；目前承诺范围是注入时钟/身份生成器后的 state-level replay。
-- **Dream provenance** 严格保持 `messageId`、`eventId`、`evidenceId` 三个命名空间；缺失层使用 `null`/`[]`，不进行跨类型 fallback，进入归档前对显式 event/evidence 引用执行 cross-reference validation。
-- **Attention watermark** 是 **256-entry bounded FIFO idempotency**，不是无限历史幂等；损坏或空文件进入 fail-closed，写盘失败回滚内存状态。
-- **Archive writer** 是单写者 API 边界：`experiences.jsonl` 的 append 不提供跨进程锁；检测到坏尾、断链、torn line 或非有限数字时 fail-closed，恢复审计写入隔离 sidecar，不续写损坏主链。调用方必须由 Electron single-instance/单 writer 生命周期保证无并发 append。
-- **全量测试套件与不可逆约束门禁**：本版本新增 5 套专用测试套件，共 132 项断言；当前测试文件以 `test/` 目录和 `npm test` 实际执行结果为准。
-
-**v0.9.6** — 《数字生命实验基线强化》（Digital Life Experiment Baseline Reinforcement）：恪守《生物科学与数字生命的哲学范畴》实验定位与 `Model Substrate ≠ Runtime Host ≠ Subject` 主体哲学边界，针对经历、证据、状态、记忆与 Replay 实验底座完成全套基线强化（P0-01 ～ P0-18）：
-- **P0-01 ~ P0-04** (窗口边界与指标冻结)：确立 `turn_limit`、`token_limit`、`manual`、`recovery` 四大关窗触发原因（v0.9.9 P0 起增补 `turn_limit_delayed`：存在失败关窗史且轮次超标时如实标记补关，绝不把补关粉饰成顺利关窗）；在请求模型小结前由 `windowSnapshot()` 冻结 `snapshotTurnCount`、`targetTurnCount`、`actualTurnCount` 与 `closeReason`，彻底消除异步关窗期间并发对话导致的轮数指标漂移与坏账；Bridge 桥接消息不入小结并严格隔离。
-- **P0-05 ~ P0-07** (严格 5×20 小结契约与 Fail-Stop)：落实 `validateWindowSummary()` 结构契约校验；强制要求 5 个连续分段完整覆盖窗口轮次且无重叠遗漏；小结格式不合法时触发 Fail-Stop 熔断停机，绝对保留历史对话零丢字，零污染写入经历底座。
-- **P0-08 ~ P0-10** (Archive Canonical Schema v1 与哈希链溯源)：`experiences.jsonl` 全量升级为 Canonical Schema v1，引入全局自增单调 `archiveSeq`、强唯一性 `recordId`（`rec-{type}-{seq}-{rand}`）、SHA-256 前向哈希链（`prevHash` -> `recordHash`）与底层 `fsync` 真实物理持久化，实现全链路防篡改与可复盘验证。
-- **P0-11 ~ P0-12** (证据溯源 12 条内生自校验规则)：`SubjectState.verifyEvidence()` 确立 12 条内生检验律，全面拦截跨窗口窜供、合成/生成数据伪造、Bridge 桥接消息污染、角色越权、重复指纹与空引用，筑牢认知所有权防线。
-- **P0-13** (状态转移纯对称整数舍入)：消除 JS 浮点舍入与正负不对称误差，在 `state-change.js`、`SubjectState.reduce()`、`SubjectState.replay()` 及 `ResearchService` 中统一采用无偏对称舍入（`symmetricRound`），保证离线 Replay 演化重放与在线状态推进 100% 绝对一致。
-- **P0-14 ~ P0-15** (当前自我因果投影与实验遥测)：在经历底座增加 `recordType: 'self_projection'` 因果投影记录，与 `Self-Ledger` 保持因果溯源绑定；建立 Append-Only 实验遥测日志 `experiment-telemetry.jsonl`，对 DeepSeek 前缀缓存破坏实现七大类别精准归因。
-- **P0-16 ~ P0-18** (全套不变量攻击测试矩阵与发布门禁)：该版本新增 7 套专用测试套件，共 171 项断言；当前测试文件以 `test/` 目录和 `npm test` 实际执行结果为准。
-
-**v0.9.5.3** — Codex Findings Fix（安全漏洞修复与架构一致性收敛）：针对 Codex Independent Audit 提出的 4 个 HIGH 级发现完成专项修复：
-- **H-01** (Archive Event Validation Parity): `src/archive-integrity.js` 统一接入规范级运行时事件校验器 (`validateEvent`)，对 `window_summary.payload.events[]` 及独立 `event` 归档记录实施与运行时完全对齐的强校验；`src/experience-schema.js` 全面禁止 `generated: true` 与 `synthetic: true` 伪造事件，来源空值或非法值坚决拦截并降级 `UNCERTIFIED`。
-- **H-02** (ResearchIndex Unknown Window Handling): `src/research-index.js` 彻底切断将未知 `windowNo` (null/undefined) 错误映射至 Window 1 的隐式逻辑；分离 `windowIndex` (Map) 与 `unknownWindowDescriptors` (Array)；引入 `extractRecordWindowNo` 精确支持 falsy 的 `windowNo = 0`，检索与详情查询保留 `null`。
-- **H-03** (Renderer Export Path Security): `src/research-ipc.js` 对渲染进程通过 `research:export` 传入自定义 `targetDir` / `targetPath` 实施即刻拒绝 (`RENDERER_TARGET_DIR_PROHIBITED`)；落盘模式严格由主进程原生安全对话框 (`dialog.showOpenDialog`) 用户主动授权；`src/research-export.js` 底层强校验规范化路径并彻底封杀 `..` 路径穿越攻击。
-- **H-04** (Integrity Scan Complexity Reduction): `src/research-query.js` 引入基于文件大小与修改时间的完整性快照缓存 (`_getIntegritySnapshot`)；`getWindows()` 将完整性评估移出多窗口遍历循环，算法复杂度由 $O(\text{Window} \times \text{Archive})$ 彻底降为 $O(\text{Archive})$。
-
-**v0.9.5.2** — 实验观察层完整性硬化 (Integrity Hardening)：彻底消灭 Research Layer 残留的“程序推断事实”与“默认补全数据”，恪守“没有证据就没有事实”、“不确定不得篡改成没发生”、“程序推断不得升级为实验事实”三大哲学准则；`src/research-query.js` 彻底删除 `Math.ceil(num/2)` 等基于 messageId 的数字推断逻辑，未标明确切轮次时严格保持为 `roundNo = null, status = 'UNRESOLVED'`；彻底删除 `|| 100`、`|| 200`、`segmentCount: 5` 等虚假默认统计值，`turns: 0` 与 `messageCount: 0` 如实返回 0，缺失返回 null；`src/experience-schema.js` 严禁在缺少 `schemaVersion` 时隐式补写原生 `schemaVersion: 1`，全部规范路由至 `LegacySchemaAdapter`（`sourceSchema: 'legacy-v0.9.4'`，归档判定强制为 `UNCERTIFIED`）；`src/archive-integrity.js` 强化正向白名单防线，Event 记录 `source` 强制为必填字段（缺源拦截 `INVALID_EVENT_SOURCE`），拒绝未知源；严禁 Synthetic / Generated 事件进入认证（`SYNTHETIC_EVENT_PROHIBITED` / `UNCERTIFIED`）；严查 Bridge 事件溯源来源（无 Provenance 拦截降级）；`src/research-service.js` 统一 Replay 状态与 `ArchiveIntegrityService` Canonical 单一可信源；`pet.js` 前端 UI 完善空安全与语义映射，严格区分 `content = ""`（真实空内容）与 `content = null`（未记录 / 不确定）；补齐 `package.json` 中的 `npm test` 入口脚本，新增 4 套反伪证专项攻击测试套件并通过全量回归。
-
-**v0.9.5.1** — 实验完整性加固 (Integrity Fix)：修复 Research Layer 实验完整性问题，消除一切实验事实臆造与视觉占位伪造，坚持“宁可显示未记录/无法认证/数据损坏，也绝不生成推测记录”的哲学底线；`src/archive-integrity.js` 统一归档 Schema 强校验，定义通用最小字段集与 `VALID_RECORD_TYPES` 白名单，未知类型坚决拦截并熔断，统一作为 Replay、Query、Explorer 的唯一可信源；`src/research-query.js` 彻底消除假 messageId（如 m-001001）与占位对话（如“第 N 轮用户发言”），消除代码臆测（不再按 round<=3 && windowNo>1 盲猜 Bridge），严格确立 `RECORDED`（事实）、`NOT_RECORDED`（确认缺失）、`UNRESOLVED`（未认证/损坏）状态三分态，如实展示空分段；`src/experience-schema.js` 设立正向白名单 `ALLOWED_EVENT_SOURCES`（user/assistant/activity-tracker/desktop-motion/lifecycle），严格阻断非法/未知来源，向后兼容解析器附着 `LegacySchemaAdapter` 明确标识；`src/research-service.js` 异步 Replay 引入 `REPLAY_CHUNK_SIZE = 500` 与 `setImmediate` 协作让出机制，支持执行中途即时取消与非阻塞运转；`pet.js` 前端全链路防御 null/undefined 并以语义 Badge 呈现真实状态。
-
-**v0.9.5** — 实验观测与可复盘工具链：确立严格只读研究层边界（Research Layer 只读观察，严禁反向修改实验对象）；落地 `src/research-index.js` 纯内存字节偏移量索引（ID -> byteOffset 高速局部寻址，自动依据 mtime/size 失效重建）；构建 `src/research-query.js` 统一观测引擎，支持 P1-01 Subject State 五维特质面板与状态演化轨迹、P1-02 100 轮 Window Explorer（5x20 分段与 Bridge/Active 强隔离）、P1-03 Provenance 归因溯源（StateChange -> Evidence -> Message -> Quote）与 EOI 事实三层追溯；落实 Evidence 关系契约（1 StateChange -> N Evidence，1 Evidence 严格绑定 1 Trait，单消息多特质解耦）；落地 `src/research-service.js` 异步 Replay 任务管道与 Fail-Stop 确定性熔断机制（坏行立即冻结停机，绝不跳过坏行继续推演，输出 partial + uncertified 状态）；实现 `src/research-export.js` 轨迹 CSV、跃迁 CSV、证据 CSV 与 Full Research Bundle (附 metadata.json) 只读导出；挂载 `src/research-ipc.js` 严格只读主进程 IPC 通道白名单；建立打开与退出时的 SHA-256 完整性门禁，彻底杜绝实验数据受污染风险。
-
-**v0.9.4-R2** — 最终收官加固：Evidence / Fingerprint 防重真正跨调用、跨进程重启、跨 Replay 全局持久化（`seenEvidenceIds`/`seenFingerprints` 落盘并在 Replay 中完整重建，四层联合防刷）；Replay 严格排除 `recovery_event`、`diagnostic`、`replay_report`、`internal_log` 等非状态审计记录，`nextWindowNo` 严格按 `max(actualWindowNo) + 1` 计算；明确四级恢复状态（`NORMAL`、`RECOVERY_PENDING`、`RECOVERY_UNCERTIFIED`、`RECOVERY_FAILED`），对有损归档拒绝伪装成完整恢复并记录 `recovery_uncertified`；StateChange Explanation 数值校验消除遗留 `±5` 容差，严格执行 `actualDelta === claimedDelta`，非法解释绝不污染主体状态；`validateEvent()` 真正强制执行 `ALLOWED_EVENT_TYPES` 来源白名单校验。
-
-**v0.9.4-R1** — 实验链路闭环与最终一致性加固：Event / Observation / Interpretation 三层分离完整接入 Brain.closeWindow 生产链路，严格确立主体 Event 真实来源边界（排除 System Prompt、内部提示词、Bridge 桥接消息、Synthetic 消息与内部调试日志）；落地 Trait 严格白名单过滤与 Evidence Fingerprint 移除 strength 机制（同一消息与引用无论模型如何微调强度均无法重复刷值）；StateChange 与因果解释（Explanation）全量进入生产归档链；离线 Replay v2 优先还原历史记录中的真实 Reducer 步长权重与单窗口限额参数；实现 Reducer 暂存与 Archive 落盘的两阶段提交（2PC）原子回滚与 recovery_pending 容灾自愈（Archive 提交成功但 State Commit 失败时进入 recovery_pending，禁止推进窗口并自动触发 Replay 重建状态至与归档完全一致，写入 recovery_event 诊断审计）；经历归档存在坏行时 Replay 明确标注 partial 与 uncertified 非认证状态。
-
-**v0.9.4** — 实验完整性与可复盘性强化：落地经历三层分离架构规范（客观事实 Event、程序提炼模式 Observation、主体主观视角 Interpretation）；建立状态跃迁 StateChange 与因果解释 Explanation 结构化模型，严禁 LLM 越权直写主体状态；构建纯离线确定性 Replay v2 演化重放与状态一致性检测；完善 experiences.jsonl 与 subject-state.json 故障注入与容灾自愈机制。
-
-**v0.9.3** — 数字生命实验底座与可计算主体架构：落地《生物科学与数字生命的哲学范畴》实验架构规范；实现 5×20 分段归档与 Window Synthesis 双通道解耦（用户给予与主体经历严格隔离）；程序签发不可伪造的 messageId 与 Bridge / Active Window 精确计账（消灭窗口衰减与尾部重复总结）；新增 `experiences.jsonl` Append-Only 原始实验永久底座；新增 `subject-state.json` 主体状态向量（[-999, 999] 刻度与确定性 Reducer 计算）；建立 Provenance 强核验防线（真实引用核验、幻觉拒绝）；窗口级冻结 State Snapshot 挂载于瞬时 user 尾部保卫 DeepSeek 显存 Prompt Cache 前缀稳定性；Prompt Memory 预算提升至 6000 tokens 并支持离线 Replay 演化轨迹重放。
-
-**v0.9.2** — 稳定性收束与常驻资源优化：Motion 运动改按需自管循环与 SUSPENDED 挂起机制，消灭常驻 50ms 空转 tick；proactive 主动搭话改主进程事件驱动调度，消灭渲染端 45s 定时轮询与 IPC 往返；引入 `DeferredWriter` 实现脏标记与 3 秒防抖延迟合并写盘，关键状态（关窗小结、成长档案、重置、进程退出）立即强制 flush；建立通用 `migration.js` 数据版本迁移框架，Memory/Wardrobe/Config 增加 schemaVersion=1 并保留 self-ledger 的 version 字段与旧数据兼容；新增 `asset-check.js` 启动立绘资源完整性分级检查与预警下发。
-
-**v0.9.1** — 将生命档案升级为 schema v2：首次初始化固定 `birthAt`，兼容旧档案并增加 provenance/sourceType、窗口号、消息 ID、quote 和 confidence；原始档案不再全部进入 system，Current Self 以约 3000 token 硬预算附加在最新 user 尾部。新增坏档案 `.bak` 恢复与可见状态、长期记忆和成长档案分离重置、后台任务 shutdown 闸门、主聊天与 growth/summary/merge usage 分桶，以及不连接真实工具的 Agent 能力/权限/提案/审计 Mock 接口。
-
-**v0.9.0** — 建立“生物科学与数字生命的哲学范畴”项目架构：新增追加式 Self Ledger。
-
-**v0.8.1** — 外部（Gemini）针对 v0.8.0 提的三个整改方向，逐条在本机量过之后：**一条方向对、
-一条方向对但判据装错地方、一条在跑不存在的代码**。
-
-- **采纳（方向对，实现按我们的根因重写）：`relayout()` 不许复活已收起的气泡。**
-  旧写法 `if (lastText) render(lastText)`，而 `render()` 第一件事就是
-  `bubble.classList.remove('hidden')` —— 实测收起后调一次 `relayout()` 气泡就重新可见，
-  且**没有任何待触发的收起定时器**（`bubbleTimer` 早跑过了），于是永久挂在屏幕上
-  （等 9 秒仍可见），`politeToSpeak('idle')` 从此恒为 false，主动搭话全被堵死。
-  触发路径不稀有：resize、图层加载完成、加载失败降级都走它。
-  判据改成"气泡此刻是开着的"而不是"有没有历史文本"，并反向断言开着时仍然重排
-  （否则这条修法就退化成了"干脆不重排"）。
-- **不采纳 `moved > 6` 那道门槛，改用它没想到的一条：`mousemove.buttons === 0`。**
-  它的意图（别把"按住想停一下"误判成脱手）是真的 —— 实测 700ms 阈值下按住 1.2 秒再拖，
-  窗口纹丝不动（位移 0px）。但它的判据会让**真的**窗外脱手再也修不掉：按下抖 3px
-  再把鼠标移出窗口松开，`moved > 6` 永不成立，`dragging` 停在 true、松手后窗口继续跟鼠标跑。
-  真判据在事件里：窗外松手后光标只要再进窗口动一下，来的就是 `buttons=0`（实测按下=1、
-  松手后=0，事件照样送达 window）。加上它之后看门狗退回只兜"松手后鼠标再也没动过"，
-  阈值从 700 放宽到 2500，两头都不误伤。回归测试同时**装了它那条判据做反例**
-  （位移 ≤6px 停手，我们的看门狗照样收尾），删掉门槛才会红。
-- **不采纳表情差分图层，但把"没衔接"这件事真的修了。** 它那段代码找的是
-  `document.getElementById('face')` —— 我们的 DOM 里没有这个元素（实测 0 个），
-  它按状态拼出来的那张差分图路径在磁盘上也不存在（实测请求返回 **404**）。
-  逐字接在 `pet.js` 末尾还会
-  直接语法报错（`Identifier 'STATES' has already been declared`），整份脚本不执行。
-  真正测出来的三条根因与修法见「状态机 → 表情之间切换的衔接」：
-  `transition-duration` 是 `0s`（写了没给时长）、blink 挂 `#figure` 会把状态动画顶掉
-  （实测倾角跳 2.23°）、峰值切换跳 3.0°/9.97px（CSS 修不掉，用一下 .18s 遮掩微动）。
-- **`#bubble` 的 z-index 不动。** 它建议从 10 提到 25 以"盖过设置面板"，
-  实测面板开着时气泡与面板**重叠 100%**、命中的是 `#clearMem` 按钮 ——
-  提到 25 的结果是气泡糊在"打开配置文件 / 清空记忆"上面（`pointer-events:none`
-  还会让那些点得到却看不见）。真相是记录面板已有的处理方式对：`body.showlog #bubble { display:none }`，
-  面板/记录开着时气泡本来就该让位，不是抢层级。
-- 测试 ui_test 118→152 项，整套矩阵 11 个文件 565→599 项。
-
-**v0.8.0** — 合并外部规范文档《v0.8.2 架构升级与交互状态机开发规范》里**真正 additive**
-的那部分（本地活动 + 主动搭话 + 记忆纯洁性），文档自带的两份代码则**逐字跑过之后拒收**。
-
-新增：`src/tracker.js`（双轨活动 + 水位线 + 晚安/唤醒）、`src/trigger.js`（该不该开口的判据，
-纯函数）、`memory.buildWithEphemeralUser()` / `cleanContentForSummary()`、brain 的环境块与
-睡眠联动、`activity` / `proactive-check` 两个 IPC、渲染端的礼貌闸门与提案往返。
-测试 brain 111→135、main 48→71、ui 98→118，另加 tracker 42 / trigger 36；
-整套矩阵 11 个文件共 565 项（上一版 9 个文件 420 项）。
-
-- **拒收 1：文档 §4.2 的 `getWearValidator` 会让换装整个失效。** 它写的是
-  `wardrobe.catalog().items[itemId]`，而我们 `catalog().items` 是**按槽位**分组的
-  （`{hair:[…], top:[…]}`）。把它逐字跑在真实衣柜上：15 个真 id 里判为合法的 **0 个**，
-  `gothic_black_01 → false`、而槽位名 `hair → true`；用它过一遍 `[wear:gothic_black_01]`
-  得到 `wears=[]` —— 从此一件衣服都换不上。校验器的合法集合仍然取自 `CATALOG`/`PRESETS`
-  本身（后端 `parseWear` + 前端 `setKnownWear(catalog)` 已经是同一个出处），不引入它。
-- **拒收 2：文档 §3.3 的 `StreamTagParser` 自己跟自己不一致，而且比现状更爱憋字。**
-  同一条输入 `"好的 [ state:happy]"`（冒号前一个空格）：流式 `feed()` 原样放行，
-  收尾 `stripAllTags()` 把它剥掉 —— 它自己在 #5 里承诺的"存显 100% 镜像一致"就这么破了，
-  也正是我上一轮用来否掉"放宽字符集"的那条理由。逐字喂实测：正文里一个裸 `[`
-  冻住 **17/38 帧**（我们 1/38）；未知 wear id 藏 **20/31 帧**、到第 25 帧又凭空长回来
-  （我们 5/31，且收尾与后端 `parseWear` 同口径）。它的"严格前缀预检"确实比裸放宽字符集
-  好，但代价是缓冲到 `]` 或 64 字才吐 —— 打字机手感直接完蛋。判据保留我们的
-  "还可能长成合法标记吗"（衣柜真 id 比前缀），不换实现。
-- **收下但改写法：200 条硬上限。** 文档 #2 说"强制丢弃最老陈旧事件"。它没写的是：
-  被挤掉的**可能是还没消费的事件**，于是"被戳 N 次"悄悄变成假小值 —— 撞 persona
-  那条硬边界。上限照收（防无界增长），但挤掉未消费事件时环境块改口"被戳**至少** N 次"，
-  `commit` 之后恢复精确口径。
-- **不实现：`[face:]` / `[act:]` 两条新通道、走动/边缘吸附、Task Identity 重写。**
-  前两者没有对应图层，接了就是"她能声明、程序执行不了"——那是我们花两轮拆掉的东西
-  （语言状态 ≠ 程序状态）；文档 #7 的"自主漫步只算环境感知"因此也无从属，我顺手删掉了
-  环境块里那行 `当前姿态：idle`（**没有任何代码会改它**，报了就是编造）。
-  Task Identity 用测的不是设计：上一轮那份抢占探针（在 /data 下，不随包发布）在我们现有
-  `ctrl === ctrl` 守卫下打出迟到 chunk 泄漏 0、陈旧历史 0，再叠一层 taskId 只是多一个可失配的状态。
-- **两个我自己写出来又被测试拽回来的缺陷**（都是先写完、测过才算修好）：
-  `res.declined` 分支里必须先 `streaming = false` 再 `hideBubble()` —— 否则气泡收不掉，
-  而 `politeToSpeak` 从此永远返回 false（"上一条还没说完"），**一次过期提案会把她往后
-  所有主动搭话永久堵死**；以及第一版把 90 秒静默闸放在 poke 前面，把连戳这条路整个饿死
-  （被戳本身就是"现在方便"）。两条都有对应用例，且都配了"前提复核"断言防止判据空转。
-- **顺带删掉我自己上一轮写的死代码**：`POKE_DEDUPE_MS`（同串去重 32 秒）与 `pokeFiredAt`。
-  它看着像第二道防骚扰闸门，实际永不开火 —— poke 提案提出时 `commit` 把 `lastFiredAt`
-  定在同一个 `at`，之后任何一次再触发都必须先跨过 45 秒冷却，而那时早就不算同一串了。
-  判据测不出来就等于没有，写在那里比没有更糟。
-
-**v0.7.2** — 复核自己 v0.7.1 的修法时，发现**我把用来否掉 Gemini 建议的那条理由，
-从另一个方向又犯了一遍**。起因是我想把 changelog 里"Δ10 socket"那个数复算一遍
-（结果那个数确实错了，见下），顺手给半截标记补了个"流结束后"的场景：
-- **收尾那一帧还在藏半截标记 → 吞字。** 新判据是"还可能长成合法标记就先藏"，
-  它只问"像不像"、没问"**还来不来得及长成**"。流一旦结束，那条半截永远闭合不了，
-  后端 `parseWear` 要 `]` 才剥、于是把它原样留在历史里 —— 屏幕上没有、历史里有，
-  **正是我用来否掉"放宽字符集"的同一条理由**。真 id `silver_wavy_01` 被 `max_tokens`
-  截断成 `[wear:silver_wavy_` 时实测整条被吞。改成 `stripState(t, partial)`
-  （默认跟 `streaming`），收尾一律不藏。
-  `test/ui_test.py` 原本查不出来：它那条流的结尾是**闭合**的 `[state:happy]`，
-  收尾帧本来就正常 —— 逐帧测试只测了"吐字途中"，等于把判据的一半写成了盲区。
-  现在两头都卡（途中必须藏 / 收尾必须照原样显示），截断用的 id 从衣柜现挑：
-  写死一个 id 的话，衣柜里没有该前缀时"途中会被藏"这个前提就不成立，判据变空转。
-  项数 95 → 98。
-- 另外把 v0.7.1 条目里 #4 的 socket 数按客户端单侧口径重测并订正了（那个数当时错了），
-  也补上了"为什么不能用打补丁 `ReadableStreamDefaultReader` 关掉 cancel"这条踩坑。
-- **顺带订正一条我自己说过头的话。** v0.7.1 我拿"屏幕上没有、历史里有，两边剥的不是
-  同一批"否掉放宽字符集 —— 补上 `partial` 之后拿真实后端 `parseState`→`parseWear`
-  对了一遍：**收尾那一帧两种判据完全一致**（放宽版也不会再吞，因为它压根不看收尾）。
-  真正还成立的差别只有"吐字途中"：放宽版会把幻觉 id 整条藏 14 帧、直到流结束又
-  **凭空长回来**（C 只藏 6 帧且早早就露出来）。所以否掉建议的**主理由应该是那张表里
-  B 列的 11 帧 —— 单轮结构换字符集治不了**，"前后端不同批"只是途中的一小幅。
-  结论没变（仍然不该照抄），但当时的措辞把次要理由说成了决定性理由。
-- 结论：v0.7.1 交付的那版**没有把 #2 修完**，只是把它从"闪出来"变成了"该显示时不显示"。
-  这条不影响缓存和稳定性，但方向是吞正文 —— 比闪一下更糟的那个方向。
-
-**v0.7.1** — 第二轮外部审阅（Gemini 对 v0.7.0 源码的 5 条）逐条复核，5 条**全部属实**，
-但其中两条的修法不能照抄：
-- **穿着块排到了 system 中间，把长期记忆的缓存一起赔进去了。** 代码是
-  `persona + 穿着 + 长期记忆 + 历史`，注释和 README 却都写"挂在末尾"——
-  文档说的是意图、代码干的是另一件事，这种不一致最坑：读文档的人会以为已经有保证。
-  前缀缓存从头开始比，谁在前面决定了换一次衣服要赔多少；排反时换装会把全部
-  长期记忆和历史一起顶出缓存。已改成 `persona + 长期记忆 + 穿着 + 历史`。
-  **这条之前没有任何测试钉住顺序**，所以补了不变式测试（那组在旧顺序下确实会红）。
-- **流式半截 `[wear:gothic_black_01]` 会闪出来。** 瞬态正则只允许字母，不含 `_` 和数字，
-  实测吐到 `[wear:gothic_` 起连漏 9 帧。**没有采用建议的"字符集放宽成 `[a-z0-9_]*`"**：
-  那样连 `[wear:maid_dress_01` 这种幻觉 id 也会被藏，而后端 `parseWear` 不认它、
-  会原样留在正文里 —— 屏幕上没有、历史里有，两边剥的就不是同一批标记，比闪一下更糟。
-  改成拿衣柜真实 id 集合比前缀：还可能长成合法标记的才藏，长不成的照原样显示。
-  **顺带查出第二个更深的缺陷（建议的修法抓不到）**：剥完整标记与藏半截是两段单轮代码，
-  把末尾 `[s` 藏掉后露出的 `[wear:xxx]` 本该继续剥 —— 实测泄漏 11 帧。已改为整体迭代。
-  > 这几个数都是在 **v0.7.0 zip 抽出来的原样 `stripState`** 上改出来的（不是重写一份
-  > 复刻，免得把结论写进判据）：`A` 原样、`B` 只把字符集放宽成 `[a-z0-9_]*`、
-  > `C` 只换判据仍单轮、`D` 现状。9 帧出自 A，11 帧出自 B/C —— 也就是
-  > **"换了判据但保留单轮结构"还剩多少**，跟用哪套判据无关。
-  >
-  > | 输入 | A v0.7.0 | B 只放宽字符集 | C 只换判据 | D v0.7.1 |
-  > |---|---|---|---|---|
-  > | `…[wear:gothic_black_01]` | 9 帧 | 0 | 0 | 0 |
-  > | `…[wear:gothic_black_01][s` | 10 帧 | 1 | 1 | 0 |
-  > | `…[wear:gothic_black_01][state:happy]` | 20 帧 | **11** | **11** | 0 |
-  >
-  > B 那一列就是"照抄建议"的结果：前两行修好了，第三行还剩 11 帧 —— 单轮换字符集治不了。
-- **图层异步加载完成后没重算气泡上限。** `figure.offsetHeight` 实测 242 → 276
-  （兜底单图 1015×1171 与图层画布 760×1000 宽高比不同），而 Electron 窗口启动后
-  不发 resize，所以是启动即中、错到下次手动缩放。已在 `.then` 和 `.catch` 两条
-  出口都补一次重算（含把已上屏的长回复按新上限重裁）。
-  如实说明偏差方向：上限偏大 34px 会吃掉 46px 安全边距里的 34px（气泡顶边 38 → 4），
-  **在当前可达尺寸区间内还不至于裁掉字**，但只剩 12px 余量。
-- **报错后不释放底层连接。** `break` 只是不再消费。实测（服务端发完 error 帧后
-  故意不关，**只在客户端进程数 `net.Socket` 句柄**）每报一次错就挂住一条连接：
-  连发 1/3/6 次 → Δ1/Δ3/Δ6，等 GC 也不归零；补 `reader.cancel()` 后 Δ-1，
-  也就是连接回收进 keep-alive 池、不随次数累积（跑 12 次仍是 Δ-1）。
-  桌宠是常驻进程且报错往往连续（余额耗尽时每轮都报），攒下来就是越用越多。
-  > 第一版这个探针把 server 建在同一进程里，读出 Δ12 —— 里面有一半是服务端的
-  > 连接；"Δ10 / 补完为 0"是那个读数留下的，现已按客户端单侧口径改成本文数字。
-  > 另外 `cancel` 不能用打补丁 `ReadableStreamDefaultReader` 的方式关掉：undici
-  > 走自己那套流实现，改全局原型不生效，那样测出来是假绿——要劫持 `res.body`。
-- **配置热重载只挂在 `brain.ask()` 上。** 改完 model 不发消息、直接开面板，
-  看到的还是旧值，像是热重载根本没生效。已在 `config-get` / `chat-report` 各补一次读盘，
-  并且**不碰 apiKey**：加密用户的盘上本来就没有 key 字段，顺手灌回内存会把 key 抹成空
-  （表现是"打开一次设置面板，然后她就再也不会说话了"）—— 这两种情形都有测试。
-- 新增 `test/main.test.js`（48 项）：主进程 IPC 面以前完全没有护栏，
-  `src/` 下的单元测试碰不到 handler，于是"brain 那边对、main 传出去就错"这一整类缺陷无人看守。
-
-**v0.7** — 外部审阅（Gemini 9 条）逐条对着源码复核后的结果，属实才改：
-- **SSE 流里的错误帧不再被吞掉。** OpenAI 兼容服务报错时 HTTP 仍是 200，
-  原因只写在某条 `data:` 里（余额耗尽、限速、审核拦截）。以前它会连着半截回复
-  一起被当成"成功"，最后只报一句"返回空内容"，真实原因永久查不到。
-  现在抛出服务端原文（带 type/code），并把已收到的半截挂在 `error.partial` 上。
-- **一条回复里连发多个 `[wear:]` 全部逐条执行。** 以前只有一个 `wear` 变量，
-  后面的覆盖前面的：屏幕上只换了一件，历史里也只有一条执行结果 ——
-  那是程序替模型少说了一件事。现在返回 `wears` 数组，每条结果（换上 /
-  本来就穿着 / 未生效+原因）按顺序如实写回历史。
-- **身份约束从商品 `locked` 迁到槽位 `required`**，`locked` 整个删掉，
-  避免同一个事实两个出处（反推的两种失效方向见「换装系统」一节）。
-- **原子写补上 Windows 瞬态失败重试**：`rename` 遇 `EPERM/EBUSY/EACCES`
-  线性退避重试 3 次（杀软/索引器/OneDrive 短暂持句柄），非瞬态错误原样抛出；
-  临时文件名加随机后缀。
-- **窗口缩放改用常量比例**（`src/layout.js`）。旧写法用"上一次量出来的 h/w"
-  推下一次，round 误差只累积不归零；同时窗口宽与立绘宽各有夹取范围，
-  放大到顶时比例脱钩（实测窗口 760 时立绘还卡死在 420）。
-- **菜单与长回复气泡不再被透明窗口裁掉**：都改成实测尺寸夹取
-  （`fitBubble()` 也不再是"量不出空间就不写"，缩窗后必须跟着改）。
-- **丢 `mouseup` 的兜底做成四层**（正常 mouseup / 渲染进程 blur /
-  主进程 `win.on('blur')` 转发 / 700ms 看门狗）。
-  **没有采用 `setPointerCapture`**：它捕获的是同一个 DOM 元素内的指针，
-  而这里丢事件的成因是光标离开了操作系统窗口，窗口外的输入属于别的程序，
-  Electron 不会替我们送进来 —— 捕获得再正确也收不到那个 `pointerup`。
-- **配置缓存按目录分 Key 且每次真的读盘**（`src/config.js`）：旧的模块级
-  单一 `cached` 会让换目录读到上一份配置，也让用户手改 `gpt-girl-config.json`
-  必须重启。瞬时读失败（`EPERM/EACCES/EBUSY`）时退回上一次成功读到的值，
-  不能退成 DEFAULTS —— 否则紧跟着的 save 会把用户配置写成出厂值。
-- **峰谷判定**：显式按北京时刻 + 2026 法定节假日/调休表判定。
-  实测扫描表明旧写法在国内机器上 2026 全年一个点都没错、在 DST 时区也只有
-  25 个点错一小时且**没有任何一个跨越峰谷边界** —— 所以这次改的是"不再依赖
-  恰好没有踩到边界的时刻"，不是修一个正在发生的错账。
-- 新增 `test/layout.test.js`、`test/config.test.js`、`test/deepseek.test.js`；
-  `brain`/`atomic`/`ui_test` 相应补齐；项数仍由 `docs.test.js` 核对。
-
-**v0.6**
-- API Key 不再明文写进 `gpt-girl-config.json`，改为 `safeStorage` 密文文件 `gpt-girl-key`；
-  加密不可用时如实降级为明文并在面板标注。**v0.5 老用户在启动读盘时自动迁移**
-  （不会要求他再点一次保存，否则这个漏洞实际上永远修不上），
-  迁移必须「写进去 + 立刻读回来逐字相等」才删明文；密文损坏时绝不删明文；
-  密文文件用原子写，避免半截密文把 key 真弄丢。
-- 所有持久化 JSON 改原子写（`src/atomic.js`）。
-- SSE 收尾补 flush：最后一段没有换行时，之前的实现会丢掉尾包 —— 真实 DeepSeek 的
-  `usage` 就在 `[DONE]` 前一条，表现为命中率/花费静默为 0。
-- 用量面板里 `model` 字段改为 textContent 填充（它来自配置文件，此前直接拼进 innerHTML）。
-- 新增 `test/secure.test.js`、`test/atomic.test.js`、`test/docs.test.js`；
-  文档项数改由测试核对。
-
-**v0.5** — 换装系统第一阶段（架构 + 3 套预设），`[wear:]` 提案协议，图层资源目录规范。
-**v0.4** — 三层记忆（窗口小结 + 长期记忆合并）、记忆可见可单条忘掉。
-**v0.3** — 前缀缓存改造、峰谷计价、用量面板。
-
-## 社区贡献 (Contributing)
-
-欢迎对数字生命实验平台、桌面交互与像素美术感兴趣的开发者与画师参与 Life 的建设！
-贡献指引详见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
-
-- **Q 版像素画社区共创**：Life 平台的 64×80 Q 版点阵立绘、待机动作、走动循环与换装图层正进入公开源码后的社区协同精修阶段。美术规范详见 [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md)。
-- **测试门禁验收**：在提交 Pull Request 前，请确保在根目录执行并通过 `npm test`（全量 117 项自动化契约）。
-
-## 许可证与使用规范 (License)
+## 许可证与使用规范
 
 Life 采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 源码可用许可证（Source-Available）：
 
+*Life is released under the [PolyForm Noncommercial License 1.0.0](LICENSE) — source-available:*
+
 - **允许**：个人学习、学术研究、教学展示、非商业实验、个人二次修改与非商业讨论；
-- **修改版义务**：分发修改版时必须在显著位置声明「这是修改过的版本」，并继续沿用本许可（PolyForm Noncommercial 1.0.0「Notices」与「Changes and New Works License」两节的要求）；
-- **禁止**：未经书面授权，严禁用于任何商业目的（包括但不限于将本项目打包出售、作为收费服务/商业 SaaS 运营、或更名后进行商业再发行）；
-- **商业合作**：如有商业授权需求，请通过仓库 Issue 或项目权利人主页（GitHub [@andabaoyue](https://github.com/andabaoyue)）取得联系，签署独立商业授权协议。
-- **文本口径**：[LICENSE](LICENSE) 分发的是 PolyForm Noncommercial License 1.0.0 官方正文（15 节）；若你在本地存档的副本与此处不一致，以官方发布页文本为准。
+- **修改版义务**：分发修改版时必须在显著位置声明「这是修改过的版本」，并继续沿用本许可；
+- **禁止**：未经书面授权，严禁用于任何商业目的（包括但不限于将本项目打包出售、作为收费服务 / 商业 SaaS 运营、或更名后进行商业再发行）；
+- **商业合作**：请通过仓库 Issue 或项目权利人主页（GitHub [@andabaoyue](https://github.com/andabaoyue)）取得联系；
+- **文本口径**：[LICENSE](LICENSE) 分发的是 PolyForm Noncommercial License 1.0.0 官方正文（15 节）；若你在本地存档的副本与此处不一致，以官方发布页文本为准；
 - **名称与品牌**：可以基于 Life 修改并如实说明「这是修改版」，但不得把自己说成官方版。详见 [BRANDING.md](BRANDING.md)（我们**未注册商标**；该文档是使用规范声明，不是注册，也不授予商标许可）。
+
+***Permitted:** personal study, academic research, teaching, non-commercial experiments, personal modification and non-commercial discussion. **Modified versions** must be clearly marked as modified and stay under this license. **Not permitted:** any commercial use without written authorization — selling builds, running it as a paid service or commercial SaaS, or commercial redistribution under a renamed product. **Commercial licensing:** contact the rights holder via an issue or [@andabaoyue](https://github.com/andabaoyue).*
+
+---
 
 Copyright (c) 2026 andabaoyue. All rights reserved.

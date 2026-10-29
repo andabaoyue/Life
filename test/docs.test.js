@@ -48,23 +48,31 @@ function skip(name, reason) {
 }
 
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+/* 🔴 2026-10-30：测试清单搬出 README —— README 只留门面，135 个套件的逐条说明
+ *   挪到 docs/TEST-INVENTORY.md。本文件的门禁**一条没松**，只是换了出处：
+ *   项数对账、双向差集、未点名检查全部照旧，读的还是同一份「## 测试 + bash 块」结构。
+ *
+ *   ⚠️ 为什么不能「README 里留个链接就算数」：那样项数声明就再没有任何东西在核对了，
+ *      门禁会退化成永远通过的装饰。搬走的是位置，不是判据。 */
+const inventoryPath = path.join(ROOT, 'docs', 'TEST-INVENTORY.md');
+const inventory = fs.existsSync(inventoryPath) ? fs.readFileSync(inventoryPath, 'utf8') : '';
 
-/* 1. 从 README 的 ```bash 测试块里抓「文件 -> 声称项数」 */
-const block = readme.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
-check('README 有「测试」代码块', !!block);
+/* 1. 从测试清单的 ```bash 测试块里抓「文件 -> 声称项数」 */
+const block = inventory.match(/## 测试[\r\n]+```bash[\r\n]+([\s\S]*?)```/);
+check('docs/TEST-INVENTORY.md 有「测试」代码块', !!block);
 if (!block) { console.log('\n无法继续'); process.exit(1); }
 
 const claims = [...block[1].matchAll(
   /((?:node|python3)\s+(test\/[\w.-]+))\s*#+\s*(\d+)\s*项/g)]
   .map(m => ({ cmd: m[1].trim(), file: m[2], n: +m[3] }));
-check('README 为每个测试文件标了项数', claims.length >= 3, '抓到 ' + claims.length + ' 条');
+check('测试清单为每个测试文件标了项数', claims.length >= 3, '抓到 ' + claims.length + ' 条');
 
-// 🔴 S5 修复：test/ 目录独立枚举与 README bash 块清单双向差集（杜绝循环依赖与漏列）
+// 🔴 S5 修复：test/ 目录独立枚举与测试清单 bash 块双向差集（杜绝循环依赖与漏列）
 const diskTestFiles = fs.readdirSync(path.join(ROOT, 'test')).filter(f => /\.(js|py)$/.test(f));
 const blockTestFiles = [...block[1].matchAll(/(?:node|python3)\s+test\/([\w.-]+)/g)].map(m => m[1]);
 const inDiskNotInBlock = diskTestFiles.filter(f => !blockTestFiles.includes(f));
 const inBlockNotInDisk = blockTestFiles.filter(f => !diskTestFiles.includes(f));
-check('test/ 目录与 README 测试清单双向差集为空',
+check('test/ 目录与测试清单双向差集为空',
   inDiskNotInBlock.length === 0 && inBlockNotInDisk.length === 0,
   inDiskNotInBlock.length ? '磁盘有但清单漏: ' + inDiskNotInBlock.join(', ') : (inBlockNotInDisk.length ? '清单有但磁盘无: ' + inBlockNotInDisk.join(', ') : ''));
 
@@ -369,11 +377,11 @@ function countPass(out) {
   const missing = [...mentioned].filter(f => !fs.existsSync(path.join(ROOT, f)));
   check('README 点名的文件都真实存在', missing.length === 0, missing.join(', '));
 
-  /* 4. 测试目录里的文件都得在 README 测试块被点名 —— 锚定 bash 块 */
+  /* 4. 测试目录里的文件都得在测试清单的 bash 块被点名 */
   const unlisted = diskTestFiles
     .filter(f => f !== path.basename(__filename))
     .filter(f => !blockTestFiles.includes(f));
-  check('test/ 下每个测试都在 README 测试块被点名', unlisted.length === 0, unlisted.join(', '));
+  check('test/ 下每个测试都在测试清单被点名', unlisted.length === 0, unlisted.join(', '));
 
   if (srv) srv.kill();
   if (skipped) {
