@@ -21,6 +21,54 @@
 
 ---
 
+## v1.9.0 · 2026-11-12
+
+| 项 | 值 |
+|---|---|
+| 版本 | **1.9.0** |
+| 代号 | 《受托、观察与对齐》 |
+| 公库 tag | `v1.9.0`（lightweight） |
+| 公库提交 | **`47301b6`** |
+| 私库提交 | `2a9ddac`（版本收口 `df5cdd6` → 补强 PE overlay 门禁与交付说明 `2a9ddac`） |
+| Release | https://github.com/andabaoyue/Life/releases/tag/v1.9.0 |
+| 公库提交总数 | 63（未 force，原有 62 条全部保留） |
+| 公开集文件数 | **343**（上次同步 330） |
+
+### 交付物
+
+| 文件 | 字节数 | SHA-256 |
+|---|---|---|
+| `Life-1.9.0-win-x64-portable.exe` | 100,651,468 | `b47d20c9ea402ee166652e81063f3f9a63136ffc024e5359c0c0b3bdd190bba4` |
+| `Life-1.9.0-win-x64.zip` | 153,740,432 | `bd1ae5a70e3f01f5ee7a72a74998a094fc9ddcc2c4e66b7845e20bfc4293b285` |
+
+> ✅ 两个 digest 由 GitHub 在接收时计算，与本地 `Get-FileHash -Algorithm SHA256` 逐一核对一致。
+
+> 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
+> NSIS 卸载器导出阶段在本机被 Defender 实时保护阻断（`Error writing temporary file`），非管理员无法加排除项。
+> 发布前已清理构建残留的 `231,860` 字节（`226 KB`）空壳存根，并在 `tools/release-check.js` 新增安装包 PE overlay 大小校验
+> （`overlay < 10MB` 直接判 `FAIL`），防止下次构建失败遗留坏文件蒙混过关。
+
+### 主要内容
+
+- **文档门面收口**：`README.md` 收成中英逐段对照门面，测试清单 / 架构细节 / 完整版本历史迁入 `docs/`，门禁判据一条未松。
+- **D-27 通路 B（受托落档）**：`brain.askForProposalContent()` 独立拟稿、`ok / refused / unavailable` 三态分流审计、`agent-proposal-pending` 与 `pet.js` 待决卡片队列并发防护，保留第五道闸门用户授权落盘。
+- **观察档三档（`off / observe / auto`）与期满补注入**：新增 `agentCapabilityModes` 与 `src/agent-observations.js`（`agent-observations.jsonl` 存完整正文不截断，100 条 / 90 天轮转），补齐 `observeEpoch / observedNotes / pendingEcho` 状态机与启动退出观察期兜底。
+- **动作史投影与能力认知对齐**：新增只读 `src/agent-history.js` 挂入独立 `askForSelf*`（不进 `memory.build()` 护前缀缓存），同步 `src/persona.js` 与 `src/constraints.js` 明确桌面沙盒可写不可读。
+- **安全与 Agent 框架审计收口**：A/B/C 三批审计收口、**S-2** WAL 与备份 `fsyncSync` 落盘及 0 字节幽灵 WAL 修复、**S-3** 沙盒不可用降级启动、**S-4** 媒体权限白名单严收窄至 `audio`。
+- **UI 与连接设置 P0 修复**：个体观测面板排版与机制遥测 KV 网格/度量条/`#rObsTimestamp`/`#rObsToggleAllBtn` 精修；修复连接预设切换残留、`updateConnection` 忽略 `patch.model`、`/chat/completions` URL 重复拼接与脏表单测试拦截。
+- **门禁**：138 个已编号套件（137 Node + 1 Python）/ 5162 项断言全绿；`tools/release-check.js` 13 PASS / 0 WARN / 0 FAIL（私库实测）。
+
+### 已知限制（随 Release 公开）
+
+- **本版未附 `Setup.exe`**：NSIS 卸载器导出阶段在本机被 Defender 实时保护阻断（`Error writing temporary file`），非管理员无法加排除项
+- `agentTriggerEnabled` 出厂默认仍 `false`，自发长链路实机样本仍有限（启动退出观察期写 `leftAt` 已获实机日志验证）
+- D-27 通路 B 拒案识别为启发式（偏保守保留为可拒绝待决卡）
+- S-3 沙盒不可用尚缺运行时告知模型通道（见 `docs/PENDING-TASKS.md` §8.3）
+- 高级连接设置 P1 遗留：`claude` 等无默认预设模型名、`anthropic-native` 尚无适配层、`local` 未豁免非空 Key、`mimo-token-plan` 保持隐藏
+- 延续 v1.8.0 同口径限制：观测面板数值未逐项真机核对、重逢仍仅验证 1–7 天档、STT 需独立 Key、视觉探针仅放行特定支持图片输入的模型名
+
+---
+
 ## v1.8.0 · 2026-10-28
 
 | 项 | 值 |
