@@ -514,6 +514,88 @@ function checkArtifactFreshness() {
     '产物内 ' + r.checked + ' 个运行入口与工作树逐字节一致（' + path.basename(path.dirname(path.dirname(asarPath))) + '）');
 }
 
+/* 12. 安装包 PE overlay 大小校验：
+ *   为什么必须有：electron-builder 编译 NSIS 时会先吐出一个 ~226 KB 的临时存根用于提取
+ *   卸载器；若该阶段失败但半成品留在 dist/，仅看文件名或 app.asar 新鲜度会给假绿。
+ *   正常 Electron portable / Setup.exe 的 PE 节区之外必含压缩包载荷（约 100 MB），
+ *   这里要求至少 >= 10 MB；只检查实际存在于 dist/ 的当前版本包，缺包降级 WARN 以便干净克隆与公库通过。 */
+function inspectPeOverlay(filePath) {
+  const MIN_PE_BYTES = 64;
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const stat = fs.fstatSync(fd);
+    if (stat.size < MIN_PE_BYTES) return { validPe: false, fileSize: stat.size, peEnd: 0, overlayBytes: 0 };
+    const head = Buffer.alloc(4096);
+    const bytesRead = fs.readSync(fd, head, 0, head.length, 0);
+    if (bytesRead < MIN_PE_BYTES || head[0] !== 0x4d || head[1] !== 0x5a) {
+      return { validPe: false, fileSize: stat.size, peEnd: 0, overlayBytes: 0 };
+    }
+    const peOff = head.readUInt32LE(0x3c);
+    if (peOff + 24 > bytesRead || head.readUInt32LE(peOff) !== 0x00004550) {
+      return { validPe: false, fileSize: stat.size, peEnd: 0, overlayBytes: 0 };
+    }
+    const numSections = head.readUInt16LE(peOff + 6);
+    const optHeaderSize = head.readUInt16LE(peOff + 20);
+    const secTableOff = peOff + 24 + optHeaderSize;
+    let secBuf = head;
+    let secBase = 0;
+    if (secTableOff + numSections * 40 > bytesRead) {
+      secBuf = Buffer.alloc(numSections * 40);
+      const secRead = fs.readSync(fd, secBuf, 0, secBuf.length, secTableOff);
+      if (secRead < secBuf.length) {
+        return { validPe: false, fileSize: stat.size, peEnd: 0, overlayBytes: 0 };
+      }
+      secBase = secTableOff;
+    }
+    let peEnd = 0;
+    for (let i = 0; i < numSections; i++) {
+      const off = secTableOff - secBase + i * 40;
+      const rawSize = secBuf.readUInt32LE(off + 16);
+      const rawPtr = secBuf.readUInt32LE(off + 20);
+      if (rawPtr + rawSize > peEnd) peEnd = rawPtr + rawSize;
+    }
+    return { validPe: peEnd > 0 && stat.size >= peEnd, fileSize: stat.size, peEnd, overlayBytes: stat.size - peEnd };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function checkInstallerOverlay() {
+  const MIN_OVERLAY_BYTES = 10 * 1024 * 1024;
+  let srcVersion = null;
+  try { srcVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch {}
+  if (!srcVersion) {
+    report('FAIL', '安装包 PE overlay', '无法从 package.json 读取版本号');
+    return;
+  }
+  const distDir = path.join(ROOT, 'dist');
+  const candidates = [
+    `Life-${srcVersion}-Setup.exe`,
+    `Life-${srcVersion}-win-x64-portable.exe`,
+  ].filter(name => fs.existsSync(path.join(distDir, name)));
+
+  if (candidates.length === 0) {
+    report('WARN', '安装包 PE overlay', `dist/ 未见当前版本 ${srcVersion} 的 exe 安装包，跳过校验`);
+    return;
+  }
+
+  const bad = [];
+  const ok = [];
+  for (const name of candidates) {
+    const info = inspectPeOverlay(path.join(distDir, name));
+    if (!info.validPe || info.overlayBytes < MIN_OVERLAY_BYTES) {
+      bad.push(`${name}(size=${info.fileSize}, overlay=${info.overlayBytes})`);
+    } else {
+      ok.push(`${name}(overlay=${(info.overlayBytes / (1024 * 1024)).toFixed(1)}MB)`);
+    }
+  }
+  if (bad.length > 0) {
+    report('FAIL', '安装包 PE overlay', `检测到疑似残缺安装包或空壳存根（overlay < 10MB）: ${bad.join(', ')}`);
+    return;
+  }
+  report('PASS', '安装包 PE overlay', `全部已构建安装包载荷正常: ${ok.join(', ')}`);
+}
+
 /* 执行检查 */
 checkJsSyntax();
 checkWardrobeAssets();
@@ -525,6 +607,7 @@ checkDocsAndTestSuites();
 checkPublicExport();
 checkBuilderClosure();
 checkArtifactFreshness();
+checkInstallerOverlay();
 
 console.log('\n====================================================');
 console.log(`检查完成: PASS ${totalPass} 项, WARN ${totalWarn} 项, FAIL ${totalFail} 项`);

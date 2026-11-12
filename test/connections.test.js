@@ -104,6 +104,22 @@ check('10 models / activeModel 独立：update A 的 model 不影响 B',
   connections.loadStore(dir1).store.connections.find((c) => c.connectionId === c1.connection.connectionId).activeModel === 'model-a2' &&
   connections.loadStore(dir1).store.connections.find((c) => c.connectionId === c2.connection.connectionId).activeModel === 'model-b');
 
+check('10 updateConnection 兼容 UI 字段 patch.model（未传 activeModel 时写入 activeModel/models）',
+  connections.updateConnection(dir1, c1.connection.connectionId, { model: 'model-ui-1' }).ok === true &&
+  connections.loadStore(dir1).store.connections.find((c) => c.connectionId === c1.connection.connectionId).activeModel === 'model-ui-1' &&
+  connections.loadStore(dir1).store.connections.find((c) => c.connectionId === c1.connection.connectionId).models.includes('model-ui-1'));
+
+check('10 updateConnection activeModel 优先于 model（显式 activeModel 不被 patch.model 覆盖）',
+  connections.updateConnection(dir1, c1.connection.connectionId, { activeModel: 'model-a2', model: 'ignored-ui-model' }).ok === true &&
+  connections.loadStore(dir1).store.connections.find((c) => c.connectionId === c1.connection.connectionId).activeModel === 'model-a2');
+
+const clearViaModel = connections.updateConnection(dir1, c1.connection.connectionId, { model: '' });
+const clearViaActive = connections.updateConnection(dir1, c1.connection.connectionId, { activeModel: '   ' });
+check('10 updateConnection 显式传空 model / activeModel 必须 fail-closed 拒绝（绝不回弹旧模型）',
+  clearViaModel.ok === false && clearViaModel.error.includes('ACTIVE_MODEL_REQUIRED') &&
+  clearViaActive.ok === false && clearViaActive.error.includes('ACTIVE_MODEL_REQUIRED') &&
+  connections.loadStore(dir1).store.connections.find((c) => c.connectionId === c1.connection.connectionId).activeModel === 'model-a2');
+
 check('5 updateConnection 拒绝改 immutable 字段（credentialRef/connectionId/credentialOwnership）',
   connections.updateConnection(dir1, c1.connection.connectionId, { credentialRef: 'cred:x' }).error === 'IMMUTABLE_FIELD: credentialRef' &&
   connections.updateConnection(dir1, c1.connection.connectionId, { connectionId: 'conn-z' }).error === 'IMMUTABLE_FIELD: connectionId' &&

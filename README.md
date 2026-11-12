@@ -1,4 +1,4 @@
-# Life v1.8.0
+# Life v1.9.0
 
 ```text
         . ~ ~ ~ ~ ~ .
@@ -148,9 +148,9 @@
 
 ## 快速开始
 
-**普通玩家。** 到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-1.8.0-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
+**普通玩家。** 到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-1.9.0-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
 
-***Just want to run it.** Grab `Life-1.8.0-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
+***Just want to run it.** Grab `Life-1.9.0-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
 
 **开发者。** 需要 Node.js 18 以上：
 
@@ -190,6 +190,7 @@ README 只放门面。真正想读细节、改代码、或者核对测试的，�
 
 | 版本 | 日期 | 一句话 |
 | --- | --- | --- |
+| **v1.9.0** | 2026-11-12 | D-27 独立拟稿与待决队列、观察档三档与动作史投影、Agent 审计与 S-2/S-3/S-4 安全收口、观测排版与连接设置 P0 修复 |
 | **v1.8.0** | 2026-10-28 | 语音输入、个体观测面板、重逢心境、屏幕视觉探针 |
 | v1.6.1 | 2026-10-19 | 主动搭话调度自愈，对话失败不再静默 |
 | v1.6.0 | 2026-10-18 | 公开发布剥离器，Provider 容灾自动回落 |

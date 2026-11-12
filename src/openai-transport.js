@@ -31,7 +31,9 @@ function normalizeBaseURL(baseURL) {
 }
 
 function resolveChatCompletionsURL(baseURL) {
-  return normalizeBaseURL(baseURL) + '/chat/completions';
+  const norm = normalizeBaseURL(baseURL);
+  // 避免用户粘贴完整 `.../chat/completions`（含大小写或尾斜杠）时重复拼接成 `.../chat/completions/chat/completions`
+  return /\/chat\/completions$/i.test(norm) ? norm : norm + '/chat/completions';
 }
 
 /* ---- Provider HTTP Error 归一化（P1-2 语义原样保留） ---- */

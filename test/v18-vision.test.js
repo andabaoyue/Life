@@ -277,8 +277,18 @@ check('🔴 provider-registry 的 deepseek vision 已改为 true',
 check('🔴 无 vision 能力时显式失败（不静默丢图）',
   /MODEL_HAS_NO_VISION/.test(brainSrc));
 
-check('🔴 memory 的 tail 顺序含 vision（reunion 之后、suffix 之前）',
-  /\[bedsideNote,\s*selfNote,\s*reunionNote,\s*visionNote,\s*suffix\]/.test(memSrc));
+/* 🔵 2026-11-04：判据从「固定名单逐字匹配」改为**顺序关系**。
+ *   起因：v1.9.0-dev 在 vision 与 suffix 之间插入了 observeEcho（观察期满补注入），
+ *   固定名单当场变红，而它要守的契约（vision 在 reunion 之后、suffix 之前）一个字没变。
+ *   这与 d11 那次「位置耦合」是同一类病：断言钉的是具体名单，不是不变式。 */
+{
+  const tailMatch = /const tail = \[([^\]]+)\]/.exec(memSrc);
+  const tailOrder = tailMatch ? tailMatch[1] : '';
+  const idx = (n) => tailOrder.indexOf(n);
+  check('🔴 memory 的 tail 顺序含 vision（reunion 之后、suffix 之前）',
+    idx('visionNote') > idx('reunionNote') && idx('suffix') > idx('visionNote'),
+    'tail=' + tailOrder.slice(0, 120));
+}
 
 check('🔴 brain 接线 vision provider',
   brainSrc.includes('setVisionProvider(() => this.takeVisionNote())'));

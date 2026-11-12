@@ -37,7 +37,22 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
   policy.setKillSwitch(false);
   check('没有显式授权仍拒绝', policy.can('workspace.read', 'workspace') === false);
   const proposal = createActionProposal({ capability: 'workspace.read', scope: 'workspace', reason: '查看项目' });
-  check('行动提案默认需要用户确认', proposal.status === 'proposed' && proposal.requiresUserConfirmation);
+  /* 🔵 2026-11-05 B-2：断言意图不变，载体换了。
+   *
+   * 原断言：`proposal.status === 'proposed' && proposal.requiresUserConfirmation`
+   *   —— `requiresUserConfirmation` 已于 B-2 删除（渲染端可控的死字段，
+   *      留着比没有更危险，见 agent-interfaces.js 里的注释）。
+   *
+   * 「默认需要用户确认」这件事现在的判据是 `proposalSource`：
+   *   不是 'selfNote' / 'observerJournal' ⇒ 执行器保留第五道闸门。
+   *   而它由主进程通过独立第三参数写入，渲染端伪造不了。
+   * ⇒ 断言改成「来源是 user + 状态是 proposed」，比原来**更严**（不只看一个布尔）。
+   */
+  check('行动提案默认需要用户确认（proposalSource=user ⇒ 保留第五道闸门）',
+    proposal.status === 'proposed'
+    && proposal.proposalSource === 'user'
+    && proposal.requiresUserConfirmation === undefined,
+    `status=${proposal.status} src=${proposal.proposalSource} legacy=${proposal.requiresUserConfirmation}`);
   const audit = new AuditLog();
   audit.append({ proposalId: proposal.id, result: 'proposed' });
   check('审计日志只追加', audit.list().length === 1 && audit.list()[0].proposalId === proposal.id);

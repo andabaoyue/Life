@@ -521,7 +521,25 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
     //     所以它走**独立第三参数**（与 D-9 的 intentMotive 同一手法）：
     //     渲染端即便在 payload 里塞同名字段也会被完全忽略。
     proposalSource: PROPOSAL_SOURCES.includes(proposalSourceArg) ? proposalSourceArg : 'user',
-    requiresUserConfirmation: input.requiresUserConfirmation !== false,
+    /* 🔴 2026-11-05 B-2：`requiresUserConfirmation` 字段**已删除**（审计 P2 #9）。
+     *
+     * ## 它原来是什么
+     *   `requiresUserConfirmation: input.requiresUserConfirmation !== false`
+     *   —— 取值直接来自 `input`，而 **input 就是渲染端 payload**。
+     *   谁传 `false`，谁就能在这个字段上「表示不需要确认」。
+     *
+     * ## 为什么删而不是留
+     *   它**全仓零读取点**（只有本条定义与上面的注释提到它），所以删掉不影响任何行为。
+     *   但留着它，将来有人想做「免确认」时第一眼就会看到这个字段并接上去 ——
+     *   **那就是把一个渲染端可控的开关接进安全链**，正是 D-3 顶替攻击那一族。
+     *   **留着比没有更危险**：没有它，人会去找 proposalSource（主进程盖戳，不可伪造）；
+     *   有它，人会以为自己找到了现成的开关。
+     *
+     * ## 现在「要不要第五道闸门」由谁决定
+     *   只看 `proposalSource`（见上面那条注释与 `agent-executor.js:465`）：
+     *   'selfNote' / 'observerJournal' 免逐次确认，其余一律保留闸门。
+     *   来源由**主进程通过独立第三参数**写入，渲染端同名键一律忽略。
+     */
     status,
     // v1.0 C 阶段：预算熔断是硬约束，提案得知道自己在哪个预算会话下出生。
     budgetSessionId: String(input.budgetSessionId || ''),

@@ -79,6 +79,30 @@ const DEFAULTS = {
   agentIdleMinutes: 30,
   agentSelfNoteIdleMinutes: 120,
 
+  /* 🔴 v1.9.0-dev（初澜 2.0 第 1 步）：观察档（observe）三档。
+   *
+   * ## 它解决什么问题
+   *   以后每加一个「她自发会做事」的能力，怎么在放它出去之前，
+   *   先看她在没人时会怎么做？
+   *   现在的二选一都不好：免授权直接做（出事才知道）／每次都问她（毁掉自发性）。
+   *   `observe` 是第三档：照常想、照常拟稿，但**不落盘**，只记录完整正文。
+   *
+   * ## 三档
+   *   off     不评估，直接跳过（零 LLM 开销）
+   *   observe 照常拟稿，拦截在 proposeInternal 之前，只写观察记录
+   *   auto    不拦截（现状）
+   *
+   * ## 默认值的两条纪律
+   *   ① **已有能力保持 auto**：selfNote / observerJournal 的免授权是 D-17 用户拍板过的
+   *      （agent-executor.js:444「D-17（用户拍板 C1）」）。降成 observe 是**收权**，不是给权。
+   *   ② **未登记的能力回落 observe**：以后加新能力，忘了配置也落在最安全档位
+   *      （对齐 DeepSeek 原型 src/policy.ts 的 `z.enum([...]).default('observe')`）。
+   */
+  agentCapabilityModes: {
+    selfNote: 'auto',
+    observerJournal: 'auto',
+  },
+
   // 🔴 D-011（v1.2.y）：长期记忆「渐褪」的标定参数与出厂通电。
   //   决策依据（D-011 实测真实数据）：
   //   1. 活跃门限 0.50：确立三阶认知金字塔 —— ΔW 0-1 保持全文 ACTIVE（近景焦点），
@@ -213,6 +237,21 @@ function sanitize(raw = {}) {
     // D-17：上下界防手滑（1 分钟 ~ 24 小时）。越界即回落默认，不静默接受。
     agentIdleMinutes: finiteInt(raw.agentIdleMinutes, DEFAULTS.agentIdleMinutes, 1, 1440),
     agentSelfNoteIdleMinutes: finiteInt(raw.agentSelfNoteIdleMinutes, DEFAULTS.agentSelfNoteIdleMinutes, 1, 1440),
+    // 观察档：只收合法的三档字符串；任何非法值（'true' / 1 / 'AUTO'）一律丢弃回落默认。
+    //   ⚠️ 与 agentTriggerEnabled 同款纪律：不在白名单里的键，手写进 life-config.json
+    //      会被整份丢弃，所以必须显式列在这里。
+    agentCapabilityModes: (() => {
+      const valid = ['off', 'observe', 'auto'];
+      const src = raw.agentCapabilityModes && typeof raw.agentCapabilityModes === 'object'
+        && !Array.isArray(raw.agentCapabilityModes) ? raw.agentCapabilityModes : {};
+      const out = { ...DEFAULTS.agentCapabilityModes };
+      for (const [k, v] of Object.entries(src)) {
+        // 能力名只收短标识符，防任意长键污染配置
+        if (typeof k !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]{0,40}$/.test(k)) continue;
+        if (typeof v === 'string' && valid.includes(v)) out[k] = v;
+      }
+      return out;
+    })(),
     // 丙：强度门限 0~1；渐褪截断字数 20~4000（下界保证「能读出一件事」，上界防它退化成全文投影）
     memoryActiveThreshold: finiteNumber(raw.memoryActiveThreshold, DEFAULTS.memoryActiveThreshold, 0.05, 0.99),
     memoryFadingMaxChars: finiteInt(raw.memoryFadingMaxChars, DEFAULTS.memoryFadingMaxChars, 20, 4000),
@@ -381,6 +420,37 @@ function save(userDataDir, cfg, diskOverride) {
 /** 只给测试用：清掉兜底缓存，用来证明「真的是从盘上读出来的」 */
 function _clearCache() { lastGood.clear(); }
 
+/**
+ * 🔴 v1.9.0-dev：取某个自发能力的观察档位。
+ *
+ * ## 为什么是函数而不是直接读 config 字段
+ *   两条回落规则必须**只有一处实现**，否则迟早漂移：
+ *     ① 能力没登记 → `observe`（最安全档，忘了配也不会直接放行）
+ *     ② 值非法 → 同 ①
+ *   若调用方各自写 `config.agentCapabilityModes[x] || 'observe'`，
+ *   第一处就会把 `'off'` 误当成假值（`'off'` 是真值，其实没事；但 `''` / `null` 会漏）。
+ *   收成一个函数，判据只在 `VALID_CAPABILITY_MODES` 一处。
+ *
+ * @param {object} config 已经过 sanitize 的配置
+ * @param {string} capabilityKey 能力名（selfNote / observerJournal / 将来的新能力）
+ * @returns {'off'|'observe'|'auto'}
+ */
+const VALID_CAPABILITY_MODES = Object.freeze(['off', 'observe', 'auto']);
+
+function getCapabilityMode(config, capabilityKey) {
+  const key = typeof capabilityKey === 'string' ? capabilityKey : '';
+  const modes = (config && config.agentCapabilityModes && typeof config.agentCapabilityModes === 'object')
+    ? config.agentCapabilityModes : {};
+  const v = modes[key];
+  // 判据①：合法三档直接用
+  if (VALID_CAPABILITY_MODES.includes(v)) return v;
+  // 判据②：已有能力的出厂默认（D-17 拍板过的免授权）
+  const known = DEFAULTS.agentCapabilityModes[key];
+  if (VALID_CAPABILITY_MODES.includes(known)) return known;
+  // 判据③：未登记的新能力 → 最安全档
+  return 'observe';
+}
+
 module.exports = {
   load,
   tryLoad,
@@ -388,6 +458,8 @@ module.exports = {
   DEFAULTS,
   sanitize,
   _clearCache,
+  getCapabilityMode,
+  VALID_CAPABILITY_MODES,
   migrateConfig,
   CONFIG_MIGRATIONS,
   CONFIG_FILE,

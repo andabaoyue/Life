@@ -1029,5 +1029,202 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
     && statusAfterN1.budget.remainingActions === actionsBeforeN1 - 1);
 }
 
+/* ================================================================
+ * A 批门禁（2026-11-05，来自审计报告 P1 #1/#3/#4）
+ *
+ * 这一组四条全部是「变异后仍全绿」的实测漏守点。
+ * 验收标准只有一条：把对应修复改回去，必须变红。
+ * ================================================================ */
+console.log('\n--- A 批门禁：快照生命周期与两条无测试钉住的防线 ---');
+
+/* ---------- X1/X2：未确认的 execute 不得销毁快照（P1 #1） ----------
+ *
+ * ## 原来的 bug（已复现）
+ *   `EXECUTION_NOT_ALLOWED` 落进 `!isRetryableIO` 分支 ⇒ 快照被删
+ *   ⇒ 用户随后点【授权】得到 `SNAPSHOT_EXPIRED`（实际是被自己删了）。
+ *
+ * ## X2 是 X1 的反例，缺一不可
+ *   只写 X1 的话，把「清理分支整个删掉」也能通过 ——
+ *   而那会让「用户拒绝」的提案永远留着快照（授权泄漏）。
+ */
+{
+  const h = harness();
+  /* ⚠️ harness() 默认只给 workspace.read 设了 scopeRoots（见 test/agent_ipc.test.js:92）。
+   *    写通道不设就会得到 AUTHORIZED_REJECTED / scope_not_in_whitelist。
+   *    实测：propose 返回 {"ok":false,"error":"AUTHORIZED_REJECTED","reason":"scope_not_in_whitelist"} */
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  // X1 未确认 → confirm → 仍能落盘
+  {
+    const target = path.join(h.appDir, 'x1.txt');
+    const p = h.call('agent:propose-action', h.trustedEvent, {
+      capability: 'workspace.write', scope: target, content: 'X1 正文',
+    });
+    check('X1-0 建案成功', p && p.ok === true && p.proposal && p.proposal.id);
+    const pid = p.proposal.id;
+
+    const e1 = h.call('agent:execute', h.trustedEvent, { proposalId: pid });
+    check('X1-1 未确认的 execute 被拒（EXECUTION_NOT_ALLOWED）',
+      e1 && e1.ok === false && e1.error === 'EXECUTION_NOT_ALLOWED',
+      'got=' + JSON.stringify(e1 && e1.error));
+
+    const c = h.call('agent:confirm-action', h.trustedEvent, { proposalId: pid, decision: 'approved' });
+    check('X1-2 用户批准成功', c && c.ok === true, 'got=' + JSON.stringify(c && c.error));
+
+    const e2 = h.call('agent:execute', h.trustedEvent, { proposalId: pid });
+    check('🔴 X1-3 批准后 execute 必须成功（快照没被未确认那次销毁）',
+      e2 && e2.ok === true,
+      'got=' + JSON.stringify(e2 && (e2.error || 'ok')));
+    check('🔴 X1-4 且文件真的落盘了',
+      fs.existsSync(target), 'target=' + target);
+  }
+
+  // X2 反例：用户拒绝后必须仍清快照
+  {
+    const target2 = path.join(h.appDir, 'x2.txt');
+    const p2 = h.call('agent:propose-action', h.trustedEvent, {
+      capability: 'workspace.write', scope: target2, content: 'X2 正文',
+    });
+    const pid2 = p2.proposal.id;
+    h.call('agent:confirm-action', h.trustedEvent, { proposalId: pid2, decision: 'rejected' });
+
+    const e3 = h.call('agent:execute', h.trustedEvent, { proposalId: pid2 });
+    check('🔴 X2-1 用户拒绝后 execute 被拒（REJECTED_BY_USER）',
+      e3 && e3.ok === false && e3.reason === 'REJECTED_BY_USER',
+      'got=' + JSON.stringify(e3 && (e3.reason || e3.error)));
+    check('X2-2 且文件没有落盘', !fs.existsSync(target2));
+
+    // 关键反例：拒绝后即使再点 approved 也不能复活（拒绝是终态）
+    const c2 = h.call('agent:confirm-action', h.trustedEvent, { proposalId: pid2, decision: 'approved' });
+    check('X2-3 拒绝是终态：再点 approved 也不放行',
+      !c2 || c2.ok === false, 'got=' + JSON.stringify(c2 && (c2.ok ? 'ok' : c2.error)));
+  }
+}
+
+/* ---------- A-4a：get-pending-proposal 的「已执行不再展示」防线（P1 #3） ----------
+ *
+ * 变异实测：删掉 agent-ipc.js:372-375 后，139 套件全绿；但行为真的变了
+ * （ALREADY_EXECUTED → ok:true，未确认的提案会被重新亮卡 = D-19 事故形态回归）。
+ *
+ * ⚠️ 必须用 selfNote 来源：普通 user 来源的提案有 confirmation 记录，
+ *    maxPending 那道会先挡住，测不到 consumed 这道。
+ */
+{
+  const h = harness();
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  const target = path.join(h.appDir, 'pend.txt');
+
+  const r = h.api.proposeInternal(
+    { capability: 'workspace.write', scope: target, reason: 't' },
+    'main', 'selfNote', '她自己的字'
+  );
+  check('D-pend-0 selfNote 建案成功', r && r.ok === true && r.proposal && r.proposal.id);
+
+  const pid = r.proposal.id;
+  const ex = h.api.executeInternal({ proposalId: pid });
+  check('D-pend-1 selfNote 免确认直接执行成功', ex && ex.ok === true,
+    'got=' + JSON.stringify(ex && (ex.error || 'ok')));
+
+  const pend = h.call('agent:get-pending-proposal', h.trustedEvent, { proposalId: pid });
+  check('🔴 D-pend-2 已执行的提案不得再被当作「待确认」返回（D-19 事故形态）',
+    pend && pend.ok === false && pend.error === 'ALREADY_EXECUTED',
+    'got=' + JSON.stringify(pend && (pend.error || 'ok')));
+}
+
+/* ---------- A-4b：executeInternal 内层快照 TTL（P1 #4） ----------
+ *
+ * 变异实测：删掉 executeInternal 里那道 TTL 校验后 139 全绿；
+ * 差分显示原版拒、变异版**真落盘** —— 也就是「快照过期了还能写进去」。
+ *
+ * ## 怎么做成行为级（而不是源码级）
+ *   `registerAgentIpc` 的 options 接受 `contentSnapshotStore`（agent-ipc.js:117），
+ *   所以测试可以注入自己的 Map，**直接改快照的 createdAt** 来制造过期。
+ *   这比「源码里有没有 createdAt 这个词」可靠得多 —— 后者改个变量名就假绿。
+ *
+ * ## ⚠️ 置过期必须在 confirm **之后**
+ *   confirm 通道里的 pruneSnapshots() 会先删掉过期快照。
+ *   放在前面，测到的是外层那道（get-proposal-content 的清理），
+ *   内层那道删掉后仍然全绿 —— 测的不是我以为的那个东西。
+ *   （审计方第一版就栽在这里，我自己也差点重蹈。）
+ */
+{
+  const snaps = new Map();   // 注入的快照 store
+  const h = harness({ options: { contentSnapshotStore: snaps } });
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+
+  // D-ttl-0 基线：未过期必须放行（防校验写错成恒拒）
+  {
+    const target = path.join(h.appDir, 'ttl0.txt');
+    const p = h.call('agent:propose-action', h.trustedEvent, {
+      capability: 'workspace.write', scope: target, content: 'ttl0 正文',
+    });
+    check('D-ttl-0 基线建案成功', p && p.ok === true, JSON.stringify(p && p.error));
+    const pid = p.proposal.id;
+    h.call('agent:confirm-action', h.trustedEvent, { proposalId: pid, decision: 'approved' });
+    const e = h.call('agent:execute', h.trustedEvent, { proposalId: pid });
+    check('D-ttl-0b 未过期时 execute 成功（防校验恒拒）',
+      e && e.ok === true, 'got=' + JSON.stringify(e && (e.error || 'ok')));
+    check('D-ttl-0c 且文件落盘', fs.existsSync(target));
+  }
+
+  // D-ttl-1 核心：确认后人为置过期 ⇒ 内层 TTL 必须拒，且**不得落盘**
+  {
+    const target2 = path.join(h.appDir, 'ttl1.txt');
+    const p2 = h.call('agent:propose-action', h.trustedEvent, {
+      capability: 'workspace.write', scope: target2, content: 'ttl1 正文',
+    });
+    const pid2 = p2.proposal.id;
+
+    // 先确认（此时快照还没过期，pruneSnapshots 不会删它）
+    const c2 = h.call('agent:confirm-action', h.trustedEvent, { proposalId: pid2, decision: 'approved' });
+    check('D-ttl-1a 确认成功', c2 && c2.ok === true, JSON.stringify(c2 && c2.error));
+
+    // 🔴 关键动作：confirm 之后再把 createdAt 推到 11 分钟前（TTL = 10 分钟）
+    const snap = snaps.get(pid2);
+    check('D-ttl-1b 注入的快照 store 里能拿到这条快照（证明注入生效）',
+      Boolean(snap) && typeof snap.createdAt === 'number',
+      'snapKeys=' + (snap ? Object.keys(snap).join(',') : 'null'));
+    if (snap) snap.createdAt = Date.now() - 11 * 60 * 1000;
+
+    const e2 = h.call('agent:execute', h.trustedEvent, { proposalId: pid2 });
+    check('🔴 D-ttl-1 executeInternal 自身的 TTL 校验生效（过期必须拒）',
+      e2 && e2.ok === false && e2.error === 'SNAPSHOT_EXPIRED',
+      'got=' + JSON.stringify(e2 && (e2.error || 'ok')));
+    check('🔴 D-ttl-1c 且过期时**绝不能落盘**（这是变异体会犯的错）',
+      !fs.existsSync(target2), 'target=' + target2);
+  }
+}
+
+/* ---------- A-3：SNAPSHOT 错误码的 detail 必须反映真实原因（P2 #5） ----------
+ *
+ * 原实现按「提案有没有 contentHash」猜原因，而 SEC-01 强制所有写提案都带
+ * contentHash ⇒ 三元**恒走 SNAPSHOT_EXPIRED**，SNAPSHOT_MISSING 是死分支。
+ * 后果：A-2 那个 bug 里，快照明明是被删的，用户却看到「过期」。
+ *
+ * 改法：保留两个码（渲染端已认），但把真实原因写进 `detail`。
+ */
+{
+  const snaps = new Map();
+  const h = harness({ options: { contentSnapshotStore: snaps } });
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  const target = path.join(h.appDir, 'a3.txt');
+
+  const p = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write', scope: target, content: 'a3 正文',
+  });
+  const pid = p.proposal.id;
+  h.call('agent:confirm-action', h.trustedEvent, { proposalId: pid, decision: 'approved' });
+
+  // 人为把快照删掉（模拟「被清理」），再 execute
+  snaps.delete(pid);
+  const e = h.call('agent:execute', h.trustedEvent, { proposalId: pid });
+  check('A-3a 快照被删后 execute 返回 SNAPSHOT_EXPIRED（码不变，渲染端不用改）',
+    e && e.ok === false && e.error === 'SNAPSHOT_EXPIRED',
+    'got=' + JSON.stringify(e && (e.error || 'ok')));
+  check('🔴 A-3b 但 detail 必须写真实原因 DELETED_OR_LOST（不再假装「过期」）',
+    e && e.detail === 'DELETED_OR_LOST',
+    'detail=' + JSON.stringify(e && e.detail));
+  check('A-3c 且仍然不落盘', !fs.existsSync(target));
+}
+
 console.log(failures === 0 ? '\nall agent_ipc tests passed' : `\n${failures} FAILED`);
 assert.strictEqual(failures, 0, `${failures} 项 Agent IPC 门禁失败`);

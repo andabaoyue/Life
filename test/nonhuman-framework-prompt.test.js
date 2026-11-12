@@ -269,13 +269,93 @@ const OBS_VALID = JSON.stringify({
     brainSrc.includes('分段数以【窗口规模】指令为准') && brainSrc.includes('不照抄上方五段骨架'));
 
   const dreamSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'dream-system.js'), 'utf8');
+  /* 🔵 2026-11-05 C-1：`WANT_TO_LEAVE_SYS` 的规则编号变了。
+   *
+   *   原来语言条款是 `5. 【语言】`，而 C-1 把「不编造 / 不写钟点 / 直接给内容」
+   *   三条抽到 src/constraints.js（渲染时占 3/4/5 三行），
+   *   所以语言条款顺延成 `7. 【语言】`。
+   *
+   *   ⚠️ 断言意图不变（「这条 SYS 里确实有语言自适应条款」），只是编号跟着实现走。
+   *      改成只认「【语言】使用你平时与用户交流时最常使用的语言」这句正文，
+   *      不再依赖前面的编号 —— 以后再插规则不会又红一次（与 d11 那次同类）。
+   */
   check('FC4 提示词语言自适应防漂移（PERSONA/WANT_TO_LEAVE/SUMMARY/GROWTH/MERGE/DREAM 皆含语言条款）',
     PERSONA.includes('语言自适应：当对方使用其他语言')
-    && brainSrc.includes('5. 【语言】使用你平时与用户交流时最常使用的语言')
+    && brainSrc.includes('【语言】使用你平时与用户交流时最常使用的语言')
     && brainSrc.includes('5. 【语言一致性】各字段内容')
     && brainSrc.includes('语言与输入片段保持一致（中文约 250 字以内，英文约 250 词以内）')
     && brainSrc.includes('语言一致性：提炼的 trait 描述语言必须与对话保持一致')
     && dreamSrc.includes('输出语言必须与日间遗留残余所使用的主要语言保持严格一致'));
+
+  /* ============ C 批门禁（2026-11-05，来自审计 P2 #6/#7） ============ */
+  console.log('\n--- C 批门禁：约束常量共享 + persona/executor 对齐 ---');
+
+  const personaSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'persona.js'), 'utf8');
+  const { renderConstraints, CORE_CONSTRAINTS } = require(path.join(__dirname, '..', 'src', 'constraints'));
+
+  /* C-1b 🔴 三条 SYS 必须引用共享常量，不能硬写。
+   *
+   *   为什么这条比常量本身重要：没有断言，共享常量也会被绕开 ——
+   *   有人图省事在 SYS 里硬写一句，门禁不红，漂移就又开始。
+   */
+  {
+    const sysNames = ['WANT_TO_LEAVE_SYS', 'OBSERVER_JOURNAL_SYS', 'PROPOSAL_DRAFT_SYS'];
+    const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const brainCode = stripComments(brainSrc);
+    const missing = sysNames.filter((n) => {
+      const i = brainCode.indexOf('const ' + n + ' =');
+      if (i < 0) return true;
+      const end = brainCode.indexOf("';", i);
+      const body = brainCode.slice(i, end > 0 ? end + 2 : i + 3000);
+      return !/renderConstraints\(/.test(body);
+    });
+    check('🔴 C-1b 三条独立 SYS 都引用 renderConstraints()（不是硬写约束）',
+      missing.length === 0, 'missing=' + JSON.stringify(missing));
+    check('C-1c persona 也引用同一个 CORE_CONSTRAINTS',
+      /CORE_CONSTRAINTS/.test(stripComments(personaSrc2)));
+    check('C-1d 共享常量本身含「不编造」与「不写钟点」两条',
+      CORE_CONSTRAINTS.length >= 2
+      && CORE_CONSTRAINTS.some((c) => /不编造/.test(c))
+      && CORE_CONSTRAINTS.some((c) => /钟点|日期/.test(c)));
+    check('C-1e 方案正文版允许 Markdown 标题，其余版禁止',
+      renderConstraints(1, { allowMarkdownTitle: true }).includes('直接给正文本身')
+      && !renderConstraints(1).includes('标题'));
+  }
+
+  /* C-2 🔴 persona 的沙盒可见性描述必须与**她实际能做的事**一致。
+   *
+   *   ## 判据为什么不能看 EXECUTABLE_CAPABILITIES
+   *     第一版写的是 `canRead = EXECUTABLE_CAPABILITIES.includes('workspace.read')`，
+   *     结果当场变红 —— 因为 executor **早就有** workspace.read（`:54` + `_readFile` 完整实现）。
+   *     但那不代表她「能读」：`agent-intent.js` 只产 `workspace.write`，
+   *     **她从来没有发起过一次读**。
+   *
+   *   ⇒ 判据必须看**意图层**：她实际能发起的动作，才是 persona 该描述的东西。
+   *     执行器有读能力 ≠ 她读得到。这是两件事，混起来会得出一条永远红的断言。
+   *
+   *   ## 真正要防的那个中间态
+   *     有人给 agent-intent 加了读意图，而 persona 那句「看不见里面现在有什么」没改 ——
+   *     那就是 2026-11-01「她说碰不到沙盒」的翻版：规则落后于能力。
+   */
+  {
+    const { EXECUTABLE_CAPABILITIES } = require(path.join(__dirname, '..', 'src', 'agent-executor'));
+    const intentSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent-intent.js'), 'utf8');
+
+    // 「她能不能发起读」看意图层，不看执行器能力
+    const producesReadIntent = /capability:\s*'workspace\.read'/.test(intentSrc);
+    const saysCannotSee = /看不见里面/.test(PERSONA);
+
+    check('🔴 C-2 persona 的沙盒可见性描述与她实际能做的事一致',
+      producesReadIntent ? !saysCannotSee : saysCannotSee,
+      `producesReadIntent=${producesReadIntent} saysCannotSee=${saysCannotSee}`);
+
+    /* C-2a 把「执行器有读能力」这个事实单独钉住 ——
+     *   它现在与「她读不到」并存，这个并存是**有意的**，不是疏忽。
+     *   将来谁把意图接上，C-2 会红，而 C-2a 仍绿（说明 executor 一直没问题）。 */
+    check('C-2a executor 确实已具备 workspace.read（与「她读不到」并存，是有意的）',
+      EXECUTABLE_CAPABILITIES.includes('workspace.read'),
+      'caps=' + JSON.stringify(EXECUTABLE_CAPABILITIES));
+  }
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

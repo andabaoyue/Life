@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, screen, shell, Menu, Tray, globalShortcut, nativeImage, safeStorage, dialog, powerMonitor, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { load, save, tryLoad } = require('./src/config');
+const { load, save, tryLoad, getCapabilityMode } = require('./src/config');
+const { ObservationLog } = require('./src/agent-observations');
 const { Brain } = require('./src/brain');
 const { Wardrobe, CATALOG } = require('./src/wardrobe');
 const { ActivityTracker } = require('./src/tracker');
@@ -125,48 +126,238 @@ let powerMonitorSource = null;
  *   ⇒ **不对 hint 做任何白名单/重命名/净化**（除下面的安全边界）。
  *     她想叫「我的日记.md」还是「1234.txt」都随她。
  *
+ *   🔵 D-27 澄清（**别把这段话套到通路 B 上**）：
+ *     上面这条「取名完全自由」是**通路 A（selfNote / 自发留条）**的约定 ——
+ *     她主动留下的东西，名字由她定，程序不插手。
+ *     **通路 B（用户吩咐她落档）不同**：那是用户说出的目标名，
+ *     由 `buildSandboxScope()` 做净化 + **扩展名收敛**（不可写的 csv 等 →
+ *     `.md`，以对齐执行器的 `ALLOWED_WRITE_EXTENSIONS`）。
+ *     两条路的自由度不同，因为**发起方不同**：她自己的东西她说了算，
+ *     她替用户干的事按用户的说法来。
+ *
+ *    ⚠️ 若将来有人把这条自由约定推广到通路 B，会立刻踩两个坑：
+ *      ① 用户说「整理.csv」→ 意图命中（agent-intent 的 FILENAME_RE 收 csv）、
+ *         执行器不收 csv ⇒ 点授权后白点一次；
+ *      ② 名字里的路径成分没人挡 ⇒ 沙盒边界靠下游兜。
+ *
  * ⚠️ 为什么这个函数在**模块顶层**而不是 whenReady 里：
  *   调用它的是 chat-send 的 handler，那个 handler 在模块顶层注册（ipcGuard.handle）。
  *   若把本函数定义在 whenReady 块内，顶层闭包引用它会抛 ReferenceError ——
  *   实测踩过（"tryBuildProposalFromIntent is not defined"，4 项门禁红）。
  *   依赖通过模块级 agentBuildDeps 传入，理由见其声明处注释。
  */
-function tryBuildProposalFromIntent() {
-  // 🔴🔴 D-12：**本函数当前一律不建案** —— 通路 B 暂缓（用户拍板 + 反重力复核裁定）。
-  //
-  //   ## 这个函数原本要做什么
-  //     处理「用户让她写某个文件」：判定命中 → 拼 scope → 建案 → 亮卡。
-  //
-  //   ## 为什么停掉
-  //     这类意图**只有 scope（文件名），没有 content（要写什么）**。
-  //     建出来会是一个**空内容的案**：用户点授权 → 执行器 CONTENT_EMPTY 拒写
-  //     → 用户得到一张白弹的卡片和一句错误。
-  //     **不留半截功能**比「先跑起来」重要 —— 半截功能会让人以为它通了。
-  //
-  //   ## 通路 B 的正解（留待后续，两条都不草率）
-  //     · 内容来自**会话记忆提炼**（把最近聊的整理成档）
-  //     · 内容来自**先读沙盒里那个文件再改写**（依赖尚未实现的 read 通路）
-  //
-  //   ## ⚠️ 与通路 A 的分工（别混）
-  //     通路 A（wantToLeaveSomething）走 maybeAskForSelfNote 的**独立建案路径** ——
-  //     它在建案前就用 askForSelfNote 拿到了她写的内容并暂存，
-  //     所以那条路能建案、也能落盘，**不经过本函数**。
-  //
-  //   ## 恢复条件
-  //     接上内容来源那天，把下面那个 return null 换成原来的建案逻辑即可
-  //     （原始实现见 D-10 提交的 git 历史）。
-  //     在那之前它只是**如实拒绝**，不是静默吞掉 —— 日志能看到判定命中过。
+/* ────────────────────────────────────────────────────────────────
+ * 🔴 D-27：通路 B —— 用户吩咐她落档（D-12 留下的 stub，本轮真正接通）
+ * ────────────────────────────────────────────────────────────────
+ *
+ * ## 与 D-12 的关系：不是「恢复」，是**第一次真的写**
+ *   原注释写着「原始实现见 D-10 提交的 git 历史」。**那句话是错的** ——
+ *   逐个查过 ea25d4c / 141533b / a7a4976 / b3fc13e 四个版本，本函数体
+ *   全是同一份 1107 字符的 stub，历史上从未存在过建案实现。
+ *   所以本轮不是把某段代码找回来，而是补上从未写过的那一段。
+ *
+ * ## 内容从哪来：**独立一次调用**，绝不塞进聊天返回
+ *   聊天那条提示词有自己的铁律（不含程序数字、不暴露时钟、过滤 synthetic）。
+ *   让它顺带吐几百字 Markdown，语气必然撕裂；而标记体要从气泡里剥离，
+ *   一旦被 max_tokens 截断或括号未闭合，半截文档就漏到用户眼前
+ *   （`brain.js:153` 的 WEAR_RE 只匹配十几个字符的单词标记都还要靠句尾锚定兜底）。
+ *   更关键的是**拒绝权**：聊完之后另起一次调用，她才能说「还没聊透」。
+ *   合进同一次调用，那个「不」根本来不及出口 —— 而拒绝立项正是 D-27 要保住的东西。
+ *   ⇒ 所以走 `brain.askForProposalContent()`，与 askForSelfNote 同形。
+ *
+ * ## 🔴 消费即清空（Consume-on-Read）
+ *   `brain._pendingAgentIntent` 是「上一轮判定命中的意图」，唯一的清空点是
+ *   brain.js 里那句「判定跑过但没中」。若本函数只在拒案时清空，会漏掉两条：
+ *     · 她**同意**建案 → 意图残留 → 下一轮若触发器没跑（verdict.ran === false，
+ *       比如配置被关掉或主动搭话被挡），同一意图会被**重复建案**；
+ *     · 拟稿是 await 的异步调用 —— 若等它返回才清空，等待期间用户又说了新话
+ *       写入了新意图，事后清空就会**误删新的那个**。
+ *   ⇒ 所以：**读到并校验通过后，立刻同步置 null，再进 await。**
+ *     宁可「消费了一次没建成」也不要「同一个意图被用两次」。
+ *
+ * ## 与通路 A 的分工（别混）
+ *   通路 A（wantToLeaveSomething）走 maybeAskForSelfNote 的独立建案路径 ——
+ *   它在建案前就用 askForSelfNote 拿到内容并**自动执行**（免确认、不弹卡）。
+ *   通路 B 是**用户明确要求的**，所以保留第五道闸门：建案后广播
+ *   `agent-proposal-pending`，用户点【授权】才落盘。
+ *
+ * ## 为什么建案后要广播（D-19 的教训不能只记住一半）
+ *   D-19 删掉了「自发便签写成后」那条 `agent-proposal-available` 广播 —— 那是对的，
+ *   因为「已执行完」和「待你决定」是两件事。但它之后**全仓再没有任何发送点**，
+ *   于是 D-10 的建案路径建完案就躺在注册表里直到 10 分钟 TTL 过期。
+ *   ⇒ 本轮新增语义明确的 `agent-proposal-pending`（只表示「有待决提案」），
+ *     不复用 `-available`（那个名字在 D-19 已被钉死为歧义事件）。
+ */
+/**
+ * 🔴 D-27：拒案留痕 —— 把「她拒绝立项」如实写进 agent-audit.jsonl。
+ *
+ * ## 为什么拒案也要进审计
+ *   本仓的审计口径一直是「**拒绝也要留痕**」（agent-ipc.js 里 10 处 auditLog.append
+ *   有一半是拒绝分支）。拒案与拒绝执行同属主体决策，只打 console.log 等于：
+ *   出了问题时，审计里看不到「她曾经拒绝过」——而那恰恰是最该被看见的一类事实。
+ *
+ * ## ⚠️ 三条边界
+ *   1. **绝不记正文**。只记 reason / 目标名（basename 级别的 hint），
+ *      与 AuditLog 的隐私铁律一致（它自己还会再过滤一遍 key/token 类字段）。
+ *   2. **审计写不进去不能挡住对话链路** —— 与 auditProactiveDispatched 同款纪律。
+ *   3. **不依赖 whenReady 的块级变量**：走模块顶层那个 proactiveAuditLog 引用
+ *      （它是 agentAuditLog 的顶层句柄）。若为 null 就跳过，绝不抛。
+ *
+ * @param {object} intent agent-intent 的判定结果
+ * @param {string} reason 拒绝/不可用的原因码
+ * @param {object} [deps] 建案依赖（含 audit 注入口，单测用；缺省回落到 proactiveAuditLog）
+ * @param {string} [outcome] 🔴 D-27 复核（D-4）新增：**两种状态必须用不同的 outcome**
+ *   · `'refused_by_subject'` —— 她主体性地拒绝立项（聊得不够透、时机不对）
+ *   · `'draft_unavailable'`  —— 拟稿故障/不可用（空、过短、关机、异常）
+ *   ⚠️ 为什么必须分开：只按 outcome 汇总时，把「她拒绝了」与「模型没产出」
+ *     统计成一类，会让人误判她的行为倾向（以为她总在拒绝），
+ *     而实际上可能是调用一直失败。**故障与决策不能同桶。**
+ */
+function auditProposalRefused(intent, reason, deps, outcome) {
+  // 优先用注入的审计器（门禁用替身，能验「真的写进去了」）；
+  // 生产环境 agentBuildDeps 不带 audit，回落到模块顶层的真实审计句柄。
+  const sink = (deps && deps.audit && typeof deps.audit.append === 'function')
+    ? deps.audit
+    : proactiveAuditLog;
+  if (!sink) return;
+  const oc = (outcome === 'draft_unavailable') ? 'draft_unavailable' : 'refused_by_subject';
   try {
-    const intent = brain && brain._pendingAgentIntent;
-    if (intent && intent.shouldPropose === true) {
-      console.log('[Agent] 通路 B 判定命中但暂无内容来源，按设计不建案:', String(intent.hint || '').slice(0, 60));
+    sink.append({
+      channel: 'agent:propose-action',
+      outcome: oc,
+      capability: 'workspace.write',
+      via: 'main',
+      // 只留目标名（basename 级），绝不记方案正文
+      hint: String((intent && intent.hint) || '').slice(0, 120) || null,
+      reason: String(reason || '').slice(0, 80) || null,
+    });
+  } catch { /* 审计写不进去也不能挡住建案路径 */ }
+}
+
+/**
+ * 把 intent 给的 hint 净化成一个**沙盒内的安全文件名**。
+ *
+ * ⚠️ 规则与 `maybeAskForSelfNote` 里那几条**故意保持一致**（绝对路径 / 分隔符 /
+ *   点段 / 超长 / Windows 保留名）。为什么不抽成一个共用函数：
+ *   通路 A 那一段被 `test/d10-wiring.test.js` 按**字面量**钉着 5 条断言
+ *   （`mainSrc.includes('if (/[\\/]/.test(rawHint)) return;')` 等），
+ *   动它就要动门禁；AGENTS.md 也要求「不改无关函数实现」。
+ *   所以此处**镜像**同一套规则，并另加一条门禁：两条路的拒绝行为必须一致。
+ *
+ * @param {string} rawHint 意图里给的文件名（来自用户原话）
+ * @param {string} sandboxDir 沙盒绝对路径
+ * @returns {?{scope:string, name:string}} null = 这个 hint 不能用于建案
+ */
+function buildSandboxScope(rawHint, sandboxDir) {
+  if (typeof sandboxDir !== 'string' || !sandboxDir) return null;
+  const h = String(rawHint == null ? '' : rawHint).trim();
+  if (!h) return null;
+  if (path.isAbsolute(h)) return null;
+  if (/[\\/]/.test(h)) return null;
+  if (h === '.' || h === '..') return null;
+  if (/\.\./.test(h)) return null;
+  if (h.length > 200) return null;
+  if (h.includes(':') || h.endsWith('.') || h.endsWith(' ')) return null;
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(h.split('.')[0])) return null;
+
+  // 🔴 扩展名收敛到**执行器真正允许写的那几个**（'.txt' / '.md' / '.json' / '.log'）。
+  //   为什么必须在这里做：agent-intent 的白名单里还有 `csv`
+  //   （`src/agent-intent.js:120` 的 FILENAME_RE），而执行器的
+  //   ALLOWED_WRITE_EXTENSIONS 不收 csv（`src/agent-executor.js:51`）。
+  //   两处口径不一致 ⇒ 用户说「整理.csv」时意图命中、建案成功、点授权后
+  //   执行器回 DISALLOWED_EXTENSION —— 用户得到一张白点的卡片。
+  //   这里把它收敛成 `.md`（本通路产出的本来就是一份 Markdown 文档）。
+  const WRITABLE = ['.txt', '.md', '.json', '.log'];
+  let name = path.basename(h);
+  const ext = path.extname(name).toLowerCase();
+  if (!WRITABLE.includes(ext)) {
+    // 无扩展名 或 不可写扩展名 ⇒ 一律补成 .md
+    name = (ext ? name.slice(0, name.length - ext.length) : name) + '.md';
+  }
+  if (!name || name === '.md') return null;
+
+  return { scope: path.join(sandboxDir, name), name: name };
+}
+
+async function tryBuildProposalFromIntent() {
+  try {
+    const deps = agentBuildDeps;
+    if (!deps || !deps.agentIpc || !deps.agentSandbox) return null;
+    if (!brain || typeof brain.askForProposalContent !== 'function') return null;
+
+    // ── 读取即清空：这一步**必须同步**，且在下面任何 await 之前 ──
+    const intent = brain._pendingAgentIntent;
+    if (!intent || intent.shouldPropose !== true) return null;
+    brain._pendingAgentIntent = null;
+
+    // 只处理写意图。intent.capability 目前恒为 'workspace.write'
+    // （agent-intent.js 只产这一种），但**不假设**：能力名不符就静默退出，
+    // 免得将来 intent 多产一种能力时，这里悄悄按写路径处理。
+    if (intent.capability !== 'workspace.write') return null;
+
+    // ── 拟稿（独立一次调用；她可以在这里说「不」）──
+    const draft = await brain.askForProposalContent(intent);
+
+    // 🔴 D-27 复核修订：**三态分开处理**，不再一律当 null。
+    //   原实现把「她拒绝 / 正文过短 / 拟稿抛异常」三者汇成同一个 null，
+    //   后果有两个：① 主进程没法把拒案写进审计（复核要求）；
+    //             ② 分不清「她主体性地拒绝」与「这次输出不可用」——
+    //                前者是她行使权利，后者是故障，混在一起会让排障方向全错。
+    const draftStatus = draft && typeof draft.status === 'string' ? draft.status : 'unavailable';
+
+    // ① 她拒绝立项 —— **合法结果，不是错误**。留痕，但不建案、不广播。
+    if (draftStatus === 'refused') {
+      auditProposalRefused(intent, draft.reason, deps, 'refused_by_subject');
+      console.log('[Agent] 通路 B：她拒绝立项（' + String(draft.reason || '').slice(0, 40) + '），按主体性设计不建案');
+      return null;
     }
-    return null;
+    // ② 不可用（空 / 过短 / 关机 / 异常）—— 也留痕，**但走独立 outcome**。
+    //   ⚠️ 不能与拒案共用 `refused_by_subject`：那是把「故障」记成「她的决策」。
+    if (draftStatus !== 'ok' || typeof draft.content !== 'string' || !draft.content.trim()) {
+      auditProposalRefused(intent, String((draft && draft.reason) || 'UNKNOWN').slice(0, 40), deps, 'draft_unavailable');
+      console.log('[Agent] 通路 B：拟稿不可用（' + String((draft && draft.reason) || 'unknown').slice(0, 40) + '），不建案');
+      return null;
+    }
+
+    // ── scope 只在这里拼，渲染端与 intent 都不许给绝对路径 ──
+    const built = buildSandboxScope(intent.hint, deps.agentSandbox);
+    if (!built) {
+      console.log('[Agent] 通路 B：文件名不合格，放弃建案:', String(intent.hint || '').slice(0, 60));
+      return null;
+    }
+
+    // ── 建案（复用 proposeInternal，绝不就地复刻三道闸门）──
+    //   ⚠️ 来源刻意**不传第三参数** ⇒ proposalSource = 'user' ⇒ **保留第五道闸门**。
+    //     这与通路 A 的 'selfNote'（免确认）是两件事：用户要的东西，
+    //     应该由用户自己点头，而不是程序替他点头。
+    //   ⚠️ content 走 raw.content：proposeInternal 对 proposalSource==='user'
+    //     只从 raw.content 取正文并当场算 SHA-256 绑进提案（SEC-01）。
+    //     raw 是**本函数构造**的，不经过渲染端，不存在「渲染端自造正文」的面。
+    const res = deps.agentIpc.proposeInternal({
+      capability: 'workspace.write',
+      scope: built.scope,
+      reason: intent.reason || '按你的要求整理成文',
+      content: draft.content,
+    }, 'main');
+
+    if (!res || !res.ok || !res.proposal) {
+      console.log('[Agent] 通路 B：建案被拒:', (res && (res.error || res.code)) || 'unknown');
+      return null;
+    }
+
+    // ── 亮卡：语义明确的新事件（绝不复用 -available，见上方 D-19 那段）──
+    //   只送 proposalId —— 渲染端必须回查主进程的冻结快照（D-5 安全基线）。
+    //   若这里把提案对象塞过去，D-3 顶替攻击那一族就重新打开了。
+    deps.broadcastToWindows('agent-proposal-pending', { proposalId: res.proposal.id });
+    console.log('[Agent] 通路 B：她拟好了一份东西，等你决定是否落盘:', String(built.name).slice(0, 60));
+
+    return res.proposal.id;
   } catch (err) {
     // 绝不外抛：它挂在 chat-send 的收尾上，崩了会砸掉她这一轮的回话。
     return null;
   }
 }
+
 
 
 
@@ -216,7 +407,41 @@ function maybeAskForSelfNote(selfIntent) {
     //   但 wantToLeaveSomething 存在 trigger.selfIntent 里，两者从未接线 ⇒ intent 恒 null。
     //   现在由调用方传入 trigger.selfIntent（自发愿望路径），不再依赖 evaluateTrigger。
     const intent = selfIntent || (brain && brain._pendingAgentIntent);
-    if (!intent || intent.kind !== 'wantToLeaveSomething') return;    void (async () => {
+    if (!intent || intent.kind !== 'wantToLeaveSomething') return;
+
+    /* 🔴 v1.9.0-dev（初澜 2.0 第 1 步）：观察档前置拦截。
+     *
+     * ## 为什么拦在这里（而不是拟稿之后再拦）
+     *   `off` 档的语义是「这件事根本不做」。放在 askForSelfNote 之前 return，
+     *   等于**零 LLM 开销**——不会为了一个注定不落盘的念头白烧一次 API。
+     *   若放到拟稿之后，off 和 observe 的行为会完全一样（都调了模型），
+     *   那 off 档就没有存在的意义了。
+     *
+     * ## observe 档为什么不能也在这里 return
+     *   它要**照常拟稿**——观察档的全部价值就是看她会写出什么。
+     *   所以 observe 的拦截点在 `proposeInternal` 之前（见下方）。
+     */
+    const mode = getCapabilityMode(cfg, 'selfNote');
+    if (mode === 'off') return;
+
+    /* 🔴 v1.9.0-dev（观察档缺口补齐）：档位变迁记账。
+     *
+     * ## 为什么需要它
+     *   程序**无法从配置推断档位变化**——`config.js` 没有文件监听、没有历史，
+     *   启动时只看到当前值。没有这个记账，「观察期满补注入」永远触发不了。
+     *
+     * ## 为什么在这里（而不是启动时一次性比对）
+     *   放在「她真的要写」这一刻：只有她运行到这条路径，才说明这个能力在场，
+     *   此时记账才有意义。启动时记会让 `off` 档（永不运行）也留下观察期痕迹。
+     */
+    try {
+      if (brain && brain.memory && typeof brain.memory.markObserveEpoch === 'function') {
+        if (mode === 'observe') brain.memory.markObserveEpoch('selfNote', 'in');
+        else if (mode === 'auto') brain.memory.markObserveEpoch('selfNote', 'out');
+      }
+    } catch { /* 记账失败不影响主流程 */ }
+
+    void (async () => {
       try {
         const note = await brain.askForSelfNote({ intentKind: intent.kind });
         // 边界②：她说不留 → note 为 null → 不建案。这是合法结果，不是失败。
@@ -239,6 +464,53 @@ function maybeAskForSelfNote(selfIntent) {
         if (rawHint.includes(':') || rawHint.endsWith('.') || rawHint.endsWith(' ') || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(rawHint.split('.')[0])) return;
 
         const scope = path.join(deps.agentSandbox, rawHint);
+
+        /* 🔴 v1.9.0-dev：observe 档分流 —— 拦截在 proposeInternal **之前**。
+         *
+         * ## 为什么必须在这个位置
+         *   再往后一步（proposeInternal 之后）就来不及了：那一步会建案、写审计、
+         *   占预算、进待决表。观察档不该产生任何这些副作用。
+         *   再往前一步（askForSelfNote 之前）也不行：那样她就没拟稿，无内容可观察。
+         *
+         * ## 记什么
+         *   **完整正文**，不截断。观察档唯一价值就是让人判断她写得对不对。
+         *   写进 `agent-observations.jsonl`（不是 agent-audit.jsonl）——
+         *   安全审计与行为数据必须分开，且审计有 500 字硬截断存不下正文。
+         *
+         * ## 不做什么（重要）
+         *   ✗ 不调 memory.addSelfNote —— 观察期不回流给她（防观察者效应）
+         *   ✗ 不铸自传 —— 没写成的东西不进 experiences.jsonl
+         *   ✗ 不广播任何事件 —— 免确认路径本来就没有待决状态
+         */
+        if (mode === 'observe') {
+          try {
+            if (deps.observationLog && typeof deps.observationLog.append === 'function') {
+              deps.observationLog.append({
+                capability: 'selfNote',
+                intentKind: intent.kind,
+                proposalSource: 'selfNote',
+                scopeName: rawHint,
+                content: note.content,
+              });
+            }
+            /* 🔴 v1.9.0-dev（观察档缺口补齐）：同时在**她的记忆**里记一笔。
+             *
+             *   为什么两处都要记：
+             *     · `agent-observations.jsonl` = 完整正文（给人看的，判断她写得对不对）
+             *     · `memory.data.observedNotes` = 只要 {at, capability} 的计数
+             *       （给「期满补注入」用的，也让她将来知道"那段时间我有过念头"）
+             *
+             *   ⚠️ **绝不把 note.content 传进去**：`noteObserved()` 只取两个字段，
+             *      多看的参数一律丢弃。正文已经在上面那份 jsonl 里了，
+             *      再存一份 = 同一数据两个副本，且 memory.json 会被一起备份。
+             */
+            if (brain && brain.memory && typeof brain.memory.noteObserved === 'function') {
+              brain.memory.noteObserved('selfNote');
+            }
+            console.log('[Agent] 观察档：她想留一张纸条（未落盘）:', String(rawHint).slice(0, 60));
+          } catch { /* 观察记录失败绝不能影响别的 */ }
+          return;
+        }
 
         // 🔴 D-17（用户拍板 C1）：自发愿望**盖 selfNote 戳** ⇒ 执行器闸门 4 免逐次确认。
         //   为什么：留便签的本质是「趁你不在时悄悄写下」；若要弹卡片等你回来才授权，
@@ -317,6 +589,36 @@ function maybeAskForObserverJournal(windowCloseRes) {
       }
     }
 
+    /* 🔴 v1.9.0-dev：观察档前置拦截（与 maybeAskForSelfNote 同款）。
+     *
+     *   `off` 档在这里直接 return ⇒ 零 LLM 开销。
+     *   位置在**配额探针与同日去重之后**：那两道是「这次本来就不该做」的既有判断，
+     *   先过它们能省掉一次无意义的档位读取，也不改变任何既有语义。
+     */
+    const mode = getCapabilityMode(cfg, 'observerJournal');
+    if (mode === 'off') return;
+
+    /* 🔴 档位变迁记账（2026-11-05 A-1a，与 maybeAskForSelfNote 同款，见 main.js:437-442）。
+     *
+     * ## 为什么必须有这一段
+     *   原来这条路径**从不**调 `markObserveEpoch`，于是：
+     *     进入 observe ⇒ observeEpoch.observerJournal 不存在
+     *     ⇒ 启动兜底 `if (!Number.isFinite(ep.enteredAt)) continue;` 永远跳过它
+     *     ⇒ `pendingEcho` 永远不产生
+     *     ⇒ 观察日记在 observe 档下写的东西，**永远进不了补注入**。
+     *   （审计报告 5.1 实测：observeEpoch={}、takeObserveEcho()=""，selfNote 对照正常）
+     *
+     * ## 为什么位置必须在这里，不能放进下面的 observe 分支
+     *   切回 auto 之后 observe 分支根本不执行，那 'out' 就永远写不进去，
+     *   补偿通道也就永远触发不了 —— 与 selfNote 犯过的错一模一样。
+     */
+    try {
+      if (brain && brain.memory && typeof brain.memory.markObserveEpoch === 'function') {
+        if (mode === 'observe') brain.memory.markObserveEpoch('observerJournal', 'in');
+        else if (mode === 'auto') brain.memory.markObserveEpoch('observerJournal', 'out');
+      }
+    } catch { /* 记账失败不影响主流程 */ }
+
     // 防线 2：精准同日去重（仅 journal-YYYY-MM-DD*.md，不冲突 note-*.txt）
     const d = new Date();
     const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -340,6 +642,38 @@ function maybeAskForObserverJournal(windowCloseRes) {
 
         const filename = 'journal-' + ds + '-' + Math.random().toString(36).slice(2, 6) + '.md';
         const scope = path.join(deps.agentSandbox, filename);
+
+        /* 🔴 v1.9.0-dev：observe 档分流 —— 拦截在 proposeInternal 之前。
+         *   与 selfNote 同一条纪律：不建案、不写审计、不占预算、不铸自传、不回流。 */
+        if (mode === 'observe') {
+          try {
+            if (deps.observationLog && typeof deps.observationLog.append === 'function') {
+              deps.observationLog.append({
+                capability: 'observerJournal',
+                intentKind: 'observerJournal',
+                proposalSource: 'observerJournal',
+                scopeName: filename,
+                content: journal.content,
+              });
+            }
+            /* 🔴 与 agent-observations.jsonl 同步记一笔计数（2026-11-05 A-1b）。
+             *
+             * ## 为什么两处都要记
+             *   jsonl 存**完整正文**（给人看的，判断她写得对不对）；
+             *   observedNotes 只存 `{at, capability}`（给「期满补注入」用的计数）。
+             *   两者用途不同，缺一个补注入就不会来。
+             *
+             * ⚠️ **绝不传 journal.content** —— `noteObserved(capability)` 只取
+             *    at 和 capability，多传的一律丢弃。正文已经在 jsonl 里了，
+             *    再往 memory.json 存一份 = 同一数据两个副本，且会被一起备份。
+             */
+            if (brain && brain.memory && typeof brain.memory.noteObserved === 'function') {
+              brain.memory.noteObserved('observerJournal');
+            }
+            console.log('[Agent] 观察档：她想写一篇观察日记（未落盘）:', filename);
+          } catch { /* 观察记录失败绝不能影响别的 */ }
+          return;
+        }
 
         const res = typeof deps.agentIpc.proposeInternal === 'function'
           ? deps.agentIpc.proposeInternal(
@@ -456,16 +790,43 @@ function installPermissionGate(ses) {
     return isAppLocalUrl(url, __dirname);
   };
 
-  ses.setPermissionRequestHandler((wc, permission, callback) => {
+  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
     // 未知权限 / 非白名单：直接拒
     if (!ALLOWED.has(permission)) return callback(false);
+    /* 🔴 2026-11-12 S-4：media 必须**只放行 audio**。
+     *
+     *   ## 为什么
+     *     原来只要 permission === 'media' 就放行，不区分 audio / video。
+     *     而本应用**只用麦克风**（`chat.js:483` 的 getUserMedia 只要 audio），
+     *     摄像头从未使用 ⇒ 放行 video 是**防线比需要宽**，不是正在漏。
+     *     但把不变式写进代码，将来加功能时不用重想一遍闸门。
+     *
+     *   ## ⚠️ 参数顺序（写错就完全无效）
+     *     Electron 44 的签名是 (webContents, permission, callback, details)
+     *     —— **details 在 callback 之后，是第 4 个参数**。
+     *     `MediaAccessPermissionRequest.mediaTypes` 是 `Array<'video'|'audio'>`，**可选**。
+     *
+     *   ## 🔴 2026-11-12 S-4 二次收窄：黑名单 → 严格白名单
+     *     · 原判据「不含 video 且含 audio」属黑名单思维：若未来新增媒体类型，`['audio','新类型']` 会误放行。
+     *       改为 `every((t) => t === 'audio')` 白名单思维，多一个非 audio 值就自动拒。
+     *     · ⚠️ 事实澄清：Electron 44 类型定义中 `mediaTypes` 只有 `'video' | 'audio'`，
+     *       `'unknown'` 只出现在 check handler 的 `mediaType`（单数）。此收窄属防御性加固。
+     *     · ⚠️ 为什么 `types.length === 0` 必须显式保留：`[].every(...)` 在 JS 中恒为 true，
+     *       不先拦住空数组会放行无 `mediaTypes` 或空 `mediaTypes` 的请求。
+     */
+    const types = details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    if (types.length === 0 || !types.every((t) => t === 'audio')) return callback(false);
     callback(localOnly(wc));
   });
 
   // check 发生在 request 之前，两者必须同口径，否则会出现"检查通过、请求被拒"的怪象
   if (typeof ses.setPermissionCheckHandler === 'function') {
-    ses.setPermissionCheckHandler((wc, permission) => {
+    ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
       if (!ALLOWED.has(permission)) return false;
+      /* 🔴 check 与 request 同口径：只放行 'audio'。
+       *    ⚠️ check 的 details 形状不同：是 `mediaType`（单数），不是 `mediaTypes`。 */
+      const t = details && details.mediaType;
+      if (t !== 'audio') return false;
       return localOnly(wc);
     });
   }
@@ -909,17 +1270,32 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     //   将来流式中断/改写/回滚都会对不上。
     broadcastToWindows('chat-history-changed', { reason: proactive ? 'proactive' : 'chat' });
 
-    // 🔴 D-10：她说完之后，看这一轮有没有命中「提案意图」。
+    // 🔴 D-10 / D-27：她说完之后，看这一轮有没有命中「提案意图」。
     //
     //   位置刻意在这里：**在她回话成功之后**。
     //   · 若判定没过（或被闸门拦），brain 里那个字段是 null，本调用直接返回；
     //   · 建案失败只记日志、绝不抛 —— 第一次把 Agent 接进生产对话路径，
     //     任何异常都不能砸掉她这一轮的回话（tryBuildProposalFromIntent 内部已包死）。
     //
-    //   ⚠️ 本轮**不打开 agentTriggerEnabled**：它仍是默认关，
-    //     所以真实运行时这条链大概率不会自己走通 —— 那是设计如此，
-    //     用户拍板「先验证链路，再决定开不开」。
-    tryBuildProposalFromIntent();
+    //   ⚠️ **不 await**（D-27）：通路 B 现在要跑一次独立的拟稿调用。
+    //     她那句话已经说出口了（上面 chat-history-changed 已广播），
+    //     让用户为「她要不要落档」再等一次往返是没道理的开销。
+    //     `_pendingAgentIntent` 在被调用后**同步段内就已置空**（消费即清空），
+    //     所以这里 void 起 promise 不会导致同一意图被二次消费。
+    //   🔴 D-27 复核更正（原文写错了）：原注释说「两者读的是不同的意图字段，
+    //     先后无耦合」——**那句话是错的**。看下面第 1055 行：
+    //        else maybeAskForSelfNote(brain && brain._pendingAgentIntent);
+    //     非 proactive 分支读的**正是** `brain._pendingAgentIntent`，
+    //     与上面这行 `void tryBuildProposalFromIntent()` 是**同一个字段**。
+    //   ✅ 当前不会出问题，但不是因为"无关"，而是因为两个理由：
+    //     ① `tryBuildProposalFromIntent` 在**第一次 await 之前**就把该字段置空了，
+    //        所以轮到 maybeAskForSelfNote 时读到的必然是 null；
+    //     ② agent-intent 产出的对象**没有 `kind` 字段**，而 maybeAskForSelfNote
+    //        开头就 `intent.kind !== 'wantToLeaveSomething'` 直接 return。
+    //   两条中任意一条失效，就会出现「同一意图被两条通路各消费一次」。
+    //   ⚠️ 将来若给 agent-intent 的产出加上 `kind: 'wantToLeaveSomething'`，
+    //      这里的"巧合安全"立刻失效 —— 那时必须显式改掉这条调用。
+    void tryBuildProposalFromIntent();
 
     // 🔴 D-11：如果她想留下点什么（静默 ≥120 分钟才会成立），追一次专门调用。
     //
@@ -2263,6 +2639,49 @@ app.whenReady().then(() => {
   tracker = new ActivityTracker();
   wardrobe = new Wardrobe(app.getPath('userData'));
   brain = new Brain(app.getPath('userData'), cfg, { getSS });
+
+  /* 🔴 v1.9.0-dev：启动时兜底写入「离开观察期」（2026-11-05 补）。
+   *
+   * ## 为什么需要这个兜底
+   *   `markObserveEpoch(cap, 'out')` 只有**一个**调用点：`maybeAskForSelfNote()`
+   *   （main.js:438-440）。而那个函数要「挂机 120 分钟 + wantToLeaveSomething」
+   *   才会被调用。
+   *   ⇒ 切回 auto 后，若她一直不触发自发愿望，`leftAt` 迟迟不写，
+   *      `pendingEcho` 也就不产生，补注入永远不出现。
+   *
+   * ## 2026-11-05 实测到了这个状态
+   *   配置 11:21:36 改回 auto，但进程是 07:18:59 启动的（早 4 小时）⇒
+   *   没重启就没读新配置；即使重启，也要等下次挂机 120 分钟才写 leftAt。
+   *   这就是「状态变化靠事件推动，事件不来，状态就卡住」。
+   *
+   * ## 危害不是「功能坏」，是「看不出它有没有坏」
+   *   补注入最终会来（近五天 wantToLeaveSomething 触发 5 次），
+   *   但等待期间「在等触发」与「代码有问题」从外部**完全一样**。
+   *   这个兜底让状态在重启后立刻可见：leftAt 有值 = 认到了档位变化。
+   *
+   * ## 为什么放在这里
+   *   cfg（:2568）与 brain（:2579）都已就绪，再早拿不到 memory。
+   *
+   * ## 三条判据缺一不可
+   *   ① `enteredAt` 有值 —— 老用户从没观察过，不该凭空补一段「你曾想过」
+   *   ② `leftAt === null` —— 已经离开过的，不重复写（否则每次启动都刷新时间）
+   *   ③ 当前档位不是 observe —— 仍在观察期的，不该提前结束
+   */
+  try {
+    const mem = brain && brain.memory;
+    if (mem && typeof mem.markObserveEpoch === 'function') {
+      const epochs = (mem.data && mem.data.observeEpoch) || {};
+      for (const cap of ['selfNote', 'observerJournal']) {
+        const ep = epochs[cap];
+        if (!ep || typeof ep !== 'object') continue;
+        if (!Number.isFinite(ep.enteredAt)) continue;   // ① 从没观察过
+        if (ep.leftAt !== null) continue;               // ② 已经离开过
+        if (getCapabilityMode(cfg, cap) === 'observe') continue;   // ③ 仍在观察期
+        mem.markObserveEpoch(cap, 'out');
+      }
+    }
+  } catch { /* 兜底失败绝不能阻塞启动 */ }
+
   // 换装执行器 + 本地活动追踪器注入：模型给提案 -> wardrobe 落真实状态 ->
   // 结果写回历史；她被戳了几下 -> tracker 记账 -> 随当轮 user 消息如实告知。
   bindBrainDeps(brain);
@@ -2318,7 +2737,37 @@ app.whenReady().then(() => {
   //
   //   ⚠️ 仍然关着的：process.execute 与 network.request 不在 allowed 里，
   //   且执行器入口另有硬拒（用户 D-4 拍板永久不开）。
-  const agentSandbox = ensureSandboxDir(sandboxPathFor(app.getPath('desktop')));
+  /* 🔴 2026-11-12 S-3：沙盒建不出来时**降级运行**，不中断启动。
+   *
+   *   ## 原来为什么会中断
+   *     `ensureSandboxDir` 失败会抛 `SANDBOX_UNAVAILABLE`，而这是
+   *     `app.whenReady` 的顶层语句 ⇒ 整个初始化中断 ⇒ 用户看到「软件打不开」。
+   *     而实际后果只是「Agent 写能力不可用」——两者严重性差了一个量级。
+   *
+   *   ## 为什么降级成 null 就够了
+   *     下游三处（:285 / :405 / :580）**已经有 `!deps.agentSandbox` 守卫**，
+   *     会各自静默跳过。而 `setScopeRoots(cap, [null])` 安全降级为空根
+   *     ⇒ `authorize()` 恒返回 scope_not_in_whitelist ⇒ 写能力自动关死。
+   *     所以**不需要**额外拉 killSwitch，也不需要改任何判定逻辑。
+   *
+   *   ## 为什么失败必须**可见**
+   *     静默降级等于让用户以为「功能坏了但查不出原因」。
+   *     所以既要 console.error，也要把原因挂到 agentSandboxUnavailable 上，
+   *     供 UI/诊断读取（本单只落变量，不接 UI）。
+   */
+  let agentSandbox = null;
+  let agentSandboxUnavailable = null;
+  try {
+    agentSandbox = ensureSandboxDir(sandboxPathFor(app.getPath('desktop')));
+  } catch (err) {
+    agentSandboxUnavailable = String((err && err.code) || (err && err.message) || 'UNKNOWN');
+    console.error('[Agent] 沙盒不可用，Agent 写能力已降级关闭:', agentSandboxUnavailable);
+    // 🔴 注意：此时 persona.js:32 的沙盒描述暂时不成立
+    //   （原文「你可以在那里留下文字，程序会替你把字写进去」——她以为写得了，实际已降级关闭），
+    //   下次开工需要一条运行时告知通道（如注入一行「沙盒暂时不可用」）。
+    //   ⚠️ 届时需把 agentSandboxUnavailable 提升出 app.whenReady 块级作用域
+    //      （参考 proactiveAuditLog 的 TDZ 教训，见本文件 :95-100）。
+  }
   const agentPolicy = new PermissionPolicy({
     killSwitch: false,
     allowed: ['workspace.read', 'workspace.write'],
@@ -2327,7 +2776,7 @@ app.whenReady().then(() => {
   //   那样一旦有一条路径判错，越界写入的范围就是用户的全部文件。
   agentPolicy.setScopeRoots('workspace.read', [agentSandbox]);
   agentPolicy.setScopeRoots('workspace.write', [agentSandbox]);
-  console.log('[Agent] 沙盒已启用:', agentSandbox);
+  if (agentSandbox) console.log('[Agent] 沙盒已启用:', agentSandbox);
   const agentBudget = new ExecutionBudget();
   const agentAuditLog = new AuditLog({ dir: app.getPath('userData') });
   // 🔴 D-7：把审计出口交给模块顶层那个引用 —— 主动搭话的处理器是顶层闭包，
@@ -2454,11 +2903,20 @@ app.whenReady().then(() => {
    *
    *   ⇒ **不对 hint 做任何白名单/重命名/净化**（除下面的安全边界）。
    *     她想叫「我的日记.md」还是「1234.txt」都随她。
+   *   🔵 D-27：本条只适用于**通路 A**（她自发的 selfNote）。通路 B 走
+   *     `buildSandboxScope()` 有净化与扩展名收敛 —— 理由见模块顶部那段注释。
    */
   // 🔴 D-10：把建案所需的三样交给模块顶层的 tryBuildProposalFromIntent。
   //   必须是**赋值**而不是局部 const —— 调用点（chat-send handler）在模块顶层，
   //   它读的是这个模块级变量。
-  agentBuildDeps = { agentIpc, agentSandbox, broadcastToWindows, agentBudget, takeStashedContent };
+  //
+  // 🔴 v1.9.0-dev：观察档（observe）的观察记录器一并注入。
+  //   为什么放在 deps 里而不是模块顶层 new：它需要 app.getPath('userData')，
+  //   那个在 whenReady 之前不可靠（实测无头环境会抛）。
+  agentBuildDeps = {
+    agentIpc, agentSandbox, broadcastToWindows, agentBudget, takeStashedContent,
+    observationLog: new ObservationLog({ dir: app.getPath('userData') }),
+  };
 
   // 🔴 v1.7-a：权限闸门必须在**任何 BrowserWindow 创建之前**装好。
   //   装晚了的话，窗口已经发出的权限请求走的是默认行为 —— 那正是本闸门要消除的赌。

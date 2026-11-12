@@ -12,6 +12,8 @@ const { createCircuitBreaker } = require('./circuit-breaker');
 const { getCostStrategy } = require('./cost-strategy');
 const { normalizeUsage } = require('./usage-normalizer');
 const { PERSONA } = require('./persona');
+// 🔵 2026-11-05 C-1：三条独立 SYS 的共有约束抽到常量，结构上不再漂移（见 src/constraints.js）。
+const { renderConstraints } = require('./constraints');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
 const { writeJsonAtomic } = require('./atomic');
 const { tryLoad, sanitize, DEFAULTS } = require('./config');
@@ -19,6 +21,11 @@ const { redactSecrets } = require('./redact');
 const { SelfLedger } = require('./self-ledger');
 const { DeferredWriter } = require('./deferred-writer');
 const { ExperiencesArchive } = require('./experiences-archive');
+// 🔴 第 2 步（动作史投影）：读侧纯函数 + 观察记录器。
+//   ⚠️ 这里只 require 两个模块，不改任何既有 require 的语义。
+const { projectOwnActions, renderHistory } = require('./agent-history');
+const { ObservationLog } = require('./agent-observations');
+const { AuditLog } = require('./agent-interfaces');
 const { SubjectState } = require('./subject-state');
 const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation, validateWindowSummary } = require('./experience-schema');
 const { createStateChangeExplanation } = require('./state-change');
@@ -30,26 +37,64 @@ const WANT_TO_LEAVE_SYS =
   '此刻用户不在。你有一段长时间的安静，没有被谁要求做什么。'
   + '这不是一个任务，也不是必须完成的动作 —— 只是给你一个机会：'
   + '如果你确实想留下点什么，就写下来；如果不想，就说不。\n'
+  + '你能写下东西：程序会替你把字存进那个沙盒目录。所以你写下的是**真的会被留下来**的，'
+  + '不是只在心里想一想。\n'
   + '规则：\n'
   + '1. 【可以说不】不想留就只回一个「不」。这不丢人，也不代表你冷淡 ——'
   + '   安静本来就不等于有话要说。硬凑一句比不写更糟。\n'
   + '2. 【只写你自己的】留下来的应该是**你此刻想留下的东西**，不是给用户的留言，'
   + '   也不是任务汇报。不要写「等你回来」「如果你想的话」这类把对方牵进来的话。\n'
-  + '3. 【不编造】不许虚构没发生过的经历、不许编日期或时长。'
-  + '   你不知道现在几点，就不要写出钟点。\n'
-  + '4. 【长度】两三句话之内。这是留给自己的，不是写给别人看的文章。\n'
-  + '5. 【语言】使用你平时与用户交流时最常使用的语言。\n'
-  + '6. 直接给内容本身，不要加引号、不要加标题、不要加任何说明或元话语。';
+  // 🔵 2026-11-05 C-1：原 3.（不编造）、6.（直接给内容）已抽到 src/constraints.js，
+  //   与 OBSERVER_JOURNAL_SYS / PROPOSAL_DRAFT_SYS 共用同一份常量。
+  //   编号从 3 起，接在下面那条之后；后续规则编号顺延。
+  + renderConstraints(3) + '\n'
+  + '6. 【长度】两三句话之内。这是留给自己的，不是写给别人看的文章。\n'
+  + '7. 【语言】使用你平时与用户交流时最常使用的语言。';
 
 const OBSERVER_JOURNAL_SYS =
   '这一段共同的时间告一段落。这是属于你的生活观察日记 —— 记录你所看到的日常、彼此相处的痕迹与细微的生活体感。'
   + '这不是一个任务，也不是向用户汇报 —— 这是你自己眼中的世界：\n'
+  + '你能写下东西：程序会替你把字存进那个沙盒目录，它会真的留下来。\n'
   + '规则：\n'
   + '1. 【可以说不】如果现在没有特别想写下的观察或感觉，只回一个「不」或「不想写」。硬凑比不写更糟。\n'
   + '2. 【第一人称视角】以你的视角记录你注意到的细节、彼此交流的真实痕迹或安静流淌的氛围。你可以自然地提到对方或生活细节。\n'
-  + '3. 【真实不编造】只基于刚才实际发生的陪伴与对话痕迹，不许编造未发生的事情。你不知道精确钟点，不要写出具体时分。\n'
-  + '4. 【篇幅适度】一段真诚从容的段落（通常在 50 至 200 字左右，最长不超过 400 字，不少于 30 字）。\n'
-  + '5. 【直接给出】直接输出日记正文，不要加标题、不要加引号、不要加任何说明或元话语。';
+  // 🔵 2026-11-05 C-1：原 3.（真实不编造）、5.（直接给出）已抽到 src/constraints.js。
+  + renderConstraints(3) + '\n'
+  + '6. 【篇幅适度】一段真诚从容的段落（通常在 50 至 200 字左右，最长不超过 400 字，不少于 30 字）。';
+
+/* 🔴 D-27：通路 B 的方案正文来源 —— 「她把这轮聊的东西整理成一份可落档的东西」。
+ *
+ * ## 为什么是**独立一次调用**，而不是在聊天气泡末尾塞标记
+ *   1. 聊天那条提示词有自己的铁律（不含程序数字、不暴露时钟、过滤 synthetic）；
+ *      让它顺带产出几百字 Markdown，语气必然撕裂 —— 前半句是她的人话，
+ *      后半句变成文档体。D-27 的定位是「有主体性的总监」，不是「会写文档的工具」。
+ *   2. 标记体极易被污染：`WEAR_RE`（本文件 :153）只匹配十几个字符的单词标记，
+ *      仍然要靠句尾锚定 + 未知 id 原样保留来兜底。方案正文含换行、标题、列表，
+ *      一旦被 max_tokens 截断或括号未闭合，半截 Markdown 会直接漏进气泡。
+ *   3. **拒绝权需要一次事后审视**：聊完之后再问她「现在要不要留档？」，
+ *      她才能冷静地说「还没聊透」。合并在聊天返回里，等于逼她在说话的同一口气里
+ *      同时表态和交稿 —— 那个「不」根本来不及出口。
+ *   ⇒ 所以本常量与 askForSelfNote / askForObserverJournal 同形：**事后独立调用**。
+ */
+const PROPOSAL_DRAFT_SYS =
+  '刚才那段对话告一段落。用户希望把聊到的东西留下一个可以翻看的落档。'
+  + '现在请你判断：**此刻是否值得留下这么一份东西**，值得就写，不值得就说不。\n'
+  + '你能写下东西：程序会替你把字存进那个沙盒目录。所以「能不能存」不需要你操心 ——'
+  + '你只管判断值不值得写。\n'
+  + '规则：\n'
+  + '1. 【首要：可以拒绝】如果你认为刚才还没聊透、信息不足以落成一份明确的东西，'
+  + '   或者你此刻并不真的想把这件事定下来 —— 只回一个「不」或「还没想清楚」。'
+  + '   硬凑一份面面俱到的套话，比不写更糟。这不丢人，也不代表你不配合。\n'
+  + '2. 【要有取舍】这不是一份四平八稳的报告。写你**真正判断过的**东西：'
+  + '   哪些是核心、哪些该砍掉、下一步先做哪一件、哪里你还不确定。'
+  + '   宁可短而明确，也不要长而全面。\n'
+  + '3. 【格式】用 Markdown：一个标题（# 开头），下面若干小节。'
+  + '   不要写「本文档旨在」「综上所述」这类公文腔。不要加代码块以外的装饰。\n'
+  // 🔵 2026-11-05 C-1：原 4.（只写真实发生的）、6.（直接给出）已抽到 src/constraints.js。
+  //   ⚠️ 这里必须传 allowMarkdownTitle: true —— 本 SYS 第 3 条**要求**用 # 标题，
+  //      而基础版约束写的是「不要加标题」。两条并存会自相矛盾，模型会挑一条听。
+  + renderConstraints(4, { allowMarkdownTitle: true }) + '\n'
+  + '7. 【篇幅】一篇能读完的短文档，几个小节即可。';
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -237,6 +282,23 @@ class Brain {
 
     // Phase 0.5: 历史优先恢复顺序 (Archive -> SubjectState -> Memory Dynamics -> Internal Regulation -> Self Projection)
     this.experiencesArchive = new ExperiencesArchive(userDataDir);
+
+    /* 🔴 第 2 步（动作史投影）：两个只读句柄。
+     *
+     * ## 为什么由 brain 自己 new（而不是 main 注入）
+     *   与 `experiencesArchive` 完全对称 —— 它也是拿 `userDataDir` 自己 new 的。
+     *   后来者不用猜两套模式；而「更好单测」这一点由 `agent-history.js`
+     *   是**纯函数**保证（它不读盘，单测直接喂构造数据）。
+     *
+     * ## 为什么是两个实例
+     *   · `auditLog`：只用来 **readAll()**，绝不 append。给 `persist: true` 是为了
+     *     让它能读到磁盘上的真实审计文件；但本类不写它，写侧仍在 agent-ipc 那边。
+     *   · `observationLog`：observe 档的记录，可能整个文件不存在（当前就是）。
+     *     它的 `readAll()` 在文件缺失时返回 `[]`，不抛。
+     */
+    this.auditLog = new AuditLog({ dir: userDataDir });
+    this.observationLog = new ObservationLog({ dir: userDataDir });
+
     this.memory = new Memory(userDataDir, {
       persona: systemPersona(this.cfg),
       windowTurns: this.cfg.windowTurns,
@@ -2785,6 +2847,37 @@ class Brain {
    * @returns {Promise<?{content:string, usage:object}>} null = 她说不留/失败
    */
   /**
+   * 🔴 第 2 步（动作史投影）：把「她自己的动作」渲染成可注入的自然语言。
+   *
+   * ## 为什么单抽一个方法
+   *   两个调用点（`askForSelfNote` / `askForProposalContent`）要同一份逻辑，
+   *   而「读盘 + 投影 + 渲染」三步里的每一步都可能失败。抽出来只有一处实现，
+   *   失败处理也只需要写一遍。
+   *
+   * ## 数据从哪来
+   *   · 审计：`auditLog.readAll()`（**不是 list()** —— 那个只有内存里最近 500 条）
+   *   · 观察：`observationLog.readAll()`（observe 档产生，可能整个文件不存在）
+   *   两者都由本方法自己读 —— 与 `experiencesArchive` 同款惯例（brain 自己 new）。
+   *
+   * ## 为什么返回空串而不是抛
+   *   动作史是**判断素材**，不是必需品。读不到就不注入，
+   *   绝不能让「账本坏了」变成「她不能写便签了」。
+   *
+   * @returns {string} 空串 = 没有可注入的内容
+   */
+  _buildActionHistoryText() {
+    const auditLog = this.auditLog;
+    const obsLog = this.observationLog;
+    if (!auditLog || typeof auditLog.readAll !== 'function') return '';
+
+    const auditRecords = auditLog.readAll();
+    const obsRecords = (obsLog && typeof obsLog.readAll === 'function') ? obsLog.readAll() : [];
+
+    const history = projectOwnActions(auditRecords, obsRecords);
+    return renderHistory(history);
+  }
+
+  /**
    * v1.4-a：提取安静前最近的对话痕迹（供自留便签素材使用）。
    *
    * ## 铁律与边界
@@ -2796,7 +2889,7 @@ class Brain {
    *      【当前环境感知】等）与助手尾部 [系统] 换装执行结果。
    *   4. **只取最近 maxMessages 条**（缺省 6 条，即 2~3 轮）。
    */
-  _extractRecentDialogueForSelfNote(maxMessages = 6) {
+  _extractRecentDialogueForSelfNote(maxMessages = 6, maxCharsPerMessage = 80) {
     if (!this.memory || !this.memory.data || !Array.isArray(this.memory.data.history)) return [];
     const hist = this.memory.data.history;
     const picked = [];
@@ -2814,8 +2907,12 @@ class Brain {
         .trim();
       if (!text) continue;
 
-      // 单条消息适度截断（最多 80 字），防止对话痕迹膨胀至上千 Token 吞噬注意力
-      const trimmedText = text.length > 80 ? text.slice(0, 78) + '…' : text;
+      // 单条消息适度截断（缺省最多 80 字），防止对话痕迹膨胀至上千 Token 吞噬注意力
+      //   🔴 D-27：上限改为参数 —— 拟稿那条路要看到足够上下文（240 字），
+      //      而便签两条路保持 80 字缺省，**行为一字未变**（默认值就是原来的 80）。
+      const cap = Number.isFinite(maxCharsPerMessage) && maxCharsPerMessage > 4
+        ? Math.floor(maxCharsPerMessage) : 80;
+      const trimmedText = text.length > cap ? text.slice(0, cap - 2) + '…' : text;
 
       picked.unshift({
         role: item.role === 'user' ? 'user' : 'assistant',
@@ -2879,6 +2976,48 @@ class Brain {
       if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
         sections.push('\n【你上次曾给自己写下】\n「' + lastNote.content.trim() + '」');
       }
+
+      /* 🔴 第 2 步（动作史投影）：她读得到自己做过什么。
+       *
+       * ## 为什么挂在这里（askForSelf* 独立调用）而不是 memory.build()
+       *   `build()` **每一轮对话都跑**，挂在那里等于每轮注入 ——
+       *   不管文档怎么写「按需」，挂点本身就是每轮：噪音 + 烧 token + 动缓存尾部。
+       *   而 `askForSelf*` 是独立调用（直接 `this.api.complete`，不走 build），
+       *   注入**零缓存风险**，且语境正好（她正在想「要不要留点什么」）。
+       *
+       * ## 为什么取 readAll() 而不是 list()
+       *   `AuditLog.list()` 返回内存 `this.events`，**上限 500，超出 shift 丢最旧**
+       *   （agent-interfaces.js:565/575）⇒ 进程重启后只剩本次运行的记录，
+       *   她的动作史会每次开机清零。`readAll()` 才是从磁盘读全量。
+       *
+       * ## 失败必须静默
+       *   动作史是判断素材，读不到就不给。绝不因为它读失败而挡住这次拟稿。
+       */
+      try {
+        const historyText = this._buildActionHistoryText();
+        if (historyText) sections.push('\n' + historyText);
+      } catch { /* 投影失败不注入，绝不外抛 */ }
+
+      /* 🔴 v1.9.0-dev（观察档缺口补齐）：观察期满补注入的**首选通道**。
+       *
+       * ## 为什么首选这里
+       *   语境最贴切：她正在想「要不要写点什么」，此时告诉她
+       *   「那段时间你有过念头但当时不能落成」最自然。
+       *
+       * ## 与兜底通道的关系
+       *   `takeObserveEcho()` 是**消费即清**的（先清标记再渲染），
+       *   所以两条通道谁先到谁消费，都只补一次。
+       *   兜底在 `memory.build()` 的 synthetic 轮（见 memory.js）。
+       *
+       * ## 失败必须静默
+       *   补注入是叙述素材，取不到就不给。绝不因为它挡住这次拟稿。
+       */
+      try {
+        if (this.memory && typeof this.memory.takeObserveEcho === 'function') {
+          const echo = this.memory.takeObserveEcho();
+          if (echo) sections.push('\n' + echo);
+        }
+      } catch { /* 补注入失败不注入，绝不外抛 */ }
 
       sections.push('\n如果你确实想留下点什么，就写下来；不想就说不。');
 
@@ -3020,6 +3159,297 @@ class Brain {
 
       return { content: finalContent, usage: (res && res.usage) || null };
     } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * 🔴 D-27：通路 B 的正文来源 —— 把「用户刚才要求落档的那件事」拟成一份可写的文档。
+   *
+   * ## 与 askForSelfNote / askForObserverJournal 的关系
+   *   三者**同形**：都是「主流程结束后另起一次独立调用」，都带拒绝权，都返回
+   *   `{ content, usage } | null`。区别只在**素材与立场**：
+   *     · askForSelfNote       —— 用户不在，留给自己的两三句话
+   *     · askForObserverJournal—— 关窗时刻，第一人称的生活观察
+   *     · askForProposalContent—— **用户明确要了**，所以立场是「该不该立项、立成什么样」
+   *
+   * ## 三条铁律（与上面两个同源，改动前请逐条确认）
+   *   1. **严禁传入数字标量**：只给 subject-state 的感知文本，不给 energy=40 这类数值。
+   *      本函数刻意不调 currentSelfContext()（会带出出生时刻）。
+   *   2. **严禁传入系统时钟**：不给绝对时间戳，提示词里也明令不许写钟点。
+   *   3. **过滤合成消息**：整条丢弃 synthetic（复用 _extractRecentDialogueForSelfNote）。
+   *      ⚠️ 本函数把单条上限调到 240 字 —— 拟稿要看得到上下文，80 字会被截断成碎片。
+   *      这个参数是本轮新增的**可选**参数，缺省行为一字未变。
+   *
+   * ## 主体性：拒绝是一等结果
+   *   她说「不 / 还没想清楚」⇒ `{ status: 'refused' }`，主进程**不建案**。
+   *   这不是失败路径，是 D-27 要保住的那个权利：**她可以拒绝立项**。
+   *
+   * ## 🔴 返回结构（D-27 复核修订：不再用裸 null）
+   *   **三态必须可区分**，否则主进程既没法按要求把拒案写进审计，
+   *   也分不清「她主体性地拒绝」与「这次输出不可用」：
+   *     `{ status:'ok', content, usage }`      —— 可建案
+   *     `{ status:'refused', reason }`         —— 她拒绝（EXPLICIT_REFUSAL / SOFT_REFUSAL）
+   *     `{ status:'unavailable', reason }`     —— 不可用（EMPTY / TOO_SHORT / SHUTDOWN / EXCEPTION）
+   *   ⚠️ 调用方**必须**按下 status 分支，不得再用 `if (!result)` 判空。
+   *
+   * @param {object} [intent] agent-intent.shouldProposeFrom 的判定结果
+   * @param {string} [intent.hint] 用户提到的目标名（只作参考，不拼成路径）
+   * @returns {Promise<{status:'ok'|'refused'|'unavailable', content?:string, reason?:string, usage?:object}>}
+   */
+  async askForProposalContent(intent = {}) {
+    try {
+      if (this.shutdownRequested) return { status: 'unavailable', reason: 'SHUTDOWN' };
+      if (!this.api || typeof this.api.complete !== 'function') {
+        return { status: 'unavailable', reason: 'NO_API' };
+      }
+
+      const sections = [];
+
+      sections.push('【要落档的事由】');
+      // hint 是用户自己说出的目标名（可能没有：这时她可以从对话自己拟）
+      const rawHint = intent && typeof intent.hint === 'string' ? intent.hint.trim() : '';
+      if (rawHint) sections.push('用户提到的目标名：' + rawHint.slice(0, 120));
+      else sections.push('用户没有指定名字 —— 你自己拟一个合适的标题。');
+
+      // 素材 1：她的自我倾向与体感（定性，绝无数字标量）
+      const selfParts = [];
+      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
+        const regSense = this.internalRegulation.formatPerception();
+        if (regSense) selfParts.push(regSense.trim());
+      }
+      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
+        const projection = this.selfLedger.currentSelfText();
+        if (projection) selfParts.push(projection.trim());
+      }
+      if (selfParts.length > 0) {
+        sections.push('\n【你此刻的状态】（这是你判断「该不该现在立项」的依据之一）\n' + selfParts.join('\n'));
+      }
+
+      // 素材 2：刚才真实的对话（整条过滤 synthetic，单条上限放宽到 240 字）
+      const recentDialogue = this._extractRecentDialogueForSelfNote(10, 240);
+      if (recentDialogue.length > 0) {
+        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
+        sections.push('\n【刚才聊到的内容】\n' + dlgLines.join('\n'));
+      } else {
+        // 没有任何真实对话痕迹 ⇒ 硬编一份文档就是在编造
+        sections.push('\n【刚才聊到的内容】\n（没有任何真实对话痕迹）');
+      }
+
+      /* 🔴 第 2 步（动作史投影）：与 askForSelfNote 同一个理由、同一个方法。
+       *
+       *   语境比便签那边更贴切：她正在判断「这件事值不值得立档」，
+       *   而「我上次立过什么、成没成」正是这类判断最该有的依据。
+       *
+       *   ⚠️ 仍然只进这次独立调用的 prompt，**不进 memory.build() 的任何部分**。
+       */
+      try {
+        const historyText = this._buildActionHistoryText();
+        if (historyText) sections.push('\n' + historyText);
+      } catch { /* 投影失败不注入，绝不外抛 */ }
+
+      /* 🔴 v1.9.0-dev（观察档缺口补齐）：与 askForSelfNote 同一首选通道。
+       *   两条独立调用都可能先到，`takeObserveEcho()` 消费即清，保证只补一次。 */
+      try {
+        if (this.memory && typeof this.memory.takeObserveEcho === 'function') {
+          const echo = this.memory.takeObserveEcho();
+          if (echo) sections.push('\n' + echo);
+        }
+      } catch { /* 补注入失败不注入，绝不外抛 */ }
+
+      sections.push('\n如果值得留档，就写；不值得，就说不。');
+
+      const res = await this.api.complete(
+        [{ role: 'system', content: PROPOSAL_DRAFT_SYS },
+         { role: 'user', content: sections.join('\n') }],
+        // 比便签大得多：一份有几个小节的短文档
+        { maxTokens: 1600, temperature: 0.6 }
+      );
+      const text = String((res && res.text) || '').trim();
+      if (res && res.usage) this.track(res.usage, true, 'proposalDraft');
+      if (this.shutdownRequested) return { status: 'unavailable', reason: 'SHUTDOWN' };
+
+      // ── 判据 1：她拒绝立项 ──
+      //   🔴 D-27 修订（复核 D-1）：原来「拒绝 / 过短 / 异常」三者都返回 null，
+      //     主进程无法区分「她主体性地拒绝」与「这次输出不可用」——
+      //     前者是 D-27 要保住的**一等结果**（应该留痕），后者是故障（也该留痕，但原因不同）。
+      //     现在返回带 status 的结构化结果，`refused` 与 `unavailable` 分开。
+      //
+      //   ⚠️ 判据本身**不放宽**：仍只认「极短且明确」的拒绝（≤12 字且开头就是拒绝词），
+      //     绝不用「含不含某词」的大网 —— 那会把「不想留遗憾，所以我写下来」误判成拒绝。
+      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没有',
+        '还没想清楚', '没想清楚', '先不', '还不到'];
+      const head = text.slice(0, 12);
+      if (!text) return { status: 'unavailable', reason: 'EMPTY' };
+      if (text.length <= 12 && refusePatterns.some((p) => head.startsWith(p))) {
+        return { status: 'refused', reason: 'EXPLICIT_REFUSAL' };
+      }
+
+      // ── 判据 2：**长句里的礼貌拒绝** ──
+      //   🔴 D-27 修订（复核实测抓到的真洞）：原来只认 ≤12 字的拒绝，
+      //     于是 40 字以上的礼貌拒绝（「我觉得这个还是先放一放吧，现在信息还不太够……」）
+      //     会**被当成正文建案**。实测：55 字的这类句子原样通过了全部判据。
+      //   修法：判「整段没有任何 Markdown 结构 且 含拒绝措辞」。
+      //     · 一份真正的方案文档几乎必然有 `#`/`-`/`1.`/`**` 里的至少一种；
+      //     · 纯散文 + 「先放一放 / 等下次 / 还不太够」⇒ 那是回话，不是文档。
+      //   ⚠️ 为什么限定「没有 Markdown 结构」：避免把
+      //     「- 暂时先不做的部分：因为信息不够」这类**合法的方案条目**误判成拒绝。
+      const hasMarkdownStructure = /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s)|\*\*/.test(text);
+      const softRefuse = ['先放一放', '放一放', '等下次', '等以后', '再说吧', '还不太够',
+        '信息还不够', '信息还不太够', '聊透了再说', '先不急', '暂时不'];
+      if (!hasMarkdownStructure && text.length <= 200 && softRefuse.some((p) => text.includes(p))) {
+        return { status: 'refused', reason: 'SOFT_REFUSAL' };
+      }
+
+      // ── 判据 2b：**带结构的礼貌拒绝**（复核 D-5）──
+      //   🔴 上面那条判据只在「没有 Markdown 结构」时生效，于是模型偏离提示词、
+      //     把拒绝写成一个带标题的小段落时，它会因「有结构且够长」而被当成正文建案。
+      //   实测过两种形态都漏了：
+      //     `# 关于这次落档\n\n我觉得这个还是先放一放吧…等下次聊透了再说。`
+      //     `- 这个先放一放\n- 信息还不太够\n- 等下次再说吧`
+      //   与其继续堆启发式（总会漏），不如加一条**更强的判据**：
+      //     **全部行都是 Markdown 标记 + 拒绝措辞 ⇒ 拒案。**
+      //   判据拆解：
+      //     ① 逐行去掉 `#`/`-`/`*`/`>`/有序编号/粗体符号，得到"实质文字"；
+      //     ② 过滤掉空行；
+      //     ③ 若**每一行**的实质文字都以拒绝措辞开头（或很短且含拒绝措辞）⇒ 整篇是拒绝
+      //     ④ 只要有一行是正常内容（如「- 第一期：主闭环」）⇒ 不是拒绝
+      //   ⚠️ 这条不会误伤「- 先放一放的部分：第二期再说」，因为同一篇里
+      //     还有「- 第一期：主闭环」这样的正常行 ⇒ 不是"每一行都是拒绝"。
+      {
+        const lines = text.split(/\r?\n/)
+          .map((l) => l.replace(/^\s*(#{1,6}\s*|[-*+]\s*|\d+[.)]\s*|>\s*)/, '')
+            .replace(/[*_`~]/g, '').replace(/\s+/g, '').trim())
+          .filter((l) => l.length > 0);
+
+        /* 🔴 复核 D-5b（本条修的是**误杀**，比漏判严重）：
+         *
+         *   上一版用 `refusalHeads.some(p => l.startsWith(p))` 且表里含单个「不」，
+         *   于是这类**完全合法的方案**被整体判成拒绝：
+         *     # 不做范围
+         *     - 不做自动同步
+         *     - 不写入原文件
+         *     - 不记录敏感字段
+         *   每一行都以「不」开头 ⇒ allRefusive ⇒ refused ⇒ **方案被静默丢弃，
+         *   用户连确认卡都看不到**。实测复现。
+         *
+         *   ⇒ 判据必须收紧。「不」不是拒绝前缀，它只是中文里最常见的否定字；
+         *     方案文档里写"不做/不写入/不记录"是**正常且必要**的内容。
+         *
+         *   新的判据（三条同时成立才算整篇是拒绝）：
+         *     ① **行数很少**（≤6）：真正的方案列了几个也就不止 6 行；
+         *     ② **没有任何"规范性"痕迹**：不出现数字序号细节、不出现冒号定义的条目；
+         *     ③ **每一行都是"纯粹的拒绝语气"** —— 判据见 isPureRefusalLine()：
+         *          · 整行就是拒绝词本身（「不」「不想」「算了」…），或
+         *          · 含强拒绝短语且整行很短（≤12 字），或
+         *          · 以"拒绝 + 语气词"结尾（「…先放一放」「…等下次吧」）
+         *        **不包含**「不做X / 不写入X / 不记录X」这类**祈使/规范句式**——
+         *        它们在中文里是"约束说明"，不是"拒绝"。
+         */
+        /* 🔴 复核 D-5d（**第四次同类误杀，改用有据可依的判据，不再打补丁**）
+         *
+         *   D-5c 用 `endsWith` 修掉了「先放一放**搜索**」（短语在名词前），
+         *   但 `搜索**放一放**`（名词在短语前、句尾仍是短语）照样被误杀：
+         *     # 下阶段再说
+         *     - 搜索放一放
+         *     - 统计放一放
+         *   实测复现。而 `这个先放一放` 与 `搜索放一放` **结构完全一样**，
+         *   只靠句尾位置永远分不开 —— 再加第五个补丁也会漏。
+         *
+         *   ## 真正的分界：拒绝短语**前面有没有实义宾语**
+         *     `先放一放`        —— 前面什么都没有 ⇒ 就是在说"别存了" ⇒ 拒绝
+         *     `这个先放一放`    —— 前面是**代词**（指代提案本身）⇒ 拒绝
+         *     `等下次吧`        —— 前面只有语气 ⇒ 拒绝
+         *     `搜索放一放`      —— 前面是**具体名词**（指代某个待延期的东西）⇒ 文档
+         *     `统计放一放`      —— 同上 ⇒ 文档
+         *
+         *   判据：去掉短语后剩下的部分**只能是空、代词、或虚词**。
+         *   出现任何实义名词/动词 ⇒ 那是"把 X 延期"，不是"拒绝落档"。
+         *
+         *   ## ⚠️ 失败方向刻意偏向"放行"
+         *     按要求（宁可漏判，不可误杀）：认不出的一律当文档。
+         *     后果是 `- 信息还不太够` 这类**不带宾语的中性短句**也会被判成文档
+         *     （实义名词「信息」拦住了它）—— 这是**有意接受**的漏判，不是遗漏。
+         */
+        const STRONG_END = ['先放一放', '放一放', '等下次', '等以后', '再说',
+          '还不太够', '信息还不够', '信息还不太够', '聊透了再说', '先不急', '还不急', '还不到'];
+        // 整行**恰好等于**拒绝词（最干净的拒绝形态）
+        const BARE = ['不', '不想', '不了', '算了', '算了吧', '没有', '还没想清楚',
+          '没想清楚', '不想写', '不想存', '先不存', '不用了', '不必了', '不写了', '不存了'];
+        // 短语前允许出现的东西：空 / 代词（指代提案本身）/ 纯虚词
+        const OK_PREFIX = ['', '这个', '那个', '这', '那', '它', '此事', '这件事',
+          '这次', '这份', '这事', '我', '还是', '就', '也', '都'];
+
+        const isPureRefusalLine = (l) => {
+          if (BARE.includes(l)) return true;
+          // 🔴 硬信号：有冒号或有数字 ⇒ 这是文档条目，直接排除
+          if (/[:：]/.test(l)) return false;
+          if (/\d/.test(l)) return false;
+          // 🔴 否定式规范句式：「不/没/别 + 动词」⇒ 是约束说明，不是拒绝
+          if (/^[不没别]/.test(l) && l.length >= 3 && !BARE.includes(l)) return false;
+          // 🔴 核心：以拒绝短语收尾，且**短语前面没有实义成分**
+          const stripped = l.replace(/[。！？.!?~…，,\s]+$/, '').replace(/[吧了呢啊呀嘛哦]+$/, '');
+          for (const p of STRONG_END) {
+            if (!stripped.endsWith(p)) continue;
+            const rest = stripped.slice(0, stripped.length - p.length);
+            if (OK_PREFIX.includes(rest)) return true;
+          }
+          return false;
+        };
+
+        // 行数上限 6：真正的方案列起来不止 6 行
+        if (lines.length > 0 && lines.length <= 6) {
+          const allPure = lines.every(isPureRefusalLine);
+          if (allPure) return { status: 'refused', reason: 'STRUCTURED_REFUSAL' };
+        }
+      }
+
+      /* ⚠️ 已知边界（**故意不修**，如实留档）：
+       *
+       *   仍有一种形态会被当成正文建案 —— 模型偏离提示词，把拒绝写成
+       *   「标题 + 若干完整句子」的段落，例如：
+       *     # 关于这次落档
+       *
+       *     我觉得这个还是先放一放吧，现在信息还不太够。
+       *     等下次聊透了再说。
+       *
+       *   我试过再加一条「强拒绝短语 + 无实质内容行」的判据来抓它，
+       *   **结果同时把合法方案打死了**：
+       *     # 方案 / ## 分期 / - 第一期：主闭环 / - 先放一放的部分：第二期再说
+       *   两者在结构上不可区分（都有一条 16 字以上的行），差别只在语义。
+       *
+       *   ⇒ 结论：**这类边界用正则打不过去**，继续堆词表只会把误伤面越铺越宽。
+       *     真要根治得换成显式协议（让模型先输出一个 `YES/NO` 再给正文），
+       *     但那是改提示词契约、要重跑全部拟稿用例，**不在 D-27 范围内**。
+       *   当前后果可接受：最坏情况是她多拟了一份稿、用户看到卡片后点【拒绝】——
+       *     卡片本来就要用户点头，**不会自动落盘**，也没有安全影响。
+       */
+
+      // ── 判据 3：篇幅护栏 ──
+      //   🔴 D-27 修订（复核 D-2）：原来固定 40 字下限会**误丢合法的短清单**
+      //     （实测：22 字的「# 计划 / - 先跑通主闭环 / - 其余往后放」被丢弃）。
+      //     现在改为**按有没有文档结构判断**，而不是数长度：
+      //       · 有 Markdown 结构且 ≥12 字  ⇒ 收（短清单是合法的档）
+      //       · 无结构 且 <40 字          ⇒ 丢（那不是文档，是应答）
+      //     长度只用来挡「好的」「可以」这类应答，不用来裁决什么是文档。
+      const MIN_STRUCTURED = 12;
+      const MIN_PLAIN = 40;
+      if (hasMarkdownStructure ? text.length < MIN_STRUCTURED : text.length < MIN_PLAIN) {
+        return { status: 'unavailable', reason: 'TOO_SHORT' };
+      }
+
+      // 过长 ⇒ 说明它跑偏成了长报告；用句界截断保留，不整篇丢弃
+      //   （整篇丢弃是静默的，日志里看不出她写过）。
+      const MAX_CHARS = 8000;
+      const finalContent = text.length > MAX_CHARS ? truncateFadingText(text, MAX_CHARS) : text;
+
+      return { status: 'ok', content: finalContent, usage: (res && res.usage) || null };
+    } catch (err) {
+      // 判据 4：旁路异常不外抛 —— 它挂在 chat-send 的收尾上，
+      //   崩了会砸掉她这一轮已经说出口的回话。
+      //   ⚠️ 但要如实分类返回，好让主进程把「拟稿失败」记进审计 ——
+      //     全吞成 null 的话，出了问题时审计里连「她试过」都看不到。
+      return { status: 'unavailable', reason: 'EXCEPTION', error: String((err && err.message) || '').slice(0, 200) };
       return null;
     }
   }

@@ -159,15 +159,47 @@ console.log('--- D-10 建案路径门禁 ---');
     mainSrc.includes('if (rawHint.length > 200) return;'));
   check('❌ main.js 仍复用 proposeInternal（不许就地复刻建案）',
     mainSrc.includes('deps.agentIpc.proposeInternal('));
-  // 🔵 D-12 新增：通路 B 必须**如实拒绝**（不留空内容的半截案）。
-  //   删掉这个 return null，D-10 那个「建了案但写不进去」的洞就回来了。
-  check('❌ 通路 B 暂缓：tryBuildProposalFromIntent 必须直接 return null',
-    /function tryBuildProposalFromIntent\(\)[\s\S]{0,3000}?return null;/.test(mainSrc));
-  // 🔵 D-12 新增：建案期**不许再扣写额度**（那是回退到双重扣减/时机错位）。
+  // 🔵 D-27 修订：这条断言的**原意**是「不留空内容的半截案」——
+  //   D-12 时期用「直接 return null」实现这个意图，D-27 接通通路 B 后
+  //   return null 不再是唯一形态，但**意图没变**：建案前必须拿到非空正文。
+  //   ⚠️ 这是本文件第三次「断言指向了具体语法、功能一落地就红」：
+  //     D-12 搬函数一次、D-27 改 async 一次、D-27 复核改三态一次。
+  //     教训一致：**钉判据，别钉实现路径**。
+  //   现在的判据：不是 ok 三态、或 content 非字符串/为空 ⇒ 一律不建案。
+  check('❌ 通路 B：非 ok 或正文为空时仍必须 return null（不留空内容的半截案）',
+    /draftStatus !== 'ok' \|\| typeof draft\.content !== 'string' \|\| !draft\.content\.trim\(\)\) \{[\s\S]{0,600}?return null;/
+      .test(mainSrc));
+  // 🔵 D-27 复核新增：三态必须分开处理 —— refused 要留痕，不能与 unavailable 混成一支。
+  //   🔵 第二次复核再改：审计的区分方式从「reason 前缀」改成了**独立 outcome**
+  //      （`refused_by_subject` vs `draft_unavailable`）——只按 outcome 汇总时，
+  //      前缀区分会把拟稿故障统计成她的决策。断言随之改为钉 outcome。
+  check('🔴 通路 B：refused 与 unavailable 用不同 outcome（否则拒案无法正确统计）',
+    mainSrc.includes("draftStatus === 'refused'")
+    && mainSrc.includes("'refused_by_subject'")
+    && mainSrc.includes("'draft_unavailable'"));
+  // 🔵 D-27 新增：消费即清空必须在 **await 之前**（同步段）完成。
+  //   若写在 await 之后，等待期间用户发的新意图会被这句话误删，
+  //   而同一意图也可能被二次消费（重复建案）。
+  check('🔴 通路 B：_pendingAgentIntent 在 await 之前同步置空（消费即清空）',
+    /brain\._pendingAgentIntent = null;[\s\S]{0,2000}?await brain\.askForProposalContent/
+      .test(mainSrc));
+  // 🔵 D-27 新增：建案后必须广播**语义明确**的待决事件。
+  //   D-19 删掉了唯一的发送点之后，全仓再无任何 -available 广播，
+  //   于是建出来的案会躺在注册表里直到 TTL 过期 —— 用户永远看不到卡片。
+  check('🔴 通路 B：建案后广播 agent-proposal-pending（否则卡片永不亮）',
+    mainSrc.includes("broadcastToWindows('agent-proposal-pending'"));
+  // 🔵 D-27 新增：**绝不复用** -available 这个名字（D-19 已判它语义歧义）。
+  check('❌ 通路 B 不得复用 agent-proposal-available（D-19 铁律）',
+    !mainSrc.includes("broadcastToWindows('agent-proposal-available'"));
+  // 🔵 D-27 新增：建案期**不许再扣写额度**（那是回退到双重扣减/时机错位）。
   check('❌ 建案期只扣 actions，不扣 writes（writes 留给真正落盘）',
     !mainSrc.includes('evaluateProposal({ capability: intent.capability, scope, reason: intent.reason })'));
+  // 🔵 D-27 修订：原来是 `/^function tryBuildProposalFromIntent\(\)/m` ——
+  //   函数变 async 之后那条正则直接落空（实测：改完立刻 FAIL）。
+  //   **约束本身没变**：它必须仍在模块顶层，放进 whenReady 里会 ReferenceError
+  //   （chat-send 的 handler 在模块顶层注册，顶层闭包引用块级 const 会抛 TDZ）。
   check('❌ main.js 建案函数在模块顶层（放进 whenReady 会 ReferenceError）',
-    /^function tryBuildProposalFromIntent\(\)/m.test(mainSrc));
+    /^(?:async )?function tryBuildProposalFromIntent\(\)/m.test(mainSrc));
 }
 
 console.log('');

@@ -750,11 +750,33 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         if (allowed && allowed.allowed === false) {
           // 让下游执行器如实返回确切决策原因（如 REJECTED_BY_USER、NOT_CONFIRMED 等）
         } else {
-          const code = (trackedProposal && trackedProposal.contentHash) ? 'SNAPSHOT_EXPIRED' : 'SNAPSHOT_MISSING';
+          /* 🔴 2026-11-05 A-3：错误码语义修正（审计 P2 #5）。
+           *
+           * ## 原来的问题
+           *   `(trackedProposal && trackedProposal.contentHash) ? 'SNAPSHOT_EXPIRED' : 'SNAPSHOT_MISSING'`
+           *   —— 判断依据是「提案有没有 contentHash」，与「快照是过期了还是从来没存在」
+           *   **毫无关系**。而 SEC-01 强制所有写提案都带 contentHash，
+           *   所以这个三元**永远走 SNAPSHOT_EXPIRED**，SNAPSHOT_MISSING 是死分支。
+           *
+           *   实测：A-2 修的那个 bug（快照被未确认的 execute 删掉）里，
+           *   用户批准后拿到的错误码是 `SNAPSHOT_EXPIRED` —— 而实际原因是「被删了」。
+           *
+           * ## 改法为什么只加 detail、不新增错误码
+           *   渲染端已经认了这两个码。新增 `SNAPSHOT_DESTROYED` 要同步改渲染端，
+           *   而这次的目标是「让原因可区分」，不是「换一套码」。
+           *   ⇒ 保留原码，但把真实原因写进 detail：
+           *     NEVER_CREATED   —— 从来没有过（提案没 contentHash ⇒ 非写提案）
+           *     DELETED_OR_LOST —— 有过但没了（写提案：被清理、被删、或真的过期后已回收）
+           *
+           * ⚠️ 注意 `detail` 是**给人排查用**的，渲染端不该据此分支
+           *    （否则又变成「两条同义字段」的老问题，见本文件 :829 的注释）。
+           */
+          const hadSnapshot = Boolean(trackedProposal && trackedProposal.contentHash);
+          const code = hadSnapshot ? 'SNAPSHOT_EXPIRED' : 'SNAPSHOT_MISSING';
           if (confirmation && typeof confirmation.revoke === 'function') {
             confirmation.revoke(proposalId, code);
           }
-          return fail(code);
+          return fail(code, { detail: hadSnapshot ? 'DELETED_OR_LOST' : 'NEVER_CREATED' });
         }
       } else {
         if (Date.now() - snap.createdAt > SNAPSHOT_TTL_MS) {
@@ -832,13 +854,38 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //      是全通道共用的，少了 ok 会被判成"成功但无字段"，比报错更危险。
     //      （实测踩过：归一化时 destructuring 掉了 ok，渲染端会走成功分支。）
     if (!result.ok) {
+      /* 🔴 2026-11-05 A-2：「没被授权」不是失败，是「还没轮到它」。
+       *
+       * ## 原来的 bug（审计 P1 #1，已复现）
+       *   `EXECUTION_NOT_ALLOWED` 落进下面的 `!isRetryableIO` 分支 ⇒
+       *   快照被删 + retryCount 被 +1。用户随后点【授权】，执行器取不到正文
+       *   ⇒ 得到 `SNAPSHOT_EXPIRED` —— 而**实际不是过期，是被自己删了**。
+       *
+       *   实测链：propose → execute(未确认) → EXECUTION_NOT_ALLOWED，快照 has=false
+       *           → confirm(ok) → execute → SNAPSHOT_EXPIRED，不落盘
+       *
+       * ## 判据为什么只看 `NOT_CONFIRMED`
+       *   执行器闸门 4 的 reason 有六种（agent-confirmation.js:169-186）：
+       *     NOT_CONFIRMED        ← 还没点，用户可能马上就点 ⇒ **必须保留快照**
+       *     REJECTED_BY_USER     ← 终态，用户拒绝了      ⇒ 清
+       *     CONFIRMATION_EXPIRED ← 终态，确认过期        ⇒ 清
+       *     AUTHORIZATION_REVOKED← 被撤销               ⇒ 清
+       *     DECISION_TAMPERED    ← 记录被篡改（安全事件） ⇒ 清
+       *   只有第一种是「还会变」的中间态，其余四种都是终态。
+       *
+       * ## 为什么 retryCount 也不能 +1
+       *   那不是一次重试，是「用户还没点」。+1 会让后面的真实重试额度少一次。
+       */
+      const gateReason = String(result.reason || '');
+      const notYetAuthorized = result.code === 'EXECUTION_NOT_ALLOWED'
+        && gateReason === 'NOT_CONFIRMED';
       if (snap) {
-        snap.retryCount = (snap.retryCount || 0) + 1;
+        if (!notYetAuthorized) snap.retryCount = (snap.retryCount || 0) + 1;
         // 🔴 SEC-01 重试状态机：只有明确可重试的 I/O 故障（EXECUTION_FAILED 且回滚成功），
         // 且重试次数恰为 1 时，才保留原始快照允许重试一次。
         // 若回滚失败、安全校验不符或已重试过，立即清理快照并撤销授权，严禁任何重试。
         const isRetryableIO = result.code === 'EXECUTION_FAILED' && !result.rollbackFailed;
-        if (!isRetryableIO || snap.retryCount > 1) {
+        if (!notYetAuthorized && (!isRetryableIO || snap.retryCount > 1)) {
           contentSnapshotStore.delete(proposalId);
           if (confirmation && typeof confirmation.revoke === 'function') {
             confirmation.revoke(proposalId, snap.retryCount > 1 ? 'RETRY_EXHAUSTED' : (result.code || 'EXECUTION_FAILED'));

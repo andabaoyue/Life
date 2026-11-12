@@ -164,14 +164,53 @@ console.log('--- D-11 她想留下点什么门禁 ---');
     mainSrc.includes("intent.kind !== 'wantToLeaveSomething'"));
   check('❌ 主进程暂存内容且取用即删（重放不许重复写）',
     mainSrc.includes('pendingSelfNoteContent.delete(id)'));
+  /* 🔵 2026-11-01（初澜 2.0 observe 档）：判据从字面串 `'takeStashedContent }'`
+   *   改为「在 agentBuildDeps 对象里出现 takeStashedContent」。
+   *
+   *   为什么改：原判据要求 takeStashedContent 恰好在 deps 对象**末尾**（紧跟 `}`）。
+   *   这是**位置耦合**，不是语义判据——observe 档往 deps 里追加了 observationLog，
+   *   takeStashedContent 就从末尾变成了中间项，断言当场变红，而它要守的东西
+   *   （「takeStashedContent 真的被注入 agentIpc」）一个字都没变。
+   *   实测确认：改后 takeStashedContent 仍在 deps 里，只是不在末尾。
+   *
+   *   ⚠️ 这不是放松判据：仍然要求它出现在 agentBuildDeps 这个对象字面量内，
+   *      只是不再要求它排在最后。 */
+  const depsMatch = /agentBuildDeps\s*=\s*\{[\s\S]*?\n\s*\};/.exec(mainSrc);
   check('❌ main.js 把 takeStashedContent 注入了 agentIpc',
-    mainSrc.includes('takeStashedContent }'));
+    Boolean(depsMatch) && /takeStashedContent/.test(depsMatch[0]),
+    depsMatch ? 'deps 内出现' : '未找到 agentBuildDeps 对象');
 
   const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent-ipc.js'), 'utf8');
   check('🔴 execute 通道优先用主进程暂存内容，无视渲染端传的（防渲染端改写她的话）',
     ipcSrc.includes('const effectiveContent = stashed !== null && stashed !== undefined'));
   check('🔴 未注入 takeStashedContent 时退回原行为（等价于 D-10）',
     ipcSrc.includes('? takeStashedContent') && ipcSrc.includes(': null;'));
+
+  /* ---------- 2026-11-04：三个独立调用都必须告诉她「你能写」 ----------
+   *
+   * ## 为什么这条断言必须存在
+   *   `askForSelfNote` / `askForObserverJournal` / `askForProposalContent`
+   *   的 system prompt **不是主 persona**，各有专用常量。
+   *   所以改 `persona.js` 对这三条路**零影响** —— 它们照样不知道自己能写。
+   *
+   *   实测依据：2026-11-01 10:41 她说「存到沙盒我碰不到」，
+   *   而 17:15 那张便签写「沙盒还空着」（她 13:50 刚写过一张）。
+   *   两次都发生在这些独立调用/相关路径上。
+   *
+   * ## 判据
+   *   三个 prompt 常量里都必须出现「能写」类表述。
+   *   ⚠️ 只判「含沙盒」不够 —— 沙盒这个词本来就在别的上下文里出现过。
+   */
+  const brainSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+  const promptNames = ['WANT_TO_LEAVE_SYS', 'OBSERVER_JOURNAL_SYS', 'PROPOSAL_DRAFT_SYS'];
+  for (const name of promptNames) {
+    const start = brainSrc2.indexOf('const ' + name + ' =');
+    const end = brainSrc2.indexOf(';', brainSrc2.indexOf("';", start));
+    const body = start >= 0 && end > start ? brainSrc2.slice(start, end) : '';
+    check('🔴 ' + name + ' 告诉她「能写」（否则她以为自己碰不到沙盒）',
+      body.length > 0 && /程序会替你把字存进那个沙盒目录|能写下东西/.test(body),
+      body ? 'len=' + body.length : '未找到常量');
+  }
 }
 
 console.log('');

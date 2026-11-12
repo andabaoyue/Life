@@ -131,7 +131,111 @@ console.log('--- D-5 Agent 沙盒门禁 ---');
     && SANDBOX_NOTICE.includes('重要文件'), SANDBOX_NOTICE);
 }
 
-console.log('--- D-5 Agent 沙盒门禁：'
-  + pass + ' 通过 / ' + fail + ' 失败 ---');
+/* ---------- 5. S-3：沙盒初始化失败时主进程降级运行，不中断启动 ---------- */
+(async () => {
+  const { PermissionPolicy } = require('../src/agent-interfaces');
+  const policy = new PermissionPolicy({ killSwitch: false, allowed: ['workspace.read', 'workspace.write'] });
+  const roots = policy.setScopeRoots('workspace.write', [null]);
+  const auth = policy.authorize('workspace.write', path.join(os.tmpdir(), 'LifeSandbox', 'a.txt'));
+  check('S3-1 setScopeRoots([null]) 自动收敛为空根并拒绝对沙盒写入',
+    Array.isArray(roots) && roots.length === 0 &&
+    auth && auth.allowed === false && auth.reason === 'scope_not_in_whitelist',
+    auth && auth.reason);
 
-process.exit(fail === 0 ? 0 : 1);
+  const Module = require('module');
+  const url = require('url');
+  const ROOT = path.join(__dirname, '..');
+  const badDesktop = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-t1-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-t2-'));
+  fs.writeFileSync(path.join(badDesktop, SANDBOX_DIR_NAME), 'blocking regular file', 'utf8');
+
+  const handlers = new Map();
+  const mainFrame = { url: url.pathToFileURL(path.join(ROOT, 'index.html')).href };
+  const mkWin = () => ({
+    isDestroyed: () => false,
+    webContents: { send: () => {}, on: () => {}, mainFrame },
+    on: () => {}, loadFile: () => {},
+    setPosition() {}, getPosition: () => [100, 500],
+    setSize() {}, getSize: () => [340, 480],
+    setAlwaysOnTop() {}, isAlwaysOnTop: () => true, setIgnoreMouseEvents() {},
+    setBounds() {}, getBounds: () => ({ x: 100, y: 500, width: 340, height: 480 }),
+    setVisible() {}, isVisible: () => true, show() {}, hide() {}, focus() {},
+    setOpacity() {}, getOpacity: () => 1, setSkipTaskbar() {}
+  });
+  const fakeWin = mkWin();
+  let readyPromise = null;
+  const origLoad = Module._load;
+  const origConsoleErr = console.error;
+  const origConsoleLog = console.log;
+  const errLogs = [];
+  const infoLogs = [];
+  console.error = (...a) => errLogs.push(a.map(String).join(' '));
+  console.log = (...a) => infoLogs.push(a.map(String).join(' '));
+  Module._load = function (request, parent, isMain) {
+    if (request === 'electron') return {
+      app: {
+        getPath: (k) => (k === 'desktop' ? badDesktop : userDataDir),
+        requestSingleInstanceLock: () => true,
+        whenReady: () => ({
+          then(cb) {
+            readyPromise = Promise.resolve().then(cb);
+            return readyPromise;
+          }
+        }),
+        on: () => {}, quit: () => {}
+      },
+      BrowserWindow: Object.assign(function () { return fakeWin; }, { allWindows: [] }),
+      ipcMain: {
+        handle: (ch, fn) => handlers.set(ch, fn),
+        on: (ch, fn) => handlers.set('on:' + ch, fn)
+      },
+      screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }) },
+      shell: {}, Menu: { setApplicationMenu: () => {}, buildFromTemplate: () => ({}) },
+      Tray: function () { return { setToolTip() {}, setContextMenu() {}, on() {} }; },
+      globalShortcut: { register: () => true, unregisterAll: () => {} },
+      nativeImage: { createFromPath: () => ({}) },
+      safeStorage: null,
+      session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
+      dialog: {}, powerMonitor: { on: () => {} }
+    };
+    return origLoad.apply(this, arguments);
+  };
+
+  let readyErr = null;
+  try {
+    require(path.join(ROOT, 'main.js'));
+    await readyPromise;
+  } catch (err) {
+    readyErr = err;
+  } finally {
+    Module._load = origLoad;
+    console.error = origConsoleErr;
+    console.log = origConsoleLog;
+  }
+
+  check('S3-2 🔴 沙盒冲突抛出 SANDBOX_UNAVAILABLE 时 main.js app.whenReady 不中断（正常完成装配）',
+    readyErr === null && handlers.has('agent:propose-action') && handlers.has('chat-send'),
+    readyErr ? String(readyErr.code || readyErr.message) : 'ready=ok');
+
+  check('S3-3 降级时可见报错含 SANDBOX_UNAVAILABLE 且绝不谎报「沙盒已启用: null」',
+    errLogs.some((l) => l.includes('沙盒不可用') && l.includes('SANDBOX_UNAVAILABLE')) &&
+    !infoLogs.some((l) => l.includes('沙盒已启用')),
+    'err=' + errLogs.length);
+
+  let proposeRes = null;
+  if (handlers.has('agent:propose-action')) {
+    proposeRes = await handlers.get('agent:propose-action')(
+      { sender: fakeWin.webContents, senderFrame: fakeWin.webContents.mainFrame },
+      { capability: 'workspace.write', scope: path.join(badDesktop, SANDBOX_DIR_NAME, 'x.txt'), reason: 's3', content: 'hi' }
+    );
+  }
+  check('S3-4 降级后经 agent:propose-action 发起写提案自动被 scope_not_in_whitelist 拒绝',
+    proposeRes && proposeRes.ok === false &&
+    proposeRes.error === 'AUTHORIZED_REJECTED' && proposeRes.reason === 'scope_not_in_whitelist',
+    proposeRes ? (proposeRes.error + '/' + proposeRes.reason) : 'no handler');
+
+  console.log('--- D-5 Agent 沙盒门禁：'
+    + pass + ' 通过 / ' + fail + ' 失败 ---');
+
+  process.exit(fail === 0 ? 0 : 1);
+})();

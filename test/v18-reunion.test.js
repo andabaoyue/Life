@@ -237,8 +237,22 @@ check('🔴 memory 有 setReunionProvider（依赖注入，不直接碰 stats）
 check('🔴 memory 有 _reunionNote 挂点', memSrc.includes('_reunionNote()'));
 // ⚠️ 2026-10-20：v1.8-b 在 reunion 与 suffix 之间插入了 visionNote，
 //   所以顺序断言必须跟着更新 —— 不是放宽，是承认新的事实元。
-check('🔴 build 的 tail 顺序：bedside → selfNote → reunion → vision → suffix',
-  /\[bedsideNote,\s*selfNote,\s*reunionNote,\s*visionNote,\s*suffix\]/.test(memSrc));
+// 🔵 2026-11-04：v1.9.0-dev 在 vision 与 suffix 之间又插入了 observeEcho
+//   （观察期满补注入的兜底通道）。判据从「固定名单逐字匹配」改为**顺序关系**——
+//   它要守的契约是「reunion 在 vision 之前、vision 在 suffix 之前」，
+//   而不是「tail 里只能有这五个变量」。固定名单每次插新元素都会红，
+//   而那与契约无关（与 d11 那次「位置耦合」是同一类病）。
+{
+  const tailMatch = /const tail = \[([^\]]+)\]/.exec(memSrc);
+  const tailOrder = tailMatch ? tailMatch[1] : '';
+  const idx = (n) => tailOrder.indexOf(n);
+  check('🔴 build 的 tail 顺序：bedside → selfNote → reunion → vision → suffix',
+    idx('bedsideNote') >= 0 && idx('selfNote') > idx('bedsideNote')
+    && idx('reunionNote') > idx('selfNote')
+    && idx('visionNote') > idx('reunionNote')
+    && idx('suffix') > idx('visionNote'),
+    'tail=' + tailOrder.slice(0, 120));
+}
 
 check('🔴 brain 初始化时接线 provider',
   brainSrc.includes('setReunionProvider(() => this.takeReunionNote())'));

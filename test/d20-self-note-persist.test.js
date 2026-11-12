@@ -205,6 +205,68 @@ console.log('--- D-20 自述持久化门禁 ---');
   check('❌ main.js 的 onExecuted hook 仍登记自述', mainSrc.includes('addSelfNote'));
 }
 
+/* ============ 8. B-1（2026-11-05）：addSelfNote 内容幂等 ============
+ *
+ * 背景（审计 P2 #8）：同一条内容连调两次 → 两次都返回 true，队列里两条。
+ * 正常路径不会重复（onExecuted 只在执行成功时 fire 一次），但没有任何断言挡着。
+ *
+ * ⚠️ B-2 是 B-1 的反例，缺一不可：
+ *    只写 B-1 的话，「把所有重复都拒掉」也能通过 ——
+ *    而那会让她永远写不了同一句话第二次，是过度修复。
+ */
+{
+  const NOTE = '同一条内容';
+
+  // B1-1 同内容未消费前不重复入队
+  {
+    const m = freshMem();
+    const a = m.addSelfNote({ content: NOTE, name: 'a.txt', source: 'selfNote' });
+    const b = m.addSelfNote({ content: NOTE, name: 'a.txt', source: 'selfNote' });
+    check('B1-1 同内容未消费前不重复入队（第二次返回 false）',
+      a === true && b === false && m.data.selfNotes.length === 1,
+      `a=${a} b=${b} len=${m.data.selfNotes.length}`);
+  }
+
+  // B1-2 🔴 反例：已 drain 的同内容必须能重新登记
+  {
+    const m = freshMem();
+    m.addSelfNote({ content: NOTE, name: 'a.txt', source: 'selfNote' });
+    // 模拟「已被注入过」——她读过了
+    m.data.selfNotes[0].drained = true;
+    const again = m.addSelfNote({ content: NOTE, name: 'a.txt', source: 'selfNote' });
+    check('🔴 B1-2 已 drain 的同内容可以重新登记（否则她永远写不了同一句话第二次）',
+      again === true && m.data.selfNotes.length === 2,
+      `again=${again} len=${m.data.selfNotes.length}`);
+  }
+
+  // B1-3 不同内容不受影响（防判据写成恒真）
+  {
+    const m = freshMem();
+    const a = m.addSelfNote({ content: '第一条', name: 'a.txt', source: 'selfNote' });
+    const b = m.addSelfNote({ content: '第二条', name: 'b.txt', source: 'selfNote' });
+    check('B1-3 不同内容各自入队（防判据恒真）',
+      a === true && b === true && m.data.selfNotes.length === 2,
+      `len=${m.data.selfNotes.length}`);
+  }
+
+  // B1-4 队列满时重复项不该白挤掉一条真实条目
+  //   （判重必须在淘汰之前 —— 这是实现顺序的断言）
+  {
+    const m = freshMem();
+    for (let i = 0; i < 8; i++) {
+      m.addSelfNote({ content: '填充' + i, name: 'f' + i + '.txt', source: 'selfNote' });
+    }
+    const lenBefore = m.data.selfNotes.length;
+    const firstContent = m.data.selfNotes[0].content;
+    // 重复最后一条（未 drain）
+    const dup = m.addSelfNote({ content: '填充7', name: 'f7.txt', source: 'selfNote' });
+    check('B1-4 队列满时重复项被拒且不挤掉最旧的真实条目',
+      dup === false && m.data.selfNotes.length === lenBefore
+      && m.data.selfNotes[0].content === firstContent,
+      `dup=${dup} len=${m.data.selfNotes.length} first=${m.data.selfNotes[0].content}`);
+  }
+}
+
 console.log('');
 console.log('失败 ' + failures + ' 项');
 process.exitCode = failures ? 1 : 0;

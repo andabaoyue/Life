@@ -299,5 +299,159 @@ console.log('--- D-2 单文件写事务 + WAL 门禁 ---');
   check('D2-9 WAL 半截行被跳过而非崩溃（崩溃现场本来就可能残缺）', ok);
 }
 
+/* ================= 12. 🔴 S-2：WAL / 备份 fsync 落盘与失败不留残余 ================= */
+{
+  // S2-1：正常 begin + commit 确实经过 fsyncSync（WAL pending + WAL committed + backup + target）
+  const { workDir, mgr } = scenario();
+  const f = path.join(workDir, 'fsync-count.txt');
+  fs.writeFileSync(f, 'V1');
+  const origFsync = fs.fsyncSync;
+  let fsyncCalls = 0;
+  fs.fsyncSync = function (fd) {
+    fsyncCalls++;
+    return origFsync.call(fs, fd);
+  };
+  try {
+    const tx = mgr.begin({ target: f, data: 'V2' });
+    mgr.commit(tx);
+  } finally {
+    fs.fsyncSync = origFsync;
+  }
+  check('S2-1 正常覆盖写事务（备份 + pending WAL + atomic + committed WAL）多次调用 fsyncSync',
+    fsyncCalls >= 4, 'calls=' + fsyncCalls);
+}
+{
+  // S2-2：已有 WAL 时模拟 fsyncSync 抛错 → _appendWal 抛 WAL_APPEND_FAILED，且不留下半条或未落盘记录
+  const { walPath, mgr } = scenario();
+  const seed = JSON.stringify({ txId: 'txn-seed', status: 'committed', at: 1 }) + '\n';
+  fs.writeFileSync(walPath, seed, 'utf8');
+  const origFsync = fs.fsyncSync;
+  fs.fsyncSync = function () {
+    const err = new Error('EIO_FSYNC');
+    err.code = 'EIO';
+    throw err;
+  };
+  let caught = null;
+  try {
+    mgr._appendWal({ txId: 'txn-should-not-persist', status: 'pending', at: 2 });
+  } catch (e) {
+    caught = e;
+  } finally {
+    fs.fsyncSync = origFsync;
+  }
+  check('S2-2 ❌ 反例：WAL fsyncSync 抛错必抛 WAL_APPEND_FAILED',
+    caught && caught.code === 'WAL_APPEND_FAILED', caught && caught.code);
+  check('S2-2b ❌ 反例：WAL fsyncSync 失败后不留半条或幽灵记录（保持原 WAL 逐字节一致）',
+    fs.readFileSync(walPath, 'utf8') === seed);
+}
+{
+  // S2-3：新建 WAL（原先不存在）在 begin() 落 pending WAL 时 fsyncSync 抛错 → 不留 WAL 文件，也不写目标文件
+  const { workDir, walPath, mgr } = scenario();
+  const f = path.join(workDir, 'new-fsync-fail.txt');
+  const origFsync = fs.fsyncSync;
+  fs.fsyncSync = function () { throw new Error('EIO_WAL_NEW'); };
+  let caught = null;
+  try {
+    mgr.begin({ target: f, data: 'SHOULD_NOT_WRITE' });
+  } catch (e) {
+    caught = e;
+  } finally {
+    fs.fsyncSync = origFsync;
+  }
+  check('S2-3 ❌ 反例：新建事务 WAL fsyncSync 失败时抛 WAL_APPEND_FAILED 且不写目标、不留 WAL',
+    caught && caught.code === 'WAL_APPEND_FAILED' && !fs.existsSync(walPath) && !fs.existsSync(f));
+}
+{
+  // S2-4：覆盖写备份阶段 fsyncSync 抛错 → 原文件完好且不留孤儿备份/WAL
+  const { workDir, walPath, backupDir, mgr } = scenario();
+  const f = path.join(workDir, 'backup-fsync-fail.txt');
+  fs.writeFileSync(f, 'KEEP_ORIGINAL');
+  const origFsync = fs.fsyncSync;
+  fs.fsyncSync = function () { throw new Error('EIO_BACKUP'); };
+  let caught = null;
+  try {
+    mgr.begin({ target: f, data: 'OVERWRITE_BLOCKED' });
+  } catch (e) {
+    caught = e;
+  } finally {
+    fs.fsyncSync = origFsync;
+  }
+  const leftovers = fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : [];
+  check('S2-4 ❌ 反例：备份 fsyncSync 抛错时原文件未改、无 WAL、无孤儿备份残留',
+    caught !== null && fs.readFileSync(f, 'utf8') === 'KEEP_ORIGINAL' &&
+    !fs.existsSync(walPath) && leftovers.length === 0,
+    'leftovers=' + leftovers.length);
+}
+{
+  // S2-5：分段短写（每次最多 8 字节）时循环写全且 fsync，WAL 与备份字节完整
+  const { workDir, walPath, mgr } = scenario();
+  const f = path.join(workDir, 'short-write.txt');
+  const origContent = 'ORIGINAL-CONTENT-OVER-16-BYTES-FOR-BACKUP-CHUNK';
+  fs.writeFileSync(f, origContent, 'utf8');
+  const newContent = 'NEW-CONTENT-OVER-16-BYTES';
+  const origWriteSync = fs.writeSync;
+  const origFsync = fs.fsyncSync;
+  let writeCalls = 0;
+  let fsyncCalls = 0;
+  fs.writeSync = function (fd, buf, offset, length, position) {
+    if (Buffer.isBuffer(buf) && typeof offset === 'number' && typeof length === 'number') {
+      writeCalls++;
+      return origWriteSync.call(fs, fd, buf, offset, Math.min(8, length), position);
+    }
+    return origWriteSync.apply(fs, arguments);
+  };
+  fs.fsyncSync = function (fd) {
+    fsyncCalls++;
+    return origFsync.call(fs, fd);
+  };
+  let tx = null;
+  let backupBytes = null;
+  let walLines = null;
+  try {
+    tx = mgr.begin({ target: f, data: newContent });
+    backupBytes = fs.readFileSync(tx.backupPath, 'utf8');
+    mgr.commit(tx);
+    try {
+      walLines = fs.readFileSync(walPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    } catch {
+      walLines = null;
+    }
+  } finally {
+    fs.writeSync = origWriteSync;
+    fs.fsyncSync = origFsync;
+  }
+  check('S2-5 分段短写（每次最多 8 字节）时循环写全且 fsync，WAL 与备份字节完整',
+    writeCalls > 6
+    && fsyncCalls >= 4
+    && backupBytes === origContent
+    && fs.readFileSync(f, 'utf8') === newContent
+    && Array.isArray(walLines) && walLines.length === 2
+    && walLines[0].status === 'pending' && walLines[0].txId === tx.txId
+    && walLines[1].status === 'committed' && walLines[1].txId === tx.txId,
+    'writes=' + writeCalls + ' fsync=' + fsyncCalls);
+}
+{
+  // S2-6：❌ 反例：新建 WAL 时 fstatSync 抛错（prevSize 为 null）仍必须清理 0 字节幽灵 WAL
+  const { workDir, walPath, mgr } = scenario();
+  const f = path.join(workDir, 'fstat-fail.txt');
+  const origFstat = fs.fstatSync;
+  fs.fstatSync = function () {
+    const err = new Error('EIO_FSTAT');
+    err.code = 'EIO';
+    throw err;
+  };
+  let caught = null;
+  try {
+    mgr.begin({ target: f, data: 'SHOULD_NOT_LEAVE_ZERO_WAL' });
+  } catch (e) {
+    caught = e;
+  } finally {
+    fs.fstatSync = origFstat;
+  }
+  check('S2-6 ❌ 反例：新建 WAL 时 fstatSync 抛错：抛 WAL_APPEND_FAILED 且磁盘不留 0 字节幽灵文件',
+    caught && caught.code === 'WAL_APPEND_FAILED' && !fs.existsSync(walPath) && !fs.existsSync(f),
+    'code=' + (caught && caught.code) + ' walExists=' + fs.existsSync(walPath));
+}
+
 console.log(failures === 0 ? '\nall agent_transaction tests passed' : `\n${failures} FAILED`);
 assert.strictEqual(failures, 0, `${failures} 项写事务门禁失败`);

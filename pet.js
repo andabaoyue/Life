@@ -242,38 +242,99 @@ function anyOverlayOpen() {
      · 渲染层只做「把用户点击如实上报」，不执行任何动作。
        confirm通道的executed 恒为 false，主进程那边还有确认闸门独立判定。
      · 提案被拒时**不弹卡片** —— 主进程已经拒了，再问用户是噪声。*/
+
+/* 🔴 D-27 复核修订（D-1 并发）：**待决卡片队列**。
+ *   拟稿是并行的异步调用，两轮对话可以各触发一次，广播完成顺序不定；
+ *   而确认卡是**单容器**（`ui-agent-confirm.js` 的 `show()` 语义就是覆盖）。
+ *   没有队列的话，后到的卡片会把前一张直接盖掉 —— 前一条提案在主进程
+ *   `proposalStore` 里还活着（TTL 10 分钟），但用户在界面上再也看不到它。
+ *
+ *   ⚠️ 为什么队列放在这里而不是 `ui-agent-confirm.js`：
+ *     那个模块的契约是「**渲染一张卡**」，`show()` 覆盖是它的既定语义，
+ *     既有门禁（`test/ui-agent-confirm.test.js`）也按这个契约写。
+ *     把排序职责塞进渲染层会同时破坏那个契约和那批断言。
+ *     **排序是应用层的事** —— pet.js 这里才是决定「先给用户看哪一张」的地方。
+ *
+ *   🔴 顺序要求（别挪到 agentConfirmCard 之后）：
+ *     决策回调里会调 `drainCardsNextTick()`。函数声明虽会提升，
+ *     但 `pendingCards` / `pendingCardIds` 是 `const`，处于 TDZ ——
+ *     若把它们放在回调之后，第一次点按钮就会 ReferenceError。
+ */
+const MAX_PENDING_CARDS = 8;
+const pendingCards = [];
+/** 去重集合：**既含队列里的等待项，也含正在回查/正在展示的那一条**。
+ *  🔴 复核 D-1 修订：原来这个集合只装等待项，而「正在展示」那一条在
+ *     `show()` 成功后才由 `agentConfirmCard.isVisible()` 体现。
+ *     中间那段**回查快照的 await 窗口**里，`isVisible()` 仍是 false ——
+ *     第二条信号于是也走「直接展示」，两条 `show()` 互相覆盖。
+ *     实测：50ms 延迟下 A/B 两条信号同时到，`shown = ["A","B"]`，
+ *     A 的卡片被 B 顶掉且再也回不来（A 已不在队列里）。
+ *  ⇒ 现在的判据：**集合里有没有这个 id**，而不是「卡片可不可见」。
+ *     id 在进入处理流程时加入，展示结束/决策完成后移除。 */
+const pendingCardIds = new Set();
+/** 正在展示的那一条（用于 drain 时判断"该不该再亮一张"）。 */
+let activeCardId = null;
+
+/* 🔴 D-27：用户点完一张卡，接上下一条。
+ *   挂点选在**决策回调的末尾**（`agentConfirmCard` 的 onDecision），
+ *   而不是去改 `ui-agent-confirm.js` —— 那个模块不该知道"队列"存在。
+ *
+ *   ⚠️ 为什么必须延迟一拍：`ui-agent-confirm` 的点击处理器是
+ *     `try { await onDecision(...) } finally { hide() }`，
+ *     回调返回时卡片**还没**隐藏。若在回调里直接 drain，
+ *     `isVisible()` 仍为 true，下一条会被再次塞回队列。
+ *     用 setTimeout(0) 排到宏任务，此时 hide() 已跑完。
+ *   ⚠️ 这**不是轮询**（D-001 禁的是连续定时器）：每次决策只排一次，不循环。 */
+function drainCardsNextTick() {
+  try {
+    setTimeout(() => { void drainPendingCards(); }, 0);
+  } catch (_) { /* 静默 */ }
+}
+
 const agentConfirmCard = (typeof window.AgentConfirm !== 'undefined' && window.AgentConfirm)
   ? window.AgentConfirm.bind(
     document.getElementById('agentConfirm'),
     async (decision, proposalId) => {
-      if (!api || !api.agent || typeof api.agent.confirm !== 'function') return;
+      // 🔴 复核 D-1 修订：整段包进 try/finally。
+      //   原来 confirm 不可用或抛错时**提前 return**，而卡片随后仍会被
+      //   `ui-agent-confirm` 的 finally 隐藏 —— 于是队列再也没人接，
+      //   后面所有待决提案静默滞留（既不消失也不出现）。
+      //   drain 必须在 finally 里安排，与「这一张成没成」无关。
       try {
-        await api.agent.confirm({ proposalId, decision });
-      } catch (e) {
-        // 上报失败就静默收起卡片：留着半张卡比不弹更糟，
-        // 而审计里主进程已记了「确认未送达」。
-        return;
-      }
-
-      // 🔴 D-12 修：**确认之后必须真的执行** —— 否则用户点了【授权】什么都不会发生。
-      //
-      //   实测（反重力复核）：`api.agent.execute` 全仓调用点为 0。
-      //   confirm 通道的注释写得很明白「只登记决策，绝不执行」——
-      //   但**没有任何地方负责接着执行**，于是卡片点了授权、沙盒里永远没有文件。
-      //
-      //   ⚠️ 三条边界：
-      //     1. **只有 approved 才执行。** rejected 是终态，不该落盘。
-      //     2. **不传 content。** 主进程若为该提案暂存了内容（D-11 她为自己写的话），
-      //        由主进程侧取用；渲染端传的话反而可能覆盖她的原话。
-      //        普通通路（用户让她写）的 content 也应由主进程决定 ——
-      //        渲染端能自造内容 = 她能写的东西由渲染端决定，那是条不该开的口子。
-      //     3. **失败静默**。执行结果主进程有审计；渲染端出错不该影响别的东西。
-      if (decision === 'approved' && typeof api.agent.execute === 'function') {
+        if (!api || !api.agent || typeof api.agent.confirm !== 'function') return;
         try {
-          await api.agent.execute({ proposalId });
+          await api.agent.confirm({ proposalId, decision });
         } catch (e) {
-          // 静默：审计里主进程已记录拒绝原因。
+          // 上报失败就静默收起卡片：留着半张卡比不弹更糟，
+          // 而审计里主进程已记了「确认未送达」。
+          return;
         }
+
+        // 🔴 D-12 修：**确认之后必须真的执行** —— 否则用户点了【授权】什么都不会发生。
+        //
+        //   实测（反重力复核）：`api.agent.execute` 全仓调用点为 0。
+        //   confirm 通道的注释写得很明白「只登记决策，绝不执行」——
+        //   但**没有任何地方负责接着执行**，于是卡片点了授权、沙盒里永远没有文件。
+        //
+        //   ⚠️ 三条边界：
+        //     1. **只有 approved 才执行。** rejected 是终态，不该落盘。
+        //     2. **不传 content。** 主进程若为该提案暂存了内容（D-11 她为自己写的话），
+        //        由主进程侧取用；渲染端传的话反而可能覆盖她的原话。
+        //        普通通路（用户让她写）的 content 也应由主进程决定 ——
+        //        渲染端能自造内容 = 她能写的东西由渲染端决定，那是条不该开的口子。
+        //     3. **失败静默**。执行结果主进程有审计；渲染端出错不该影响别的东西。
+        if (decision === 'approved' && typeof api.agent.execute === 'function') {
+          try {
+            await api.agent.execute({ proposalId });
+          } catch (e) {
+            // 静默：审计里主进程已记录拒绝原因。
+          }
+        }
+      } finally {
+        // 🔴 D-27：这一张决策完了（**无论成没成**）—— 接上队列里的下一条。
+        //   释放占位 + 延一拍 drain（`ui-agent-confirm` 的 hide() 在本回调返回后才执行）。
+        releaseActiveCard(proposalId);
+        drainCardsNextTick();
       }
     },
     (k, f) => (typeof t === 'function' ? t(k, f) : f),
@@ -286,15 +347,19 @@ const agentConfirmCard = (typeof window.AgentConfirm !== 'undefined' && window.A
   : null;
 
 /** 有Agent 提案时亮卡片。proposal 为空则收起（不会误亮）。
- *  ⚠️⚠️ 待D-4 接线（2026-10-06 实测确认：本函数目前**全仓零调用点**）——
- *  当前 Agent 触发模式仍是「你调用」，主进程不会自发生成提案，
- *  所以确认卡片**永远不会出现**，这是设计如此，不是 bug。
- *  D-4 接真实执行器时，由「提案产生的那一刻」调用本函数插上电。
- *  接线时必须一并处理：
+ *  🔵 接线状态（2026-10-30 D-27 复核更新，原文已过时）：
+ *    **本函数现在真的有调用点** —— `showProposalById()`（本文件下方）会调用它，
+ *    链路是：主进程广播 `agent-proposal-pending` → `onProposalSignal`
+ *    → 回查冻结快照 → `showProposalById` → 本函数。
+ *    ⚠️ 原文写的「全仓零调用点 / 确认卡片永远不会出现」是 D-4 时期的事实，
+ *      已经随着 D-27 接通通路 B 而失效。留着会让后来者以为卡片还没接上。
+ *  接线时必须一并处理的两条（**仍然成立**）：
  *    ① anyOverlayOpen() 未把 agentConfirm 算进去 —— 卡片亮起时
- *       面板视窗不会被正确扩收，可能与其他浮层打架；
+ *       面板视窗不会被正确扩收，可能与其他浮层打架
+ *       （实测：`anyOverlayOpen()` 里已把 agentConfirm 纳入，见本文件上方）；
  *    ② 提案来源必须是主进程的真实提案对象（proposalStore 里那一份），
- *       绝不能让渲染端自己编一个 —— 那正是 id 顶替攻击的入口。
+ *       绝不能让渲染端自己编一个 —— 那正是 id 顶替攻击的入口
+ *       （已落实：只收 proposalId，快照一律回查主进程）。
  */
 async function showAgentProposal(proposal) {
   if (!agentConfirmCard) return false;
@@ -314,9 +379,9 @@ async function showAgentProposal(proposal) {
     return false;
   }
 }
-/* 🔴 D-10：主进程建案后亮确认卡 —— showAgentProposal 从「零调用点」到真正接线。
+/* 🔴 D-10 / D-27：主进程建案后亮确认卡 —— showAgentProposal 从「零调用点」到真正接线。
  *
- *   链路：主进程 [形态校验 → 授权 → 预算 → 建案] → 广播 agent-proposal-available
+ *   链路：主进程 [形态校验 → 授权 → 预算 → 建案] → 广播 agent-proposal-pending
  *         → 本处收到 → 回查冻结快照 → showAgentProposal(快照)
  *
  *   ⚠️ 三条边界：
@@ -324,19 +389,127 @@ async function showAgentProposal(proposal) {
  *        渲染端拿到的永远是 Object.freeze 的只读快照，篡改它没有用处。
  *     2. **取不到就不亮卡**。过期/已决策/不存在一律静默 ——
  *        凭空弹一张确认框比不弹更糟（用户会闭眼点授权，那道闸门就白设了）。
- *     3. **异常静默**。这是她说话之后触发的旁路，绝不能反向影响对话。 */
-if (api && api.agent && typeof api.agent.onProposalAvailable === 'function') {
-  api.agent.onProposalAvailable(async (payload) => {
-    try {
-      const id = payload && payload.proposalId;
-      if (!id) return;
-      const snap = await api.agent.getPendingProposal(id);
-      if (!snap || snap.ok !== true || !snap.proposal) return;
-      await showAgentProposal(snap.proposal);
-    } catch (e) {
-      // 边界③：静默。亮卡失败不该影响任何别的东西。
+ *     3. **异常静默**。这是她说话之后触发的旁路，绝不能反向影响对话。
+ *
+ * 🔴 D-27：抽成具名函数，**两个事件共用这一份**。
+ *   为什么不复用 `agent-proposal-available` 那个名字：D-19 判定它语义歧义
+ *   （「已执行完」与「待你决定」共用过它，导致自发便签写成后仍弹多余授权卡）。
+ *   新链路用语义明确的 `agent-proposal-pending`；旧名字保留监听只为兼容，
+ *   主进程侧**零发送点**，所以它现在是一条死通道，不会带来任何多余卡片。
+ *
+ *   🔵 队列定义与 drainCardsNextTick 已上移到 `agentConfirmCard` 之前
+ *      （原因见那里的「顺序要求」注释）；此处只留事件处理。 */
+
+/** 展示一张卡；成功返回 true。
+ *  🔴 复核 D-1：本函数**会先把 id 记进 `pendingCardIds` 占位**，成功才转入 active。
+ *     这样「回查快照的 await 窗口」也被锁住 —— 那正是竞态发生的地方。 */
+async function showProposalById(id) {
+  // 占位（若调用方已经占过则保留）
+  pendingCardIds.add(id);
+  try {
+    const snap = await api.agent.getPendingProposal(id);
+    if (!snap || snap.ok !== true || !snap.proposal) {
+      // 取不到（已决策/过期/不存在）：**无条件还回占位**
+      //   ⚠️ 不能只还"本次新加的"：drain 取出来的那一条占位是
+      //     onProposalSignal 加的（wasTracked 为 true），只还自己加的会泄漏 ——
+      //     那个 id 永久留在集合里，等于把队列名额吃掉一格。
+      pendingCardIds.delete(id);
+      return false;
     }
-  });
+    const ok = await showAgentProposal(snap.proposal);
+    if (ok) {
+      activeCardId = id;      // 成功展示：由 active 持有，决策后由 releaseActiveCard 释放
+    } else {
+      pendingCardIds.delete(id);
+    }
+    return ok;
+  } catch (e) {
+    pendingCardIds.delete(id);
+    return false;
+  }
+}
+
+/** 队列里取下一条并展示（跳过已失效的）。
+ *  🔴 复核 D-1：**不再在展示前就把 id 从集合删掉** —— 那会让它重新变成
+ *     "可见的"候选，进而被第三条信号重复处理。改为展示成功才由 active 接管。
+ *     ⚠️ 另外：`activeCardId` 仍在展示时不 drain（避免把当前这张顶掉）。 */
+async function drainPendingCards() {
+  if (agentConfirmCard && agentConfirmCard.isVisible()) return false;
+  while (pendingCards.length > 0) {
+    const next = pendingCards.shift();
+    // ⚠️ 保留 id 在集合里（占位），由 showProposalById 的 active 逻辑接管
+    if (await showProposalById(next)) return true;
+  }
+  return false;
+}
+
+/** 用户完成一张卡的决策后：解除占位，准备接下一张。 */
+function releaseActiveCard(proposalId) {
+  const id = proposalId || activeCardId;
+  if (id) pendingCardIds.delete(id);
+  if (activeCardId === id) activeCardId = null;
+}
+
+async function onProposalSignal(payload) {
+  try {
+    const id = payload && payload.proposalId;
+    if (!id) return;
+    // 边界 1：去重（集合含**等待项 + 正在回查/展示**的那一条）
+    if (pendingCardIds.has(id)) return;
+
+    // 🔴 复核 D-1 关键一步：**先占位，再 await**。
+    //   若等 showProposalById 内部去占位，那么在它进入 await 的**同一拍之前**
+    //   第二条信号可能已经跑到这里读过 has(id) —— 两条都判定"没有"，
+    //   于是都去 show，后者覆盖前者（实测：A/B 同时到达时 shown=["A","B"]）。
+    //   占位必须在**本函数同步段内**完成，判据才不会被 await 撕开。
+    pendingCardIds.add(id);
+
+    // 🔴 复核 D-1 修正：busy 的判据**不能只看 activeCardId/isVisible()** ——
+    //   两者都只在"已经展示出来"之后才为真，而 A 在 `await getPendingProposal`
+    //   的那段窗口里两个都是 false。于是 B 也判"空闲"→ 两条都 show → 覆盖。
+    //   ⭐ 真正可靠的判据：**占位集合里除自己之外还有没有别人**。
+    //     占位是在同步段加、在展示成功（转 active）或失败（归还）时才变，
+    //     所以它不会被 await 撕开。
+    const someoneElseInFlight = pendingCardIds.size > 1
+      || activeCardId !== null
+      || (agentConfirmCard && agentConfirmCard.isVisible());
+
+    if (!someoneElseInFlight) {
+      if (await showProposalById(id)) return;
+      // 亮不出来（已失效）：继续尝试队列里已有的，避免队列被卡死
+      await drainPendingCards();
+      return;
+    }
+    // 边界 2：上界
+    if (pendingCardIds.size >= MAX_PENDING_CARDS) {
+      const dropped = pendingCards.shift();
+      if (dropped) {
+        pendingCardIds.delete(dropped);
+        console.warn('[Agent] 待决卡片队列已满，丢弃最早的一条:', String(dropped).slice(0, 40));
+      }
+    }
+    pendingCards.push(id);
+  } catch (e) {
+    // 边界③：静默。亮卡失败不该影响任何别的东西。
+    pendingCardIds.delete(id);
+  }
+}
+
+/* 🔴 D-27：用户点完一张卡，接上下一条。
+ *   挂点选在**决策回调的末尾**（`agentConfirmCard` 的 onDecision），
+ *   而不是去改 `ui-agent-confirm.js` —— 那个模块不该知道"队列"存在。
+ *
+ *   ⚠️ 为什么必须延迟一拍：`ui-agent-confirm` 的点击处理器是
+ *     `try { await onDecision(...) } finally { hide() }`，
+ *     回调返回时卡片**还没**隐藏。若在回调里直接 drain，
+ *     `isVisible()` 仍为 true，下一条会被再次塞回队列。
+ *     用 setTimeout(0) 排到宏任务，此时 hide() 已跑完。
+ *   ⚠️ 这**不是轮询**（D-001 禁的是连续定时器）：每次决策只排一次，不循环。 */
+if (api && api.agent && typeof api.agent.onProposalPending === 'function') {
+  api.agent.onProposalPending(onProposalSignal);
+}
+if (api && api.agent && typeof api.agent.onProposalAvailable === 'function') {
+  api.agent.onProposalAvailable(onProposalSignal);
 }
 
 /* v1.0 缩放退役：零漂移账目随缩放一起退役（没有缩放档就没有欠账）。
@@ -789,8 +962,49 @@ async function refreshLifeMechanisms() {
       lx.textContent = '';
       (r.lexicon || []).forEach((x) => {
         const row = document.createElement('div');
-        row.textContent = '[' + x.status + '] ' + x.word + (x.gloss ? ' — ' + x.gloss : '')
-          + t('research.lexicon.citeMeta', '（{kind} · 引证 {id}）', { kind: x.kind, id: x.messageId });
+        row.className = 'r-table-row r-ledger-item';
+
+        const head = document.createElement('div');
+        head.className = 'r-ledger-head';
+
+        const left = document.createElement('div');
+        left.className = 'r-ledger-left';
+        const stKey = String(x.status || 'ACTIVE').toUpperCase();
+        const badge = document.createElement('span');
+        badge.className = 'r-badge ' + (stKey === 'ACTIVE' ? 'badge-active' : 'badge-dormant');
+        badge.textContent = t('research.lexicon.status.' + stKey, String(x.status || stKey));
+        const word = document.createElement('span');
+        word.className = 'r-ledger-word';
+        word.textContent = x.word || t('obs.dash', '—');
+        left.append(badge, word);
+        if (x.kind) {
+          const kind = document.createElement('span');
+          kind.className = 'r-chip-muted';
+          kind.textContent = t('research.lexicon.kind.' + x.kind, String(x.kind));
+          left.appendChild(kind);
+        }
+
+        const citeWrap = document.createElement('div');
+        citeWrap.className = 'r-ledger-cite';
+        if (Array.isArray(x.uses) && x.uses.length > 0) {
+          const reused = document.createElement('span');
+          reused.className = 'r-chip-muted';
+          reused.textContent = t('research.lexicon.reusedChip', '复用 {n} 次', { n: x.uses.length });
+          citeWrap.appendChild(reused);
+        }
+        const cite = document.createElement('span');
+        cite.className = 'r-chip-cite';
+        cite.textContent = t('research.lexicon.citeChip', '引证 {id}', { id: x.messageId || '—' });
+        citeWrap.appendChild(cite);
+
+        head.append(left, citeWrap);
+        row.appendChild(head);
+        if (x.gloss) {
+          const sub = document.createElement('div');
+          sub.className = 'r-ledger-sub';
+          sub.textContent = x.gloss;
+          row.appendChild(sub);
+        }
         lx.appendChild(row);
       });
       if (!lx.children.length) lx.textContent = t('research.lexicon.empty', '（暂无 —— 词汇表零先验，等她自己长词）');
@@ -800,8 +1014,48 @@ async function refreshLifeMechanisms() {
       ex.textContent = '';
       (r.expectations || []).forEach((x) => {
         const row = document.createElement('div');
-        row.textContent = '[' + x.status + '] ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')
-          + t('research.expect.citeMeta', ' · {kind} · 引证 {id}', { kind: x.kind, id: x.messageId });
+        row.className = 'r-table-row r-ledger-item';
+
+        const head = document.createElement('div');
+        head.className = 'r-ledger-head';
+
+        const left = document.createElement('div');
+        left.className = 'r-ledger-left';
+        const stLower = String(x.status || 'open').toLowerCase();
+        const badgeCls = stLower === 'fulfilled' ? 'badge-certified'
+          : (stLower === 'broken' ? 'badge-rejected' : (stLower === 'open' ? 'badge-open' : 'badge-dormant'));
+        const badge = document.createElement('span');
+        badge.className = 'r-badge ' + badgeCls;
+        badge.textContent = t('research.expect.status.' + stLower, String(x.status || stLower));
+        left.appendChild(badge);
+        if (x.kind) {
+          const kind = document.createElement('span');
+          kind.className = 'r-chip-muted';
+          kind.textContent = t('research.expect.kind.' + x.kind, String(x.kind));
+          left.appendChild(kind);
+        }
+        if (x.dueHint) {
+          const due = document.createElement('span');
+          due.className = 'r-chip-muted';
+          due.textContent = x.dueHint;
+          left.appendChild(due);
+        }
+
+        const citeWrap = document.createElement('div');
+        citeWrap.className = 'r-ledger-cite';
+        const cite = document.createElement('span');
+        cite.className = 'r-chip-cite';
+        cite.textContent = t('research.lexicon.citeChip', '引证 {id}', { id: x.messageId || '—' });
+        citeWrap.appendChild(cite);
+
+        head.append(left, citeWrap);
+        row.appendChild(head);
+
+        const body = document.createElement('div');
+        body.className = 'r-ledger-sub';
+        body.textContent = x.text || t('obs.dash', '—');
+        row.appendChild(body);
+
         ex.appendChild(row);
       });
       if (!ex.children.length) ex.textContent = t('research.expect.empty', '（暂无）');
@@ -840,18 +1094,31 @@ async function refreshLifeMechanisms() {
  *
  * @param {object|null} obs 来自 life-mechanisms 的 `obs` 字段
  */
+const expandedObsGroups = new Set();
+
 function renderObsGroups(obs) {
   const box = document.getElementById('rObsGroups');
   if (!box) return;
   box.textContent = '';
 
   const dash = t('obs.dash', '—');
+  const tsEl = document.getElementById('rObsTimestamp');
+  if (tsEl) {
+    if (obs && Number.isFinite(obs.generatedAt) && typeof formatDisplayTime === 'function') {
+      tsEl.textContent = t('research.obs.updatedAt', '采集于 {time}', { time: formatDisplayTime(obs.generatedAt) });
+      tsEl.classList.remove('hidden');
+    } else {
+      tsEl.textContent = '';
+      tsEl.classList.add('hidden');
+    }
+  }
 
   if (!obs || !obs.groups || typeof obs.groups !== 'object') {
     const row = document.createElement('div');
     row.className = 'r-table-container';
     row.textContent = dash;
     box.appendChild(row);
+    if (typeof syncObsToggleAllBtn === 'function') syncObsToggleAllBtn();
     return;
   }
 
@@ -871,42 +1138,55 @@ function renderObsGroups(obs) {
      *
      *   ⚠️ 只用 textContent / createElement，绝不 innerHTML（防注入，与全文件同口径）。
      */
+    const isExpanded = expandedObsGroups.has(g);
     const wrap = document.createElement('div');
     wrap.className = 'obs-group';
     wrap.dataset.obsGroupWrap = g;
 
     const title = document.createElement('button');
     title.type = 'button';
-    title.className = 'obs-group-head collapsed';
+    title.className = 'obs-group-head' + (isExpanded ? '' : ' collapsed');
     title.dataset.obsGroupToggle = g;
-    title.setAttribute('aria-expanded', 'false');
+    title.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
     // 组名 + 项数徽标（项数是纯计数，不含任何内容，符合"遥测不展示内容"口径）
     const nameSpan = document.createElement('span');
     nameSpan.className = 'obs-group-name';
     nameSpan.textContent = groupLabel(g);
     const countSpan = document.createElement('span');
     countSpan.className = 'obs-group-count';
-    countSpan.textContent = String(items.length);
+    countSpan.textContent = t('research.obs.itemsUnit', '{count} 项', { count: items.length });
     title.appendChild(nameSpan);
     title.appendChild(countSpan);
     wrap.appendChild(title);
 
     const list = document.createElement('div');
-    list.className = 'r-table-container obs-group-body hidden';
+    list.className = isExpanded ? 'r-table-container obs-group-body' : 'r-table-container obs-group-body hidden';
     list.dataset.obsGroup = g;   // 门禁按它做双向差集
 
     for (const it of items) {
       const row = document.createElement('div');
+      row.className = 'obs-item';
       row.dataset.obsId = it.id || '';
 
+      const head = document.createElement('div');
+      head.className = 'obs-item-head';
       const label = document.createElement('span');
       label.className = 'obs-label';
       label.textContent = t(it.labelKey || '', it.text || it.id || '');
-      row.appendChild(label);
+      head.appendChild(label);
 
-      const val = document.createElement('span');
+      const rangeText = formatObsRangeLabel(it);
+      if (rangeText) {
+        const rangePill = document.createElement('span');
+        rangePill.className = 'obs-range-pill';
+        rangePill.textContent = rangeText;
+        head.appendChild(rangePill);
+      }
+      row.appendChild(head);
+
+      const val = document.createElement('div');
       val.className = 'obs-value';
-      val.textContent = ' ' + formatObsValue(it.value, dash);
+      appendObsValueContent(val, it, dash);
       row.appendChild(val);
 
       list.appendChild(row);
@@ -922,6 +1202,8 @@ function renderObsGroups(obs) {
     box.appendChild(row);
   }
 
+  syncObsToggleAllBtn();
+
   /* 🔴 2026-10-27：折叠交互用**事件委托**挂在容器上，不逐组绑。
    *
    *   原因：本函数每次刷新都会重建整个子树（先清空 box 再重建）。
@@ -934,12 +1216,18 @@ function renderObsGroups(obs) {
       const head = ev.target && ev.target.closest
         ? ev.target.closest('[data-obs-group-toggle]') : null;
       if (!head || !box.contains(head)) return;
+      const gName = head.dataset.obsGroupToggle;
       const wrap = head.parentElement;
       const body = wrap ? wrap.querySelector('.obs-group-body') : null;
       if (!body) return;
       const collapsed = body.classList.toggle('hidden');
       head.classList.toggle('collapsed', collapsed);
       head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      if (gName) {
+        if (collapsed) expandedObsGroups.delete(gName);
+        else expandedObsGroups.add(gName);
+      }
+      syncObsToggleAllBtn();
     });
   }
 }
@@ -957,21 +1245,241 @@ function renderObsGroups(obs) {
 function formatObsValue(value, dash) {
   if (value === null || value === undefined) return dash;
   if (typeof value === 'boolean') return value ? t('obs.yes', '是') : t('obs.no', '否');
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : dash;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return dash;
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+  }
   if (typeof value === 'string') return value || dash;
   if (Array.isArray(value)) return value.length ? value.join(', ') : dash;
   if (typeof value === 'object') {
     const parts = [];
     for (const k of Object.keys(value)) {
       const v = value[k];
-      // 嵌套对象不展开（避免一行过长），只标类型
       if (v === null || v === undefined) parts.push(k + '=' + dash);
-      else if (typeof v === 'object') parts.push(k + '=' + (Array.isArray(v) ? '[' + v.length + ']' : '{…}'));
+      else if (typeof v === 'object') {
+        if (Array.isArray(v)) parts.push(k + '=[' + v.length + ']');
+        else {
+          const sub = Object.keys(v).map((sk) => sk + ':' + ((v[sk] === null || v[sk] === undefined) ? dash : v[sk])).join(', ');
+          parts.push(k + '={' + (sub || dash) + '}');
+        }
+      }
       else parts.push(k + '=' + v);
     }
     return parts.length ? parts.join(' · ') : dash;
   }
   return dash;
+}
+
+// 遥测面板人眼可读性辅助函数（纯 createElement/textContent，严禁 innerHTML，null 永不出 0）
+function formatObsRangeLabel(item) {
+  if (item && Array.isArray(item.range) && item.range.length === 2) {
+    const [lo, hi] = item.range;
+    if (lo === 0 && hi === 1) return '0%–100%';
+    return `${lo}..${hi}`;
+  }
+  return (item && item.unit) ? String(item.unit) : '';
+}
+
+function formatObsFieldDisplay(key, v, dash) {
+  if (v === null || v === undefined) return { text: dash, kind: 'null' };
+  if (typeof v === 'boolean') {
+    const tone = v
+      ? (key === 'tripped' ? 'danger' : (key === 'probeInFlight' ? 'warn' : 'info'))
+      : 'muted';
+    return { text: v ? t('obs.yes', '是') : t('obs.no', '否'), kind: 'pill', tone };
+  }
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return { text: dash, kind: 'null' };
+    if (key === 'confidence' || key === 'revisionPressure' || key === 'promiseFidelity') {
+      const pct = (v * 100).toFixed(1).replace(/\.0$/, '');
+      return { text: pct + '%', kind: 'num' };
+    }
+    if (key === 'cooldownUntil' && v > 1e12 && typeof formatDisplayTime === 'function') {
+      return { text: formatDisplayTime(v) || String(v), kind: 'time' };
+    }
+    if (key === 'bias') {
+      return { text: Number(v.toFixed(2)) + 'x', kind: 'num' };
+    }
+    return { text: Number.isInteger(v) ? String(v) : String(Number(v.toFixed(2))), kind: 'num' };
+  }
+  if (typeof v === 'string') {
+    if (!v) return { text: dash, kind: 'null' };
+    if (key === 'state') {
+      const upper = v.toUpperCase();
+      const tone = upper === 'CLOSED' ? 'ok' : (upper === 'OPEN' ? 'danger' : 'warn');
+      return { text: t('obs.state.' + upper, v), kind: 'pill', tone };
+    }
+    return { text: v, kind: 'text' };
+  }
+  if (Array.isArray(v)) return { text: v.length ? v.join(', ') : dash, kind: v.length ? 'text' : 'null' };
+  return { text: dash, kind: 'null' };
+}
+
+function resolveObsMeter(key, v, item, rootVal) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  if (key === 'dims' || key === 'min' || key === 'max' || key === 'windowNo' || key === 'archiveSeq' || key === 'cooldownUntil') {
+    return null;
+  }
+  if (item && Array.isArray(item.range) && item.range.length === 2) {
+    const [lo, hi] = item.range;
+    if (hi <= lo) return null;
+    if (lo < 0 && hi > 0) {
+      const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
+      const pct = Math.min(50, (Math.abs(v) / maxAbs) * 50);
+      return { mode: 'bipolar', neg: v < 0, pct };
+    }
+    if (lo === 0.5 && hi === 1.5 && key === 'bias') {
+      const diff = v - 1.0;
+      const pct = Math.min(50, (Math.abs(diff) / 0.5) * 50);
+      return { mode: 'bipolar', neg: diff < 0, pct };
+    }
+    const pct = Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+    const warn = (key === 'restPressure' || key === 'cognitiveLoadProxy' || key === 'revisionPressure') && pct >= 70;
+    return { mode: 'linear', pct, tone: warn ? 'warn' : 'ok' };
+  }
+  if (key === 'promiseFidelity') {
+    const pct = Math.max(0, Math.min(100, v * 100));
+    return { mode: 'linear', pct, tone: pct < 50 ? 'warn' : 'ok' };
+  }
+  if (rootVal && typeof rootVal === 'object') {
+    if ((key === 'runtimeCached' || key === 'count') && Number.isFinite(rootVal.capacity) && rootVal.capacity > 0) {
+      const pct = Math.max(0, Math.min(100, (v / rootVal.capacity) * 100));
+      return { mode: 'linear', pct, tone: pct >= 85 ? 'warn' : 'ok' };
+    }
+    if ((key === 'ACTIVE' || key === 'FADING' || key === 'DORMANT') && Number.isFinite(rootVal.total) && rootVal.total > 0) {
+      const pct = Math.max(0, Math.min(100, (v / rootVal.total) * 100));
+      return { mode: 'linear', pct, tone: key === 'DORMANT' ? 'muted' : 'ok' };
+    }
+    if (key === 'actions' && Number.isFinite(rootVal.remainingActions) && (v + rootVal.remainingActions) > 0) {
+      const pct = Math.max(0, Math.min(100, (v / (v + rootVal.remainingActions)) * 100));
+      return { mode: 'linear', pct, tone: pct >= 80 ? 'warn' : 'ok' };
+    }
+    if (key === 'writes' && Number.isFinite(rootVal.remainingWrites) && (v + rootVal.remainingWrites) > 0) {
+      const pct = Math.max(0, Math.min(100, (v / (v + rootVal.remainingWrites)) * 100));
+      return { mode: 'linear', pct, tone: pct >= 80 ? 'warn' : 'ok' };
+    }
+  }
+  return null;
+}
+
+function appendObsKvTile(gridEl, fieldKey, rawVal, item, rootVal, dash, isSub) {
+  const tile = document.createElement('div');
+  tile.className = 'obs-kv' + (isSub ? ' obs-kv-sub' : '');
+
+  const kEl = document.createElement('span');
+  kEl.className = 'obs-k';
+  kEl.textContent = t('obs.field.' + fieldKey, fieldKey);
+  kEl.title = fieldKey;
+
+  const vEl = document.createElement('span');
+  const fmt = formatObsFieldDisplay(fieldKey, rawVal, dash);
+  vEl.className = 'obs-v';
+  if (fmt.kind === 'pill') {
+    const pill = document.createElement('span');
+    pill.className = 'obs-pill is-' + (fmt.tone || 'muted');
+    pill.textContent = fmt.text;
+    vEl.appendChild(pill);
+  } else {
+    if (fmt.kind === 'null') vEl.classList.add('is-null');
+    else if (fmt.kind === 'time') vEl.classList.add('is-time');
+    vEl.textContent = fmt.text;
+  }
+
+  tile.append(kEl, vEl);
+
+  const meterSpec = resolveObsMeter(fieldKey, rawVal, item, rootVal);
+  if (meterSpec) {
+    const meter = document.createElement('div');
+    meter.className = 'obs-meter';
+    const fill = document.createElement('div');
+    if (meterSpec.mode === 'bipolar') {
+      const mid = document.createElement('div');
+      mid.className = 'obs-meter-mid';
+      fill.className = 'obs-meter-fill ' + (meterSpec.neg ? 'neg' : 'pos');
+      fill.style.left = meterSpec.neg ? (50 - meterSpec.pct) + '%' : '50%';
+      fill.style.width = meterSpec.pct + '%';
+      meter.append(mid, fill);
+    } else {
+      fill.className = 'obs-meter-fill linear is-' + (meterSpec.tone || 'ok');
+      fill.style.width = meterSpec.pct + '%';
+      meter.appendChild(fill);
+    }
+    tile.appendChild(meter);
+  }
+
+  gridEl.appendChild(tile);
+}
+
+function appendObsValueContent(valEl, item, dash) {
+  const value = item ? item.value : null;
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
+    const scalar = document.createElement('span');
+    scalar.className = 'obs-scalar' + ((value === null || value === undefined) ? ' is-null' : '');
+    scalar.textContent = formatObsValue(value, dash);
+    valEl.appendChild(scalar);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'obs-kv-grid';
+  const keys = Object.keys(value);
+  if (!keys.length) {
+    const scalar = document.createElement('span');
+    scalar.className = 'obs-scalar is-null';
+    scalar.textContent = dash;
+    valEl.appendChild(scalar);
+    return;
+  }
+
+  for (const k of keys) {
+    const v = value[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const subKeys = Object.keys(v);
+      if (!subKeys.length) {
+        appendObsKvTile(grid, k, null, item, value, dash, true);
+      } else {
+        for (const sk of subKeys) {
+          appendObsKvTile(grid, sk, v[sk], item, value, dash, true);
+        }
+      }
+    } else {
+      appendObsKvTile(grid, k, v, item, value, dash, false);
+    }
+  }
+  valEl.appendChild(grid);
+}
+
+function syncObsToggleAllBtn() {
+  const btn = document.getElementById('rObsToggleAllBtn');
+  if (!btn) return;
+  if (!btn.dataset.obsToggleBound) {
+    btn.dataset.obsToggleBound = '1';
+    btn.addEventListener('click', () => {
+      const box = document.getElementById('rObsGroups');
+      if (!box) return;
+      const bodies = [...box.querySelectorAll('.obs-group-body')];
+      if (!bodies.length) return;
+      const anyCollapsed = bodies.some((b) => b.classList.contains('hidden'));
+      for (const body of bodies) {
+        const gName = body.dataset.obsGroup;
+        const head = body.parentElement ? body.parentElement.querySelector('[data-obs-group-toggle]') : null;
+        body.classList.toggle('hidden', !anyCollapsed);
+        if (head) {
+          head.classList.toggle('collapsed', !anyCollapsed);
+          head.setAttribute('aria-expanded', anyCollapsed ? 'true' : 'false');
+        }
+        if (gName) {
+          if (anyCollapsed) expandedObsGroups.add(gName);
+          else expandedObsGroups.delete(gName);
+        }
+      }
+      syncObsToggleAllBtn();
+    });
+  }
+  const box = document.getElementById('rObsGroups');
+  const bodies = box ? [...box.querySelectorAll('.obs-group-body')] : [];
+  const allOpen = bodies.length > 0 && bodies.every((b) => !b.classList.contains('hidden'));
+  btn.textContent = allOpen ? t('research.obs.collapseAll', '收起全部') : t('research.obs.expandAll', '展开全部');
 }
 
 const tzLabel = document.getElementById('tzLabel');
@@ -1145,6 +1653,12 @@ function renderI18nPanel() {
   setText('rLexiconTitle', 'research.state.lexicon');
   setText('rExpectTitle', 'research.state.expect');
   setText('rHistoryTitle', 'research.state.history');
+  setText('rObsTitle', 'research.obs.title');
+  const subSubject = document.querySelector('#rStateSubtabs .r-subtab[data-subtab="subject"]');
+  if (subSubject) subSubject.textContent = t('research.state.subtabSubject');
+  const subObs = document.querySelector('#rStateSubtabs .r-subtab[data-subtab="obs"]');
+  if (subObs) subObs.textContent = t('research.state.subtabObs');
+  if (typeof syncObsToggleAllBtn === 'function') syncObsToggleAllBtn();
   setText('rWindowSelectLabel', 'research.windows.selectLabel');
   document.querySelectorAll('.r-seg-btn').forEach(b => {
     const seg = b.dataset.seg;
@@ -1152,11 +1666,11 @@ function renderI18nPanel() {
   });
 
   // 归因与 EOI 溯源
-  const subProv = document.querySelector('.r-subtab[data-subtab="prov"]');
+  const subProv = document.querySelector('#rPaneProvenance .r-subtab[data-subtab="prov"]');
   if (subProv) subProv.textContent = t('research.prov.tabProv');
-  const subEoi = document.querySelector('.r-subtab[data-subtab="eoi"]');
+  const subEoi = document.querySelector('#rPaneProvenance .r-subtab[data-subtab="eoi"]');
   if (subEoi) subEoi.textContent = t('research.prov.tabEoi');
-  const subRej = document.querySelector('.r-subtab[data-subtab="rejected"]');
+  const subRej = document.querySelector('#rPaneProvenance .r-subtab[data-subtab="rejected"]');
   if (subRej) subRej.textContent = t('research.prov.tabRejected');
   setPlaceholder('rScInput', 'research.prov.scPlaceholder');
   setText('rTraceBtn', 'research.prov.traceBtn');
@@ -1251,7 +1765,9 @@ function renderProviderPanel() {
 function applyPreset(id) {
   const p = getPreset(id);
   if (!p) return;
-  const set = (gid, v) => { const el = document.getElementById(gid); if (el && v) el.value = v; };
+  // 🔴 即使预设的 baseURL / model 为空串也要赋值清空，避免残留上一次预设的 Endpoint / Model；
+  //    nameKey / providerId / protocol 在各预设上均为非空值，行为与原 `if (el && v)` 等价。
+  const set = (gid, v) => { const el = document.getElementById(gid); if (el) el.value = v == null ? '' : v; };
   set('connName', t(p.nameKey));
   set('connProvider', p.providerId);
   set('connProtocol', p.protocol);
@@ -1934,14 +2450,23 @@ function fillConnEditor(connectionId) {
   const c = connItems.find((x) => x.connectionId === connectionId);
   if (!c) return;
   connSelectedId = connectionId;
+  const mappedProvider = ['deepseek', 'local', 'custom'].includes(c.providerId) ? c.providerId : 'custom';
+  const mappedProtocol = c.protocol === 'anthropic-native' ? 'anthropic-native' : 'openai-compatible';
   document.getElementById('connName').value = c.displayName || '';
-  document.getElementById('connProvider').value =
-    ['deepseek', 'local', 'custom'].includes(c.providerId) ? c.providerId : 'custom';
-  document.getElementById('connProtocol').value =
-    c.protocol === 'anthropic-native' ? 'anthropic-native' : 'openai-compatible';
+  document.getElementById('connProvider').value = mappedProvider;
+  document.getElementById('connProtocol').value = mappedProtocol;
   document.getElementById('connUrl').value = c.baseURL || '';
   document.getElementById('connModel').value = c.activeModel || '';
   document.getElementById('connKey').value = ''; // 绝不回填 secret
+  if (connPresetSelect) {
+    // 切换已保存连接时同步预设下拉框（按 providerId + baseURL 匹配，无匹配回落 'custom'），避免显示上一次手选的预设名
+    const normBase = String(c.baseURL || '').trim().replace(/\/+$/, '');
+    const matched = Array.from(connPresetSelect.options)
+      .map((opt) => getPreset(opt.value))
+      .find((p) => p && p.id !== 'custom' && p.providerId === mappedProvider && p.baseURL &&
+        p.baseURL.replace(/\/+$/, '') === normBase);
+    connPresetSelect.value = matched ? matched.id : 'custom';
+  }
   connSay(t('conn.credentialPrefix', '凭据：') + (c.hasCredential ? (c.keyEncrypted ? t('conn.encrypted', '已加密存储') : t('conn.plain', '明文降级存储')) : t('conn.unconfigured', '未配置')) +
     t('conn.testStatusPrefix', '；测试状态：') + ((c.testState && c.testState.status) || 'unverified'));
 }
@@ -2015,7 +2540,25 @@ document.getElementById('connSave').addEventListener('click', async () => {
 });
 
 document.getElementById('connTest').addEventListener('click', async () => {
-  if (!api || !api.connections || !connSelectedId) return;
+  if (!api || !api.connections) return;
+  const cur = connSelectedId ? connItems.find((x) => x.connectionId === connSelectedId) : null;
+  if (!cur) {
+    return connSay(t('conn.testNeedCreate', '当前配置尚未建档，请先点击「＋ 新建连接」保存后再测试'));
+  }
+  const f = connEditorFields();
+  const keyDraft = document.getElementById('connKey').value;
+  const curProvider = ['deepseek', 'local', 'custom'].includes(cur.providerId) ? cur.providerId : 'custom';
+  const curProtocol = cur.protocol === 'anthropic-native' ? 'anthropic-native' : 'openai-compatible';
+  // 🔴 拒绝用“刚切换/编辑过但未保存”的表单状态去静默测试磁盘上的旧连接，避免用户误以为测试的是当前表单值
+  const dirty = keyDraft.length > 0 ||
+    f.displayName !== String(cur.displayName || '').trim() ||
+    f.providerId !== curProvider ||
+    f.protocol !== curProtocol ||
+    f.baseURL !== String(cur.baseURL || '').trim() ||
+    f.model !== String(cur.activeModel || '').trim();
+  if (dirty) {
+    return connSay(t('conn.testNeedSave', '表单有未保存改动，请先点击「💾 保存修改」或「＋ 新建连接」后再测试'));
+  }
   connSay(t('conn.testing', '测试中…（可能发起一次极小计费请求）'));
   const r = await api.connections.test(connSelectedId);
   if (!r || r.ok === false) return connSay(t('conn.testFailedPrefix', '测试失败：') + ((r && r.error) || t('conn.unknownErr', '未知错误')));
@@ -2338,25 +2881,44 @@ function renderSubjectStateTab(state) {
     card.className = 'r-trait-card' + (currentSelectedTrait === tName ? ' selected' : '');
     card.dataset.trait = tName;
 
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'r-trait-title-wrap';
     const titleEl = document.createElement('div');
     titleEl.className = 'r-trait-name';
     // 主显中文定名、次显程序键：她看到的不该是变量名（同 subject-state 定名教训），键留给对账
-    titleEl.textContent = t('trait.' + tName, TRAIT_LABELS[tName] || tName) + ' (' + tName + ')';
+    titleEl.textContent = t('trait.' + tName, TRAIT_LABELS[tName] || tName);
+    const keyEl = document.createElement('div');
+    keyEl.className = 'r-trait-key';
+    keyEl.textContent = tName;
+    titleWrap.append(titleEl, keyEl);
 
-    const valEl = document.createElement('div');
-    valEl.className = 'r-trait-val';
-    valEl.textContent = String(info.current ?? 0);
-
-    const metaEl = document.createElement('div');
-    metaEl.className = 'r-trait-meta';
     const delta = info.latestDelta ?? 0;
     const deltaStr = delta > 0 ? `+${delta}` : String(delta);
     const deltaCls = delta > 0 ? 'r-delta-pos' : (delta < 0 ? 'r-delta-neg' : 'r-delta-zero');
 
-    metaEl.append(
-      t('research.state.prevMeta', '前值: {prev} | 增量: ', { prev: info.previous ?? 0 }),
-      (() => { const s = document.createElement('span'); s.className = deltaCls; s.textContent = deltaStr; return s; })()
-    );
+    const numGroup = document.createElement('div');
+    numGroup.className = 'r-trait-val-wrap';
+    const valEl = document.createElement('div');
+    valEl.className = 'r-trait-val';
+    valEl.textContent = String(info.current ?? 0);
+    const deltaEl = document.createElement('span');
+    deltaEl.className = 'r-trait-delta ' + deltaCls;
+    deltaEl.textContent = deltaStr;
+    numGroup.append(valEl, deltaEl);
+
+    const headEl = document.createElement('div');
+    headEl.className = 'r-trait-head';
+    headEl.append(titleWrap, numGroup);
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'r-trait-meta';
+    const prevSpan = document.createElement('span');
+    prevSpan.className = 'r-trait-prev';
+    prevSpan.textContent = t('research.state.prevShort', '前值 {prev}', { prev: info.previous ?? 0 });
+    const hintSpan = document.createElement('span');
+    hintSpan.className = 'r-trait-hint';
+    hintSpan.textContent = t('research.state.traitClickHint', '查看演化 ▸');
+    metaEl.append(prevSpan, hintSpan);
 
     // 可视化极性状态槽：以中点 0 为基准向正负双向延伸
     const barWrap = document.createElement('div');
@@ -2378,7 +2940,15 @@ function renderSubjectStateTab(state) {
     }
     barWrap.append(barMid, barFill);
 
-    card.append(titleEl, valEl, barWrap, metaEl);
+    const scaleEl = document.createElement('div');
+    scaleEl.className = 'r-trait-scale';
+    for (const mark of ['-999', '0', '+999']) {
+      const m = document.createElement('span');
+      m.textContent = mark;
+      scaleEl.appendChild(m);
+    }
+
+    card.append(headEl, barWrap, scaleEl, metaEl);
     card.addEventListener('click', () => {
       document.querySelectorAll('.r-trait-card').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
@@ -2415,15 +2985,31 @@ async function loadTraitHistory(trait) {
 
     for (const sc of items) {
       const row = document.createElement('div');
-      row.className = 'r-table-row';
+      row.className = 'r-table-row r-history-row';
 
-      const left = document.createElement('span');
-      left.textContent = `Window #${sc.windowNo || 1} | ${sc.previousValue ?? 0} → ${sc.newValue ?? 0}`;
+      const left = document.createElement('div');
+      left.className = 'r-hist-left';
+      const winBadge = document.createElement('span');
+      winBadge.className = 'r-badge badge-recorded';
+      winBadge.textContent = `W#${sc.windowNo || 1}`;
+      const trans = document.createElement('span');
+      trans.className = 'r-hist-trans';
+      trans.textContent = `${sc.previousValue ?? 0} → ${sc.newValue ?? 0}`;
+      left.append(winBadge, trans);
 
-      const right = document.createElement('span');
+      const right = document.createElement('div');
+      right.className = 'r-hist-right';
       const d = sc.delta ?? 0;
-      right.className = d > 0 ? 'r-delta-pos' : (d < 0 ? 'r-delta-neg' : 'r-delta-zero');
-      right.textContent = (d > 0 ? `+${d}` : String(d)) + ` (${sc.stateChangeId || ''})`;
+      const dPill = document.createElement('span');
+      dPill.className = 'r-trait-delta ' + (d > 0 ? 'r-delta-pos' : (d < 0 ? 'r-delta-neg' : 'r-delta-zero'));
+      dPill.textContent = d > 0 ? `+${d}` : String(d);
+      const idSpan = document.createElement('span');
+      idSpan.className = 'r-chip-cite';
+      idSpan.textContent = sc.stateChangeId || '';
+      const traceHint = document.createElement('span');
+      traceHint.className = 'r-chip-trace';
+      traceHint.textContent = t('research.state.traceBtn', '溯源 ↗');
+      right.append(dPill, idSpan, traceHint);
 
       row.append(left, right);
       row.style.cursor = 'pointer';
@@ -2851,7 +3437,7 @@ function switchResearchTab(tabName) {
  */
 function switchStateSubtab(which) {
   const name = which === 'obs' ? 'obs' : 'subject';
-  document.querySelectorAll('.r-subtab').forEach((b) => {
+  document.querySelectorAll('#rStateSubtabs .r-subtab').forEach((b) => {
     b.classList.toggle('active', b.dataset.subtab === name);
   });
   const sub = document.getElementById('rSubPaneSubject');
@@ -3004,7 +3590,7 @@ document.querySelectorAll('.r-tab').forEach(btn => {
 });
 
 // 🔴 2026-10-27：主体状态页的二级子标签（主体状态 / 机制遥测）
-document.querySelectorAll('.r-subtab').forEach(btn => {
+document.querySelectorAll('#rStateSubtabs .r-subtab').forEach(btn => {
   btn.addEventListener('click', () => switchStateSubtab(btn.dataset.subtab));
 });
 
@@ -3022,9 +3608,9 @@ document.getElementById('rWindowSelect')?.addEventListener('change', (e) => {
   loadWindowDetail(currentSelectedWindowNo);
 });
 
-document.querySelectorAll('.r-subtab').forEach(btn => {
+document.querySelectorAll('#rPaneProvenance .r-subtab').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.r-subtab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#rPaneProvenance .r-subtab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const sub = btn.dataset.subtab;
     const provPane = document.getElementById('rSubPaneProv');

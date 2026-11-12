@@ -5,7 +5,11 @@
 
 ---
 
-## [Unreleased]
+## [1.9.0] - 2026-11-12
+
+> **相比上一个公开版本 v1.8.0**，本版打通受托落档（D-27 通路 B）、补齐自发能力的观察档与动作史闭环、
+> 完成 Agent 框架审计收口与 S-2/S-3/S-4 安全加固，并修复个体观测面板排版与高级连接设置的 P0 缺陷。
+> 以下按功能线归纳，不逐笔罗列提交。
 
 ### 📄 文档：README 收成门面（纯文档重构，不改运行行为）
 
@@ -47,6 +51,101 @@
   —— 英文内容搬进 README 后它变成**指向自己**，随搬家一并消失。
 - 中英各有一行版权声明，同一份文件重复，已合并为末尾一处。
 - `docs/RELEASE-LEDGER.md` 的发布流程原写真实盘符，会让剥离门禁报断链，改用 `<公库工作树>` 占位。
+
+---
+
+### 🎯 新增：D-27 通路 B —— 她拟稿、她可以拒绝、你点头才落盘
+
+> **为什么做**：D-12 把 `tryBuildProposalFromIntent` 停成了一个 `return null` 的 stub，
+> 理由是「只有 scope（文件名），没有 content（要写什么）」。十六轮之后补上这个缺口：
+> **正文从她自己的一次独立判断里来**，而且**她有权拒绝立项**。
+
+- **独立拟稿调用**：新增 `brain.askForProposalContent()`，与 `askForSelfNote` /
+  `askForObserverJournal` 同形 —— **绝不在聊天回话末尾夹带正文**。三条理由：
+  ① 聊天提示词有自己的铁律（不含程序数字、不暴露时钟、过滤 synthetic），
+  顺带吐几百字 Markdown 语气必然撕裂；② 多行标记一旦被 max_tokens 截断，
+  半截文档会漏进气泡；③ **拒绝权需要一次事后审视** —— 聊完再问「要不要留档」，
+  她才说得出口「还没聊透」。合并在同一次调用里，那个「不」来不及出口。
+- **三态结果**：`ok / refused / unavailable`，不再用裸 `null`。
+  拒案与拟稿故障**分开审计**（`refused_by_subject` vs `draft_unavailable`）——
+  只按 outcome 汇总时，把故障统计成她的决策会误判她的行为倾向。
+- **保留第五道闸门**：通路 B 的提案来源仍是 `'user'`，**用户点【授权】才落盘**。
+  与通路 A（自发留条，免确认）是两件事：她替用户干的事按用户的说法来。
+- **新事件 `agent-proposal-pending`**：D-19 删掉唯一的 `agent-proposal-available`
+  发送点之后，全仓再无发送点，建出来的案会躺到 10 分钟 TTL 过期、用户永远看不到卡片。
+  新事件语义明确（只表示「有待决提案」），不复用那个已被判为歧义的名字。
+- **待决卡片队列**（`pet.js`，不改 `ui-agent-confirm.js` 的单卡契约）：
+  拟稿是并行异步调用，广播顺序不定，而确认卡是单容器。实测复现覆盖竞态
+  （50ms 延迟下 A/B 同时到达，A 被 B 顶掉且再也回不来），根因是 `busy` 判据
+  读 `isVisible()` 会被 `await` 撕开。修法：占位在同步段、判据改「集合里除自己
+  还有没有别人」、确认回调整段包 `try/finally`。
+- **文件名净化与执行器对齐**：`agent-intent` 的扩展名白名单认 `csv`，
+  执行器 `ALLOWED_WRITE_EXTENSIONS` 不收 csv ⇒ 「整理.csv」会建案成功、
+  点授权后白点在 `DISALLOWED_EXTENSION`。`buildSandboxScope()` 收敛为 `.md`。
+
+**⚠️ 如实声明（已知边界，不是遗漏）**：拒绝识别采用**启发式判据**（实义宾语检测），
+已知三类漏判：① 标题 + 完整句子；② 标题是拒绝、正文是完整句；③ 短语前有实义名词
+（`信息还不太够` 里的「信息」）。**失败方向刻意偏向「把拒绝当正文」** ——
+最坏多一张可拒绝的卡片，不会误丢弃合法方案。五次复核中同一类误杀出现过四次
+（`不做X` → `先放一放X` → `X放一放`），根治需改为显式协议（模型输出独立字段表态），
+不在本轮范围。
+
+### 🔍 新增：自发能力观察档（`off / observe / auto`）与期满补注入
+
+- **三档模式开关**（`agentCapabilityModes`）：
+  - `off`：在 `askForSelf*` 之前直接拦截，零 LLM 开销；
+  - `observe`：在 `proposeInternal` 之前分流拦截，照常思考拟稿但**不建案、不写安全审计、不占写预算、不回流 `selfNotes`**，完整正文写入独立文件 `agent-observations.jsonl`（`src/agent-observations.js`，100 条 / 90 天双维度轮转，保留完整正文不被审计 500 字上限截断）；
+  - `auto`：维持既有自动路径（`selfNote` / `observerJournal` 默认保持 `auto`，未登记的新能力默认保守回落 `observe`）。
+- **观察期满补注入与启动兜底**：
+  - `src/memory.js` 新增 `observeEpoch` / `observedNotes` / `pendingEcho`、`noteObserved()`、`markObserveEpoch()` 与 `takeObserveEcho()`，按能力分通道隔离观察次数与待补回声；
+  - `markObserveEpoch('out')` 幂等防止离开后反复触发；消费时清除已用通道 `observedNotes`，避免再次进入观察期翻出上一轮旧账；
+  - `brain.js` 在 `askForSelf*` 优先注入（`memory.build()` 仅在 `synthetic` 轮次作为兜底且绝不污染 `system`），只给出定性描述，不报告触发数字或时刻；
+  - `main.js` 在启动阶段对已离开 `observe` 档但 `leftAt === null` 的历史状态做一次性兜底落账（实机重启日志已确认写入 `leftAt` 与 `pendingEcho`）。
+
+### 📜 新增：动作史投影与能力认知对齐
+
+- **动作史投影（`src/agent-history.js`）**：纯粹从审计日志只读投影她自己的行动记录，按 `proposalId` 聚合（以 `propose-action` 的 `proposalSource` 归属、执行优先 `executed`），自动剔除 `proactive-offer` / `chat-failed` / `confirm-action`（用户操作）以及 D-19 历史遗留 `ALREADY_EXECUTED` 误报。
+- **不污染对话前缀缓存**：`brain._buildActionHistoryText()` 仅挂进独立 `askForSelf*` 调用，不进 `memory.build()`，只陈述事实而不给出可比较聚合计数或绝对时钟。
+- **能力认知对齐**：更新 `src/persona.js` 诚实边界与三条独立提示词，明确沙盒文件夹是她唯一可写下的外部位置且她无法读取其内部内容；通过新抽离的 `src/constraints.js` 统一共享核心约束，并建立意图层读能力一致性门禁防认知漂移。（提示：`persona` 变更会触发一次已有对话系统前缀缓存重建。）
+
+### 🛡️ 安全加固与 Agent 框架审计收口
+
+- **Agent 框架 A/B/C 三批收口**：
+  - 执行确认（`NOT_CONFIRMED`）时保留快照与重试次数，`get-pending` 拦截已执行案并区分 `SNAPSHOT_EXPIRED` / `SNAPSHOT_MISSING`；补齐 `observerJournal` 观察期记账；移除渲染端可控的无用字段 `requiresUserConfirmation`；
+  - `addSelfNote` 增加未读内容去重，观察日志轮转改用原子写，移除无用死导出 `realpathBestEffort` 及 `memory.js` 零调用死方法 `buildWithEphemeralUser`。
+- **S-2 WAL 与备份物理落盘（`src/agent-transaction.js`）**：
+  - 抽取私有 `writeAllAndFsyncSync`（含防短写死循环保护），`_appendWal` 与 `begin()` 备份统一改用 `openSync → writeSync → fsyncSync → closeSync`；
+  - 修复新建 WAL 时若 `fstatSync` 抛错导致残余 0 字节 `agent-write-txn.jsonl` 幽灵文件的边界漏洞，统一按 `!committed` 回滚截断/删空并清理孤儿备份。
+- **S-3 沙盒不可用降级启动（`main.js`）**：
+  - 沙盒目录初始化失败或被同名文件占坑时捕获异常，降级为 `agentSandbox = null`（内部状态记录 `agentSandboxUnavailable`），不阻断 `app.whenReady()` 主流程，并借助 `scope_not_in_whitelist` 自动停用写能力。
+- **S-4 媒体权限白名单收窄（`main.js`）**：
+  - `setPermissionRequestHandler` 接入第 4 参数 `details` 的 `mediaTypes`，收窄为严格白名单 `types.length === 0 || !types.every((t) => t === 'audio')`；`setPermissionCheckHandler` 同步限制为 `details.mediaType === 'audio'`，显式拒绝 `video` 与空数组请求。
+
+### 🖥️ UI 体验与连接设置修复
+
+- **个体观测面板排版精修（`index.html` / `style.css` / `pet.js` / `ui-i18n.js`）**：
+  - 重构个体观测与机制遥测 KV 网格及度量条样式，补齐双语标签、遥测刷新时间戳（`#rObsTimestamp`）与机制分组全部展开/收起工具栏（`#rObsToggleAllBtn`）。
+- **高级连接设置 4 项 P0 修复（`pet.js` / `ui-i18n.js` / `src/connections.js` / `src/openai-transport.js`）**：
+  - **预设切换清残留**：`applyPreset()` 允许空值（如 Custom、未填预设模型的厂商）清掉旧 Endpoint / Model 残留，`fillConnEditor()` 同步更新 `#connPresetSelect` 选中态；
+  - **Model 保存生效**：`updateConnection()` 兼容前端传入 `patch.model`，且显式传空模型名时 fail-closed 拒绝而不回弹旧 `models[0]`；
+  - **URL 去重**：`resolveChatCompletionsURL()` 规范识别尾部已带 `/chat/completions` 的 Endpoint（含大小写变体），避免拼出双倍后缀；
+  - **未建档与脏表单拦截**：在连接未建档或表单存在未保存修改时点击「测试连接」，明确中英文提示先创建或保存，不再静默拿着旧配置测试。
+
+### 🔧 门禁与测试规模
+
+- 测试套件扩展至 **138 个已编号套件（137 个 Node 套件 + 1 个 Python UI 套件，合计 5162 项断言）**，另含门禁聚合器 `docs.test.js` 与自检 `gate-selfcheck.test.js`（全目录共 140 个测试文件）。
+- 新增/扩充 `agent-observe-mode`、`agent-history`、`agent_transaction`、`agent-sandbox`、`v17-permission-gate`、`connections`、`connection-ipc` 等多项边界与变异回归门禁。
+- `tools/release-check.js` 新增安装包 PE overlay 大小校验，拦截构建失败遗留的残缺存根（`overlay < 10MB` 直接判 `FAIL`）。
+
+### ⚠️ 已知限制（不粉饰）
+
+- **本版未附 `Setup.exe`**：NSIS 卸载器导出阶段在本机被 Defender 实时保护阻断（`Error writing temporary file`），非管理员无法加排除项。当前交付便携单文件版 `Life-1.9.0-win-x64-portable.exe` 与绿色解压版 `Life-1.9.0-win-x64.zip`。
+
+- **Agent 长链路实机样本仍有限**：`agentTriggerEnabled` 出厂默认仍为 `false`；观察期重启写 `leftAt` 已获实机日志验证，但观察档触发、期满补注入与动作史注入整体主要靠单测与变异测试覆盖，尚缺长时间真实挂机实机样本。
+- **D-27 通路 B 拒案识别为启发式**：目前仍保留三类偏保守漏判（宁可将拒绝呈为可拒绝待决卡，不误丢合法方案），根治需后续改为显式结构化协议。
+- **S-3 缺运行时「沙盒不可用」告知通道**：沙盒初始化失败时虽可安全降级且阻断写入，但尚未向对话模型传递「桌面沙盒暂时不可用」的状态提示（已登记于 `docs/PENDING-TASKS.md` §8.3）。
+- **高级连接设置遗留 P1（本版未改动）**：部分官方预设（如 Claude）无默认预设模型名需手动输入、`anthropic-native` 协议目前尚无适配层实现、`local` 类型连接暂未豁免非空 API Key、`mimo-token-plan` 仍在预设下拉列表保持隐藏。
+- **延续 v1.8.0 同口径限制**：观测面板多组遥测数值未逐项真机核对、重逢心境仍仅验证 1–7 天档、STT 需独立配置 Key、视觉探针能力判定仅对支持图片输入的特定模型名放行。
 
 ---
 

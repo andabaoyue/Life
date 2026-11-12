@@ -284,6 +284,115 @@ const invoke = async (ch, arg) => handlers.get(ch)(trustedEvent(), arg);
     (pet.match(/await refreshConnections\(\)/g) || []).length >= 4 &&
     pet.includes("connKey').value = ''"));
 
+  /* ---- P0 回归：IPC patch.model / applyPreset 清空残留 / fillConnEditor 预设同步 / connTest 脏表单拦截 ---- */
+  const updViaUiModel = await invoke('connections:update', {
+    connectionId: crB.connectionId,
+    patch: { model: 'b-via-ui-ipc' }
+  });
+  const gotAfterUiModel = await invoke('connections:get', { connectionId: crB.connectionId });
+  check('P0-2 IPC connections:update 兼容渲染端 patch.model 并持久写入 activeModel',
+    updViaUiModel.ok === true && gotAfterUiModel.ok === true && gotAfterUiModel.connection.activeModel === 'b-via-ui-ipc');
+
+  const vm = require('vm');
+  const presetsSrc = fs.readFileSync(path.join(ROOT, 'ui-provider-presets.js'), 'utf8');
+  const applyPresetSrc = (pet.match(/function applyPreset\(id\)\s*\{[\s\S]*?\n\}/) || [])[0];
+  const fillEditorSrc = (pet.match(/function fillConnEditor\(connectionId\)\s*\{[\s\S]*?\n\}/) || [])[0];
+  const fieldsSrc = (pet.match(/function connEditorFields\(\)\s*\{[\s\S]*?\n\}/) || [])[0];
+  const connTestSrc = (pet.match(/document\.getElementById\('connTest'\)\.addEventListener\('click',\s*async\s*\(\)\s*=>\s*\{[\s\S]*?\n\}\);/) || [])[0];
+
+  const uiFields = {
+    connName: { value: 'old' },
+    connProvider: { value: 'deepseek' },
+    connProtocol: { value: 'openai-compatible' },
+    connUrl: { value: 'https://old.example.com' },
+    connModel: { value: 'old-model' },
+    connKey: { value: '' }
+  };
+  const listeners = {};
+  let lastSaid = '';
+  let testCalls = 0;
+  let lastTestedId = null;
+  let refreshedCount = 0;
+  const uiCtx = vm.createContext({
+    module: { exports: {} },
+    connPresetSelect: {
+      value: 'custom',
+      options: [{ value: 'custom' }, { value: 'deepseek' }, { value: 'claude' }, { value: 'gpt' }, { value: 'local' }]
+    },
+    connItems: [],
+    connSelectedId: null,
+    t: (k, fb) => fb || k,
+    connSay: (msg) => { lastSaid = String(msg); },
+    refreshConnections: async () => { refreshedCount++; },
+    api: {
+      connections: {
+        test: async (id) => { testCalls++; lastTestedId = id; return { ok: true, status: 'verified', phase: 'authProbe' }; }
+      }
+    },
+    document: {
+      getElementById: (id) => {
+        if (id === 'connTest') {
+          return { addEventListener: (ev, fn) => { listeners[ev] = fn; } };
+        }
+        return uiFields[id] || null;
+      }
+    }
+  });
+  vm.runInContext(presetsSrc, uiCtx);
+  vm.runInContext([applyPresetSrc, fillEditorSrc, fieldsSrc, connTestSrc].filter(Boolean).join('\n'), uiCtx);
+
+  let presetFlowOk = false;
+  if (typeof uiCtx.applyPreset === 'function') {
+    uiCtx.applyPreset('deepseek');
+    const afterDs = { url: uiFields.connUrl.value, model: uiFields.connModel.value };
+    uiCtx.applyPreset('claude');
+    const afterClaude = { url: uiFields.connUrl.value, model: uiFields.connModel.value, proto: uiFields.connProtocol.value };
+    uiCtx.applyPreset('custom');
+    const afterCustom = { url: uiFields.connUrl.value, model: uiFields.connModel.value };
+    presetFlowOk = afterDs.url === 'https://api.deepseek.com/v1' && afterDs.model === 'deepseek-chat' &&
+      afterClaude.model === '' && afterClaude.url !== 'https://api.deepseek.com/v1' &&
+      afterCustom.url === '' && afterCustom.model === '';
+  }
+  check('P0-1 applyPreset 切到无默认值预设（claude / custom）时清空残留 Endpoint / Model', presetFlowOk);
+
+  let editorSyncOk = false;
+  if (typeof uiCtx.fillConnEditor === 'function') {
+    uiCtx.connItems = [
+      { connectionId: 'c-ds', displayName: 'DS', providerId: 'deepseek', protocol: 'openai-compatible', baseURL: 'https://api.deepseek.com/v1', activeModel: 'deepseek-chat', hasCredential: true, keyEncrypted: true, testState: { status: 'unverified' } },
+      { connectionId: 'c-cu', displayName: 'MyProxy', providerId: 'custom', protocol: 'openai-compatible', baseURL: 'https://proxy.example.com/v1', activeModel: 'm1', hasCredential: true, keyEncrypted: true, testState: { status: 'unverified' } }
+    ];
+    uiCtx.connPresetSelect.value = 'claude';
+    uiCtx.fillConnEditor('c-ds');
+    const pickDs = uiCtx.connPresetSelect.value;
+    uiCtx.fillConnEditor('c-cu');
+    const pickCu = uiCtx.connPresetSelect.value;
+    editorSyncOk = pickDs === 'deepseek' && pickCu === 'custom' && uiCtx.connSelectedId === 'c-cu';
+  }
+  check('P0-1/4 fillConnEditor 同步 connPresetSelect（已知 URL 匹配预设，自定义 URL 回落 custom）', editorSyncOk);
+
+  let dirtyGuardOk = false;
+  if (typeof listeners.click === 'function') {
+    uiCtx.connSelectedId = null;
+    await listeners.click();
+    const rejectUncreated = testCalls === 0 && lastSaid.length > 0;
+
+    uiCtx.fillConnEditor('c-ds');
+    uiFields.connUrl.value = 'https://api.anthropic.com'; // 未保存改端点
+    await listeners.click();
+    const rejectDirtyField = testCalls === 0;
+
+    uiCtx.fillConnEditor('c-ds');
+    uiFields.connKey.value = 'sk-unsaved-key'; // 未保存填新 Key
+    await listeners.click();
+    const rejectDirtyKey = testCalls === 0;
+
+    uiCtx.fillConnEditor('c-ds'); // 表单与已保存完全一致
+    await listeners.click();
+    const allowClean = testCalls === 1 && lastTestedId === 'c-ds' && refreshedCount === 1;
+    dirtyGuardOk = rejectUncreated && rejectDirtyField && rejectDirtyKey && allowClean;
+  }
+  check('P0-4 connTest 拒绝未建档/有未保存改动的表单静默测试旧连接，干净状态正常放行', dirtyGuardOk);
+
   console.log('\n' + (failures ? failures + ' 项失败' : 'connection-ipc tests passed: '));
   process.exit(failures ? 1 : 0);
 })().catch((e) => {

@@ -220,9 +220,16 @@ function resolveRealPath(p, fsImpl) {
   return null;
 }
 
-function realpathBestEffort(p, fsImpl) {
-  return resolveRealPath(p, fsImpl);
-}
+/* 🔵 2026-11-05 C-4：删除死导出 `realpathBestEffort`（审计 P3 #12）。
+ *
+ *   它只是 `resolveRealPath` 的一层包装：
+ *     function realpathBestEffort(p, fsImpl) { return resolveRealPath(p, fsImpl); }
+ *   生产代码 0 引用、测试 0 引用（全仓只有定义与 module.exports 两处）。
+ *
+ *   ⚠️ 本文件是红线文件，但这一项是**纯删除死代码**，不影响任何行为
+ *      （改前改后跑全套件对比过，见提交说明）。
+ *      保留一个没人用的包装层，只会让后来者以为它和 resolveRealPath 有区别。
+ */
 
 /**
  * 受控执行器。
@@ -636,7 +643,7 @@ module.exports = {
   ALLOWED_WRITE_EXTENSIONS,
   isMalformedWindowsPath,
   resolveRealPath,
-  realpathBestEffort,
+  // 🔵 2026-11-05 C-4：realpathBestEffort 已删除（死导出，见上方注释）。
   DEFAULT_MAX_READ_BYTES,
   DEFAULT_MAX_WRITE_BYTES,
 };

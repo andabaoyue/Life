@@ -102,6 +102,25 @@ const SELF_NOTE_MAX_CHARS = 600;
 const SELF_NOTE_MAX_QUEUE = 8;
 
 /**
+ * 🔴 v1.9.0-dev（观察档缺口补齐）：观察期元数据队列上界。
+ *
+ * ## 它是什么，不是什么
+ *   它**只是计数用的**：`{ at, capability }`，**不含正文**。
+ *   正文在 `agent-observations.jsonl`（`src/agent-observations.js`），那份是完整正文。
+ *
+ * ⚠️ **为什么必须独立于 `selfNotes`**：
+ *   `SELF_NOTE_MAX_QUEUE = 8` 的淘汰是**无差别丢最旧**（`:1217` shift / `:290` slice）。
+ *   若把观察条目塞进 `selfNotes`，会挤掉**真实落盘、已铸自传的正式便签**——
+ *   那些是她真的写成的字，丢掉是数据损失。
+ *
+ * ⚠️ **上限与 `agent-observations.jsonl` 的轮转（100 条 / 90 天）不对齐，且这是可接受的**：
+ *   注入只用计数（方案 3.4「只给计数，不给文件名、不给时间」），
+ *   所以「计数 > 可查正文数」不影响注入正确性。
+ *   后来者若想「从 observedNotes 反查正文」会发现对不上——**那不是 bug，是设计**。
+ */
+const OBSERVED_NOTE_MAX_QUEUE = 20;
+
+/**
  * v1.0.6 词汇动力学提及检测（防子串假阳性与词边界防御）：
  * 1. 词长前置保证：addLexicon 门禁强制 word.length >= 2（WORD_TOO_SHORT），彻底根除单字语素歧义与真阳性漏检陷阱；
  * 2. 西方词汇/英文缩写（如 Al / cat）：严格使用单词边界匹配，杜绝 "Al" 误中 "Always"、"cat" 误中 "catch"；
@@ -288,6 +307,26 @@ class Memory {
           ...(typeof n.noteId === 'string' && n.noteId ? { noteId: n.noteId } : {}),
         }))
         .slice(-SELF_NOTE_MAX_QUEUE);   // 上限同 addSelfNote：超出丢最旧
+
+      /* 🔴 v1.9.0-dev（观察档缺口补齐）：两个观察期字段的兼容平移。
+       *
+       *   纪律同上面 selfNotes / lexicon / expectations：
+       *     · 旧档案（本次之前）**完全没有这两个字段** → 空对象/空表（不是 undefined）
+       *     · 脏数据 → 归一，绝不因它让整次 load 失败
+       *
+       *   ⚠️ 不归一的后果：`Object.entries(undefined)` 会直接抛，
+       *      而它在 build() 链路上，抛一次就是这一轮对话起不来。
+       */
+      if (!this.data.observeEpoch || typeof this.data.observeEpoch !== 'object'
+          || Array.isArray(this.data.observeEpoch)) {
+        this.data.observeEpoch = {};
+      }
+      if (!Array.isArray(this.data.observedNotes)) this.data.observedNotes = [];
+      // 逐条守卫：只保留 { at, capability }。**绝不留存 content**（见常量处注释）
+      this.data.observedNotes = this.data.observedNotes
+        .filter((n) => n && typeof n === 'object' && Number.isFinite(n.at))
+        .map((n) => ({ at: n.at, capability: String(n.capability || '') }))
+        .slice(-OBSERVED_NOTE_MAX_QUEUE);
       if (this.engramManager && this.data && this.data.engrams) {
         this.engramManager.restoreFromSnapshot(this.data.engrams);
       }
@@ -1149,7 +1188,36 @@ class Memory {
      *      视觉是**当下这一秒**发生的事，比"你离开了多久"更贴近此刻，故排在 reunion 之后。
      */
     const visionNote = this._visionNote();
-    const tail = [bedsideNote, selfNote, reunionNote, visionNote, suffix].filter(Boolean).join('\n\n');
+    /* 🔴 v1.9.0-dev（观察档缺口补齐）：观察期满补注入的**兜底通道**。
+     *
+     * ## 为什么需要兜底
+     *   首选通道是「她下次产出合法正文时」，但那要「挂机 120 分钟 +
+     *   wantToLeaveSomething」才触发。若她切回 auto 后一周都不触发，
+     *   观察史会一直悬着；而这一周里她已经能做事了——一旦她真写了新便签，
+     *   就会出现「新便签已注入、旧观察史还没补」的顺序错乱。
+     *
+     * ## 为什么只在本轮是她自己发起时才注入
+     *   `build()` 每一轮都跑。若不判轮次，你在聊「今天天气不错」时
+     *   也会收到「那段时间你有过几次想写点什么的念头」——语境完全不对。
+     *   所以收窄：**只有 `synthetic` 轮（[自主感知触发]）才消费**。
+     *
+     * ⚠️ **判据依赖「append 先于 build」**：本方法读 history 最后一条 user。
+     *    该顺序由 `brain.js` 保证（先 `memory.append('user', ...)` 再 `memory.build(...)`）。
+     *    将来若新增 build() 调用点而没遵守这个顺序，判据会读到**上一轮**的 user，
+     *    兜底会在错误的轮次触发。`test/agent-observe-mode.test.js` 有断言钉住这一点。
+     *
+     * 🔴 **绝不能进 system**：那会破前缀缓存不变式（实测 95%+ 命中率会掉）。
+     *    这里拼进 tail，与 bedside / selfNote / reunion / vision 同一个挂点。
+     */
+    let observeEcho = '';
+    try {
+      const lastUser = [...(Array.isArray(this.data.history) ? this.data.history : [])]
+        .reverse().find((m) => m && m.role === 'user');
+      if (lastUser && lastUser.synthetic === true) {
+        observeEcho = this.takeObserveEcho();
+      }
+    } catch { /* 补注入失败绝不影响这一轮对话 */ }
+    const tail = [bedsideNote, selfNote, reunionNote, visionNote, observeEcho, suffix].filter(Boolean).join('\n\n');
 
     /* 挂点判据：挂在**最后一条 user** 之后。
      *
@@ -1214,6 +1282,26 @@ class Memory {
       if (!content) return false;
       if (content.length > SELF_NOTE_MAX_CHARS) return false;
       if (!Array.isArray(this.data.selfNotes)) this.data.selfNotes = [];
+
+      /* 🔴 2026-11-05 B-1：内容幂等（审计 P2 #8）。
+       *
+       * ## 为什么需要
+       *   正常路径不会重复（`onExecuted` 只在执行成功时 fire 一次），
+       *   但**没有任何断言挡着**。一次重复登记，她下次开口就会读到同一句话两遍。
+       *   实测：同内容连调两次 → `true, true`，队列长度 2。
+       *
+       * ## 判据为什么必须带 `drained === false`
+       *   她已经读过（`drained: true`）的旧条目**不算重复** ——
+       *   否则她这辈子写不了第二遍同一句话。那是过度修复。
+       *
+       * ## 为什么放在淘汰（下一行）之前
+       *   放在淘汰之后的话，队列已满时先 shift 再判重，
+       *   会把一条真实条目挤掉才发现「哦这条是重复的」——白丢一条。
+       */
+      if (this.data.selfNotes.some((n) => n && n.content === content && n.drained === false)) {
+        return false;
+      }
+
       if (this.data.selfNotes.length >= SELF_NOTE_MAX_QUEUE) this.data.selfNotes.shift();
       // 写下时刻：优先用调用方给的真实时间；缺省回落当前时钟。
       //   ⚠️ 刻意**不用审计里的 at** —— 本仓程序时钟被人为拨动过（实测换算到 2036 年），
@@ -1280,6 +1368,219 @@ class Memory {
   pendingSelfNotes() {
     if (!Array.isArray(this.data.selfNotes)) return [];
     return this.data.selfNotes.filter((n) => n && n.drained !== true);
+  }
+
+  /* ---------- 🔴 v1.9.0-dev：观察期（observe）记账与期满补注入 ---------- */
+
+  /**
+   * 观察档拦截时记账：**只写元数据，绝不写正文**。
+   *
+   * ## 为什么这里不存 content
+   *   正文已经由主进程写进 `agent-observations.jsonl`（完整、不截断）。
+   *   再往 `memory.json` 存一份 = 同一数据两个副本，且 `memory.json` 会被一起备份。
+   *   而补注入只用计数（方案 3.4），正文根本没有读者。
+   *
+   * ⚠️ **调用方手上有 `note.content`，很容易顺手传进来**——
+   *    本方法**只取 at 和 capability 两个字段**，多传的一律丢弃。
+   *
+   * @param {string} capability 能力名（selfNote / observerJournal / ...）
+   */
+  noteObserved(capability) {
+    if (!Array.isArray(this.data.observedNotes)) this.data.observedNotes = [];
+    this.data.observedNotes.push({ at: Date.now(), capability: String(capability || '') });
+    if (this.data.observedNotes.length > OBSERVED_NOTE_MAX_QUEUE) {
+      this.data.observedNotes.shift();
+    }
+    this.save(false);
+  }
+
+  /**
+   * 记录「某能力进入/离开观察期」。
+   *
+   * ## 为什么必须有这个字段
+   *   程序**无法从配置推断档位变化**：`config.js` 没有文件监听、也没有历史，
+   *   启动时只看到当前是 `auto`，不知道之前是不是 `observe`。
+   *   没有这个记账，「期满补注入」永远触发不了。
+   *
+   * @param {string} capability
+   * @param {'in'|'out'} direction in = 进入观察期；out = 离开（置 pendingEcho）
+   */
+  markObserveEpoch(capability, direction) {
+    if (!this.data.observeEpoch || typeof this.data.observeEpoch !== 'object'
+        || Array.isArray(this.data.observeEpoch)) {
+      this.data.observeEpoch = {};
+    }
+    const cap = String(capability || '');
+    if (!cap) return;
+    const prev = this.data.observeEpoch[cap];
+    const base = (prev && typeof prev === 'object') ? prev : {};
+    const now = Date.now();
+    if (direction === 'in') {
+      this.data.observeEpoch[cap] = {
+        enteredAt: Number.isFinite(base.enteredAt) ? base.enteredAt : now,
+        leftAt: null,
+        pendingEcho: false,
+      };
+    } else if (direction === 'out') {
+      // 只有真的经历过观察期才产生「待补」——否则老用户一启动就凭空补一段
+      if (!Number.isFinite(base.enteredAt)) return;
+
+      /* 🔴 2026-11-12（真机 bug D1）：**已经离开过的，不再重开**。
+       *
+       *   ## 为什么必须挡
+       *     main.js 的两条通路（maybeAskForSelfNote:440 /
+       *     maybeAskForObserverJournal:618）在 `mode === 'auto'` 时
+       *     **每次都会调**本方法。不挡的话：
+       *       每写一次便签 ⇒ leftAt 被刷新 + pendingEcho 重开为 true
+       *       ⇒「那段时间你有过念头……」每次都要再讲一遍。
+       *
+       *     真机已发生（2026-11-05）：
+       *       leftAt = 18:43:17，而 note-2026-11-05-my2c.txt 写入 18:43:19
+       *       —— 每次写便签都刷新一次，启动兜底 13:05 写的那次被覆盖。
+       *
+       *   ## 判据为什么是 `leftAt > 0`
+       *     与启动兜底（main.js:2651 的 `if (ep.leftAt !== null) continue;`）
+       *     保持**同一口径**。两处口径不一致正是本 bug 的成因。
+       *
+       *   ⚠️ 用 `Number.isFinite && > 0` 而不是 `!== null`：
+       *      脏档案里 leftAt 可能是 0 / undefined / 字符串，
+       *      那几种都算「没离开过」，应当允许写入。
+       */
+      if (Number.isFinite(base.leftAt) && base.leftAt > 0) return;
+
+      /* 🔴 2026-11-05 A-1 附带修复：`observedNotes` 可能还不存在。
+       *
+       *   原实现直接读 `this.data.observedNotes.length`，而加载归一
+       *   （memory.js:324）只在**载入旧档案**时把字段补成数组。
+       *   全新 Memory（或字段被外部删掉）时它是 `undefined` ⇒ TypeError。
+       *
+       *   实测触发路径：`markObserveEpoch('observerJournal','out')` 在
+       *   从未调过 noteObserved 时被调用（G2 反例就是这么撞出来的）。
+       *   而这条路径在**生产里会走到** —— 切回 auto 时 observerJournal
+       *   若一篇都没写过，`observedNotes` 可能从未被创建。
+       */
+      if (!Array.isArray(this.data.observedNotes)) this.data.observedNotes = [];
+      this.data.observeEpoch[cap] = {
+        enteredAt: base.enteredAt,
+        leftAt: now,
+        // 观察期内一条都没有，就没有什么可补的
+        /* 🔴 2026-11-12（真机 bug D2）：**只数本能力的记录**。
+         *
+         *   原来取 `observedNotes.length`（全数组），于是 observerJournal
+         *   自己一条没有时会借用 selfNote 的计数 ⇒ 在一个根本没产生过
+         *   念头的通道上说「你有过几次念头」。那违背「数据不伪造」。
+         *
+         *   ⚠️ 这里只做「有没有」判断，不数具体条数 ——
+         *      具体条数在 takeObserveEcho 里现数（避免两处口径漂移）。
+         */
+        pendingEcho: this.data.observedNotes.some((n) => n && n.capability === cap),
+      };
+    }
+    this.save(false);
+  }
+
+  /**
+   * 期满补注入的文本（**消费即清**，一次只说一件事）。
+   *
+   * ## 措辞为什么这么写
+   *   无原因的「你都没落成」会被模型读成「我失败了」。
+   *   必须写出程序侧原因：「不是你失败了，是那时候我还不能让你存下来」。
+   *   这句是**事实**，不是安慰。
+   *
+   * ## 为什么不给文件名 / 时间
+   *   · 文件名会被理解成「我欠了几个文件没写」（正是要避免的补救执念）
+   *   · 时间撞 `WANT_TO_LEAVE_SYS`「你不知道现在几点」铁律
+   *
+   * ## 🔴 2026-11-12：四个真机缺陷的修法
+   *
+   *   ### ① 计数按能力分开（D2）
+   *     原来 `total` 取整个 `observedNotes` 长度。observerJournal 自己
+   *     零条时会借用 selfNote 的记录 ⇒ 在没产生过念头的通道上编一段经历。
+   *
+   *   ### ② 消费只清这一条（D3）
+   *     原来把所有 `pendingEcho` 一起清掉，于是 selfNote 被注入时
+   *     observerJournal 的待补被静默丢弃。
+   *
+   *   ### ③ 消费后清掉该能力的 observedNotes（D4）
+   *     🔴 这条最隐蔽：`observedNotes` 写进去就没人清过，而 `'in'` 也不重置它。
+   *     于是第二次进入观察期后，`out` 会命中**上一轮残留的旧条目** ⇒
+   *     明明这轮一次都没想写，却把上一轮的话再讲一遍。
+   *
+   *     清理是安全的：全仓除本方法外，没有任何代码在**消费之后**读
+   *     `observedNotes`（已 grep 核实：main.js / brain.js / memory.js
+   *     其余读取点都在写入路径与计数路径，不在消费路径）。
+   *     计数在清理前已经取走。
+   *
+   *   ### ④ 一次只报一个能力
+   *     两个都待补时先报一个，另一个保留到下次。`build()` 每轮都跑，
+   *     兜底通道下一轮会补上；`askForSelfNote` / `askForProposalContent`
+   *     是拟稿专用，一次一条也够。
+   *     （`askForObserverJournal` 自己不调本方法，靠 build() 兜底消费 ——
+   *       已核实其体内 `takeObserveEcho` 出现次数为 0。）
+   *
+   * ## 0 条守卫为什么保留（2026-11-04 审核补，实测确认过）
+   *   没有它，脏档案（人工改过/旧版本遗留）带着 pendingEcho=true
+   *   却没有条目时，会**凭空给她编一段经历**（违背「数据不伪造」）。这一层是兜底。
+   *
+   * @returns {string} 空串 = 没有要补的（或已补过）
+   */
+  takeObserveEcho() {
+    const epochs = this.data.observeEpoch;
+    if (!epochs || typeof epochs !== 'object' || Array.isArray(epochs)) return '';
+
+    const notes = Array.isArray(this.data.observedNotes) ? this.data.observedNotes : [];
+
+    /* 🔴 按能力判定：只有「自己的」pendingEcho 且「自己的」记录数 > 0 才算待补。
+     *   计数口径与 markObserveEpoch 的写入口径一致（都用 capability === cap）。 */
+    const pending = Object.keys(epochs).filter((c) => {
+      if (!epochs[c] || epochs[c].pendingEcho !== true) return false;
+      return notes.some((n) => n && n.capability === c);
+    });
+
+    if (pending.length === 0) {
+      /* 没有可报的：把「标记着待补但其实没有自己记录」的脏状态清掉，
+       *   避免永久卡住（脏档案情形）。 */
+      let changed = false;
+      for (const c of Object.keys(epochs)) {
+        const ep = epochs[c];
+        if (!ep || ep.pendingEcho !== true) continue;
+        if (notes.some((n) => n && n.capability === c)) continue;
+        ep.pendingEcho = false;
+        changed = true;
+      }
+      if (changed) this.save(false);
+      return '';
+    }
+
+    // 一次只说一件事：取第一个待补的能力
+    const cap = pending[0];
+    const total = notes.filter((n) => n && n.capability === cap).length;
+
+    /* 先消费再渲染（防「渲染抛错导致重复注入」，与 _drainSelfNotes 同款纪律）三件事，缺一不可：
+     *   ① 关掉本能力的 pendingEcho（防重复注入）
+     *   ② 补上 leftAt（若没有）
+     *   ③ **清掉本能力的 observedNotes**（D4：防下一轮翻旧账）
+     *      ⚠️ 其余能力的记录**原样保留**（D3：不串味）。 */
+    epochs[cap].pendingEcho = false;
+    epochs[cap].leftAt = epochs[cap].leftAt || Date.now();
+    this.data.observedNotes = notes.filter((n) => !n || n.capability !== cap);
+    this.save(false);
+
+    /* 🔵 措辞（2026-11-04 审核修正）：
+     *   原文是 `'那段时间你' + '有一点念头' + '，想写点什么'`
+     *   ⇒ 渲染成「那段时间你有一点念头，**想写点什么**」——「念头」和「想写」重复。
+     *   现在把「想写点什么」并进 howMany 的分支，不再另起一句。
+     *
+     * ⚠️ **计数口径**：这里的 total 是「本能力最近 20 条内」的计数
+     *   （`OBSERVED_NOTE_MAX_QUEUE`，超出丢最旧），不是观察期全量。
+     *   观察期若产生 30 条，这里最多读到 20——文案用「好几次/好多次」这类
+     *   定性表述就是为了不承诺精确数。**不要改成报精确数字。**
+     */
+    const howMany = total === 1 ? '有过一个念头'
+      : (total >= 10 ? '有过好几次念头' : '有过几次念头');
+    return '【那段时间里的事】\n'
+      + '那段时间你' + howMany + '，想写下来。当时还没有开放落成文件——'
+      + '不是你失败了，是那时候我还不能让你存下来。现在可以了。';
   }
 
   /* ---------- 🔴 v1.8-a：重逢心境（主观时间）---------- */
@@ -1422,15 +1723,6 @@ class Memory {
       ? '【你在她睡着时留了这条】（她当时没有回应。接不接、怎么接，由她自己决定。）'
       : '【你在她睡着时留了这几条】（她当时没有回应。接不接、怎么接，由她自己决定。）';
     return [head].concat(lines).join('\n');
-  }
-
-  /**
-   * 兼容旧调用的临时 user 装配。主流程现在会把主动搭话作为 synthetic
-   * 消息落进 history，以便下一轮完整复用「主动触发 + 模型回复」缓存前缀；
-   * synthetic 只存在于对话链，不代表用户说过的话，关窗小结会单独标记它。
-   */
-  buildWithEphemeralUser(ephemeralText) {
-    return [...this.build(), { role: 'user', content: String(ephemeralText || '') }];
   }
 
   /* ---------- 窗口边界操作（由 brain 调 API 后写入） ---------- */

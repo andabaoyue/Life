@@ -282,10 +282,21 @@ function updateConnection(dir, connectionId, patch = {}) {
   const idx = loaded.store.connections.findIndex((c) => c.connectionId === connectionId);
   if (idx < 0) return { ok: false, error: 'CONNECTION_NOT_FOUND: ' + connectionId };
   const current = loaded.store.connections[idx];
-  const { models, activeModel } = normalizeModels(
+  // 兼容 UI 层（connEditorFields）传 `patch.model` 与后端调用传 `patch.activeModel`；
+  // 仅当未重设 `models` 且显式把 `activeModel`/`model` 置空时，保持空串交由 validateConnection 拒绝，
+  // 防止 normalizeModels 在 list 非空时静默回弹到旧 `models[0]`。
+  const hasModelPatch = patch.activeModel !== undefined || patch.model !== undefined;
+  const requestedActive = patch.activeModel !== undefined
+    ? patch.activeModel
+    : (patch.model !== undefined ? patch.model : current.activeModel);
+  const explicitClearActive = hasModelPatch && patch.models === undefined &&
+    !String(requestedActive == null ? '' : requestedActive).trim();
+  const normalizedModels = normalizeModels(
     patch.models !== undefined ? patch.models : current.models,
-    patch.activeModel !== undefined ? patch.activeModel : current.activeModel
+    requestedActive
   );
+  const models = normalizedModels.models;
+  const activeModel = explicitClearActive ? '' : normalizedModels.activeModel;
   const next = {
     ...current,
     displayName: patch.displayName !== undefined ? String(patch.displayName).trim() : current.displayName,

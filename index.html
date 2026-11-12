@@ -312,7 +312,13 @@
           <!-- 子页 B：机制遥测（按 src/observability.js 的声明式注册表动态生成，
                不在这里手写区块 —— 新增机制只需注册一行，两端自动跟上） -->
           <div id="rSubPaneObs" class="r-subpane hidden">
-            <div class="r-section-title" id="rObsTitle">机制遥测（全量 · 只读）</div>
+            <div class="r-obs-toolbar">
+              <div class="r-section-title" id="rObsTitle">机制遥测（全量 · 只读）</div>
+              <div class="r-obs-actions">
+                <span id="rObsTimestamp" class="r-obs-ts hidden"></span>
+                <button type="button" id="rObsToggleAllBtn" class="r-btn-sm">展开全部</button>
+              </div>
+            </div>
             <div id="rObsGroups"></div>
           </div>
         </div>

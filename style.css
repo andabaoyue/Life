@@ -1359,11 +1359,139 @@ body.pixel-sprite #sprite, body.pixel-sprite #layers img { image-rendering: pixe
 /* ---------------- v1.7-b 机制遥测（声明式注册表驱动） ----------------
    行内容由 pet.js 的 renderObsGroups 动态生成，这里只负责排版。
    label 用低对比度、value 用高对比度，便于在长列表里快速扫值。 */
-#rObsGroups .obs-label { color: rgba(255,255,255,.62); }
-#rObsGroups .obs-value { color: rgba(255,255,255,.92); word-break: break-word; }
-#rObsGroups > .r-table-container { line-height: 1.75; font-size: 12.5px; }
-#rObsGroups > .r-table-container > div { padding: 3px 0; }
-#rObsGroups > .r-table-container > div + div { border-top: 1px solid rgba(255,255,255,.05); }
+#rObsGroups .obs-label { font-size: 12px; font-weight: 600; color: #c7d5ef; }
+#rObsGroups .obs-value { display: block; color: rgba(255,255,255,.92); word-break: break-word; }
+
+/* ===== 个体观测面板 · 人眼可读性排版精修 ===== */
+#researchPanel .r-traits-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+#researchPanel .r-trait-card {
+  cursor: pointer;
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px;
+  padding: 10px 12px;
+  transition: border-color .15s, background .15s;
+}
+#researchPanel .r-trait-card:hover { background: rgba(255,255,255,.06); border-color: rgba(130,165,255,.35); }
+#researchPanel .r-trait-card.selected { background: rgba(110,145,255,.09); border-color: rgba(130,175,255,.58); }
+.r-trait-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.r-trait-title-wrap { min-width: 0; }
+.r-trait-name { font-size: 13px; font-weight: 600; color: #e4ecfa; line-height: 1.3; }
+.r-trait-key {
+  font-size: 10px; color: rgba(168,184,219,.52);
+  font-family: Consolas, ui-monospace, monospace;
+  margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.r-trait-val-wrap { display: flex; align-items: baseline; gap: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.r-trait-val { font-size: 18px; font-weight: 700; line-height: 1; margin: 0; font-variant-numeric: tabular-nums; }
+.r-trait-delta {
+  font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 999px;
+  background: rgba(255,255,255,.06); font-variant-numeric: tabular-nums;
+}
+.r-trait-bar-wrap { margin: 4px 0 3px; height: 5px; }
+.r-trait-scale {
+  display: flex; justify-content: space-between; font-size: 9.5px;
+  color: rgba(160,175,205,.45); font-variant-numeric: tabular-nums; margin-bottom: 5px;
+}
+.r-trait-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: rgba(168,184,219,.68); font-variant-numeric: tabular-nums;
+}
+.r-trait-hint { opacity: .65; transition: opacity .15s, color .15s; }
+#researchPanel .r-trait-card:hover .r-trait-hint,
+#researchPanel .r-trait-card.selected .r-trait-hint { opacity: 1; color: #9fc0ff; }
+
+#researchPanel .r-section-title {
+  font-size: 12.5px; font-weight: 600; color: #b7c8e8; letter-spacing: .2px;
+  padding-left: 8px; border-left: 3px solid rgba(130,170,255,.65); margin: 12px 0 7px;
+}
+#rSubPaneSubject > .r-section-title:first-child,
+.r-obs-toolbar .r-section-title { margin-top: 2px; margin-bottom: 0; }
+
+.r-ledger-item { display: flex; flex-direction: column; gap: 4px; padding: 9px 10px; }
+.r-ledger-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.r-ledger-left { display: flex; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }
+.r-ledger-word { font-size: 13.5px; font-weight: 700; color: #edf2fc; }
+.r-ledger-cite { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+.r-ledger-sub { font-size: 12.5px; color: #c4d0e6; line-height: 1.55; padding-left: 2px; }
+.r-chip-muted {
+  font-size: 10.5px; color: #9fb0d0; background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.08); padding: 1px 7px; border-radius: 999px;
+}
+.r-chip-cite { font-size: 10.5px; color: #7e92b8; font-family: Consolas, ui-monospace, monospace; }
+.r-chip-trace { font-size: 11px; color: #8cb8ff; opacity: .75; }
+.badge-open { background: rgba(245,190,70,.16); color: #f6cd6d; border: 1px solid rgba(245,190,70,.32); }
+.badge-dormant { background: rgba(150,165,195,.14); color: #9aa9c4; border: 1px solid rgba(150,165,195,.22); }
+
+.r-history-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  font-variant-numeric: tabular-nums; transition: background .15s;
+}
+.r-history-row:hover { background: rgba(255,255,255,.05); }
+.r-history-row:hover .r-chip-trace { opacity: 1; text-decoration: underline; }
+.r-hist-left, .r-hist-right { display: flex; align-items: center; gap: 8px; }
+.r-hist-trans { color: #e2eaf8; font-weight: 500; }
+
+.r-obs-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 2px 0 8px; }
+.r-obs-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.r-obs-ts { font-size: 11px; color: rgba(168,184,219,.62); font-variant-numeric: tabular-nums; }
+.r-obs-ts.hidden { display: none; }
+
+#rObsGroups { display: flex; flex-direction: column; gap: 7px; }
+#rObsGroups .obs-group {
+  margin-bottom: 0; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 9px; background: rgba(255,255,255,.025); overflow: hidden;
+}
+#rObsGroups .obs-group-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+  background: rgba(255,255,255,.03); border: none; border-radius: 0;
+  font-size: 12.5px; font-weight: 600; color: #d5e0f4; cursor: pointer; text-align: left;
+}
+#rObsGroups .obs-group-head:hover { background: rgba(255,255,255,.07); color: #f0f5ff; }
+#rObsGroups .obs-group-count {
+  font-size: 10.5px; font-weight: 500; color: #9cb0d8; background: rgba(255,255,255,.07);
+  border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums;
+}
+#rObsGroups .obs-group-body {
+  margin-top: 0; border: none; border-top: 1px solid rgba(255,255,255,.07);
+  border-radius: 0; background: transparent; padding: 8px 10px;
+}
+#rObsGroups .obs-item { padding: 8px 0; }
+#rObsGroups .obs-item:first-child { padding-top: 2px; }
+#rObsGroups .obs-item:last-child { padding-bottom: 2px; }
+#rObsGroups .obs-item + .obs-item { border-top: 1px solid rgba(255,255,255,.06); }
+#rObsGroups .obs-item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+#rObsGroups .obs-range-pill {
+  font-size: 10px; color: rgba(168,184,219,.62); background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums;
+}
+#rObsGroups .obs-kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 6px; }
+#rObsGroups .obs-kv {
+  display: flex; flex-direction: column; gap: 3px; background: rgba(0,0,0,.22);
+  border: 1px solid rgba(255,255,255,.06); border-radius: 7px; padding: 6px 8px; min-width: 0;
+}
+#rObsGroups .obs-kv-sub { border-style: dashed; border-color: rgba(140,175,255,.22); background: rgba(110,145,255,.05); }
+#rObsGroups .obs-k {
+  font-size: 10.5px; color: rgba(182,196,225,.68); line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#rObsGroups .obs-v { font-size: 13.5px; font-weight: 600; color: #eef3fc; font-variant-numeric: tabular-nums; line-height: 1.3; word-break: break-word; }
+#rObsGroups .obs-v.is-time { font-size: 11.5px; font-weight: 500; line-height: 1.35; }
+#rObsGroups .obs-v.is-null, #rObsGroups .obs-scalar.is-null { color: rgba(160,175,205,.45); font-weight: 400; }
+#rObsGroups .obs-pill { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; }
+#rObsGroups .obs-pill.is-ok { background: rgba(85,205,140,.16); color: #78e0a8; border: 1px solid rgba(85,205,140,.35); }
+#rObsGroups .obs-pill.is-warn { background: rgba(245,190,70,.16); color: #f6cd6d; border: 1px solid rgba(245,190,70,.35); }
+#rObsGroups .obs-pill.is-danger { background: rgba(245,100,115,.18); color: #ff8e99; border: 1px solid rgba(245,100,115,.38); }
+#rObsGroups .obs-pill.is-info { background: rgba(105,175,255,.16); color: #8ec5ff; border: 1px solid rgba(105,175,255,.35); }
+#rObsGroups .obs-pill.is-muted { background: rgba(255,255,255,.07); color: rgba(210,220,240,.72); border: 1px solid rgba(255,255,255,.1); }
+#rObsGroups .obs-meter { position: relative; height: 4px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; margin-top: 2px; }
+#rObsGroups .obs-meter-mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.28); z-index: 1; }
+#rObsGroups .obs-meter-fill { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
+#rObsGroups .obs-meter-fill.linear { left: 0; background: linear-gradient(90deg, rgba(95,165,255,.75), rgba(115,215,195,.9)); }
+#rObsGroups .obs-meter-fill.linear.is-warn { background: linear-gradient(90deg, rgba(245,175,70,.8), rgba(255,120,105,.92)); }
+#rObsGroups .obs-meter-fill.linear.is-muted { background: rgba(165,180,210,.45); }
+#rObsGroups .obs-meter-fill.pos { background: rgba(105,175,255,.88); }
+#rObsGroups .obs-meter-fill.neg { background: rgba(245,135,140,.85); }
 
 /* ---------------- v1.7-a 语音输入按钮 ----------------
    #micBtn 与 #input、#send 同在 #inputBar 内。

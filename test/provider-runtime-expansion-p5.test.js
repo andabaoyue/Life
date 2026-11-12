@@ -141,6 +141,12 @@ function sseRes(chunks) {
     check('B-2 /v1 path 保留', resolveChatCompletionsURL('https://host/v1') === 'https://host/v1/chat/completions');
     check('B-2 尾斜杠标准化', resolveChatCompletionsURL('https://host/v1/') === 'https://host/v1/chat/completions');
     check('B-2 绝不产生 //chat/completions', !resolveChatCompletionsURL('https://host///').includes('//chat'));
+    check('B-2 已含 /chat/completions 不重复拼接', resolveChatCompletionsURL('https://host/v1/chat/completions') === 'https://host/v1/chat/completions');
+    check('B-2 /chat/completions/ 带尾斜杠与大小写混合不重复拼接',
+      resolveChatCompletionsURL('https://host/chat/completions/') === 'https://host/chat/completions' &&
+      resolveChatCompletionsURL('https://host/v1/Chat/Completions/') === 'https://host/v1/Chat/Completions');
+    check('B-2 非独立后缀 *chat/completions 仍正常拼接',
+      resolveChatCompletionsURL('https://host/my-chat/completions') === 'https://host/my-chat/completions/chat/completions');
     check('B-2 trim + 合法性校验', normalizeBaseURL('  https://host/v1  ') === 'https://host/v1' && (() => { try { normalizeBaseURL('not a url'); return false; } catch { return true; } })());
 
     const m = mockFetch(async () => okRes({ choices: [{ message: { content: 'ok' } }], usage: {}, model: 'm' }));

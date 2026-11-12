@@ -84,14 +84,14 @@ check('闸门安装返回 true', ok1 === true);
 const localUrl = 'file:///' + path.join(ROOT, 'index.html').replace(/\\/g, '/');
 let allowLocal = null;
 if (f1.reg.request) {
-  f1.reg.request(wcAt(localUrl), 'media', (v) => { allowLocal = v; });
+  f1.reg.request(wcAt(localUrl), 'media', (v) => { allowLocal = v; }, { mediaTypes: ['audio'] });
 }
-check('🔴 正向对照：media + 本地页 → 放行（防"全拒"假绿）', allowLocal === true,
+check('🔴 正向对照：media(audio) + 本地页 → 放行（防"全拒"假绿）', allowLocal === true,
   'allow=' + allowLocal + ' url=' + localUrl);
 
 let checkLocal = null;
-if (f1.reg.check) checkLocal = f1.reg.check(wcAt(localUrl), 'media');
-check('🔴 正向对照：check handler 对 media + 本地页也放行', checkLocal === true);
+if (f1.reg.check) checkLocal = f1.reg.check(wcAt(localUrl), 'media', localUrl, { mediaType: 'audio' });
+check('🔴 正向对照：check handler 对 media(audio) + 本地页也放行', checkLocal === true);
 
 /* ============ 2. 白名单外权限一律拒 ============ */
 const DENIED = ['geolocation', 'notifications', 'midi', 'midiSysex', 'usb', 'serial',
@@ -121,10 +121,10 @@ for (const u of badUrls) {
   const f = makeFakeSession();
   makeGate(f.session);
   let got = null;
-  f.reg.request(wcAt(u), 'media', (v) => { got = v; });
+  f.reg.request(wcAt(u), 'media', (v) => { got = v; }, { mediaTypes: ['audio'] });
   if (got !== false) urlBad.push(String(u) + '=' + got);
 }
-check('🔴 非本地页 / 脏 URL 下的 media 一律拒', urlBad.length === 0, urlBad.join(','));
+check('🔴 非本地页 / 脏 URL 下的 media(audio) 一律拒', urlBad.length === 0, urlBad.join(','));
 
 /* ============ 4. wc 为空必须不抛、且拒 ============ */
 let nullThrew = false;
@@ -132,7 +132,7 @@ let nullAllow = null;
 try {
   const f = makeFakeSession();
   makeGate(f.session);
-  f.reg.request(null, 'media', (v) => { nullAllow = v; });
+  f.reg.request(null, 'media', (v) => { nullAllow = v; }, { mediaTypes: ['audio'] });
 } catch (e) { nullThrew = true; }
 check('🔴 wc=null 时 request handler 不抛', !nullThrew);
 check('🔴 wc=null 时一律拒', nullAllow === false, 'allow=' + nullAllow);
@@ -142,7 +142,7 @@ let nullCheckVal = null;
 try {
   const f = makeFakeSession();
   makeGate(f.session);
-  nullCheckVal = f.reg.check ? f.reg.check(null, 'media') : null;
+  nullCheckVal = f.reg.check ? f.reg.check(null, 'media', localUrl, { mediaType: 'audio' }) : null;
 } catch (e) { nullCheckThrew = true; }
 check('🔴 wc=null 时 check handler 不抛且拒绝', !nullCheckThrew && nullCheckVal === false,
   'val=' + nullCheckVal);
@@ -156,7 +156,7 @@ check('🔴 wc=null 时 check handler 不抛且拒绝', !nullCheckThrew && nullC
 const f5 = makeFakeSession();
 makeGate(f5.session);
 let micVal = null;
-f5.reg.request(wcAt(localUrl), 'microphone', (v) => { micVal = v; });
+f5.reg.request(wcAt(localUrl), 'microphone', (v) => { micVal = v; }, { mediaTypes: ['audio'] });
 check('🔴 microphone（非枚举值）被拒，不得被当成白名单', micVal === false, 'val=' + micVal);
 
 /* ============ 6. 源码断言：白名单常量只有 'media' ============ */
@@ -201,6 +201,47 @@ check('🔴 main.js 从 ipc-guard 导入了 isAppLocalUrl',
 /* ============ 10. 安装失败不阻塞启动（只告警） ============ */
 check('🔴 闸门安装失败时只告警、不 throw（不阻塞启动）',
   /if \(!installPermissionGate\(session\.defaultSession\)\) \{[\s\S]{0,200}console\.warn/.test(mainSrc));
+
+/* ============ 11. S-4：media 只放行 audio，拒绝 video 与信息不足 ============ */
+{
+  const fs4 = makeFakeSession();
+  makeGate(fs4.session);
+
+  let r1 = null;
+  fs4.reg.request(wcAt(localUrl), 'media', (v) => { r1 = v; }, { mediaTypes: ['video'] });
+  check('S4-R1 media+video 必须拒（本应用从不用摄像头）', r1 === false, 'r1=' + r1);
+
+  let r2 = null;
+  fs4.reg.request(wcAt(localUrl), 'media', (v) => { r2 = v; }, { mediaTypes: ['audio', 'video'] });
+  check('S4-R2 media 含 video 的混合请求必须拒', r2 === false, 'r2=' + r2);
+
+  let r3a = null;
+  let r3b = null;
+  fs4.reg.request(wcAt(localUrl), 'media', (v) => { r3a = v; });
+  fs4.reg.request(wcAt(localUrl), 'media', (v) => { r3b = v; }, { mediaTypes: [] });
+  check('S4-R3 未提供 mediaTypes 或空列表时必须拒（信息不足不放行）', r3a === false && r3b === false,
+    'undef=' + r3a + ' empty=' + r3b);
+
+  const cVid = fs4.reg.check(wcAt(localUrl), 'media', localUrl, { mediaType: 'video' });
+  const cUnk = fs4.reg.check(wcAt(localUrl), 'media', localUrl, { mediaType: 'unknown' });
+  const cMiss = fs4.reg.check(wcAt(localUrl), 'media', localUrl);
+  check('S4-R4 check handler 同口径拒绝 video / unknown / 缺失 mediaType',
+    cVid === false && cUnk === false && cMiss === false,
+    'video=' + cVid + ' unknown=' + cUnk + ' missing=' + cMiss);
+
+  let r5 = null;
+  fs4.reg.request(wcAt(localUrl), 'media', (v) => { r5 = v; }, { mediaTypes: ['audio', 'unknown'] });
+  check('S4-R5 防御性收窄：即使含 audio，mediaTypes 出现非 audio 元素（如 [audio,unknown]）仍必须拒',
+    r5 === false, 'r5=' + r5);
+
+  let r5b = null;
+  let r5bThrew = false;
+  try {
+    fs4.reg.request(wcAt(localUrl), 'media', (v) => { r5b = v; }, null);
+  } catch (e) { r5bThrew = true; }
+  check('S4-R5b details 为 null 时不抛且必须拒', !r5bThrew && r5b === false,
+    'threw=' + r5bThrew + ' r5b=' + r5b);
+}
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

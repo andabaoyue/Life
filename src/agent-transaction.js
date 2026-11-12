@@ -43,6 +43,32 @@ function sha256OfFile(file) {
 }
 
 /**
+ * 将 Buffer 完整写入已打开句柄并强制刷盘。
+ *
+ * ## 为什么需要循环
+ *   `fs.writeSync` 在极端情况下可能只写入一部分（返回写入字节数 < 请求长度），
+ *   尤其在跨文件系统/网络盘/句柄被信号打断时。单次 write 后直接 fsync，
+ *   会把写了一半的内容当成完整内容刷下去。
+ *
+ * ## 为什么 n <= 0 要抛
+ *   零进展写会让 while 变成死循环。抛错比挂死安全 —— 上层会走 WAL_APPEND_FAILED。
+ *
+ * @param {number} fd
+ * @param {Buffer} buf
+ */
+function writeAllAndFsyncSync(fd, buf) {
+  let offset = 0;
+  while (offset < buf.length) {
+    const written = fs.writeSync(fd, buf, offset, buf.length - offset);
+    if (!Number.isFinite(written) || written <= 0) {
+      throw Object.assign(new Error('SHORT_WRITE'), { code: 'SHORT_WRITE' });
+    }
+    offset += written;
+  }
+  fs.fsyncSync(fd);
+}
+
+/**
  * 事务管理器。
  * @param {object} opts { dir }  数据目录（用户 userData），WAL 与备份都放这里。
  */
@@ -61,7 +87,52 @@ class WriteTransactionManager {
     if (!this.persist) return false;
     try {
       fs.mkdirSync(this.dir, { recursive: true });
-      fs.appendFileSync(this.walPath, JSON.stringify(record) + '\n', 'utf8');
+      /* 🔴 2026-11-12 S-2：append 之后必须 fsync。
+       *
+       *   ## 为什么
+       *     WAL 的全部意义是「崩溃后能靠它恢复」。而 `appendFileSync` 只保证
+       *     **写进了内核页缓存**，不保证落盘。断电时日志可能只写了一半，
+       *     恢复时读到半截行（`_readWal` 会跳过坏行）⇒ **这条事务凭空消失**，
+       *     而备份文件还在 ⇒ 回滚逻辑会对着一个"没有日志的孤儿备份"发呆。
+       *
+       *   ## 为什么用 open/write/fsync/close 而不用 appendFileSync + fsync 文件
+       *     Node 没有「对已存在文件做 fsync」的便捷 API，最稳的写法是：
+       *     openSync('a') → writeSync → fsyncSync(fd) → closeSync。
+       *     同时记下写前大小，一旦 write/fsync 失败则在关闭句柄后回滚残留，
+       *     确保不留下半条或未落盘的幽灵记录。
+       *
+       *   ⚠️ closeSync 必须放 finally：任何一步抛错都不能泄漏 fd。
+       */
+      /* 🔴 2026-11-12 S-2 二次加固：
+       *
+       *   ① 抽出 writeAllAndFsyncSync，与 begin() 的备份写入共用一份实现
+       *      （原来两处各写一遍，容易只改一边）。
+       *   ② 修 0 字节幽灵文件：`openSync('a')` 会先建出空文件，
+       *      若紧接着 `fstatSync` 抛错，`prevSize` 仍是 null，
+       *      旧判据 `!committed && prevSize !== null` 就会跳过清理，
+       *      磁盘上留下一个 0 字节的 agent-write-txn.jsonl。
+       *      ⇒ 改成只判 `!committed`，内部再分情况。
+       */
+      const existed = fs.existsSync(this.walPath);
+      const fd = fs.openSync(this.walPath, 'a');
+      let prevSize = null;
+      let committed = false;
+      try {
+        prevSize = fs.fstatSync(fd).size;
+        writeAllAndFsyncSync(fd, Buffer.from(JSON.stringify(record) + '\n', 'utf8'));
+        committed = true;
+      } finally {
+        fs.closeSync(fd);
+        if (!committed) {
+          try {
+            /* 原本不存在 ⇒ 这个文件是本次 openSync 刚建出来的，删掉；
+             * 原本存在但读不出大小 ⇒ 绝不截断（宁可留残行让 _readWal 跳过，
+             *   也不能把用户的历史记录截没）。 */
+            if (!existed) fs.unlinkSync(this.walPath);
+            else if (prevSize !== null) fs.truncateSync(this.walPath, prevSize);
+          } catch { /* 清理失败不掩盖原错误 */ }
+        }
+      }
       return true;
     } catch (err) {
       throw Object.assign(new Error('WAL_APPEND_FAILED: ' + (err && err.message)), { code: 'WAL_APPEND_FAILED' });
@@ -125,7 +196,19 @@ class WriteTransactionManager {
         //   那会直接抛 ERR_INVALID_ARG_TYPE，让退化模式整体不可用。
         fs.mkdirSync(this.backupDir, { recursive: true });
         backupPath = this._backupPathFor(txId, target);
-        fs.writeFileSync(backupPath, originalBytes);
+        /* 🔴 2026-11-12 S-2：备份落盘后 fsync。
+         *   备份是回滚的唯一凭据，没落盘就等于没备份。 */
+        const bfd = fs.openSync(backupPath, 'w');
+        let backupCommitted = false;
+        try {
+          writeAllAndFsyncSync(bfd, originalBytes);
+          backupCommitted = true;
+        } finally {
+          fs.closeSync(bfd);
+          if (!backupCommitted) {
+            try { fs.unlinkSync(backupPath); } catch { /* 清理失败不掩盖原错误 */ }
+          }
+        }
       } else {
         // 内存模式：原字节留在内存里，回滚时直接用（无跨进程恢复能力，这是有意的取舍）。
         originalBytesInMemory = originalBytes;

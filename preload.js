@@ -160,7 +160,14 @@ contextBridge.exposeInMainWorld('deskpet', {
     getPendingProposal: (proposalId) => ipcRenderer.invoke('agent:get-pending-proposal', { proposalId }),
     // 🔴 SEC-01：受保护的可信待写入正文查询（按 proposalId 按需拉取，纯文本展示）。
     getProposalContent: (proposalId) => ipcRenderer.invoke('agent:get-proposal-content', { proposalId }),
-    onProposalAvailable: (cb) => ipcRenderer.on('agent-proposal-available', (e, p) => cb(p))
+    // ⚠️ D-19：`agent-proposal-available` 保留监听但**主进程已不再发送** ——
+    //   那个事件名在 D-19 被判定为语义歧义（「已执行完」与「待你决定」共用过它）。
+    //   留着这行是为了兼容旧版本残留的渲染端调用点，新代码一律用下面的 pending。
+    onProposalAvailable: (cb) => ipcRenderer.on('agent-proposal-available', (e, p) => cb(p)),
+    // 🔴 D-27：**待决提案**的专用信号 —— 只表示「有一份提案等你决定」，
+    //   与「已执行完」严格分开（D-19 的语义铁律）。
+    //   ⚠️ 同样只带 proposalId：渲染端必须回查 get-pending-proposal 的冻结快照。
+    onProposalPending: (cb) => ipcRenderer.on('agent-proposal-pending', (e, p) => cb(p))
   },
 
   // 实验观测与可复盘工具链 (v0.9.5)
