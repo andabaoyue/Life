@@ -54,6 +54,7 @@
         <div class="panel-nav">
           <div class="pnav-item on" data-sec="conn" id="secConn">连接</div>
           <div class="pnav-item" data-sec="memory" id="secMemory">记忆</div>
+          <div class="pnav-item" data-sec="tickets" id="secTickets">未完事项</div>
           <div class="pnav-item" data-sec="voice" id="secVoice">语音</div>
           <div class="pnav-item" data-sec="timezone" id="secTimezone">时区</div>
           <div class="pnav-item danger" data-sec="danger" id="secDanger">危险区</div>
@@ -166,6 +167,12 @@
           <div class="psec" data-sec="memory">
             <div class="p-title" id="memTitle">我的记忆</div>
             <div id="memList" class="memlist">—</div>
+          </div>
+
+          <!-- ③a 未完事项（v2.0-b2-a：纯只读观察，遵循 D-005 主体性铁律） -->
+          <div class="psec" data-sec="tickets">
+            <div class="p-title" id="ticketsTitle">未完事项</div>
+            <div id="ticketList" class="memlist">—</div>
           </div>
 
           <!-- ③b 时区（v1.0 拆分） -->

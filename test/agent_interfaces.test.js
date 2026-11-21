@@ -236,6 +236,22 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
     const s = b.state();
     return s.remainingActions === 3 && s.remainingWrites === 1 && s.actions === 2 && s.writes === 1;
   })());
+  check('C3 opts.free=true 只读豁免不消耗 actions 且仍重置连续错误计数', (() => {
+    const b = new ExecutionBudget({ maxActionsPerSession: 2, maxWritesPerSession: 5, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
+    b.recordError();
+    const ok1 = b.consume(false, Date.now(), { free: true });
+    const ok2 = b.consume(false, Date.now(), { free: true });
+    const ok3 = b.consume(false, Date.now(), { free: true });
+    const s = b.state();
+    return ok1 === true && ok2 === true && ok3 === true
+      && s.actions === 0 && s.remainingActions === 2 && s.consecutiveErrors === 0 && s.tripped === false;
+  })());
+  check('C3 已熔断后即使 opts.free=true 也必须拦截放行', (() => {
+    const b = new ExecutionBudget({ maxActionsPerSession: 1, maxWritesPerSession: 5, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
+    b.consume(false);
+    b.consume(false); // 触发 max_actions_exceeded 熔断
+    return b.state().tripped === true && b.consume(false, Date.now(), { free: true }) === false;
+  })());
 
   /* ===== ④ AuditLog 落盘（append-only）===== */
   check('C4 审计落盘后可从磁盘回读（重启不丢）', (() => {

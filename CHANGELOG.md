@@ -5,6 +5,38 @@
 
 ---
 
+## [2.0.0] - 2026-11-21
+
+> **相比上一个公开版本 v1.9.0**，本版完成了 Agent 底座架构升级、沙盒感官与结构操作层开放、自留便签渐褪演化、只读未完事项生命周期，并彻底打通了卡滞多日的关窗铸造与正常对话过载死锁问题。以下按功能线归纳，不逐笔罗列提交。
+
+### 🧭 架构底座收口（v2.0-a）
+
+- **能力元数据加法式收口**：`CAPABILITY_META` 新增冻结只读开关（`enforcesWriteExtension` / `requiresContentSnapshot` / `checksOverwrite`），`agent-ipc.js` 判定改为「既有行为当下限 + 冻结元数据只追加」，篡改或动态注册能力均无法跳过五道安全闸门。
+- **统一决策路由（`src/agent-router.js`）**：接管对话收尾（`turn_chat`）、挂机自发（`proactive_idle`）、关窗轮转（`window_closed`）三类事件，L1 物理沙盒门禁无副作用短路；`brain._pendingAgentIntent` 全仓收敛为单点消费并置空，消除旧「巧合安全」。
+- **S-3 运行时降级告知**：沙盒不可用状态 `agentSandboxUnavailable` 提升至模块顶层防 TDZ，并在当轮动态尾部（`dynamicBody`）客观告知落盘不可用，守住 `systemText()` 前缀缓存不变式。
+
+### 📂 沙盒感官、结构操作与便签渐褪（v2.0-s1 & s2）
+
+- **只读感官接线（`workspace.list` / `workspace.read`）**：非递归列举桌面 `LifeSandbox/` 顶层文件名/大小/时间（零绝对路径）；独立读扩展白名单（含 `.tsv` 与 `README`/`LICENSE` 等无扩展名纯文本与二进制探测），读结果严格进入独立只读槽位（2000 字截断、一次性消费、零污染 `selfNotes` 与 `systemText()`）。
+- **受控结构操作与观察档补读（`workspace.mkdir` / `move` / `remove`）**：开放子目录创建、安全移动（`src/dst` 双端 `realpath` + 沙盒前缀 + 防覆盖/防自移动/防 junction 逃逸）与删除（`remove` 永禁免确认旁路，每次必走 Gate 4 确认）；`workspace.read` 补齐 `observe → auto` 期满补读回声。
+- **自留便签三阶渐褪**：接通 `ACTIVE / FADING / DORMANT` 动力学强度演化，休眠仅移出眼前、零物理删除并保留 D-24 铸造资格；按最低强度淘汰且严格豁免 `drained === false` 未读便签；支持 `reactivateByContext` 线索唤醒。
+
+### 📋 未完事项与主体性红线（v2.0-b ~ b3）
+
+- **Ticket 三态生命周期与 IPC**：新增 `src/agent-lifecycle.js`（`open ⇄ paused → ended`，原子写至 `%APPDATA%\Life\agent-tickets.json`，尾部最多注入 3 条活跃摘要、单条 ≤ 80 字，不进 `history` 与 `systemText()`）；扩展 `agent-ipc.js` 通道至 12 条。
+- **D-005 纯只读面板与零猜测生产者**：设置面板「未完事项」tab 严守主体性铁律改为纯只读观察，移除渲染端新建/改态入口；拆除会诱导奖赏黑客与误判意愿的关键词正则，上线 `test/v20b3-no-regex-guess.test.js` 静态门禁拦截「自然语言正则建单」模式；仅保留关窗时对同会话超时未决用户写入提案的客观转单生产者（`capability / user / lookup / consumed / TTL` 五重核验替代冻结的 `status === 'proposed'`，以 `scope` basename 落入 `paused`）。
+
+### 🔧 关键修复与数值校准（v2.0-b2-a & b4）
+
+- **关窗非流式思考链修复**：`deepseek.js` 非流式 `complete()` 显式传入 `thinking: { type: 'disabled' }` 对齐 `stream()`，修复满 100 轮关窗小结因思维链耗尽 10000 tokens 截断导致长期停留在第 6 窗的问题；实机已验证第 6 窗（101 轮）成功结算进入第 7 窗并真实铸入 8 条 `self_note` 经历至 `experiences.jsonl`。
+- **交互密度与认知负荷衰减校准**：`InternalRegulationManager` 补齐 ≥ 12s 对话间隔平滑衰减与冷启动时间戳回退，并将衰减系数从 `5/10` 校准为 `8/16`，消除 15s 典型思考间隔聊满 60 轮撞上 ≥ 60 过载线的死锁，同时保持 < 12s 刷屏 `+5` 惩罚不变；新增 5 项单调性、60 轮行为及源码变异判别力断言。
+
+### 🧪 门禁扩展
+
+- 已编号门禁扩展至 **145 个套件 / 5320 项断言**（含 `v20a`、`v20s`、`v20s2`、`v20b`、`v20b2`、`v20b3` 及新增 `internal-regulation` 数值门禁），全部通过。
+
+---
+
 ## [1.9.0] - 2026-11-12
 
 > **相比上一个公开版本 v1.8.0**，本版打通受托落档（D-27 通路 B）、补齐自发能力的观察档与动作史闭环、

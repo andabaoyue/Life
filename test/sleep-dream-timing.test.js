@@ -334,10 +334,11 @@ function mkReg(dir) {
     /ORPHAN_SLEEP_STATE_SELF_HEALED/.test(regSrc));
 }
 
-// ============ 14. 回话腰斩：思维链不得吞掉台词配额（v3.1 修复）============
+// ============ 14. 回话腰斩：思维链不得吞掉台词配额（v3.1 修复；v2.0-b2-a 补齐 complete()）============
 {
   const ds = fs.readFileSync(path.join(__dirname, '..', 'src', 'deepseek.js'), 'utf8');
-  check('deepseek.js 显式关闭服务端思维链', /thinking:\s*\{\s*type:\s*'disabled'\s*\}/.test(ds));
+  check('deepseek.js complete 与 stream 均显式关闭服务端思维链',
+    (ds.match(/thinking:\s*\{\s*type:\s*'disabled'\s*\}/g) || []).length >= 2);
   check('日常对话默认 max_tokens 已放宽（600 → 1200）',
     /max_tokens:\s*opts\.maxTokens\s*\?\?\s*1200/.test(ds));
   check('不再残留 600 的日常对话上限',

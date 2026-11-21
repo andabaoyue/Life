@@ -152,6 +152,9 @@ contextBridge.exposeInMainWorld('deskpet', {
       content: payload && payload.content
     }),
     getAuditLog: (opts) => ipcRenderer.invoke('agent:get-audit-log', opts || {}),
+    // v2.0-b2-a：Ticket 面板遵循 D-005 主体性只读观察铁律，渲染端仅可只读查询列表，
+    // 严禁从设置面板手动新建或篡改她的未完事项（创建与状态流转全由主进程对话与主体决策驱动）。
+    ticketList: () => ipcRenderer.invoke('agent:ticket-list'),
 
     // D-10：主进程建案后通知渲染端「去取提案快照」。
     //   ⚠️ 信号里**只有 proposalId**，不含提案对象本身 ——

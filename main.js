@@ -30,8 +30,11 @@ const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = requ
 // D-4：写事务管理器（D-2 实现，D-4 起才真正被Agent 执行器用到）。
 const { WriteTransactionManager } = require('./src/agent-transaction');
 // D-5：沙盒目录定位与确保（创建失败即拒，绝不静默降级）。
-const { sandboxPathFor, ensureSandboxDir } = require('./src/agent-sandbox');
+const { sandboxPathFor, ensureSandboxDir, listSandboxTopLevel, runPreChatSandboxRead } = require('./src/agent-sandbox');
+const { evaluateTrigger } = require('./src/agent-trigger');
 const { UserConfirmationGate } = require('./src/agent-confirmation');
+// v2.0-a：Agent 统一决策入口（Router：单一消费约束、统一事件分派、L1 沙盒门禁）
+const agentRouter = require('./src/agent-router');
 
 /* brain 是会被重建的（config-set-key 换 key 时新造一个），所以每样依赖的注入
    都收在这一个函数里。以前只有 wardrobe 在这里绑，tracker 若另处再绑一次，
@@ -92,6 +95,21 @@ let motion = null;
 let assetReport = null;
 let proactiveTimer = null;
 let powerMonitorSource = null;
+// v2.0-a（S-3）：从 app.whenReady 块级作用域提升至模块顶层，供 Router L1 与 brain.ask 读取，避免 TDZ
+let agentSandboxUnavailable = null;
+
+function routeAgentEvent(event) {
+  const deps = agentBuildDeps || {};
+  return agentRouter.handleEvent(event, {
+    agentSandbox: deps.agentSandbox || null,
+    sandboxUnavailable: agentSandboxUnavailable || deps.sandboxUnavailable || null,
+    handlers: {
+      tryBuildProposalFromIntent,
+      maybeAskForSelfNote,
+      maybeAskForObserverJournal,
+    },
+  });
+}
 // 🔴 D-7：主动搭话的审计出口。
 //   必须在**模块顶层**声明，不能直接用 app.whenReady() 里的 agentAuditLog：
 //   那是个块级 const，而 proactive-declined 的处理器是模块顶层的闭包，
@@ -279,6 +297,28 @@ function buildSandboxScope(rawHint, sandboxDir) {
   return { scope: path.join(sandboxDir, name), name: name };
 }
 
+/**
+ * v2.0-s1：构造只读提案的沙盒文件路径（独立于写路径，不做 `.md` 强改扩展名，保留原名供无扩展名文本探测与 .tsv 读取）。
+ * @param {string} rawHint 从用户消息提取的文件名
+ * @param {string} sandboxDir 沙盒绝对路径
+ * @returns {?{scope:string, name:string}}
+ */
+function buildReadSandboxScope(rawHint, sandboxDir) {
+  if (typeof sandboxDir !== 'string' || !sandboxDir) return null;
+  const h = String(rawHint == null ? '' : rawHint).trim();
+  if (!h) return null;
+  if (path.isAbsolute(h)) return null;
+  if (/[\\/]/.test(h)) return null;
+  if (h === '.' || h === '..') return null;
+  if (/\.\./.test(h)) return null;
+  if (h.length > 200) return null;
+  if (h.includes(':') || h.endsWith('.') || h.endsWith(' ')) return null;
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(h.split('.')[0])) return null;
+  const name = path.basename(h);
+  if (!name || name.charAt(0) === '.') return null;
+  return { scope: path.join(sandboxDir, name), name };
+}
+
 async function tryBuildProposalFromIntent() {
   try {
     const deps = agentBuildDeps;
@@ -405,8 +445,9 @@ function maybeAskForSelfNote(selfIntent) {
     if (!deps || !deps.agentSandbox) return;
     // 🔴 D-15 修断点 3（反重力复核发现）：原来读 brain._pendingAgentIntent，
     //   但 wantToLeaveSomething 存在 trigger.selfIntent 里，两者从未接线 ⇒ intent 恒 null。
-    //   现在由调用方传入 trigger.selfIntent（自发愿望路径），不再依赖 evaluateTrigger。
-    const intent = selfIntent || (brain && brain._pendingAgentIntent);
+    //   v2.0-a：彻底取消回落读 brain._pendingAgentIntent，只接收调用方显式传入的 selfIntent，
+    //   使 _pendingAgentIntent 在全仓严格保持「单点读取+清空」（仅 tryBuildProposalFromIntent）。
+    const intent = selfIntent;
     if (!intent || intent.kind !== 'wantToLeaveSomething') return;
 
     /* 🔴 v1.9.0-dev（初澜 2.0 第 1 步）：观察档前置拦截。
@@ -719,6 +760,39 @@ function takeStashedContent(proposalId) {
   const v = pendingSelfNoteContent.get(id);
   pendingSelfNoteContent.delete(id);
   return v;
+}
+
+/**
+ * v2.0-b3：唯一零猜测的 Ticket 自动生产者 —— 关窗时读取系统客观状态：
+ * 将本会话内已超时（> SNAPSHOT_TTL_MS）且仍未被确认或消费的用户写入提案转为 Ticket。
+ * 绝不读取任何自然语言文本；标题取自提案 scope 的 basename。
+ */
+function syncExpiredProposalsToTickets(now = Date.now()) {
+  try {
+    const deps = agentBuildDeps;
+    if (!deps || !deps.agentIpc || typeof deps.agentIpc.drainExpiredPendingWriteProposals !== 'function') return [];
+    if (!brain || !brain.ticketStore || typeof brain.ticketStore.createTicket !== 'function') return [];
+    const expired = deps.agentIpc.drainExpiredPendingWriteProposals(now);
+    if (!Array.isArray(expired) || expired.length === 0) return [];
+    const winNo = (brain.memory && brain.memory.data && Number.isFinite(brain.memory.data.windowNo))
+      ? brain.memory.data.windowNo
+      : 1;
+    const created = [];
+    for (const item of expired) {
+      if (!item || !item.name) continue;
+      const res = brain.ticketStore.createTicket({
+        title: item.name,
+        state: 'paused',
+        capability: 'workspace.write',
+        note: '有一份没落的稿子，搁在那儿',
+        windowNo: winNo,
+      });
+      if (res && res.ok && res.ticket) created.push(res.ticket);
+    }
+    return created;
+  } catch {
+    return [];
+  }
 }
 
 const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
@@ -1220,6 +1294,60 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
   syncMotionBlock('chat');
   brain.abort();
   try {
+    // v2.0-s1 & v2.0-s2：只读感官前置执行（接入 getCapabilityMode 观察档三档）
+    //   - workspace.list：auto 时获取顶层清单；observe 时仅记一次观察记录（防 20 轮队列挤占）；off 时跳过
+    //   - workspace.read：委托 runPreChatSandboxRead 按 off / observe / auto 分流；
+    //     observe 只记账不读盘不塞正文，严禁在此写入 brain._pendingAgentIntent 或发起写入提案
+    let sandboxList = undefined;
+    if (typeof brain.setPendingSandboxRead === 'function') brain.setPendingSandboxRead(null);
+    const activeSandboxDir = agentBuildDeps && agentBuildDeps.agentSandbox;
+    if (!agentSandboxUnavailable && activeSandboxDir) {
+      if (typeof brain.refreshConfig === 'function') brain.refreshConfig();
+      const activeCfg = (brain && brain.cfg) || load();
+      const listMode = getCapabilityMode(activeCfg, 'workspace.list');
+      if (listMode === 'auto') {
+        sandboxList = listSandboxTopLevel(activeSandboxDir);
+      } else if (listMode === 'observe') {
+        try {
+          const mem = brain && brain.memory;
+          if (mem) {
+            if (typeof mem.markObserveEpoch === 'function') mem.markObserveEpoch('workspace.list', 'in');
+            const alreadyNoted = mem.data && Array.isArray(mem.data.observedNotes)
+              && mem.data.observedNotes.some((n) => n && n.capability === 'workspace.list');
+            if (!alreadyNoted && typeof mem.noteObserved === 'function') {
+              mem.noteObserved('workspace.list');
+            }
+          }
+          if (agentBuildDeps.observationLog && typeof agentBuildDeps.observationLog.append === 'function') {
+            agentBuildDeps.observationLog.append({
+              capability: 'workspace.list',
+              intentKind: 'workspace.list',
+              proposalSource: 'readOnly',
+              content: '请求查看沙盒顶层清单（observe 档未列出）',
+            });
+          }
+        } catch { /* 观察记账异常绝不能阻断对话 */ }
+      }
+      const readMode = getCapabilityMode(activeCfg, 'workspace.read');
+      if (readMode !== 'off' && !proactive && agentBuildDeps.agentIpc && typeof brain.setPendingSandboxRead === 'function') {
+        try {
+          runPreChatSandboxRead({
+            text,
+            proactive: false,
+            cfg: activeCfg,
+            brain,
+            agentIpc: agentBuildDeps.agentIpc,
+            sandboxDir: activeSandboxDir,
+            observationLog: agentBuildDeps.observationLog,
+            evaluateTrigger,
+            buildReadScope: buildReadSandboxScope,
+            getCapabilityMode,
+          });
+        } catch (readErr) {
+          console.warn('[AgentRead] 只读感官前置读取跳过:', readErr && readErr.message);
+        }
+      }
+    }
     const res = await brain.ask(offer ? offer.reason : text, (delta) => {
       broadcastToWindows('chat-delta', delta);   // 流式增量：她身边与对话窗都要听得见
     }, { proactive, proactiveHint: offer && offer.hint,
@@ -1227,7 +1355,11 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
          //   ⚠️ 不做类型/内容校验：brain 那一侧有类型守卫
          //   （见 brain.js 的 selfIntent 三条边界），两处各做一遍判定迟早漂移。
          //   这里刻意**只传**，不加工 —— 加工过的东西会让人误以为主进程保证过。
-         selfIntent: offer && offer.selfIntent });
+         selfIntent: offer && offer.selfIntent,
+         // v2.0-s1：沙盒顶层清单直传（零执行预算消耗），unavailable 时略过
+         sandboxList,
+         // v2.0-a（S-3）：仅沙盒初始化失败时通过动态后缀告知她落盘已关闭，不碰 system 前缀缓存
+         sandboxUnavailable: Boolean(agentSandboxUnavailable) });
     // 主动搭话真的说出口了才记账；被渲染端礼貌闸门拦下时压根不会走到这
     if (proactive && trigger) trigger.commit(offer);
     // 🔴 D-25：好奇问题真的问出口了才打 asked 标记（同 commit 语义：说了才算）。
@@ -1243,7 +1375,11 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     // v0.9.9 意志层：关窗后特质可能演进，刷新主动性权重（只动权重，不动闸门）
     if (res.windowClosed && trigger && brain && brain.subjectState) trigger.updateTraits(brain.subjectState.values);
     // 🔴 v1.4-b：关窗轮转时刻触发生活观察日记（沙盒通路 B）
-    if (res.windowClosed) maybeAskForObserverJournal(res);
+    // v2.0-a：由 agentRouter 统一接管分派与 L1 沙盒门禁
+    if (res.windowClosed) {
+      routeAgentEvent({ kind: 'window_closed', windowCloseRes: res });
+      syncExpiredProposalsToTickets();
+    }
     // 🔴 v1.0 她说完了 → 通知对话窗重新对账。
     //
     //   ## 为什么必须在这里通知，而不是靠对话窗自己刷新
@@ -1282,35 +1418,32 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     //     让用户为「她要不要落档」再等一次往返是没道理的开销。
     //     `_pendingAgentIntent` 在被调用后**同步段内就已置空**（消费即清空），
     //     所以这里 void 起 promise 不会导致同一意图被二次消费。
-    //   🔴 D-27 复核更正（原文写错了）：原注释说「两者读的是不同的意图字段，
-    //     先后无耦合」——**那句话是错的**。看下面第 1055 行：
-    //        else maybeAskForSelfNote(brain && brain._pendingAgentIntent);
-    //     非 proactive 分支读的**正是** `brain._pendingAgentIntent`，
-    //     与上面这行 `void tryBuildProposalFromIntent()` 是**同一个字段**。
-    //   ✅ 当前不会出问题，但不是因为"无关"，而是因为两个理由：
-    //     ① `tryBuildProposalFromIntent` 在**第一次 await 之前**就把该字段置空了，
-    //        所以轮到 maybeAskForSelfNote 时读到的必然是 null；
-    //     ② agent-intent 产出的对象**没有 `kind` 字段**，而 maybeAskForSelfNote
-    //        开头就 `intent.kind !== 'wantToLeaveSomething'` 直接 return。
-    //   两条中任意一条失效，就会出现「同一意图被两条通路各消费一次」。
-    //   ⚠️ 将来若给 agent-intent 的产出加上 `kind: 'wantToLeaveSomething'`，
-    //      这里的"巧合安全"立刻失效 —— 那时必须显式改掉这条调用。
-    void tryBuildProposalFromIntent();
+    //   🔴 D-27 复核更正（**历史记录，v2.0-a 起已失效，保留供追溯**）：
+    //     当时原注释说「两者读的是不同的意图字段，先后无耦合」——**那句话是错的**。
+    //     当时的实情：非 proactive 分支读的**正是** `brain._pendingAgentIntent`
+    //     （旧代码：`else maybeAskForSelfNote(brain && brain._pendingAgentIntent);`），
+    //     与通路 B 是**同一个字段**。当时不出问题只靠两个巧合：
+    //     ① `tryBuildProposalFromIntent` 在**第一次 await 之前**就把该字段置空了；
+    //     ② agent-intent 产出的对象**没有 `kind` 字段**，maybeAskForSelfNote 开头就 return。
+    //   ⚠️ 当时就写明：将来若给 agent-intent 加上 `kind: 'wantToLeaveSomething'`，
+    //      「巧合安全」立刻失效 —— 那时**必须显式改掉这条调用**。
+    //   ✅ v2.0-a 已按这条预警显式改掉：两条通路统一交给 agentRouter 分派，
+    //      且 maybeAskForSelfNote 已彻底取消对 `brain._pendingAgentIntent` 的回落读取
+    //      （全仓仅 tryBuildProposalFromIntent 单点读取+置空）。巧合不再是安全依据。
 
-    // 🔴 D-11：如果她想留下点什么（静默 ≥120 分钟才会成立），追一次专门调用。
-    //
-    //   ⚠️ 三个刻意选择：
-    //     1. **不 await**（`void` 起一个独立 promise）—— 她这句话已经说完了，
-    //        留下东西是旁路，绝不能让用户多等一次 LLM 往返。
-    //     2. **只在 wantToLeaveSomething 时跑**。这个意图的阈值（120 分钟）
-    //        远高于 idleness 两档，所以绝大部分主动搭话根本不会走到这里。
-    //     3. **失败静默**。她说不出、不想留、调用出错 —— 都是 null，不建案。
+    // 🔴 D-11 / D-15（原位于本处；v2.0-a 起调用点迁进 src/agent-router.js 的 turn_chat 分支）：
+    //   若她想留下点什么（静默 ≥120 分钟才成立），追一次专门调用。三个刻意选择：
+    //     1. **不 await**（`void` 起独立 promise）—— 她这句话已经说完了，
+    //        留下东西是旁路，绝不能让用户多等一次 LLM 往返；
+    //     2. **只在 wantToLeaveSomething 时跑** —— 这个意图的阈值（120 分钟）
+    //        远高于 idleness 两档，所以绝大部分主动搭话根本不会走到这里；
+    //     3. **失败静默** —— 她说不出、不想留、调用出错都是 null，不建案。
     //        「她说不想留」是**合法结果**，不是错误（见 brain.askForSelfNote 判据 1）。
-    // 🔴 D-15 修断点 2（反重力复核发现）：原来 if (!proactive)，
-    //   把自发愿望完全排除在外（proactive=true 才是她主动开口）。
-    //   现在：proactive 时传 trigger.selfIntent；用户发消息时传 _pendingAgentIntent。
-    if (proactive) maybeAskForSelfNote(trigger && trigger.selfIntent);
-    else maybeAskForSelfNote(brain && brain._pendingAgentIntent);
+    //   D-15 修断点 2：原来 `if (!proactive)` 把自发愿望整个排除在外
+    //     （proactive=true 才是她主动开口）；现在 proactive 时传 trigger.selfIntent，
+    //     用户发消息时**不再**回落到 _pendingAgentIntent（v2.0-a 收敛为单点消费）。
+    if (proactive) routeAgentEvent({ kind: 'proactive_idle', trigger });
+    else routeAgentEvent({ kind: 'turn_chat' });
 
     return { ok: true, text: res.text, state: res.state,
              wears: res.wears, wearNote: res.wearNote,
@@ -2671,7 +2804,7 @@ app.whenReady().then(() => {
     const mem = brain && brain.memory;
     if (mem && typeof mem.markObserveEpoch === 'function') {
       const epochs = (mem.data && mem.data.observeEpoch) || {};
-      for (const cap of ['selfNote', 'observerJournal']) {
+      for (const cap of ['selfNote', 'observerJournal', 'workspace.read', 'workspace.list']) {
         const ep = epochs[cap];
         if (!ep || typeof ep !== 'object') continue;
         if (!Number.isFinite(ep.enteredAt)) continue;   // ① 从没观察过
@@ -2756,26 +2889,35 @@ app.whenReady().then(() => {
    *     供 UI/诊断读取（本单只落变量，不接 UI）。
    */
   let agentSandbox = null;
-  let agentSandboxUnavailable = null;
+  agentSandboxUnavailable = null;
   try {
     agentSandbox = ensureSandboxDir(sandboxPathFor(app.getPath('desktop')));
   } catch (err) {
     agentSandboxUnavailable = String((err && err.code) || (err && err.message) || 'UNKNOWN');
     console.error('[Agent] 沙盒不可用，Agent 写能力已降级关闭:', agentSandboxUnavailable);
     // 🔴 注意：此时 persona.js:32 的沙盒描述暂时不成立
-    //   （原文「你可以在那里留下文字，程序会替你把字写进去」——她以为写得了，实际已降级关闭），
-    //   下次开工需要一条运行时告知通道（如注入一行「沙盒暂时不可用」）。
-    //   ⚠️ 届时需把 agentSandboxUnavailable 提升出 app.whenReady 块级作用域
-    //      （参考 proactiveAuditLog 的 TDZ 教训，见本文件 :95-100）。
+    //   （原文「你可以在那里留下文字，程序会替你把字写进去」——她以为写得了，实际已降级关闭）。
+    // ✅ v2.0-a 已补上运行时告知通道（本段原写「下次开工需要」，现已落地）：
+    //   ① `agentSandboxUnavailable` 已提升至模块顶层（本文件 :98，避开 TDZ，参照 proactiveAuditLog 的教训）；
+    //   ② `chat-send` 以 `sandboxUnavailable` 传入 `brain.ask`，仅在为真时于
+    //      `src/brain.js` 的 `dynamicBody` 末尾追加一行覆盖 persona 的环境事实，不进 systemText、不入 history；
+    //   ③ 同时经 agentRouter 的 L1 沙盒门禁短路，降级期零拟稿 LLM 调用。
   }
   const agentPolicy = new PermissionPolicy({
     killSwitch: false,
-    allowed: ['workspace.read', 'workspace.write'],
+    allowed: [
+      'workspace.read', 'workspace.list', 'workspace.write',
+      'workspace.mkdir', 'workspace.move', 'workspace.remove',
+    ],
   });
   // scopeRoots 只配沙盒根：**绝不配整个桌面或整个 userData** ——
-  //   那样一旦有一条路径判错，越界写入的范围就是用户的全部文件。
+  //   那样一旦有一条路径判错，越界写入/结构操作的范围就是用户的全部文件。
   agentPolicy.setScopeRoots('workspace.read', [agentSandbox]);
+  agentPolicy.setScopeRoots('workspace.list', [agentSandbox]);
   agentPolicy.setScopeRoots('workspace.write', [agentSandbox]);
+  agentPolicy.setScopeRoots('workspace.mkdir', [agentSandbox]);
+  agentPolicy.setScopeRoots('workspace.move', [agentSandbox]);
+  agentPolicy.setScopeRoots('workspace.remove', [agentSandbox]);
   if (agentSandbox) console.log('[Agent] 沙盒已启用:', agentSandbox);
   const agentBudget = new ExecutionBudget();
   const agentAuditLog = new AuditLog({ dir: app.getPath('userData') });
@@ -2826,6 +2968,8 @@ app.whenReady().then(() => {
     try {
       if (!brain || !brain.memory || typeof brain.memory.addSelfNote !== 'function') return;
       if (!info || typeof info.content !== 'string' || !info.content.trim()) return;
+      // 🔴 v2.0-s1：读文件与列目录属于只读感官结果，绝不进入 selfNotes（否则外部拖入文件会被当成「她自己写下过」）。
+      if (info.proposalSource === 'readOnly' || (info.capability && info.capability !== 'workspace.write')) return;
       // 🔴 D-24：来源戳一并登记（'selfNote' = 她自发写下的字，将来才可能铸进她的自传）
       const ok = brain.memory.addSelfNote({ content: info.content, name: info.name, source: info.proposalSource });
       if (ok) console.log('[Agent] 她写过的东西已登记，下次开口时她读得到:', String(info.name || '').slice(0, 60));
@@ -2875,6 +3019,10 @@ app.whenReady().then(() => {
       if (!it || typeof it !== 'object' || !Array.isArray(it.sources) || !it.sources.length) return null;
       return { sources: it.sources, kind: typeof it.kind === 'string' ? it.kind : null };
     },
+    // v2.0-b2：注入唯一 TicketStore 实例与主进程当前 windowNo（不在 agent-ipc 内 new 第二份实例）
+    ticketStore: brain && brain.ticketStore ? brain.ticketStore : null,
+    getWindowNo: () => (brain && brain.memory && brain.memory.data
+      && Number.isFinite(brain.memory.data.windowNo)) ? brain.memory.data.windowNo : 1,
   });
 
   /* ────────────────────────────────────────────────────────────────
@@ -2914,7 +3062,8 @@ app.whenReady().then(() => {
   //   为什么放在 deps 里而不是模块顶层 new：它需要 app.getPath('userData')，
   //   那个在 whenReady 之前不可靠（实测无头环境会抛）。
   agentBuildDeps = {
-    agentIpc, agentSandbox, broadcastToWindows, agentBudget, takeStashedContent,
+    agentIpc, agentSandbox, sandboxUnavailable: agentSandboxUnavailable,
+    broadcastToWindows, agentBudget, takeStashedContent,
     observationLog: new ObservationLog({ dir: app.getPath('userData') }),
   };
 

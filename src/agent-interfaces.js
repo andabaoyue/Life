@@ -37,7 +37,16 @@ function newProposalId() {
   return `proposal-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-const CAPABILITIES = Object.freeze(['workspace.read', 'workspace.write', 'process.execute', 'network.request']);
+const CAPABILITIES = Object.freeze([
+  'workspace.read',
+  'workspace.list',
+  'workspace.write',
+  'workspace.mkdir',
+  'workspace.move',
+  'workspace.remove',
+  'process.execute',
+  'network.request',
+]);
 
 /**
  * 判断一个字符串是否**明显是文件路径**而非命令。
@@ -86,17 +95,58 @@ const CAPABILITY_META = Object.freeze({
     dangerLevel: 'low',
     requiresConfirm: true,
     scopeKind: 'path',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
+  }),
+  'workspace.list': Object.freeze({
+    dangerLevel: 'low',
+    requiresConfirm: false,
+    scopeKind: 'path',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
   }),
   'workspace.write': Object.freeze({
     dangerLevel: 'high',
     requiresConfirm: true,
     scopeKind: 'path',
     transactional: true,   // 写操作必须可回滚，见B 阶段文档 §3.6
+    enforcesWriteExtension: true,   // v2.0-a：触发写扩展名白名单与畸形路径前检
+    requiresContentSnapshot: true,  // v2.0-a：触发 SEC-01 权威正文快照绑定
+    checksOverwrite: true,          // v2.0-a：触发确认阶段覆盖检测
+  }),
+  'workspace.mkdir': Object.freeze({
+    dangerLevel: 'low',
+    requiresConfirm: false,         // v2.0-s2：可逆建子目录，走 readOnly 同款免确认旁路
+    scopeKind: 'path',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
+  }),
+  'workspace.move': Object.freeze({
+    dangerLevel: 'medium',
+    requiresConfirm: true,          // v2.0-s2：沙盒内移动/重命名需确认（暂不接 Mandate）
+    scopeKind: 'path',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
+  }),
+  'workspace.remove': Object.freeze({
+    dangerLevel: 'high',
+    requiresConfirm: true,          // v2.0-s2：不可逆删除，必须每次经第四道确认且永久禁免确认
+    scopeKind: 'path',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
   }),
   'process.execute': Object.freeze({
     dangerLevel: 'critical',
     requiresConfirm: true,
     scopeKind: 'command',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
   }),
   'network.request': Object.freeze({
     dangerLevel: 'forbidden',
@@ -104,6 +154,9 @@ const CAPABILITY_META = Object.freeze({
     scopeKind: 'none',
     hardDenied: true,
     hardDenyReason: 'C 阶段硬裁定：人格无法验证网络真伪，联网即触发 persona.js 反表演红线',
+    enforcesWriteExtension: false,
+    requiresContentSnapshot: false,
+    checksOverwrite: false,
   }),
 });
 
@@ -315,18 +368,21 @@ class ExecutionBudget {
   /**
    * 申请一次动作配额。返回 { allowed, reason }。
    * @param {boolean} isWrite 是否写动作（写动作走更严的独立上限）
+   * @param {number} [now] 当前时间戳
+   * @param {{ free?: boolean }} [opts] 可选配置；free=true 表示只读免扣 actions（仍受 tripped 熔断约束且成功可重置 consecutiveErrors）
    * @returns {boolean} true=放行；false=已熔断，调用方**必须停止**且不得重试
    */
-  consume(isWrite = false, now = Date.now()) {
+  consume(isWrite = false, now = Date.now(), opts = {}) {
     if (this.tripped) return false;
+    const isFree = Boolean(opts && opts.free);
     // 🔴 P0-2: 会话常驻不再受进程启动时间熔断；maxWallClockMs 语义回归「单次提案端到端时限」，由执行器执行期校验
-    if (this.actions + 1 > this.limits.maxActionsPerSession) {
+    if (!isFree && this.actions + 1 > this.limits.maxActionsPerSession) {
       return this._trip('max_actions_exceeded');
     }
     if (isWrite && this.writes + 1 > this.limits.maxWritesPerSession) {
       return this._trip('max_writes_exceeded');
     }
-    this.actions += 1;
+    if (!isFree) this.actions += 1;
     if (isWrite) this.writes += 1;
     // 成功动作重置连续错误计数
     this.consecutiveErrors = 0;
@@ -465,11 +521,12 @@ function normalizeIntentMotive(motive) {
  *   `input.intentSources` / `input.intentKind` / `input.intentOrigin` 一律被忽略。
  * @returns 冻结的提案对象
  */
-/** 🔴 D-17 & v1.4-b：提案来源白名单。只有这三个值合法，其余一律回落 'user'（fail-closed）。
+/** 🔴 D-17 & v1.4-b & v2.0-s1：提案来源白名单。只有这四个值合法，其余一律回落 'user'（fail-closed）。
  *   'user'            —— 用户让她写：保留第五道闸门（D-3 原则不动）
  *   'selfNote'        —— 她自己想留的便签：免逐次确认（沙盒/格式/长度/预算四道硬约束仍在）
- *   'observerJournal' —— 她自主沉淀的观察日记（v1.4-b）：免逐次确认（同沙盒四道硬约束） */
-const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote', 'observerJournal']);
+ *   'observerJournal' —— 她自主沉淀的观察日记（v1.4-b）：免逐次确认（同沙盒四道硬约束）
+ *   'readOnly'        —— v2.0-s1 主进程只读感官建案：免确认读取/列目录（执行器硬绑定 !isWrite 且能力限于 READ_ONLY_EXEMPT_CAPABILITIES） */
+const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote', 'observerJournal', 'readOnly']);
 
 /**
  * @param {object} input **来自渲染端的不可信输入**，只取白名单字段。
@@ -495,6 +552,18 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
     id: newProposalId(),
     capability: String(input.capability || ''),
     scope: String(input.scope || ''),
+    // v2.0-s2：结构操作辅助字段（move 目标路径 & 批量上限核验 targets），均冻结不可篡改
+    dst: input.dst != null ? String(input.dst) : (input.destination != null ? String(input.destination) : null),
+    targets: Array.isArray(input.targets)
+      ? Object.freeze(input.targets.map((t) => (
+        t && typeof t === 'object'
+          ? Object.freeze({
+            src: String(t.src != null ? t.src : (t.scope || '')),
+            dst: t.dst != null ? String(t.dst) : (t.destination != null ? String(t.destination) : null),
+          })
+          : String(t == null ? '' : t)
+      )))
+      : null,
     reason: String(input.reason || '').slice(0, 500),
     createdAt: Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
     // 🔴 D-17：origin 是**主进程盖的来源戳**（三态），执行器据此决定要不要第五道闸门。

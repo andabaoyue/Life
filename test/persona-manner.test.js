@@ -101,13 +101,13 @@ check('persona 保留「不自创非物理的日历或日长」',
    *
    *   ⇒ 判据改成：**两句各自必须存在**（允许同义表述，但两个语义位置都要占住）。
    */
-  const cantSeeStatement = /看不见里面现在有什么/.test(personaSrc)
-    || /(沙盒|它)[^。]{0,20}(看不见|读不到|无从判断)/.test(personaSrc);
-  const cantSeeInference = /(空不空|里面有什么)[^。]{0,20}(不知道|无从判断)/.test(personaSrc)
-    || /(不知道|无从判断)[^。]{0,10}(空不空|里面有什么)/.test(personaSrc);
-  const cantSee = cantSeeStatement && cantSeeInference;
+  // v2.0-s1 配对更新：沙盒只读感官（顶层清单 + 按请求只读）已接线，原「看不见里面」改为
+  //   「显式告知沙盒感官边界 + 沙盒外依然不可达」，保留反自主随意翻看与沙盒外红线。
+  const hasReadSense = /(顶层目前有哪些文件|沙盒顶层)/.test(personaSrc)
+    && /(按请求.*读出的合法文本|从里面读出)/.test(personaSrc);
+  const outsideDenied = /(沙盒之外[^。]{0,30}(碰不到|读不到))/.test(personaSrc);
   check('persona 声明沙盒是她能碰的位置（能力认知，不是越权）', hasSandbox && canWrite);
-  check('persona 声明她看不见沙盒内容（否则会说「沙盒还空着」）', cantSee);
+  check('persona 声明沙盒只读感官与沙盒外不可达边界（v2.0-s1 配对更新）', hasReadSense && outsideDenied);
   // 反向：不能把「整个文件系统都能碰」写进去 —— 那是真的越界认知
   check('persona 未把权限放宽到整个外部系统',
     !/整个文件系统|任意路径|任何位置都能写/.test(personaSrc));

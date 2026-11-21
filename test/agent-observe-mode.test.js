@@ -103,6 +103,14 @@ console.log('--- A. config 三档 ---');
   check('A14 sanitize 丢弃超长键名', s.agentCapabilityModes[longKey] === undefined);
   check('A15 sanitize 丢弃含连字符的键名', s.agentCapabilityModes['has-dash'] === undefined);
   check('A16 sanitize 后出厂默认仍在（observerJournal）', s.agentCapabilityModes.observerJournal === 'auto');
+  check('A17 workspace.read 与 workspace.list 出厂默认均为 auto（兼容 s1 只读感官链且可显式降级）',
+    cfgMod.DEFAULTS.agentCapabilityModes['workspace.read'] === 'auto'
+    && g({}, 'workspace.read') === 'auto'
+    && g({}, 'workspace.list') === 'auto');
+  const sRead = cfgMod.sanitize({ agentCapabilityModes: { 'workspace.read': 'observe', 'workspace.list': 'off' } });
+  check('A18 sanitize 允许点号能力键（workspace.read / workspace.list）不被正则表达式误杀',
+    sRead.agentCapabilityModes['workspace.read'] === 'observe'
+    && sRead.agentCapabilityModes['workspace.list'] === 'off');
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -226,6 +234,10 @@ console.log('--- D. 接线 ---');
   const journalReads = (mainSrc.match(/getCapabilityMode\(\s*cfg\s*,\s*'observerJournal'\s*\)/g) || []).length;
   check('D3 selfNote 通路读了档位', selfNoteReads >= 1, 'count=' + selfNoteReads);
   check('D4 observerJournal 通路读了档位', journalReads >= 1, 'count=' + journalReads);
+  const readReads = (mainSrc.match(/getCapabilityMode\(\s*activeCfg\s*,\s*'workspace\.read'\s*\)/g) || []).length;
+  const listReads = (mainSrc.match(/getCapabilityMode\(\s*activeCfg\s*,\s*'workspace\.list'\s*\)/g) || []).length;
+  check('D4b chat-send 只读感官读了 workspace.read / workspace.list 档位',
+    readReads >= 1 && listReads >= 1, `read=${readReads}, list=${listReads}`);
 
   // observe 分流必须真的调 observationLog.append
   const appends = (mainSrc.match(/observationLog\.append\(/g) || []).length;
@@ -276,8 +288,9 @@ console.log('--- D. 接线 ---');
   const execSrc = fs.readFileSync(path.join(ROOT, 'src', 'agent-executor.js'), 'utf8');
   check('D12 执行器三态闸门仍在（SELF_NOTE_EXEMPT / OBSERVER_JOURNAL_EXEMPT）',
     /SELF_NOTE_EXEMPT/.test(execSrc) && /OBSERVER_JOURNAL_EXEMPT/.test(execSrc));
-  check('D13 执行器未被本方案改动（PROPOSAL_SOURCES 三态仍只有三个）',
-    /PROPOSAL_SOURCES\s*=\s*Object\.freeze\(\[\s*'user'\s*,\s*'selfNote'\s*,\s*'observerJournal'\s*\]\)/.test(
+  // 🔴 v2.0-s1 配对更新：PROPOSAL_SOURCES 在既有三态之外新增只读感官专用的 'readOnly'（严格绑定 !isWrite 且能力限于 READ_ONLY_EXEMPT_CAPABILITIES）。
+  check('D13 PROPOSAL_SOURCES 四态冻结且含观察档三态与只读感官态',
+    /PROPOSAL_SOURCES\s*=\s*Object\.freeze\(\[\s*'user'\s*,\s*'selfNote'\s*,\s*'observerJournal'\s*,\s*'readOnly'\s*\]\)/.test(
       fs.readFileSync(path.join(ROOT, 'src', 'agent-interfaces.js'), 'utf8')));
 }
 
@@ -473,6 +486,16 @@ console.log('--- D. 接线 ---');
     const userText = userMsg && typeof userMsg.content === 'string' ? userMsg.content : '';
     check('E21b 同一轮补注入确实进了尾部（证明 E21 不是假绿）',
       /不是你失败/.test(userText));
+
+    // v2.0-s2：workspace.read 观察期满补注入使用只读感知专属文案（不混入「你想写下来却停住」）
+    const mr = mkMem();
+    mr.markObserveEpoch('workspace.read', 'in');
+    mr.noteObserved('workspace.read');
+    mr.markObserveEpoch('workspace.read', 'out');
+    const readEcho = mr.takeObserveEcho();
+    check('E21c workspace.read 期满补注入使用只读文案且不误报写操作',
+      /翻看沙盒里的文件/.test(readEcho) && /开放读取权限/.test(readEcho) && !/停住了/.test(readEcho),
+      'echo=' + readEcho.slice(0, 80));
   }
 
   /* E22 接线断言：main.js 的 observe 分支真的调了 noteObserved（替身计数，不搜字符串） */
@@ -511,7 +534,7 @@ console.log('--- D. 接线 ---');
      * ⚠️ 这里是**复刻**判据用于验证语义；真正的接线由 E24 的源码断言钉住。 */
     const startupFallback = (mem, modeOf) => {
       const epochs = (mem.data && mem.data.observeEpoch) || {};
-      for (const cap of ['selfNote', 'observerJournal']) {
+      for (const cap of ['selfNote', 'observerJournal', 'workspace.read', 'workspace.list']) {
         const ep = epochs[cap];
         if (!ep || typeof ep !== 'object') continue;
         if (!Number.isFinite(ep.enteredAt)) continue;
@@ -624,6 +647,18 @@ console.log('--- D. 接线 ---');
       try { startupFallback(m, () => 'auto'); } catch { threw = true; }
       check('F7 observeEpoch 是垃圾值时启动兜底不抛', !threw);
     }
+
+    // F8 workspace.read 观察期满切回 auto 后启动兜底同样补 leftAt + pendingEcho
+    {
+      const m = new Memory(memDir(), { persona: 'test-persona', windowTurns: 10 });
+      m.data.observeEpoch = { 'workspace.read': { enteredAt: 1000, leftAt: null, pendingEcho: false } };
+      m.data.observedNotes = [{ at: 1100, capability: 'workspace.read' }];
+      startupFallback(m, () => 'auto');
+      const ep = m.data.observeEpoch['workspace.read'];
+      check('F8 workspace.read 切回 auto ⇒ 启动兜底补齐 leftAt 与 pendingEcho',
+        Number.isFinite(ep.leftAt) && ep.pendingEcho === true,
+        JSON.stringify(ep));
+    }
   }
 
   /* E24 接线断言：main.js 真的在启动时做了兜底（源码级，剥注释后匹配） */
@@ -637,6 +672,8 @@ console.log('--- D. 接线 ---');
       /Number\.isFinite\(ep\.enteredAt\)/.test(code3)
       && /ep\.leftAt !== null/.test(code3)
       && /getCapabilityMode\(cfg,\s*cap\) === 'observe'/.test(code3));
+    check('E25b 启动兜底名单包含 workspace.read 与 workspace.list',
+      /\['selfNote',\s*'observerJournal',\s*'workspace\.read',\s*'workspace\.list'\]/.test(code3));
   }
 
   /* ================= 🔴 2026-11-12 真机缺陷回归（OBS-1~5） ================= */

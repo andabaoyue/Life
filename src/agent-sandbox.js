@@ -99,4 +99,240 @@ function ensureSandboxDir(dir, fsImpl) {
   return target;
 }
 
-module.exports = { SANDBOX_DIR_NAME, SANDBOX_NOTICE, sandboxPathFor, ensureSandboxDir };
+/**
+ * 非递归列举沙盒顶层普通文件（供只读感官与 workspace.list 共用）。
+ * 只返回 basename / 字节数 / 修改时间戳（毫秒），绝不返回绝对路径，跳过子目录与符号链接。
+ *
+ * @param {string} dir 沙盒根目录
+ * @param {object} [fsImpl] 注入用（测试）
+ * @returns {Array<{ name: string, bytes: number, mtime: number }>}
+ */
+function listSandboxTopLevel(dir, fsImpl) {
+  const f = fsImpl || fs;
+  const root = String(dir || '');
+  if (!root) return [];
+  let entries;
+  try {
+    entries = f.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(entries)) return [];
+  const items = [];
+  for (const ent of entries) {
+    const name = typeof ent === 'string' ? ent : (ent && ent.name);
+    if (!name || typeof name !== 'string') continue;
+    if (ent && typeof ent.isSymbolicLink === 'function' && ent.isSymbolicLink()) continue;
+    let st = null;
+    try {
+      st = typeof f.lstatSync === 'function'
+        ? f.lstatSync(path.join(root, name))
+        : f.statSync(path.join(root, name));
+    } catch {
+      continue;
+    }
+    if (!st || (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink())) continue;
+    if (typeof st.isFile !== 'function' || !st.isFile()) continue;
+    const mtime = Number.isFinite(st.mtimeMs)
+      ? Math.round(st.mtimeMs)
+      : (st.mtime instanceof Date ? st.mtime.getTime() : 0);
+    items.push({ name, bytes: Number(st.size) || 0, mtime });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  return items;
+}
+
+const WINDOWS_RESERVED_NAME_RE = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+const ILLEGAL_STRUCTURE_CHARS_RE = /[*?<>|"\u0000-\u001f]/;
+
+/**
+ * 校验沙盒内部相对路径/文件名合法性（复用并扩展 buildReadSandboxScope 纪律）：
+ * 禁绝对路径、禁盘符与 ADS 冒号、禁 `..` / `.` 段、禁 Windows 保留名与末尾点/空格、禁通配符与隐藏点前缀。
+ *
+ * @param {string} rawHint 用户或提案给定的相对路径
+ * @param {{ allowSubdir?: boolean }} [opts]
+ * @returns {?{ segments: string[], relativePath: string }}
+ */
+function validateSandboxRelativePath(rawHint, opts = {}) {
+  if (typeof rawHint !== 'string') return null;
+  const h = rawHint.trim();
+  if (!h || h.length > 200) return null;
+  if (path.isAbsolute(h)) return null;
+  if (/^[a-zA-Z]:/.test(h) || /^\\\\/.test(h) || h.includes(':')) return null;
+  if (ILLEGAL_STRUCTURE_CHARS_RE.test(h)) return null;
+  if (h === '.' || h === '..' || /\.\./.test(h)) return null;
+  const allowSubdir = opts.allowSubdir !== false;
+  if (!allowSubdir && /[\\/]/.test(h)) return null;
+  const rawSegments = h.split(/[\\/]+/).filter(Boolean);
+  if (rawSegments.length === 0) return null;
+  for (const seg of rawSegments) {
+    if (!seg || seg === '.' || seg === '..') return null;
+    if (seg.charAt(0) === '.') return null;
+    if (seg.endsWith('.') || seg.endsWith(' ')) return null;
+    if (WINDOWS_RESERVED_NAME_RE.test(seg.split('.')[0])) return null;
+  }
+  return {
+    segments: rawSegments,
+    relativePath: rawSegments.join('/'),
+  };
+}
+
+/**
+ * 构造沙盒结构操作（mkdir / move / remove）的目标作用域，严禁返回沙盒根目录本身或逃逸路径。
+ * @param {string} rawHint
+ * @param {string} sandboxDir
+ * @returns {?{ scope: string, name: string }}
+ */
+function buildStructureSandboxScope(rawHint, sandboxDir) {
+  if (typeof sandboxDir !== 'string' || !sandboxDir.trim()) return null;
+  const parsed = validateSandboxRelativePath(rawHint, { allowSubdir: true });
+  if (!parsed) return null;
+  const root = path.resolve(sandboxDir);
+  const resolved = path.join(root, ...parsed.segments);
+  const rel = path.relative(root, resolved);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return { scope: resolved, name: parsed.relativePath };
+}
+
+/**
+ * 校验结构操作绝对/候选 scope 是否含非法文件名、.. 穿越、盘符冒号、保留名或企图直接操作沙盒根目录本身。
+ * @param {string} scopePath
+ * @param {string[]} roots
+ * @returns {boolean} true 表示合法；false 表示非法或越界
+ */
+function isValidStructureScope(scopePath, roots) {
+  if (typeof scopePath !== 'string' || !scopePath.trim()) return false;
+  if (!Array.isArray(roots) || roots.length === 0) return false;
+  const raw = scopePath.trim();
+  const withoutDrive = raw.replace(/^[A-Za-z]:/, '');
+  if (withoutDrive.includes(':') || ILLEGAL_STRUCTURE_CHARS_RE.test(withoutDrive)) return false;
+  if (raw.split(/[\\/]/).some((s) => s === '.' || s === '..')) return false;
+  let resolved;
+  try {
+    resolved = path.resolve(raw);
+  } catch {
+    return false;
+  }
+  for (const r of roots) {
+    if (!r) continue;
+    const rootResolved = path.resolve(String(r));
+    const normT = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    const normR = process.platform === 'win32' ? rootResolved.toLowerCase() : rootResolved;
+    const prefix = normR.endsWith(path.sep) ? normR : normR + path.sep;
+    if (normT === normR) return false; // 严禁直接操作沙盒根目录本身
+    if (normT.startsWith(prefix)) {
+      const rel = path.relative(rootResolved, resolved);
+      if (validateSandboxRelativePath(rel, { allowSubdir: true })) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * v2.0-s2：chat-send 前置只读感官调度（接入 getCapabilityMode 观察档三档）。
+ * - off：直接跳过（零记账、零读取）
+ * - observe：记录 markObserveEpoch('workspace.read','in') + memory.noteObserved('workspace.read') + observationLog，
+ *            不建案、不执行 _readFile、不写入 Brain 槽位 / dynamicBody
+ * - auto：写 markObserveEpoch('workspace.read','out')，走 'readOnly' 免确认提案执行并写入一次性读取槽位
+ */
+function runPreChatSandboxRead(opts = {}) {
+  const {
+    text,
+    proactive = false,
+    cfg = {},
+    brain,
+    agentIpc,
+    sandboxDir,
+    observationLog,
+    evaluateTrigger,
+    buildReadScope,
+    getCapabilityMode,
+  } = opts;
+  if (proactive || !sandboxDir || !agentIpc || !brain || typeof brain.setPendingSandboxRead !== 'function') {
+    return { executed: false, reason: 'PRECONDITION_SKIP' };
+  }
+  if (typeof evaluateTrigger !== 'function' || typeof buildReadScope !== 'function' || typeof getCapabilityMode !== 'function') {
+    return { executed: false, reason: 'DEPS_MISSING' };
+  }
+
+  const readMode = getCapabilityMode(cfg, 'workspace.read');
+  if (readMode === 'off') {
+    return { executed: false, mode: 'off', reason: 'CAPABILITY_OFF' };
+  }
+
+  const preVerdict = evaluateTrigger(text, { config: cfg, proactive: false });
+  if (!preVerdict || !preVerdict.ran || !preVerdict.decision
+      || !preVerdict.decision.shouldPropose || preVerdict.decision.capability !== 'workspace.read') {
+    return { executed: false, mode: readMode, reason: 'NO_READ_INTENT' };
+  }
+
+  const builtRead = buildReadScope(preVerdict.decision.hint, sandboxDir);
+  if (!builtRead) {
+    return { executed: false, mode: readMode, reason: 'INVALID_SCOPE' };
+  }
+
+  if (readMode === 'observe') {
+    try {
+      if (brain.memory) {
+        if (typeof brain.memory.markObserveEpoch === 'function') {
+          brain.memory.markObserveEpoch('workspace.read', 'in');
+        }
+        if (typeof brain.memory.noteObserved === 'function') {
+          brain.memory.noteObserved('workspace.read');
+        }
+      }
+      if (observationLog && typeof observationLog.append === 'function') {
+        observationLog.append({
+          capability: 'workspace.read',
+          intentKind: 'workspace.read',
+          proposalSource: 'readOnly',
+          scopeName: builtRead.name,
+          content: `请求读取沙盒文件: ${builtRead.name}`,
+        });
+      }
+    } catch { /* 观察记账异常绝不阻断对话 */ }
+    return { executed: false, observed: true, mode: 'observe', name: builtRead.name };
+  }
+
+  if (readMode !== 'auto') {
+    return { executed: false, mode: readMode, reason: 'UNKNOWN_MODE' };
+  }
+
+  try {
+    if (brain.memory && typeof brain.memory.markObserveEpoch === 'function') {
+      brain.memory.markObserveEpoch('workspace.read', 'out');
+    }
+  } catch { /* 记账失败不阻断合法读取 */ }
+
+  const readProp = agentIpc.proposeInternal({
+    capability: 'workspace.read',
+    scope: builtRead.scope,
+    reason: '按用户请求读取沙盒文件',
+  }, 'main', 'readOnly');
+  if (!readProp || !readProp.ok || !readProp.proposal) {
+    return { executed: false, mode: 'auto', reason: (readProp && readProp.error) || 'PROPOSE_FAILED' };
+  }
+
+  const readExec = agentIpc.executeInternal({ proposalId: readProp.proposal.id });
+  if (readExec && readExec.ok && readExec.result && typeof readExec.result.content === 'string') {
+    brain.setPendingSandboxRead({
+      name: builtRead.name,
+      bytes: readExec.result.bytes,
+      content: readExec.result.content,
+    });
+    return { executed: true, mode: 'auto', name: builtRead.name, bytes: readExec.result.bytes };
+  }
+  return { executed: false, mode: 'auto', reason: (readExec && readExec.error) || 'EXECUTE_FAILED' };
+}
+
+module.exports = {
+  SANDBOX_DIR_NAME,
+  SANDBOX_NOTICE,
+  sandboxPathFor,
+  ensureSandboxDir,
+  listSandboxTopLevel,
+  validateSandboxRelativePath,
+  buildStructureSandboxScope,
+  isValidStructureScope,
+  runPreChatSandboxRead,
+};

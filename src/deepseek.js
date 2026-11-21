@@ -149,6 +149,9 @@ class DeepSeek {
         model: this.cfg.model,
         messages,
         stream: false,
+        // v3.1 / v2.0-b2-a：与 stream() 对齐，显式关闭服务端默认思维链，
+        // 防止关窗 5×20 结构化小结与独立拟稿在 complete() 路径下被 reasoning_content 吃满 max_tokens 导致 JSON 截断。
+        thinking: { type: 'disabled' },
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 400
       }, ctrl.signal);

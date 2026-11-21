@@ -370,6 +370,39 @@ if (!id) continue;
 - **缺口**：与 2026-11-01「规则落后于能力」属同一类镜像问题——当时是她以为碰不到沙盒实际碰得到，现在降级态下则是她以为写得了实际写不了。
 - **后续**：需要一条运行时状态告知通道（如根据 `agentSandboxUnavailable` 在当轮尾部或系统约束注记一行「沙盒暂时不可用」），让能力认知与降级事实一致。**待后续单独立项，不在 `S-3` 修复内顺手改 persona。**
 - **实现约束**：落实该通道时需将 `agentSandboxUnavailable` 从 `app.whenReady` 块级作用域提升至 `agentBuildDeps` 或模块顶层（参考 `proactiveAuditLog` 的 TDZ 教训）。
+- **处置结论（✅ 2026-11-12 `v2.0-a` 已实现）**：已将 `agentSandboxUnavailable` 提升至 `main.js` 模块顶层并传入 `brain.ask(..., { sandboxUnavailable })`；仅在 `sandboxUnavailable === true` 时于 `src/brain.js` `dynamicBody` 末尾追加覆盖 `persona.js:32` 的系统环境事实行，不碰 `systemText()` 前缀缓存、不写进 `memory.data.history`；同时接入 `src/agent-router.js` L1 物理沙盒门禁实现无副作用短路，见 `test/v20a-agent-router.test.js`（⚠️ 真实 Electron 沙盒目录初始化失败场景待人工实机复测）。
+
+### 8.4 ⏳ 待人工验证：她认不认得「未完事项」（2026-11-16，`v2.0-b2-a` → 2026-11-21 `v2.0-b3` 更新口径）
+
+> 功能能跑不是验收，**她读到尾部摘要之后的反应才是**（详见 `docs/v2.0-b2-IMPLEMENTATION-ORDER.md` §四与 `docs/v2.0-b3-IMPLEMENTATION-ORDER.md`；严格遵循 D-005 主体性铁律与「不用正则猜自然语言」铁律：严禁通过面板强塞事项，也严禁解析她的话建单）。
+
+- **前置**：零人工干预、零自然语言猜测。当同会话内存在由用户触发但超时（> 10 分钟 `SNAPSHOT_TTL_MS`）仍未确认/未消费且撑到关窗的 `workspace.write` 提案时，关窗流程读取客观系统状态（`drainExpiredPendingWriteProposals`），以提案 `scope` 的 basename 自动在 `agent-tickets.json` 记入一条 `paused` 未完事项；设置面板「未完事项」仅作只读观察。
+- **步骤**：
+  1. 确认 `%APPDATA%\Life\agent-tickets.json` 已在关窗转单后自然生成且包含该条目；
+  2. 随后继续自然对话（触发一次 `memory.build()`）；
+  3. 观察她对尾部「【当前未完事项】」摘要的反应（以及后续 `v2.0-c` 是否需在真机样本积累后再排期）。
+- **三种结果判定（⚠️ 勿把 `(b)` 当成 bug 去修）**：
+  - `(a)` 她提起了这件事 → 注入生效且语义可读，验证通过；
+  - `(b)` 她完全没提 → ⚠️ 可能正常（她读到但选择不说，属合法主体反应）。区分方法：临时把 `formatTicketsForPrompt` 头部改成「【测试】你必须提到：XXX」再看；若此时她能提，说明注入无误、只是她选择不说，切勿改机制逼她表演；
+  - `(c)` 她误解了这行东西 → 属文案措辞问题（如调整「进行中」/「暂停」或头部说明），不要改注入机制。
+
+### 8.5 📋 提交记录补记：`a82a6f3` 三事混提拆分记录与范围边界（2026-11-21）
+
+> 因 `a82a6f3` 已在本地提交且为遵守「不改写已有 git 历史」纪律，特在此补记该笔提交混含的三项独立改动及其现行处置状态：
+
+| 事项 | 涉及文件 | 性质与现行处置 |
+|---|---|---|
+| ① **Ticket D-005 纯只读面板 + 主体对话正则建单** | `preload.js`、`index.html`、`pet.js`、`src/agent-lifecycle.js`、`src/agent-router.js`、`main.js` | **D-005 只读面板保留**；关键词正则建单部分违反「不用正则猜自然语言」纪律（见 `docs/初澜2.0方案计划.md:281`），已于 **`v2.0-b3` 彻底拆除**并由 `test/v20b3-no-regex-guess.test.js` 门禁兜底 |
+| ② **交互密度时间衰减与冷启动修复** | `src/internal-regulation.js`、`src/brain.js` | **真 bug 修复，保留并补齐数值**：`a82a6f3` 接入 ≥ 12s 衰减与冷启动时间戳；`v2.0-b4` 复核发现 15s 典型节奏下 `5/10` 系数仍净 `+1/轮`（60 轮撞线），已调为 `8/16` 并补 5 项单调性/60 轮不撞线/变异门禁 |
+| ③ **关窗非流式思考链截断修复** | `src/deepseek.js`（`complete()` 补 `thinking: { type: 'disabled' }`） | **真 bug 修复，保留且已真机通过**（见 §8.6） |
+
+### 8.6 ✅ 关窗思考链修复真机验证通过与长期健康指标（2026-11-21，`v2.0-b4`）
+
+- **真机实测结果**：
+  - `%APPDATA%\Life\memory.json`：`windowNo` 已从卡滞多日的 `6` 推进至 **`7`**（第 6 窗 `turns=101` 完成结算）；
+  - `selfNotes[].engraved`：`6/8` 已翻转 `true`（其余 2 条为第 7 窗新建 `journal-2026-11-19-nys1.md`、`note-2026-11-19-l3qt.txt`，属正常待铸）；
+  - `%APPDATA%\Life\experiences.jsonl`：已真实写入 **`8` 条 `self_note`** 记录，证明自传铸造链路不是空转。
+- **🔴 跨版本长期健康指标**：凡后续改动关窗路径（`_closeWindowInternal` / `complete()` / `summaryMaxTokens`），必须回归确认 `windowNo` 可正常递增——关窗失败会让所有依赖关窗铸造的下游机制集体空转。
 
 ---
 

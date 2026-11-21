@@ -46,12 +46,35 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WriteTransactionManager } = require('./agent-transaction');
+const { listSandboxTopLevel, isValidStructureScope } = require('./agent-sandbox');
 
 /** 🔴 SEC-03：执行器底层写入文件扩展名硬白名单（小写匹配）。 */
 const ALLOWED_WRITE_EXTENSIONS = Object.freeze(new Set(['.txt', '.md', '.json', '.log']));
 
+/** 🔴 v2.0-s1：执行器只读扩展名独立白名单（绝不复用 ALLOWED_WRITE_EXTENSIONS，避免日后放开读范围连带放宽写范围）。 */
+const ALLOWED_READ_EXTENSIONS = Object.freeze(new Set(['.txt', '.md', '.json', '.log', '.csv', '.tsv']));
+
+/** 🔴 v2.0-s1：允许走 'readOnly' 免确认旁路的能力硬白名单（严禁写入/移动/删除进入）。 */
+const READ_ONLY_EXEMPT_CAPABILITIES = Object.freeze(new Set(['workspace.read', 'workspace.list']));
+
+/** 🔴 v2.0-s2：可逆沙盒结构能力免确认白名单（仅限 mkdir 建子目录；严禁 workspace.remove 进入）。 */
+const REVERSIBLE_EXEMPT_CAPABILITIES = Object.freeze(new Set(['workspace.mkdir']));
+
+/** v2.0-s2：沙盒结构操作集合。 */
+const STRUCTURE_CAPABILITIES = Object.freeze(new Set(['workspace.mkdir', 'workspace.move', 'workspace.remove']));
+
+/** v2.0-s2：单次结构操作目标数硬上限（防「一条命令清空沙盒」）。 */
+const MAX_STRUCTURE_TARGETS = 5;
+
 /** D-4 允许真正执行的能力白名单。process.execute 不在其中，且下方另有硬拒。 */
-const EXECUTABLE_CAPABILITIES = Object.freeze(['workspace.read', 'workspace.write']);
+const EXECUTABLE_CAPABILITIES = Object.freeze([
+  'workspace.read',
+  'workspace.list',
+  'workspace.write',
+  'workspace.mkdir',
+  'workspace.move',
+  'workspace.remove',
+]);
 
 /** 单次读出的最大字节数（防把一个 2GB 文件读进内存）。 */
 const DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -379,6 +402,23 @@ class ControlledAgentExecutor {
     }
 
     // ── 闸门 2：能力授权**在执行期重跑**（不复用提案期的 verdict，见不变式 1）
+    const isStructure = STRUCTURE_CAPABILITIES.has(proposal.capability);
+    let structureEntries = null;
+    if (isStructure) {
+      const extracted = this._extractStructureItems(proposal);
+      if (!extracted.ok) {
+        this._audit({
+          outcome: 'rejected',
+          code: extracted.code,
+          capability: proposal.capability,
+          detail: extracted.detail || null,
+          proposalId: proposalId.slice(0, 120),
+        }, proposal);
+        return fail(extracted.code, extracted.extra || {});
+      }
+      structureEntries = extracted.items;
+    }
+
     const verdict = this.policy.authorize(proposal.capability, proposal.scope);
     if (!verdict || verdict.allowed !== true) {
       this._audit({
@@ -391,33 +431,122 @@ class ControlledAgentExecutor {
       return fail('AUTHORIZED_REJECTED', { reason: verdict && verdict.reason });
     }
 
+    const roots = (this.policy && typeof this.policy.getScopeRoots === 'function')
+      ? this.policy.getScopeRoots(proposal.capability)
+      : (verdict.matchedRoot ? [verdict.matchedRoot] : []);
+
     // ── 不变式 3：realpath 物理沙盒边界强制校验（SEC-02：无论 policy.followSymlink 为何，物理路径必须锁在沙盒内）
-    const real = (this.resolveRealPath || resolveRealPath)(proposal.scope, this.fs);
-    let symlinkEscape = false;
-    if (!real) {
-      // 悬空符号链接、循环符号链接或无法安全证明的物理路径：失败关闭
-      symlinkEscape = true;
-    } else {
-      // 获取当前 capability 配置的全部合法根目录（或 matchedRoot）
-      const roots = (this.policy && typeof this.policy.getScopeRoots === 'function')
-        ? this.policy.getScopeRoots(proposal.capability)
-        : (verdict.matchedRoot ? [verdict.matchedRoot] : []);
-      if (!roots || roots.length === 0) {
-        symlinkEscape = true;
-      } else {
-        const insideAnyRoot = roots.some((root) => {
-          let realRoot = null;
-          try {
-            realRoot = (this.resolveRealPath || resolveRealPath)(root, this.fs);
-          } catch {
-            realRoot = null;
-          }
-          if (!realRoot) return false;
-          return isPathInsideRoot(real, realRoot);
-        });
-        if (!insideAnyRoot) {
-          symlinkEscape = true;
+    const resolvedRealRoots = [];
+    if (Array.isArray(roots) && roots.length > 0) {
+      for (const root of roots) {
+        let realRoot = null;
+        try {
+          realRoot = (this.resolveRealPath || resolveRealPath)(root, this.fs);
+        } catch {
+          realRoot = null;
         }
+        if (realRoot) resolvedRealRoots.push(realRoot);
+      }
+    }
+
+    const isInsideAnyRealRoot = (realPath) => {
+      if (!realPath || resolvedRealRoots.length === 0) return null;
+      for (const rr of resolvedRealRoots) {
+        if (isPathInsideRoot(realPath, rr)) return rr;
+      }
+      return null;
+    };
+
+    let real = null;
+    let resolvedStructure = null;
+    let symlinkEscape = false;
+
+    if (isStructure) {
+      resolvedStructure = [];
+      for (const entry of structureEntries) {
+        const vSrc = this.policy.authorize(proposal.capability, entry.src);
+        if (!vSrc || vSrc.allowed !== true) {
+          this._audit({
+            outcome: 'rejected',
+            code: 'AUTHORIZED_REJECTED',
+            capability: proposal.capability,
+            reason: vSrc && vSrc.reason,
+            proposalId: proposalId.slice(0, 120),
+          }, proposal);
+          return fail('AUTHORIZED_REJECTED', { reason: vSrc && vSrc.reason });
+        }
+        if (proposal.capability === 'workspace.move') {
+          if (typeof entry.dst !== 'string' || !entry.dst.trim()) {
+            this._audit({
+              outcome: 'rejected',
+              code: 'INVALID_PROPOSAL',
+              capability: proposal.capability,
+              reason: 'DST_REQUIRED',
+              proposalId: proposalId.slice(0, 120),
+            }, proposal);
+            return fail('INVALID_PROPOSAL', { reason: 'DST_REQUIRED' });
+          }
+          const vDst = this.policy.authorize(proposal.capability, entry.dst);
+          if (!vDst || vDst.allowed !== true) {
+            this._audit({
+              outcome: 'rejected',
+              code: 'AUTHORIZED_REJECTED',
+              capability: proposal.capability,
+              reason: vDst && vDst.reason,
+              proposalId: proposalId.slice(0, 120),
+            }, proposal);
+            return fail('AUTHORIZED_REJECTED', { reason: vDst && vDst.reason });
+          }
+        }
+        if (isMalformedWindowsPath(entry.src) || !isValidStructureScope(entry.src, roots)
+            || (proposal.capability === 'workspace.move' && (isMalformedWindowsPath(entry.dst) || !isValidStructureScope(entry.dst, roots)))) {
+          this._audit({
+            outcome: 'rejected',
+            code: 'DISALLOWED_FILENAME',
+            capability: proposal.capability,
+            proposalId: proposalId.slice(0, 120),
+          }, proposal);
+          return fail('DISALLOWED_FILENAME');
+        }
+
+        const realSrc = (this.resolveRealPath || resolveRealPath)(entry.src, this.fs);
+        const matchedSrcRoot = isInsideAnyRealRoot(realSrc);
+        if (!realSrc || !matchedSrcRoot || !path.relative(matchedSrcRoot, realSrc)) {
+          symlinkEscape = true;
+          break;
+        }
+        let realDst = null;
+        let matchedDstRoot = null;
+        if (proposal.capability === 'workspace.move') {
+          realDst = (this.resolveRealPath || resolveRealPath)(entry.dst, this.fs);
+          matchedDstRoot = isInsideAnyRealRoot(realDst);
+          if (!realDst || !matchedDstRoot || !path.relative(matchedDstRoot, realDst)) {
+            symlinkEscape = true;
+            break;
+          }
+          if (isPathInsideRoot(realDst, realSrc)) {
+            this._audit({
+              outcome: 'rejected',
+              code: 'INVALID_PROPOSAL',
+              capability: proposal.capability,
+              reason: 'SELF_CONTAINED_MOVE',
+              proposalId: proposalId.slice(0, 120),
+            }, proposal);
+            return fail('INVALID_PROPOSAL', { reason: 'SELF_CONTAINED_MOVE' });
+          }
+        }
+        resolvedStructure.push({
+          src: realSrc,
+          dst: realDst,
+          srcRel: path.relative(matchedSrcRoot, realSrc).replace(/\\/g, '/'),
+          dstRel: realDst && matchedDstRoot ? path.relative(matchedDstRoot, realDst).replace(/\\/g, '/') : null,
+        });
+      }
+      real = resolvedStructure.length > 0 ? resolvedStructure[0].src : null;
+    } else {
+      real = (this.resolveRealPath || resolveRealPath)(proposal.scope, this.fs);
+      if (!real || !isInsideAnyRealRoot(real)) {
+        symlinkEscape = true;
       }
     }
 
@@ -434,9 +563,11 @@ class ControlledAgentExecutor {
       return fail('SYMLINK_ESCAPE');
     }
 
-    // ── 闸门 3：预算（执行也要计费，不能是免费动作）
+    // ── 闸门 3：预算（执行也要计费，不能是免费动作；v2.0-s1 只读 read/list 传 { free: true } 不耗 actions，已熔断仍拦截）
     const isWrite = proposal.capability === 'workspace.write';
-    if (!this.budget.consume(isWrite)) {
+    const isList = proposal.capability === 'workspace.list';
+    const isReadOnlyOp = proposal.capability === 'workspace.read' || isList;
+    if (!this.budget.consume(isWrite, Date.now(), { free: isReadOnlyOp })) {
       this._audit({
         outcome: 'rejected',
         code: 'BUDGET_TRIPPED',
@@ -469,13 +600,42 @@ class ControlledAgentExecutor {
     //   `proposalSource` 由 `createActionProposal` 的**独立第三参数**写入，
     //   渲染端在 payload 里塞同名字段一律被忽略（有门禁钉死）。
     //   通道来的提案永远是 'user' —— 只有主进程建案时才能给 'selfNote' 或 'observerJournal'。
-    const isSelfNote = proposal && proposal.proposalSource === 'selfNote';
-    const isObserverJournal = proposal && proposal.proposalSource === 'observerJournal';
+    const isRemove = proposal && proposal.capability === 'workspace.remove';
+    const isMove = proposal && proposal.capability === 'workspace.move';
+    const isSelfNote = Boolean(
+      proposal
+      && proposal.proposalSource === 'selfNote'
+      && !isRemove
+      && !isMove
+      && !isStructure
+    );
+    const isObserverJournal = Boolean(
+      proposal
+      && proposal.proposalSource === 'observerJournal'
+      && !isRemove
+      && !isMove
+      && !isStructure
+    );
+    // 🔴 v2.0-s1 & s2：
+    //   - 只读感官免确认严格绑定 !isWrite && !isRemove && !isMove 且能力限于 READ_ONLY_EXEMPT_CAPABILITIES
+    //   - mkdir 可逆结构操作走同款 'readOnly' 免确认旁路（REVERSIBLE_EXEMPT_CAPABILITIES）
+    //   - workspace.remove 不可逆：严禁进入任何免确认集合，即便 proposalSource === 'readOnly' 也必须走 confirmation.isExecutionAllowed
+    const isReadOnlyExempt = Boolean(
+      proposal
+      && proposal.proposalSource === 'readOnly'
+      && !isWrite
+      && !isRemove
+      && !isMove
+      && (READ_ONLY_EXEMPT_CAPABILITIES.has(proposal.capability)
+        || REVERSIBLE_EXEMPT_CAPABILITIES.has(proposal.capability))
+    );
     const gate = isSelfNote
       ? { allowed: true, reason: 'SELF_NOTE_EXEMPT' }
       : (isObserverJournal
         ? { allowed: true, reason: 'OBSERVER_JOURNAL_EXEMPT' }
-        : this.confirmation.isExecutionAllowed(proposalId));
+        : (isReadOnlyExempt
+          ? { allowed: true, reason: 'READ_ONLY_EXEMPT' }
+          : this.confirmation.isExecutionAllowed(proposalId)));
     if (!gate || gate.allowed !== true) {
       const reason = (gate && gate.reason) || 'NOT_CONFIRMED';
       this._audit({
@@ -488,12 +648,22 @@ class ControlledAgentExecutor {
       return fail('EXECUTION_NOT_ALLOWED', { reason });
     }
 
-    // ── 第五道闸门：事务。真正的写盘从这里开始。
+    // ── 第五道闸门：事务。真正的写盘/结构变更从这里开始。
     let result;
     try {
-      result = isWrite
-        ? this._writeFile(proposal, input.content, real)
-        : this._readFile(proposal, real);
+      if (isWrite) {
+        result = this._writeFile(proposal, input.content, real);
+      } else if (isList) {
+        result = this._listDir(proposal, real);
+      } else if (proposal.capability === 'workspace.mkdir') {
+        result = this._mkdirEntries(resolvedStructure);
+      } else if (isMove) {
+        result = this._moveEntries(resolvedStructure);
+      } else if (isRemove) {
+        result = this._removeEntries(resolvedStructure);
+      } else {
+        result = this._readFile(proposal, real);
+      }
     } catch (err) {
       // 执行失败要记连续错误（防「一直失败一直重试」），并把授权作废：
       // 失败的提案不该能被原样再执行一次。
@@ -504,9 +674,20 @@ class ControlledAgentExecutor {
         || err.code === 'CONTENT_HASH_REQUIRED'
         || err.code === 'DISALLOWED_EXTENSION'
         || err.code === 'HARDLINK_DETECTED'
+        || err.code === 'SYMLINK_ESCAPE'
+        || err.code === 'TOO_MANY_TARGETS'
+        || err.code === 'DISALLOWED_FILENAME'
+      );
+      const isStructureValidationErr = err && (
+        err.code === 'DST_ALREADY_EXISTS'
+        || err.code === 'ALREADY_EXISTS_NOT_DIR'
+        || err.code === 'NOT_FOUND'
+        || err.code === 'INVALID_MOVE_SELF'
       );
       const isRollbackFailure = err && (err.code === 'ROLLBACK_HASH_MISMATCH' || err.code === 'BACKUP_MISSING' || /ROLLBACK/i.test(err.code || ''));
-      const code = isSecurityViolation ? err.code : (isRollbackFailure ? 'ROLLBACK_FAILED' : 'EXECUTION_FAILED');
+      const code = isSecurityViolation
+        ? err.code
+        : (isStructureValidationErr ? err.code : (isRollbackFailure ? 'ROLLBACK_FAILED' : 'EXECUTION_FAILED'));
       this._audit({
         outcome: 'failed',
         code,
@@ -547,11 +728,56 @@ class ControlledAgentExecutor {
     return { ok: true, executed: true, proposalId, result, budget: this.budget.state(), proposalSource: (proposal && proposal.proposalSource) || 'user' };
   }
 
+  /**
+   * 校验无扩展名文件是否为合法 UTF-8 纯文本（拒绝 NUL、非空白 C0 控制字节与非法 UTF-8 序列）。
+   * 返回解码后的 UTF-8 字符串，或抛出 DISALLOWED_EXTENSION。
+   */
+  _probeAndDecodeExtensionlessText(raw) {
+    if (Buffer.isBuffer(raw)) {
+      const probeLen = Math.min(raw.length, 8192);
+      for (let i = 0; i < probeLen; i++) {
+        const b = raw[i];
+        if (b === 0x00 || (b >= 0x01 && b <= 0x08) || b === 0x0b || b === 0x0c || (b >= 0x0e && b <= 0x1f)) {
+          throw Object.assign(new Error('DISALLOWED_EXTENSION: binary content'), { code: 'DISALLOWED_EXTENSION' });
+        }
+      }
+      try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(raw);
+      } catch {
+        throw Object.assign(new Error('DISALLOWED_EXTENSION: invalid utf8'), { code: 'DISALLOWED_EXTENSION' });
+      }
+    }
+    const text = String(raw || '');
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/.test(text.slice(0, 8192))) {
+      throw Object.assign(new Error('DISALLOWED_EXTENSION: binary content'), { code: 'DISALLOWED_EXTENSION' });
+    }
+    return text;
+  }
+
+  _listDir(proposal, resolvedPath) {
+    const target = resolvedPath || path.resolve(proposal.scope);
+    const stat = this.fs.statSync(target);
+    if (!stat || typeof stat.isDirectory !== 'function' || !stat.isDirectory()) {
+      throw new Error('NOT_A_DIRECTORY');
+    }
+    const items = listSandboxTopLevel(target, this.fs);
+    return { count: items.length, items };
+  }
+
   _readFile(proposal, resolvedPath) {
     const target = resolvedPath || path.resolve(proposal.scope);
     // 🔴 SEC-03 深度防御：拦截读路径中的 NTFS ADS 备用数据流冒号 (:) 与 Windows 畸形文件名/保留名
     if (isMalformedWindowsPath(proposal && proposal.scope) || isMalformedWindowsPath(target)) {
       throw Object.assign(new Error('MALFORMED_WINDOWS_FILENAME'), { code: 'DISALLOWED_EXTENSION' });
+    }
+    // 🔴 v2.0-s1：读扩展名独立白名单；无扩展名文件（如 README / LICENSE）走内容探测，非文本字节一律拒绝。
+    const rawExt = path.extname(proposal && proposal.scope ? proposal.scope : '').toLowerCase();
+    const targetExt = path.extname(target || '').toLowerCase();
+    if (rawExt && !ALLOWED_READ_EXTENSIONS.has(rawExt)) {
+      throw Object.assign(new Error(`DISALLOWED_EXTENSION: ${rawExt}`), { code: 'DISALLOWED_EXTENSION' });
+    }
+    if (targetExt && !ALLOWED_READ_EXTENSIONS.has(targetExt)) {
+      throw Object.assign(new Error(`DISALLOWED_EXTENSION: ${targetExt}`), { code: 'DISALLOWED_EXTENSION' });
     }
     const stat = this.fs.statSync(target);
     if (!stat.isFile()) throw new Error('NOT_A_FILE');
@@ -561,6 +787,10 @@ class ControlledAgentExecutor {
     }
     if (stat.size > this.maxReadBytes) {
       throw Object.assign(new Error('READ_TOO_LARGE'), { code: 'READ_TOO_LARGE' });
+    }
+    if (!targetExt) {
+      const raw = this.fs.readFileSync(target);
+      return { bytes: stat.size, content: this._probeAndDecodeExtensionlessText(raw) };
     }
     //只返回内容与元数据，**不回传绝对路径**——渲染端不需要知道沙盒绝对位置，
     // 少一个信息泄露面。真要给也应该只给 basename。
@@ -635,12 +865,176 @@ class ControlledAgentExecutor {
     this.txn.commit(tx);
     return { bytes: Buffer.byteLength(content, 'utf8'), target: path.basename(proposal.scope || target) };
   }
+
+  _extractStructureItems(proposal) {
+    const cap = proposal && proposal.capability;
+    if (Array.isArray(proposal && proposal.targets)) {
+      if (proposal.targets.length === 0) {
+        return { ok: false, code: 'INVALID_PROPOSAL', detail: 'EMPTY_TARGETS' };
+      }
+      if (proposal.targets.length > MAX_STRUCTURE_TARGETS) {
+        return {
+          ok: false,
+          code: 'TOO_MANY_TARGETS',
+          detail: `targets=${proposal.targets.length} > limit=${MAX_STRUCTURE_TARGETS}`,
+          extra: { limit: MAX_STRUCTURE_TARGETS, count: proposal.targets.length },
+        };
+      }
+      const items = [];
+      for (const rawItem of proposal.targets) {
+        if (cap === 'workspace.move') {
+          const src = rawItem && typeof rawItem === 'object' ? String(rawItem.src || rawItem.scope || '') : '';
+          const dst = rawItem && typeof rawItem === 'object' ? (rawItem.dst != null ? String(rawItem.dst) : (rawItem.destination != null ? String(rawItem.destination) : '')) : '';
+          items.push({ src, dst });
+        } else {
+          const src = rawItem && typeof rawItem === 'object' ? String(rawItem.src || rawItem.scope || '') : String(rawItem || '');
+          items.push({ src, dst: null });
+        }
+      }
+      return { ok: true, items };
+    }
+    const singleSrc = String((proposal && proposal.scope) || '');
+    const singleDst = proposal && proposal.dst != null
+      ? String(proposal.dst)
+      : (proposal && proposal.destination != null ? String(proposal.destination) : null);
+    return { ok: true, items: [{ src: singleSrc, dst: singleDst }] };
+  }
+
+  _lstatBest(p) {
+    if (typeof this.fs.lstatSync === 'function') return this.fs.lstatSync(p);
+    return this.fs.statSync(p);
+  }
+
+  _mkdirEntries(resolvedItems) {
+    const created = [];
+    for (const item of resolvedItems || []) {
+      let existing = null;
+      try {
+        existing = this._lstatBest(item.src);
+      } catch (err) {
+        if (!err || err.code !== 'ENOENT') throw err;
+      }
+      if (existing) {
+        if (typeof existing.isSymbolicLink === 'function' && existing.isSymbolicLink()) {
+          throw Object.assign(new Error('SYMLINK_ESCAPE'), { code: 'SYMLINK_ESCAPE' });
+        }
+        if (typeof existing.isDirectory !== 'function' || !existing.isDirectory()) {
+          throw Object.assign(new Error('ALREADY_EXISTS_NOT_DIR'), { code: 'ALREADY_EXISTS_NOT_DIR' });
+        }
+      } else {
+        this.fs.mkdirSync(item.src, { recursive: true });
+      }
+      created.push(item.srcRel);
+    }
+    return { createdCount: created.length, targets: created };
+  }
+
+  _moveEntries(resolvedItems) {
+    const moved = [];
+    for (const item of resolvedItems || []) {
+      let srcStat;
+      try {
+        srcStat = this._lstatBest(item.src);
+      } catch (err) {
+        if (err && err.code === 'ENOENT') {
+          throw Object.assign(new Error('NOT_FOUND'), { code: 'NOT_FOUND' });
+        }
+        throw err;
+      }
+      if (!srcStat || (typeof srcStat.isSymbolicLink === 'function' && srcStat.isSymbolicLink())) {
+        throw Object.assign(new Error('SYMLINK_ESCAPE'), { code: 'SYMLINK_ESCAPE' });
+      }
+      if (typeof srcStat.isFile === 'function' && srcStat.isFile()
+          && typeof srcStat.nlink === 'number' && srcStat.nlink > 1) {
+        throw Object.assign(new Error('HARDLINK_DETECTED'), { code: 'HARDLINK_DETECTED' });
+      }
+      let dstExists = false;
+      try {
+        this._lstatBest(item.dst);
+        dstExists = true;
+      } catch (err) {
+        if (!err || err.code !== 'ENOENT') throw err;
+      }
+      if (dstExists) {
+        throw Object.assign(new Error('DST_ALREADY_EXISTS'), { code: 'DST_ALREADY_EXISTS' });
+      }
+      const normSrc = process.platform === 'win32' ? item.src.toLowerCase() : item.src;
+      const normDst = process.platform === 'win32' ? item.dst.toLowerCase() : item.dst;
+      const srcPrefix = normSrc.endsWith(path.sep) ? normSrc : normSrc + path.sep;
+      if (normDst === normSrc || normDst.startsWith(srcPrefix)) {
+        throw Object.assign(new Error('INVALID_MOVE_SELF'), { code: 'INVALID_MOVE_SELF' });
+      }
+      const parentDir = path.dirname(item.dst);
+      this.fs.mkdirSync(parentDir, { recursive: true });
+      this.fs.renameSync(item.src, item.dst);
+      moved.push({ src: item.srcRel, dst: item.dstRel });
+    }
+    return { movedCount: moved.length, items: moved };
+  }
+
+  _collectRemovePlan(targetPath, plan) {
+    let st;
+    try {
+      st = this._lstatBest(targetPath);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        throw Object.assign(new Error('NOT_FOUND'), { code: 'NOT_FOUND' });
+      }
+      throw err;
+    }
+    if (!st || (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink())) {
+      throw Object.assign(new Error('SYMLINK_ESCAPE'), { code: 'SYMLINK_ESCAPE' });
+    }
+    if (typeof st.isDirectory === 'function' && st.isDirectory()) {
+      const ents = this.fs.readdirSync(targetPath, { withFileTypes: true });
+      for (const ent of ents) {
+        const name = typeof ent === 'string' ? ent : (ent && ent.name);
+        if (!name) continue;
+        if (ent && typeof ent.isSymbolicLink === 'function' && ent.isSymbolicLink()) {
+          throw Object.assign(new Error('SYMLINK_ESCAPE'), { code: 'SYMLINK_ESCAPE' });
+        }
+        this._collectRemovePlan(path.join(targetPath, name), plan);
+      }
+      plan.push({ path: targetPath, isDir: true });
+    } else {
+      if (typeof st.nlink === 'number' && st.nlink > 1) {
+        throw Object.assign(new Error('HARDLINK_DETECTED'), { code: 'HARDLINK_DETECTED' });
+      }
+      plan.push({ path: targetPath, isDir: false });
+    }
+    if (plan.length > MAX_STRUCTURE_TARGETS) {
+      throw Object.assign(new Error(`TOO_MANY_TARGETS: ${plan.length} > ${MAX_STRUCTURE_TARGETS}`), { code: 'TOO_MANY_TARGETS' });
+    }
+  }
+
+  _removeEntries(resolvedItems) {
+    const plan = [];
+    const removedNames = [];
+    for (const item of resolvedItems || []) {
+      this._collectRemovePlan(item.src, plan);
+      removedNames.push(item.srcRel);
+    }
+    for (const node of plan) {
+      if (node.isDir) {
+        if (typeof this.fs.rmdirSync === 'function') this.fs.rmdirSync(node.path);
+        else this.fs.rmSync(node.path, { recursive: false, force: false });
+      } else {
+        this.fs.unlinkSync(node.path);
+      }
+    }
+    return { removedCount: plan.length, targets: removedNames };
+  }
 }
 
 module.exports = {
   ControlledAgentExecutor,
   EXECUTABLE_CAPABILITIES,
   ALLOWED_WRITE_EXTENSIONS,
+  ALLOWED_READ_EXTENSIONS,
+  READ_ONLY_EXEMPT_CAPABILITIES,
+  REVERSIBLE_EXEMPT_CAPABILITIES,
+  STRUCTURE_CAPABILITIES,
+  MAX_STRUCTURE_TARGETS,
   isMalformedWindowsPath,
   resolveRealPath,
   // 🔵 2026-11-05 C-4：realpathBestEffort 已删除（死导出，见上方注释）。

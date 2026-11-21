@@ -425,7 +425,7 @@ class InternalRegulationManager {
 
     const deltas = {};
 
-    // 1. 若距离上一轮有较长静默（> 1分钟），在本次交互前先计算基于静默的自然衰减
+    // 1. 若距离上一轮有较长静默（> 1分钟），在本次交互前先计算基于静默的唤醒度回归
     if (intervalMs > 60000) {
       const minutes = Math.min(120, intervalMs / 60000);
       // arousal 逐渐向基线 50 回归
@@ -434,10 +434,14 @@ class InternalRegulationManager {
       if (decayStep !== 0) {
         this.arousal = clamp(this.arousal + decayStep, REGULATION_BOUNDS.arousal.min, REGULATION_BOUNDS.arousal.max);
       }
-      // 交互密度自然衰减
-      this.interactionDensity = Math.max(0, this.interactionDensity - symmetricRound(minutes * 5));
-      // 认知负荷排空
-      this.cognitiveLoadProxy = Math.max(0, this.cognitiveLoadProxy - symmetricRound(minutes * 10));
+    }
+    // v2.0-b2-a / v2.0-b4：交互密度与认知负荷在正常对话停顿（>= 12 秒）下即按实际间隔平滑衰减；
+    // v2.0-b4 将衰减系数从 5/10 调为 8/16，保证 >=12s 正常节奏净变化 <=0（60 轮 15s 不撞 60 门槛），
+    // 同时 <12s 不进本门控，保持 +5 刷屏惩罚不变。
+    if (intervalMs >= 12000) {
+      const calmMinutes = Math.min(120, intervalMs / 60000);
+      this.interactionDensity = Math.max(0, this.interactionDensity - symmetricRound(calmMinutes * 8));
+      this.cognitiveLoadProxy = Math.max(0, this.cognitiveLoadProxy - symmetricRound(calmMinutes * 16));
     }
 
     // 2. 根据本轮输入增加生理负荷
@@ -447,7 +451,8 @@ class InternalRegulationManager {
       // 唤醒度受交互刺激微增（长输入刺激稍强）
       const arousalBoost = msgLen > 100 ? 4 : 2;
       deltas.arousal = +arousalBoost;
-      deltas.interactionDensity = +5;
+      // 正常阅读与打字间隔（>= 10 秒）只记轻度社交密度 +2；连续高频刷屏（< 10 秒）记 +5
+      deltas.interactionDensity = intervalMs >= 10000 ? +2 : +5;
       deltas.cognitiveLoadProxy = +2;
     } else {
       // assistant 产出

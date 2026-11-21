@@ -115,10 +115,16 @@ function authorizeProposal(e, { capability = 'workspace.write', scope, content =
 /* ================= 1. 装配与常量 ================= */
 {
   const e = env();
-  check('D4-1 执行器可装配，且可执行能力白名单只有 read/write 两项',
+  // v2.0-s2 配对更新：EXECUTABLE_CAPABILITIES 新增沙盒结构能力 mkdir/move/remove（共 6 项，process.execute / network.request 仍硬拒）。
+  check('D4-1 执行器可装配，且可执行能力白名单只有 read/list/write/mkdir/move/remove 六项',
     e.executor instanceof ControlledAgentExecutor
-    && EXECUTABLE_CAPABILITIES.length === 2
+    && EXECUTABLE_CAPABILITIES.length === 6
     && EXECUTABLE_CAPABILITIES.includes('workspace.read')
+    && EXECUTABLE_CAPABILITIES.includes('workspace.list')
+    && EXECUTABLE_CAPABILITIES.includes('workspace.write')
+    && EXECUTABLE_CAPABILITIES.includes('workspace.mkdir')
+    && EXECUTABLE_CAPABILITIES.includes('workspace.move')
+    && EXECUTABLE_CAPABILITIES.includes('workspace.remove')
     && EXECUTABLE_CAPACITY_HARDDENED(),
     EXECUTABLE_CAPABILITIES.join(','));
 }

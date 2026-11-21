@@ -1562,6 +1562,7 @@ function renderI18nPanel() {
   setText('panelTitle', 'panel.title');
   setText('secConn', 'sec.conn');
   setText('secMemory', 'sec.memory');
+  setText('secTickets', 'sec.tickets');
   setText('secVoice', 'sec.voice');
   setText('secTimezone', 'sec.timezone');
   setText('secDanger', 'sec.danger');
@@ -1598,8 +1599,9 @@ function renderI18nPanel() {
   setPlaceholder('connKey', 'conn.keyPlaceholder');
   setPlaceholder('connModel', 'conn.modelPlaceholder');
 
-  // 记忆与时区
+  // 记忆、未完事项与时区
   setText('memTitle', 'mem.title');
+  setText('ticketsTitle', 'tickets.title');
   setText('dangerHint', 'sec.dangerHint');
   setText('tzCompassTitle', 'tz.compass');
   setText('tzKBirth', 'tz.birth');
@@ -1716,12 +1718,13 @@ function renderI18nPanel() {
 
 /* ---------- 设置面板两栏导航（v1.0 用户设计） ----------
    左栏四区点击切换 + 右侧详情；记住上次分区（localStorage，UI 状态）。 */
-const PANEL_SECTIONS = ['conn', 'memory', 'voice', 'timezone', 'danger'];   // v1.7-a 补 voice（防漏白名单导致点不出）
+const PANEL_SECTIONS = ['conn', 'memory', 'tickets', 'voice', 'timezone', 'danger'];   // v1.7-a 补 voice（防漏白名单导致点不出）；v2.0-b2 补 tickets
 function selectPanelSection(key) {
   const k = PANEL_SECTIONS.includes(key) ? key : 'conn';
   for (const it of document.querySelectorAll('.pnav-item')) it.classList.toggle('on', it.dataset.sec === k);
   for (const sec of document.querySelectorAll('#panel .psec')) sec.classList.toggle('on', sec.dataset.sec === k);
   try { localStorage.setItem('panelSection', k); } catch (e) { /* 存不下不致命 */ }
+  if (k === 'tickets') refreshTickets();
 }
 for (const it of document.querySelectorAll('.pnav-item')) {
   it.addEventListener('click', () => selectPanelSection(it.dataset.sec));
@@ -1736,6 +1739,7 @@ if (langSelect) {
     renderProviderPanel();
     if (chatTitle) chatTitle.textContent = t('chat.title');
     refreshMem();
+    refreshTickets();
     refreshWardrobe();
     refreshStats();
   });
@@ -2208,6 +2212,7 @@ function openPanel() {
   syncPanelViewport();   // v1.0：面板家族统一视窗（扩容盖住她）
   refreshStats();
   refreshMem();
+  refreshTickets();
   refreshWardrobe();
   renderSandboxPanel();
   refreshSttPanel();
@@ -2295,6 +2300,100 @@ async function refreshMem() {
     row.append(tag, body);
     groupBody.appendChild(row);   // 条目归卡
   });
+}
+
+/* v2.0-b2-a：未完事项（Ticket）面板纯只读观察渲染（对齐 D-005 主体性铁律）。
+ * 三条纪律：
+ *   1. 不展示内部 id，也不提供任何人为新建、暂停、结束或篡改按钮；
+ *   2. 已结束默认折叠（避免历史堆积把活的事项挤下去）；
+ *   3. 状态标签必须与 src/agent-lifecycle.js formatTicketLine 逐字一致（'进行中' / '暂停'），
+ *      文本一律走 t() + textContent，禁用 innerHTML。 */
+function ticketStateTagText(state) {
+  if (state === 'paused') return t('tickets.state.paused', '暂停');
+  if (state === 'ended') return t('tickets.state.ended', '已结束');
+  return t('tickets.state.open', '进行中');
+}
+
+function renderTicketRow(ticket) {
+  const row = document.createElement('div');
+  row.className = 'mem';
+
+  const head = document.createElement('div');
+  head.className = 'row';
+
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.textContent = ticketStateTagText(ticket && ticket.state);
+
+  const titleEl = document.createElement('span');
+  titleEl.textContent = String((ticket && ticket.title) || '');
+  head.append(tag, titleEl);
+  row.appendChild(head);
+
+  if (ticket && ticket.note) {
+    const noteEl = document.createElement('div');
+    noteEl.className = 'hint';
+    noteEl.textContent = String(ticket.note);
+    row.appendChild(noteEl);
+  }
+
+  return row;
+}
+
+function collapsedTicketGroup(endedTickets) {
+  const details = document.createElement('details');
+  details.className = 'fgroup';
+  const summary = document.createElement('summary');
+  summary.className = 'fg-title';
+  summary.textContent = t('tickets.endedGroup', { n: endedTickets.length });
+  details.appendChild(summary);
+  for (const tkt of endedTickets) {
+    details.appendChild(renderTicketRow(tkt));
+  }
+  return details;
+}
+
+async function refreshTickets() {
+  const list = document.getElementById('ticketList');
+  if (!list) return;
+  const agentApi = api && api.agent;
+  if (!agentApi || typeof agentApi.ticketList !== 'function') {
+    const p = document.createElement('div');
+    p.className = 'empty';
+    p.textContent = t('tickets.preview', '当前预览模式不可用');
+    list.replaceChildren(p);
+    return;
+  }
+  try {
+    const r = await agentApi.ticketList();
+    const tickets = (r && r.ok && Array.isArray(r.tickets)) ? r.tickets : [];
+    // 空态必须给文案，不留白（沿用 s1 沙盒清单的同一纪律）
+    if (!tickets.length) {
+      const p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = t('tickets.empty', '还没有记录任何事项');
+      list.replaceChildren(p);
+      return;
+    }
+    const active = tickets
+      .filter((item) => item && item.state !== 'ended')
+      .slice()
+      .sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    const ended = tickets
+      .filter((item) => item && item.state === 'ended')
+      .slice()
+      .sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    // ⚠️ 已结束的默认折叠：避免历史堆积把活的东西挤下去
+    list.replaceChildren(
+      ...active.map(renderTicketRow),
+      ...(ended.length ? [collapsedTicketGroup(ended)] : [])
+    );
+  } catch {
+    const p = document.createElement('div');
+    p.className = 'empty';
+    p.textContent = t('tickets.readFailed', '读取失败');
+    list.replaceChildren(p);
+  }
 }
 
 async function refreshStats() {

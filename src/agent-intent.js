@@ -66,15 +66,12 @@
  *   沙盒写权限虽已开启，但没有任何代码把意图转成提案。
  *   气泡提示与卡片拉起留到 D-7（缺真实 `content` 来源）。
  *
- * ## 边界二：本模块只有写意图，没有任何读动作
+ * ## 边界二：读写意图的明确边界（v2.0-s1 升级）
  *
- * shouldProposeFrom 命中时固定产出 capability: 'workspace.write'，
- * 从不产出 workspace.read。也就是说「帮我整理」这类语义
- * （天然需要先读才知道要写什么）在 D-6 铺通后依然读不到任何文件。
- *
- * ⚠️ 别让下一个人以为读路径已经通了：沙盒里能读文件的是**执行器**
- *   （agent-executor.js 的 _readFile），但没有任何逻辑会自动去调用它 ——
- *   读能力是有的，**读意图**是没有的。
+ * v2.0-s1 起本模块区分写意图（workspace.write）与只读意图（workspace.read）：
+ *   - 写动作保留既有 REQUEST_VERBS，且与写动词冲突时写优先；
+ *   - 读动作仅由 READ_VERBS 触发，支持白名单文本/表格扩展名（含 .tsv）以及 README/LICENSE 等无扩展名纯文本探测；
+ *   - 仍只给能力建议 + hint，路径拼装与内容安全探测全部由主进程与执行器兜底。
  */
 
 const path = require('path');
@@ -84,6 +81,19 @@ const REQUEST_VERBS = [
   '帮我', '帮忙', '替我', '给我写', '写一下', '写个',
   '存到', '保存到', '存一下', '保存', '归档',
   '整理', '归整', '收拾', '清理一下',
+];
+
+/** 明确指向写入/落盘的动词（与 READ_VERBS 同句出现时写优先）。 */
+const WRITE_SPECIFIC_VERBS = [
+  '给我写', '写一下', '写个',
+  '存到', '保存到', '存一下', '保存', '归档',
+  '整理', '归整', '收拾', '清理一下',
+];
+
+/** v2.0-s1：明确指向读取沙盒文件的动词（需同时满足无 '?' 且命中 TARGET_HINTS + 合法文件名）。 */
+const READ_VERBS = [
+  '读一下', '读一读', '读读', '读取', '读出来', '读出',
+  '看一下', '看下', '看看', '查看', '打开', '念一下', '查一下',
 ];
 
 /** 目标提示词：出现其一即认为「提到了具体位置」。 */
@@ -118,6 +128,9 @@ const TARGET_HINTS = ['桌面', 'lifeandbox', '沙盒', '桌面上'];
  *   沙盒的隔离意义当场蒸发；不收 png/jpg —— 她没有图像生成能力，写出来只会是空文件。
  */
 const FILENAME_RE = /([\w\u4e00-\u9fa5][\w\u4e00-\u9fa5.-]*[\w\u4e00-\u9fa5]|\w)\.(md|txt|json|csv|log)(?![a-z0-9._-]|\.[a-z0-9])/i;
+// v2.0-s1：只读提取允许 .tsv 表格文件，不修改写入侧 FILENAME_RE 白名单。
+const READ_FILENAME_RE = /([\w\u4e00-\u9fa5][\w\u4e00-\u9fa5.-]*[\w\u4e00-\u9fa5]|\w)\.(md|txt|json|csv|tsv|log)(?![a-z0-9._-]|\.[a-z0-9])/i;
+const EXTENSIONLESS_READ_RE = /(?<![.\w-])([A-Za-z][A-Za-z0-9_-]{1,63})(?![.\w-])/g;
 const HAS_SEP_RE = /[\\\/]/;
 
 /**
@@ -221,8 +234,8 @@ function isBadDotSegment(tk) {
  * 截断依据：主名从匹配起点取，扩展名取捕获组，**只拼这两段**，
  *   不把中间/尾部的任何东西带进来。
  */
-function extractTarget(text) {
-  const m = FILENAME_RE.exec(String(text || ''));
+function extractTarget(text, re = FILENAME_RE) {
+  const m = re.exec(String(text || ''));
   if (!m) return null;
   // 🔴 D-6a 待修 2：**不能用 indexOf 找扩展名的位置**。
   //   原写法 `m[0].indexOf('.' + m[1])` 找的是「该扩展名字符串首次出现」，
@@ -247,6 +260,40 @@ function extractTarget(text) {
 
 /** 连接词与量词：只剥**开头连续**的，不动中间。 */
 const CONNECTIVES = ['把', '的', '到', '给', '一个', '这个', '一份', '一下'];
+const READ_LOCATION_PREFIXES = ['里的', '中的', '上的', '里', '中', '桌面', '桌面上', '沙盒'];
+
+/** v2.0-s1：无扩展名常见文本文件名显式白名单（小写匹配），避免把自然语言词如 PDF / ChatGPT / JSON / config 误当成文件名去读。 */
+const EXTENSIONLESS_READ_ALLOWLIST = new Set([
+  'readme',
+  'license',
+  'licence',
+  'changelog',
+  'todo',
+  'notes',
+  'makefile',
+  'dockerfile',
+  'version',
+  'authors',
+  'contributing',
+]);
+
+/**
+ * 从读请求中提取无扩展名文件标识符（只认 EXTENSIONLESS_READ_ALLOWLIST 内的常见文件名，如 README / LICENSE / TODO）。
+ * 严格排除前后紧跟点号的片段（防止把 secret.exe 误切出 secret），并跳过沙盒目录名本身。
+ */
+function extractExtensionlessReadTarget(text, sandboxName) {
+  const customSandbox = sandboxName ? String(sandboxName).toLowerCase() : '';
+  EXTENSIONLESS_READ_RE.lastIndex = 0;
+  let m;
+  while ((m = EXTENSIONLESS_READ_RE.exec(String(text || ''))) !== null) {
+    const token = m[1];
+    const lower = token.toLowerCase();
+    if (customSandbox && lower === customSandbox) continue;
+    if (!EXTENSIONLESS_READ_ALLOWLIST.has(lower)) continue;
+    return token;
+  }
+  return null;
+}
 
 /**
  * 🔴 D-6a 待修 11：句子性前缀（多字请求动词）—— **贪婪主名**的真正修法。
@@ -326,8 +373,10 @@ function trimSentencePrefix(name) {
  *
  * 循环剥而不是一次替换：「帮我把整理」这类可能叠着「帮我」+「把」。
  */
-function stripVerbPrefix(name, verb) {
+function stripVerbPrefix(name, verb, opts = {}) {
   const original = String(name || '');
+  const isRead = Boolean(opts && opts.isRead);
+  const sandboxName = String((opts && opts.sandboxName) || 'LifeSandbox');
   // 🔴 D-6a 待修 1：剥动词必须收敛，否则会把合法中文文件名剥成裸扩展名。
   //
   //   REQUEST_VERBS 里有「归档 / 保存 / 收拾 / 归整 / 写一下 / 存到」这些词，
@@ -348,16 +397,30 @@ function stripVerbPrefix(name, verb) {
   //   为什么不是「剥坏了整个回退」：那样「帮我归档.md」会连「帮我」一起留下，
   //   得到「帮我归档.md」而不是期望的「归档.md」—— 动词确实该剥，
   //   只是最后一刀把主名剥没了。
-  const MAX_STRIP_ROUNDS = 8;
+  const MAX_STRIP_ROUNDS = 12;
   let out = original;
   for (let rounds = 0; rounds < MAX_STRIP_ROUNDS; rounds++) {
     let cut = null;
     for (const v of REQUEST_VERBS) {
       if (out.startsWith(v)) { cut = v; break; }
     }
+    if (!cut && isRead) {
+      for (const v of READ_VERBS) {
+        if (out.startsWith(v)) { cut = v; break; }
+      }
+    }
     if (!cut) {
       for (const w of CONNECTIVES) {
         if (out.startsWith(w)) { cut = w; break; }
+      }
+    }
+    if (!cut && isRead) {
+      const readPrefixes = [...READ_LOCATION_PREFIXES, sandboxName];
+      for (const p of readPrefixes) {
+        if (p && out.toLowerCase().startsWith(p.toLowerCase())) {
+          cut = out.slice(0, p.length);
+          break;
+        }
       }
     }
     if (!cut) break;
@@ -392,12 +455,16 @@ function shouldProposeFrom(userText, opts = {}) {
     return { shouldPropose: false, reason: 'IS_QUESTION', capability: null, hint: null };
   }
 
-  // 条件 1：必须是明确的请求动词。
+  // 条件 1：必须是明确的请求动词（读/写分流：有明确写动词时写优先）。
   const lower = text.toLowerCase();
-  const verbHit = REQUEST_VERBS.find((v) => lower.includes(v));
-  if (!verbHit) {
+  const writeVerbHit = REQUEST_VERBS.find((v) => lower.includes(v));
+  const explicitWriteHit = WRITE_SPECIFIC_VERBS.find((v) => lower.includes(v));
+  const readVerbHit = READ_VERBS.find((v) => lower.includes(v));
+  if (!writeVerbHit && !readVerbHit) {
     return { shouldPropose: false, reason: 'NO_REQUEST_VERB', capability: null, hint: null };
   }
+  const isRead = Boolean(readVerbHit && !explicitWriteHit);
+  const verbHit = isRead ? readVerbHit : writeVerbHit;
 
   // 条件 4：目标提示词。找不到就不提 —— 因为我们不知道用户指的是哪个文件。
   const hintHit = TARGET_HINTS.find((h) => lower.includes(h))
@@ -416,7 +483,7 @@ function shouldProposeFrom(userText, opts = {}) {
   // 两条判据并存：
   //   ① extractTarget：从整句提取白名单扩展名的「主名.扩展名」片段（新增路径）；
   //   ② HAS_SEP_RE：带路径分隔符的完整路径（保留原有路径判据，完整路径本就该命中）。
-  const extracted = extractTarget(text);
+  const extracted = extractTarget(text, isRead ? READ_FILENAME_RE : FILENAME_RE);
   const tokens = text.split(/[\s，。！？、]+/).filter(Boolean);
   //🔴 D-6a 待修 4/6：pathLike 这条**也要过「主名不得以点开头」的关**。
   //
@@ -500,8 +567,11 @@ function shouldProposeFrom(userText, opts = {}) {
   //   两版不可混淆：**旧版恒假，新版有效**。
 
   // 完整路径优先于提取式：带分隔符的 token 是用户明说的路径形态，
-  // 比「在整句里扫到一个文件名片段」更可信。
-  const target = pathLike || extracted;
+  // 比「在整句里扫到一个文件名片段」更可信。只读模式下额外支持无扩展名纯文本名（如 README）。
+  const extensionlessTarget = (isRead && !pathLike && !extracted)
+    ? extractExtensionlessReadTarget(text, sandboxName)
+    : null;
+  const target = pathLike || extracted || extensionlessTarget;
   if (!target) {
     return { shouldPropose: false, reason: 'NO_CONCRETE_TARGET', capability: null, hint: hintHit };
   }
@@ -509,6 +579,20 @@ function shouldProposeFrom(userText, opts = {}) {
   // ⚠️ 这里**只给能力建议，不给绝对路径**。
   //   路径的最终形态由主进程拼装并交给 PermissionPolicy.authorize() 判定；
   //   渲染端/判定层若自行拼绝对路径，那条白名单就等于被绕过了一层。
+  const baseTarget = extracted !== null
+    ? extracted
+    : (pathLike !== null ? path.basename(pathLike) : extensionlessTarget);
+  const cleanHint = extensionlessTarget
+    ? extensionlessTarget
+    : stripVerbPrefix(trimSentencePrefix(baseTarget), verbHit, { isRead, sandboxName });
+  if (isRead) {
+    return {
+      shouldPropose: true,
+      reason: 'EXPLICIT_REQUEST',
+      capability: 'workspace.read',
+      hint: cleanHint,
+    };
+  }
   return {
     shouldPropose: true,
     reason: 'EXPLICIT_REQUEST',
@@ -520,23 +604,8 @@ function shouldProposeFrom(userText, opts = {}) {
     //
     // 之后都剥前缀动词：中文没有空格分词，「帮我把整理.md」整体是候选，
     //   不剥的话交给主进程拼路径会生成「帮我把整理.md」这种文件名。
-    hint: stripVerbPrefix(
-      // 🔴 D-6a 待修 11：**两级剥除，顺序不能换**。
-      //   第一级 trimSentencePrefix：剥掉「顺便帮我把整理」里的**句子性前缀**
-      //     （多字请求动词出现在主名内部 ⇒ 主名是句子碎片，不完整）。
-      //   第二级 stripVerbPrefix：剥掉**开头**的动词与连接词
-      //     （「帮我把」→「整理」，且带「剥出裸扩展名就回退」的保护）。
-      //
-      //   ⚠️ 为什么必须先 trim 再 strip：stripVerbPrefix 只认 startsWith，
-      //     遇到「顺便帮我把整理」这种**动词不在开头**的输入会完全失效
-      //     —— 用户说的是「整理.md」，hint 却是「顺便帮我把整理.md」，
-      //     磁盘上会多出一个叫「顺便帮我把整理.md」的文件。
-      //   ⚠️ 为什么不能反过来：先 strip 对同一输入同样无效（开头不是动词），
-      //     而且顺序若换，`我的.报告.md` 这类合法名会被剥坏。
-      trimSentencePrefix(extracted !== null ? extracted : path.basename(pathLike)),
-      verbHit
-    ),
+    hint: cleanHint,
   };
 }
 
-module.exports = { shouldProposeFrom, REQUEST_VERBS, TARGET_HINTS };
+module.exports = { shouldProposeFrom, REQUEST_VERBS, READ_VERBS, TARGET_HINTS };

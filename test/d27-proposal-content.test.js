@@ -684,8 +684,14 @@ console.log('--- D-27 通路 B 内容生成与主体拒案门禁 ---');
    *   任一失效就会出现「同一意图被两条通路各消费一次」。
    *   本组把这两个前提钉成断言 —— 将来谁改坏了，这里先红。 */
   {
-    check('🔴 两条通路确实共读同一字段（若哪天改了，这条注释与断言要一起更新）',
-      /else maybeAskForSelfNote\(brain && brain\._pendingAgentIntent\)/.test(MAIN_SRC));
+    // 🔵 v2.0-a 修订：turn_chat 已统一经 agentRouter 分派，且 maybeAskForSelfNote 彻底取消
+    //   对 brain._pendingAgentIntent 的读取与回落（全仓收敛为 tryBuildProposalFromIntent 单点消费+置空）。
+    //   剥除历史注释后再判代码调用，保留 main.js 原决策背景注释。
+    const mainCodeOnly = MAIN_SRC.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+    check('🔴 v2.0-a：chat-send 通过 routeAgentEvent 路由，且不再向 maybeAskForSelfNote 传 _pendingAgentIntent',
+      /routeAgentEvent\(\{ kind: 'turn_chat' \}\)/.test(mainCodeOnly)
+      && !/maybeAskForSelfNote\(brain && brain\._pendingAgentIntent\)/.test(mainCodeOnly)
+      && !/selfIntent \|\| \(brain && brain\._pendingAgentIntent\)/.test(mainCodeOnly));
     check('🔴 前置①：置空发生在 await 之前（否则后者会读到同一个意图）',
       /brain\._pendingAgentIntent = null;[\s\S]{0,2000}?await brain\.askForProposalContent/.test(MAIN_SRC));
     // 前置②：agent-intent 的产出没有 kind 字段

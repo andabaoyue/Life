@@ -666,6 +666,107 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     const recovered = m.getState().interactionDensity === 28 && !m.formatPerception(DAYT + 20 * 60000).includes('自己安静待一会儿');
     return overloaded && recovered;
   })());
+
+  check('v2.0-b2-a 正常间隔对话（20~40秒/轮）不误触发过载退避，高频刷屏仍照常触发', (() => {
+    // 1) 模拟先拖了 4 下，随后以 25 秒/轮的正常节奏连聊 16 轮
+    const normalChat = mk('ir-normal-', 75, 0);
+    for (let i = 0; i < 4; i++) {
+      normalChat.updateOnActivity('drag', { count: 1, timestamp: DAYT + i * 1500 });
+    }
+    for (let i = 0; i < 16; i++) {
+      const ts = DAYT + 10000 + i * 25000;
+      normalChat.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs: 25000, timestamp: ts });
+      normalChat.updateOnInteractionTurn({ role: 'assistant', messageLength: 80, intervalMs: 2000, timestamp: ts + 2000 });
+    }
+    const normalSt = normalChat.getState();
+    const normalSense = normalChat.formatPerception(DAYT + 500000);
+    const normalClean = normalSt.interactionDensity < 40 && !normalSense.includes('过载散乱') && !normalSense.includes('自己安静待一会儿');
+
+    // 2) 对照：以 1 秒间隔高频连发 12 轮仍会正常触发 >= 60 过载保护
+    const spamChat = mk('ir-spam-', 75, 0);
+    for (let i = 0; i < 12; i++) {
+      spamChat.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs: 1000, timestamp: DAYT + i * 1000 });
+    }
+    const spamSt = spamChat.getState();
+    const spamTriggered = spamSt.interactionDensity >= 60 && spamChat.formatPerception(DAYT + 12000).includes('过载散乱');
+
+    return normalClean && spamTriggered;
+  })());
+
+  /* ============ v2.0-b4：衰减净变化单调性与 60 轮 15s 不撞线门禁 ============ */
+  function measureNetDensityDelta(intervalMs, seedDensity = 20, ManagerClass = InternalRegulationManager) {
+    const m = new ManagerClass(makeTempDir());
+    m.interactionDensity = seedDensity;
+    m.cognitiveLoadProxy = 20;
+    m.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs, timestamp: DAYT });
+    return m.interactionDensity - seedDensity;
+  }
+
+  check('v2.0-b4 数值判据①：刷屏间隔 5000ms 不进衰减门控，净变化保持 +5 > 0', (() => {
+    const delta = measureNetDensityDelta(5000);
+    return delta === 5 && delta > 0;
+  })());
+
+  check('v2.0-b4 数值判据②：正常打字起点 12000ms 与思考间隔 15000ms 净变化 <= 0', (() => {
+    const d12 = measureNetDensityDelta(12000);
+    const d15 = measureNetDensityDelta(15000);
+    return d12 <= 0 && d15 <= 0;
+  })());
+
+  check('v2.0-b4 数值判据③：从容间隔 30000ms 净下降 (< 0) 且久别 120000ms 显著回落 (< -2)', (() => {
+    const d30 = measureNetDensityDelta(30000);
+    const d120 = measureNetDensityDelta(120000);
+    return d30 < 0 && d120 < -2;
+  })());
+
+  check('v2.0-b4 行为判据④：正常聊天 60 轮（15s 间隔）交互密度峰值始终 < 60，不误触过载退避', (() => {
+    const m = new InternalRegulationManager(makeTempDir());
+    let peak = 0;
+    for (let i = 0; i < 60; i++) {
+      m.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs: 15000, timestamp: DAYT + i * 15000 });
+      peak = Math.max(peak, m.interactionDensity);
+    }
+    return peak < 60 && m.cognitiveLoadProxy < 30 && !m.formatPerception(DAYT + 60 * 15000).includes('过载散乱');
+  })());
+
+  check('v2.0-b4 变异判别力⑤：把真实源码衰减系数 8/16 改回 5/10 后，12s/15s 净变化 > 0 且 60 轮必撞 ≥60', (() => {
+    const vm = require('vm');
+    const srcPath = path.resolve(__dirname, '..', 'src', 'internal-regulation.js');
+    const origSrc = fs.readFileSync(srcPath, 'utf8');
+    const mutatedSrc = origSrc
+      .replace('calmMinutes * 8', 'calmMinutes * 5')
+      .replace('calmMinutes * 16', 'calmMinutes * 10');
+    if (mutatedSrc === origSrc) return false;
+
+    const mod = { exports: {} };
+    vm.runInNewContext(mutatedSrc, {
+      module: mod,
+      exports: mod.exports,
+      require: (id) => require(id.startsWith('.') ? path.resolve(path.dirname(srcPath), id) : id),
+      __dirname: path.dirname(srcPath),
+      __filename: srcPath,
+      console,
+      Date,
+      Math,
+      Number,
+      Boolean,
+      String,
+      Object,
+      Array,
+      Set,
+      Map,
+    });
+    const MutatedMgr = mod.exports.InternalRegulationManager;
+    const md12 = measureNetDensityDelta(12000, 20, MutatedMgr);
+    const md15 = measureNetDensityDelta(15000, 20, MutatedMgr);
+    const mm = new MutatedMgr(makeTempDir());
+    let mPeak = 0;
+    for (let i = 0; i < 60; i++) {
+      mm.updateOnInteractionTurn({ role: 'user', messageLength: 20, intervalMs: 15000, timestamp: DAYT + i * 15000 });
+      mPeak = Math.max(mPeak, mm.interactionDensity);
+    }
+    return md12 > 0 && md15 > 0 && mPeak >= 60;
+  })());
 })();
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

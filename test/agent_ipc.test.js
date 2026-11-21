@@ -143,9 +143,10 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
     stat.policy.killSwitch === false &&
     Array.isArray(stat.registeredCapabilities));
 
+  // v2.0-s2 配对更新：CAPABILITIES 新增沙盒结构能力 mkdir/move/remove（共 8 项；network.request 仍硬封死）。
   const caps = h.call('agent:get-capabilities', h.trustedEvent);
   check('D1-3 get-capabilities 只读返回元数据，network.request 标记为硬封死',
-    caps && caps.ok === true && caps.capabilities.length === 4 &&
+    caps && caps.ok === true && caps.capabilities.length === 8 &&
     caps.capabilities.some((c) => c.name === 'network.request' && c.hardDenied === true));
 
   const audit = h.call('agent:get-audit-log', h.trustedEvent);
@@ -312,8 +313,11 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
   //   避免在 get-pending-proposal 中暴露未截断大文本，且受 ALREADY_DECIDED 保护。
   //   新增的是一条「受保护的只读正文查看」通道，不是执行通道。
   //   数量从 7 改到 8，第②条（禁进程/网络通道）与第③条（写唯一入口）逐字未动。
-  check('❌ 反例5 通道名单恰为 8 条且不含任何进程/网络通道（SEC-01 修订硬约束）',
-    names.length === 8
+  // 🔵 v2.0-b2 成对更新（8 → 12）：新增 4 条 Ticket 生命周期通道
+  //   （agent:ticket-list / ticket-create / ticket-transition / ticket-note），
+  //   仅管理未完事项记录，不触发文件或执行器动作；禁进程/网络通道与写唯一入口两条硬约束逐字未动。
+  check('❌ 反例5 通道名单恰为 12 条且不含任何进程/网络通道（v2.0-b2 成对更新）',
+    names.length === 12
     && !names.some((c) => /process|network|spawn|shell|http|fetch/i.test(c)),
     names.join(','));
 

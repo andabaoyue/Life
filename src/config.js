@@ -97,10 +97,14 @@ const DEFAULTS = {
    *      （agent-executor.js:444「D-17（用户拍板 C1）」）。降成 observe 是**收权**，不是给权。
    *   ② **未登记的能力回落 observe**：以后加新能力，忘了配置也落在最安全档位
    *      （对齐 DeepSeek 原型 src/policy.ts 的 `z.enum([...]).default('observe')`）。
+   *   ③ **v2.0-s2 只读感官观察档**：`workspace.read` 与 `workspace.list` 均保持 `auto`（s1 已备齐 readOnly 旁路、
+   *      ALLOWED_READ_EXTENSIONS、2MB 上限与沙盒前缀校验），但支持通过本表显式降级为 `observe`/`off` 并产出只读回声。
    */
   agentCapabilityModes: {
     selfNote: 'auto',
     observerJournal: 'auto',
+    'workspace.read': 'auto',
+    'workspace.list': 'auto',
   },
 
   // 🔴 D-011（v1.2.y）：长期记忆「渐褪」的标定参数与出厂通电。
@@ -246,8 +250,8 @@ function sanitize(raw = {}) {
         && !Array.isArray(raw.agentCapabilityModes) ? raw.agentCapabilityModes : {};
       const out = { ...DEFAULTS.agentCapabilityModes };
       for (const [k, v] of Object.entries(src)) {
-        // 能力名只收短标识符，防任意长键污染配置
-        if (typeof k !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]{0,40}$/.test(k)) continue;
+        // 能力名只收短标识符（允许单点分段如 workspace.read），防连字符/超长键污染配置
+        if (typeof k !== 'string' || k.length > 41 || !/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*){0,2}$/.test(k)) continue;
         if (typeof v === 'string' && valid.includes(v)) out[k] = v;
       }
       return out;
@@ -342,6 +346,16 @@ function sanitize(raw = {}) {
 const lastGood = new Map();                 // realPath -> cfg（只在读成功时更新）
 
 function realKey(dir) {
+  // 🔴 v2.0.0 发布修复：`dir` 非字符串时 path.normalize 会抛 TypeError
+  //   （Node 18+ 起 normalize(undefined) 不再宽容返回 '.'）。
+  //   而本函数的 try/catch **只兜 realpathSync**，catch 里再抛就没人接了 ——
+  //   于是 "The path argument must be of type string" 一路穿到 tryLoad/load 的调用方。
+  //
+  //   实际触发点（2026-11-21 公库同步时抓到）：main.js 的 `load()` 裸调用（无参），
+  //   在生产里被 `brain && brain.cfg` 短路、从不执行；只有测试把 brain 替成假对象、
+  //   cfg 为 undefined 时才第一次走到 → 潜伏了从 v2.0-s2 起的所有版本。
+  //   这里用哨兵串而不是抛错：读不到配置的语义是「返回 null / 用默认值」，不是崩溃。
+  if (typeof dir !== 'string' || !dir) return '\u0000invalid-userdata';
   try { return fs.realpathSync(dir); } catch { return path.normalize(dir); }
 }
 

@@ -37,10 +37,30 @@ const path = require('path');
 const crypto = require('crypto');
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget,
-  createActionProposal, AuditLog, CAPABILITIES,
+  createActionProposal, AuditLog, CAPABILITIES, CAPABILITY_META,
 } = require('./agent-interfaces');
+
+/**
+ * v2.0-a：只读冻结的 CAPABILITY_META，不走可变的 registry.metaOf()。
+ * 新注册能力若缺失或伪造键值为 false，在加法式判据（cap === 'workspace.write' || flag === true）下
+ * 也无法跳过 workspace.write 既有的任何安全闸门。
+ */
+function hasCapabilityMetaFlag(capability, flagName) {
+  if (!capability || !Object.prototype.hasOwnProperty.call(CAPABILITY_META, capability)) {
+    return false;
+  }
+  const meta = CAPABILITY_META[capability];
+  return Boolean(meta && meta[flagName] === true);
+}
 const { UserConfirmationGate } = require('./agent-confirmation');
-const { ControlledAgentExecutor, ALLOWED_WRITE_EXTENSIONS, isMalformedWindowsPath } = require('./agent-executor');
+const { isValidStructureScope } = require('./agent-sandbox');
+const {
+  ControlledAgentExecutor,
+  ALLOWED_WRITE_EXTENSIONS,
+  STRUCTURE_CAPABILITIES,
+  MAX_STRUCTURE_TARGETS,
+  isMalformedWindowsPath,
+} = require('./agent-executor');
 
 /**
  * 允许注册的通道名单（白名单即设计约束，不多不少）。
@@ -48,7 +68,8 @@ const { ControlledAgentExecutor, ALLOWED_WRITE_EXTENSIONS, isMalformedWindowsPat
  * D-1 时这里只有 4 条治理/查询通道；D-3 加了 agent:confirm-action；
  * D-4 加了 agent:execute，共 6 条；
  * D-5 加了 agent:get-pending-proposal，共 7 条（安全取回提案真身的唯一途径）；
- * SEC-01 加了 agent:get-proposal-content，共 8 条（受保护的正文安全只读查看通道）。
+ * SEC-01 加了 agent:get-proposal-content，共 8 条（受保护的正文安全只读查看通道）；
+ * v2.0-b2 加了 4 条 Ticket 生命周期通道（list / create / transition / note），共 12 条。
  *
  * ⚠️ agent:confirm-action **只登记用户的「同意/拒绝」**，它不执行任何动作。
  * 用户点头≠ 可以动手，中间还隔着预算终态判定、TTL、以及事务层。
@@ -67,6 +88,10 @@ const AGENT_CHANNELS = Object.freeze([
   'agent:confirm-action',
   'agent:execute',
   'agent:get-audit-log',
+  'agent:ticket-list',
+  'agent:ticket-create',
+  'agent:ticket-transition',
+  'agent:ticket-note',
 ]);
 
 /** 统一错误信封：与 research-ipc 的 { ok, error } 形状对齐，渲染层好统一处理。 */
@@ -117,6 +142,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   const contentSnapshotStore = options.contentSnapshotStore || ctx.contentSnapshotStore || new Map();
   const MAX_CONTENT_BYTES = 5 * 1024 * 1024; // 5 MiB
   const SNAPSHOT_TTL_MS = 10 * 60 * 1000;    // 10 分钟
+  // v2.0-b3：记录已转为 Ticket 的过期提案 id，防止同一次会话连续关多窗时重复建单。
+  const ticketizedProposalIds = new Set();
 
   function pruneSnapshots() {
     const now = Date.now();
@@ -164,6 +191,15 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     ? options.onExecuted
     : null;
 
+  // v2.0-b2：Ticket 生命周期（只读注入 + 主进程填字段）
+  //   ⚠️ 刻意**不在这里 new TicketStore()**——那会造出第二个实例，
+  //      两个 store 各持一份 tickets 数组：面板建的单子注入时读不到。
+  //      唯一实例在 brain.js:305，由 main.js 注入进来。
+  const ticketStore = options.ticketStore || ctx.ticketStore || null;
+  const getWindowNo = (typeof options.getWindowNo === 'function')
+    ? options.getWindowNo
+    : (typeof ctx.getWindowNo === 'function' ? ctx.getWindowNo : () => 1);
+
   /**
    * 在建案瞬间求一次动机。**只此一处调用**，求值结果随即冻结进提案。
    * 任何异常都吞掉并返回 null：动机记录失败绝不能挡住建案本身。
@@ -198,7 +234,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
    * 再做能力授权（可能读磁盘白名单），最后才消耗预算。
    * 反过来会让恶意畸形输入先吃掉用户的动作配额。
    */
-  function evaluateProposal(raw) {
+  function evaluateProposal(raw, opts = {}) {
     // ① 输入形态硬校验：跨进程传进来的一律视为不可信输入。
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return { code: 'INVALID_PROPOSAL', ok: false };
@@ -206,13 +242,80 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     const capability = String(raw.capability || '');
     if (!capability) return { code: 'CAPABILITY_REQUIRED', ok: false };
 
-    // ② 能力授权：故意**不传 ctx.meta** —— 让 authorize 走 CAPABILITY_META 兜底，
+    // ② 能力授权与结构操作前检：故意**不传 ctx.meta** —— 让 authorize 走 CAPABILITY_META 兜底，
     //    这样 renderer 无法通过伪造 meta 洗白 hardDenied 能力（如 network.request）。
-    const verdict = policy.authorize(capability, raw.scope);
-    if (!verdict.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: verdict.reason, verdict };
+    //    v2.0-s2：结构能力（mkdir / move / remove）校验 targets 上限（<= MAX_STRUCTURE_TARGETS）、
+    //    文件名合法性，并对 workspace.move 同时授权+校验 src 与 dst（跨边界必拒）。
+    let verdict;
+    if (STRUCTURE_CAPABILITIES.has(capability)) {
+      const capRoots = (policy && policy.scopeRoots && typeof policy.scopeRoots.get === 'function')
+        ? (policy.scopeRoots.get(capability) || [])
+        : [];
+      const checkStructurePath = (targetPath, tag) => {
+        const v = policy.authorize(capability, targetPath);
+        if (!v.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: v.reason, verdict: v };
+        if (isMalformedWindowsPath(targetPath) || !isValidStructureScope(targetPath, capRoots)) {
+          return { code: 'DISALLOWED_FILENAME', ok: false, reason: tag };
+        }
+        return { ok: true, verdict: v };
+      };
+
+      if (Array.isArray(raw.targets)) {
+        if (raw.targets.length === 0) {
+          return { code: 'INVALID_PROPOSAL', ok: false, reason: 'EMPTY_TARGETS' };
+        }
+        if (raw.targets.length > MAX_STRUCTURE_TARGETS) {
+          return {
+            code: 'TOO_MANY_TARGETS',
+            ok: false,
+            reason: `targets=${raw.targets.length} > limit=${MAX_STRUCTURE_TARGETS}`,
+          };
+        }
+        for (const item of raw.targets) {
+          if (capability === 'workspace.move') {
+            const itemSrc = item && typeof item === 'object' ? (item.src || item.scope || '') : '';
+            const itemDst = item && typeof item === 'object'
+              ? (item.dst != null ? item.dst : (item.destination != null ? item.destination : ''))
+              : '';
+            if (typeof itemSrc !== 'string' || !itemSrc.trim() || typeof itemDst !== 'string' || !itemDst.trim()) {
+              return { code: 'INVALID_PROPOSAL', ok: false, reason: 'MOVE_SRC_DST_REQUIRED' };
+            }
+            const srcCheck = checkStructurePath(itemSrc, 'INVALID_STRUCTURE_SRC');
+            if (!srcCheck.ok) return srcCheck;
+            const dstCheck = checkStructurePath(itemDst, 'INVALID_STRUCTURE_DST');
+            if (!dstCheck.ok) return dstCheck;
+            if (!verdict) verdict = srcCheck.verdict;
+          } else {
+            const itemSrc = item && typeof item === 'object' ? (item.src || item.scope || '') : item;
+            if (typeof itemSrc !== 'string' || !itemSrc.trim()) {
+              return { code: 'INVALID_PROPOSAL', ok: false, reason: 'TARGET_PATH_REQUIRED' };
+            }
+            const srcCheck = checkStructurePath(itemSrc, 'INVALID_STRUCTURE_SCOPE');
+            if (!srcCheck.ok) return srcCheck;
+            if (!verdict) verdict = srcCheck.verdict;
+          }
+        }
+      } else {
+        const srcCheck = checkStructurePath(raw.scope, 'INVALID_STRUCTURE_SCOPE');
+        if (!srcCheck.ok) return srcCheck;
+        verdict = srcCheck.verdict;
+        if (capability === 'workspace.move') {
+          const dstPath = raw.dst != null ? raw.dst : raw.destination;
+          if (typeof dstPath !== 'string' || !dstPath.trim()) {
+            return { code: 'INVALID_PROPOSAL', ok: false, reason: 'DST_REQUIRED' };
+          }
+          const dstCheck = checkStructurePath(dstPath, 'INVALID_STRUCTURE_DST');
+          if (!dstCheck.ok) return dstCheck;
+        }
+      }
+    } else {
+      verdict = policy.authorize(capability, raw.scope);
+      if (!verdict.allowed) return { code: 'AUTHORIZED_REJECTED', ok: false, reason: verdict.reason, verdict };
+    }
 
     // 🔴 F5 & SEC-03：写扩展名白名单同源前置校验与 Windows 畸形文件名/保留名防御。建案期即拦截，不扣减用户动作预算。
-    if (capability === 'workspace.write') {
+    // v2.0-a：加法式元数据判定，workspace.write 永远触发，其它能力由冻结 CAPABILITY_META 追加触发
+    if (capability === 'workspace.write' || hasCapabilityMetaFlag(capability, 'enforcesWriteExtension')) {
       const ext = path.extname(raw.scope || '').toLowerCase();
       if (isMalformedWindowsPath(raw.scope) || !ALLOWED_WRITE_EXTENSIONS.has(ext)) {
         return { code: 'DISALLOWED_EXTENSION', ok: false, ext: ext || 'none' };
@@ -238,7 +341,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     //       执行  consume(isWrite) → writes     （agent-executor.js，真正落盘处）
     //
     //   ⚠️ capability 变量仍要保留做日志/审计，别删。
-    if (!budget.consume(false)) {
+    const isFreeRead = Boolean(opts && opts.free);
+    if (!budget.consume(false, Date.now(), { free: isFreeRead })) {
       return { code: 'BUDGET_TRIPPED', ok: false, state: budget.state() };
     }
     return { code: 'OK', ok: true, capability, verdict };
@@ -288,6 +392,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         killSwitch: policy.killSwitch,
         grantedCapabilities: [...policy.allowed],
         sandboxRoots: policy && policy.scopeRoots && typeof policy.scopeRoots.get === 'function'
+          // v2.0-a 故意保留：sandboxRoots 是渲染层展示字段（取 roots[0] 显示“沙盒路径”），仅取写沙盒根目录
           ? [...(policy.scopeRoots.get('workspace.write') || [])]
           : [],
       },
@@ -375,7 +480,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     }
 
     let isOverwrite = false;
-    if (tracked.capability === 'workspace.write' && typeof tracked.scope === 'string' && tracked.scope) {
+    if ((tracked.capability === 'workspace.write' || hasCapabilityMetaFlag(tracked.capability, 'checksOverwrite'))
+      && typeof tracked.scope === 'string' && tracked.scope) {
       try {
         const fsImpl = options.fs || fs;
         isOverwrite = fsImpl.existsSync(path.resolve(tracked.scope));
@@ -457,20 +563,34 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //     通道传 'ipc'，主进程传 'main'。审计里能看出提案是谁发起的。
   function proposeInternal(raw, via, source, trustedContent) {
     const src = via === 'main' ? 'main' : 'ipc';
-    // 🔴 D-17 & v1.4-b：来源由**主进程侧**决定，经独立参数传入（不读 raw）。
-    //   通道来的（渲染端）永远只能是 'user'；主进程自主建案时放行 'selfNote' 与 'observerJournal'。
-    //   ⚠️ 这里不做白名单校验（createActionProposal 内已兜底），
-    //     但**只认受信任的主进程自主来源值** —— 未知值一律按 'user' 传下去。
-    const proposalSource = (src === 'main' && (source === 'selfNote' || source === 'observerJournal'))
-      ? source : 'user';
+    // 🔴 D-17 & v1.4-b & v2.0-s1 & v2.0-s2：来源由**主进程侧**决定，经独立参数传入（不读 raw）。
+    //   通道来的（渲染端）永远只能是 'user'；主进程自主建案时放行 'selfNote'、'observerJournal'
+    //   以及只读/可逆目录来源 'readOnly'（严格限定 workspace.read / list / mkdir，绝不给 write / move / remove）。
+    //   ⚠️ workspace.remove 与 workspace.move 无论传任何 source 一律降回 'user'，绝不可免确认；
+    //     且额度豁免（isTrustedFreeRead）仅限 read / list，workspace.mkdir 仍计动作额度。
+    const rawCap = raw && typeof raw === 'object' ? raw.capability : null;
+    const isTrustedReadOnly = src === 'main'
+      && source === 'readOnly'
+      && (rawCap === 'workspace.read' || rawCap === 'workspace.list' || rawCap === 'workspace.mkdir');
+    const isTrustedFreeRead = src === 'main'
+      && source === 'readOnly'
+      && (rawCap === 'workspace.read' || rawCap === 'workspace.list');
+    const isTrustedNoteSource = src === 'main'
+      && (source === 'selfNote' || source === 'observerJournal')
+      && rawCap !== 'workspace.remove'
+      && rawCap !== 'workspace.move';
+    const proposalSource = isTrustedNoteSource
+      ? source
+      : (isTrustedReadOnly ? 'readOnly' : 'user');
 
     // 🔴 SEC-01 & F4：写能力权威内容快照强制绑定（P1 级安全防御 + 校验先于计费）
     //   所有 workspace.write 提案必须在建案时取得有效字符串正文。
     //   普通 IPC 提案必须提供 raw.content；自主提案（selfNote / observerJournal）必须使用主进程可信的 trustedContent。
     //   正文缺失、类型错误、空字符串或超限时，直接拒绝建案，不扣减用户动作预算，不得创建提案或授权记录。
+    // v2.0-a：加法式元数据判定；分支内三处审计故意保留字面量 'workspace.write'（此处尚未经 evaluateProposal(raw) 校验）
     let contentMeta = null;
     let candidate = null;
-    if (raw && raw.capability === 'workspace.write') {
+    if (raw && (raw.capability === 'workspace.write' || hasCapabilityMetaFlag(raw.capability, 'requiresContentSnapshot'))) {
       candidate = (src === 'main' && (proposalSource === 'selfNote' || proposalSource === 'observerJournal'))
         ? trustedContent
         : (raw && raw.content);
@@ -517,7 +637,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       };
     }
 
-    const evaluated = evaluateProposal(raw);
+    const evaluated = evaluateProposal(raw, { free: isTrustedFreeRead });
     if (!evaluated.ok) {
       // 拒绝也要留痕 —— 审计的价值一半在这里。
       auditLog.append({
@@ -536,6 +656,9 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       }
       if (evaluated.code === 'DISALLOWED_EXTENSION') {
         return fail('DISALLOWED_EXTENSION', { ext: evaluated.ext });
+      }
+      if (evaluated.reason) {
+        return fail(evaluated.code, { reason: evaluated.reason });
       }
       return fail(evaluated.code);
     }
@@ -740,7 +863,14 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     const proposalId = String(raw.proposalId || '').trim();
     const trackedProposal = proposalStore.get(proposalId);
     const snap = contentSnapshotStore.get(proposalId);
-    const isWrite = trackedProposal && trackedProposal.capability === 'workspace.write';
+    // v2.0-a：判定依据是「这个能力要不要权威正文快照」，故用 requiresContentSnapshot，
+    //   不用 transactional —— 后者语义是「写操作必须可回滚」（agent-interfaces.js:97），
+    //   两件事将来可能分离（例：可回滚但无需正文快照的写）。加法式：workspace.write 恒触发。
+    const isWrite = Boolean(
+      trackedProposal
+      && (trackedProposal.capability === 'workspace.write'
+        || hasCapabilityMetaFlag(trackedProposal.capability, 'requiresContentSnapshot'))
+    );
 
     if (isWrite) {
       if (!snap) {
@@ -922,6 +1052,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         const r = (result && result.result) || {};
         onExecuted({
           proposalId: String(raw.proposalId || ''),
+          capability: (trackedProposal && trackedProposal.capability) || null,
           // 写文件路径：执行器已给 basename；读文件没有 target，则退回 null
           name: typeof r.target === 'string' ? r.target : null,
           bytes: typeof r.bytes === 'number' ? r.bytes : null,
@@ -953,6 +1084,63 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     return { ok: true, total: all.length, returned: slice.length, events: slice };
   }));
 
+  /* v2.0-b2：Ticket 四条通道。
+   *
+   * 🔴 三条铁律：
+   *   1. 错误字段归一到 `error`（TicketStore 内部用 `code`）——渲染端只认一种形状。
+   *      参照 agent:execute 的 `const { ok, code, ...rest } = result; return { ok:false, ...rest, error: code }`。
+   *   2. 只**显式摘取**白名单字段：`id` / `windowNo` / `now` **一律不接受渲染端传入**。
+   *      Ticket 是跨轮状态的注入源，能伪造窗口号 = 能让任意文字出现在她下一轮视野里。
+   *      （这不是越权执行，是越权影响认知。）
+   *   3. 全部走 guard() + assertByHandler()，与既有 8 条同构。 */
+  function ticketReply(result) {
+    if (!result || result.ok === true) return result;
+    const { ok, code, ...rest } = result;
+    return { ok: false, ...rest, error: code || 'TICKET_ERROR' };
+  }
+
+  // 9. Ticket 列表（只读，含全部状态；面板据此渲染）
+  ipcGuard.handle('agent:ticket-list', guard((event) => {
+    assertByHandler(event);
+    if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
+    return { ok: true, tickets: ticketStore.list() };
+  }));
+
+  // 10. 建一条（id 与 windowNo 一律由主进程填，绝不接受渲染端传入）
+  ipcGuard.handle('agent:ticket-create', guard((event, raw = {}) => {
+    assertByHandler(event);
+    if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
+    const r = ticketStore.createTicket({
+      title: raw && raw.title,
+      note: raw && raw.note,
+      capability: raw && raw.capability,
+      windowNo: getWindowNo(),
+      // ⚠️ 刻意不传 id / now / state：由 createTicket 内部生成或走默认
+    });
+    return ticketReply(r);
+  }));
+
+  // 11. 改状态
+  ipcGuard.handle('agent:ticket-transition', guard((event, raw = {}) => {
+    assertByHandler(event);
+    if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
+    const r = ticketStore.transition(raw && raw.id, raw && raw.state, {
+      note: raw && raw.note,
+      windowNo: getWindowNo(),
+    });
+    return ticketReply(r);
+  }));
+
+  // 12. 改备注
+  ipcGuard.handle('agent:ticket-note', guard((event, raw = {}) => {
+    assertByHandler(event);
+    if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
+    const r = ticketStore.updateNote(raw && raw.id, raw && raw.note, {
+      windowNo: getWindowNo(),
+    });
+    return ticketReply(r);
+  }));
+
   // 🔴 D-10：把**实例化的**判定函数交出去，而不是导出模块级的裸函数。
   //
   //   为什么不能直接 `module.exports.evaluateProposal = evaluateProposal`：
@@ -966,7 +1154,40 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //
   //   兼容性：旧调用方只判真假（`if (!registerAgentIpc(...))`），
   //   对象恒为 truthy，行为不变。
-  return { ok: true, evaluateProposal, proposeInternal, executeInternal };
+  /**
+   * v2.0-b3：读取并消费本会话内「已超时未决的用户写入提案」（零自然语言猜测，只看系统客观状态）。
+   *
+   * 注意：proposalStore 中的提案对象均已 Object.freeze()，executor 通过 this.consumed 记终态、
+   * confirmation 通过 get(id) 记授权/拒绝，proposal.status 恒为 'proposed'；
+   * 因此必须同时校验能力、proposalSource==='user'、未确认、未消费、超时 > SNAPSHOT_TTL_MS 且同会话去重。
+   */
+  function drainExpiredPendingWriteProposals(now = Date.now()) {
+    const ts = Number.isFinite(now) ? now : Date.now();
+    const out = [];
+    for (const p of proposalStore.values()) {
+      if (!p || p.capability !== 'workspace.write') continue;
+      if (p.proposalSource !== 'user') continue;
+      if (ticketizedProposalIds.has(p.id)) continue;
+      if (confirmation) {
+        const confRec = typeof confirmation.lookup === 'function'
+          ? confirmation.lookup(p.id)
+          : (typeof confirmation.get === 'function' ? confirmation.get(p.id) : null);
+        if (confRec) continue;
+      }
+      if (executor && executor.consumed && executor.consumed.has(p.id)) continue;
+      if (!Number.isFinite(p.createdAt) || (ts - p.createdAt <= SNAPSHOT_TTL_MS)) continue;
+      ticketizedProposalIds.add(p.id);
+      out.push({
+        id: p.id,
+        scope: p.scope,
+        name: path.basename(String(p.scope || '')),
+        createdAt: p.createdAt,
+      });
+    }
+    return out;
+  }
+
+  return { ok: true, evaluateProposal, proposeInternal, executeInternal, drainExpiredPendingWriteProposals };
 }
 
 module.exports = { registerAgentIpc, AGENT_CHANNELS };

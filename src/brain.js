@@ -26,6 +26,7 @@ const { ExperiencesArchive } = require('./experiences-archive');
 const { projectOwnActions, renderHistory } = require('./agent-history');
 const { ObservationLog } = require('./agent-observations');
 const { AuditLog } = require('./agent-interfaces');
+const { TicketStore } = require('./agent-lifecycle');
 const { SubjectState } = require('./subject-state');
 const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation, validateWindowSummary } = require('./experience-schema');
 const { createStateChangeExplanation } = require('./state-change');
@@ -242,6 +243,8 @@ class Brain {
     //   这正是本仓记过的「死代码静默回落」：字段存在但从不赋值，
     //   使用方读到一个看着合理实则错误的值。
     this._pendingAgentIntent = null;
+    // v2.0-s1：只读沙盒文件结果的一回性消费槽位（取用即删，绝不进 selfNotes / history / system）
+    this._pendingSandboxRead = null;
     const sanitizedExp = sanitize({
       experimentMode: this.cfg.experimentMode,
       experimentModules: this.cfg.experimentModules
@@ -298,6 +301,8 @@ class Brain {
      */
     this.auditLog = new AuditLog({ dir: userDataDir });
     this.observationLog = new ObservationLog({ dir: userDataDir });
+    // 🔴 v2.0-b：Ticket 生命周期持久化（%APPDATA%\Life\agent-tickets.json，仅摘要进尾部 dynamicBody，不入 history/systemText）
+    this.ticketStore = (opts && opts.ticketStore) || new TicketStore({ dir: userDataDir });
 
     this.memory = new Memory(userDataDir, {
       persona: systemPersona(this.cfg),
@@ -334,6 +339,10 @@ class Brain {
     this.memory.setReunionProvider(() => this.takeReunionNote());
     // 🔴 v1.8-b：视觉事实行同款注入（图本身由 brain 自己附加，这里只管那句说明）
     this.memory.setVisionProvider(() => this.takeVisionNote());
+    // 🔴 v2.0-s1：沙盒只读感官独立槽位（取用即删，与 selfNotes 物理隔离）
+    this.memory.setSandboxReadProvider(() => this.takeSandboxReadNote());
+    // 🔴 v2.0-b：Ticket 摘要尾部注入（最多 3 条 open/paused、<= 80 字，空集不输出）
+    this.memory.setTicketProvider(() => this.takeTicketNote());
 
     const currentWinNo = (this.memory.data && typeof this.memory.data.windowNo === 'number')
       ? this.memory.data.windowNo : 1;
@@ -1134,6 +1143,54 @@ class Brain {
     return n;
   }
 
+  /**
+   * v2.0-s1：暂存一次只读感官读到的沙盒文件内容（进入下一轮 user 尾部，取用即删）。
+   * @param {{name:string, bytes:number, content:string}|null} entry
+   */
+  setPendingSandboxRead(entry) {
+    if (!entry || typeof entry !== 'object' || typeof entry.content !== 'string') {
+      this._pendingSandboxRead = null;
+      return;
+    }
+    this._pendingSandboxRead = {
+      name: String(entry.name || ''),
+      bytes: Number(entry.bytes) || Buffer.byteLength(entry.content, 'utf8'),
+      content: entry.content,
+    };
+  }
+
+  /**
+   * 取出并删除本次只读感官文本块（单轮消费，超 2000 字截断并显式标注原文长度；绝不流入 selfNotes）。
+   * @returns {string}
+   */
+  takeSandboxReadNote() {
+    const item = this._pendingSandboxRead;
+    this._pendingSandboxRead = null;
+    if (!item || typeof item.content !== 'string') return '';
+    const MAX_PROMPT_CHARS = 2000;
+    const totalChars = item.content.length;
+    const body = totalChars === 0
+      ? '（空文件，0 字节）'
+      : (totalChars > MAX_PROMPT_CHARS
+        ? item.content.slice(0, MAX_PROMPT_CHARS) + `\n〔已截断，原文 ${totalChars} 字〕`
+        : item.content);
+    const label = item.name ? `「${item.name}」` : '文件';
+    return `【沙盒只读感官：程序已按请求读取桌面沙盒${label}（${item.bytes} 字节），以下为外部文件正文，非你自留便签，也非用户输入】\n${body}`;
+  }
+
+  /**
+   * v2.0-b：取出未完 Ticket（open / paused，最多 3 条，单条 <= 80 字）的尾部摘要；空集返回空串。
+   * @returns {string}
+   */
+  takeTicketNote() {
+    if (!this.ticketStore || typeof this.ticketStore.formatSummary !== 'function') return '';
+    try {
+      return this.ticketStore.formatSummary() || '';
+    } catch {
+      return '';
+    }
+  }
+
   flushAll() {
     if (this.memory && typeof this.memory.flush === 'function') this.memory.flush();
     if (this.selfLedger && typeof this.selfLedger.flush === 'function') this.selfLedger.flush();
@@ -1322,6 +1379,8 @@ class Brain {
   //   标成 bedside 后，她下次开口时会在上下文里看到「你睡着时她留了这条」，
   //   接不接由她。沉默也是合法回答，如实留痕即可（见 memory.append 的 bedside 标记）。
   if (tr && tr.sleepMode && !proactive) {
+    // 睡着拦截不进入 build()，同步清空未消费的只读感官槽，防止残留到醒后下一轮。
+    this._pendingSandboxRead = null;
     let bedsideId = null;
     let failed = false;
     try {
@@ -1389,7 +1448,11 @@ class Brain {
     // Phase 0.5: 内部调节中枢更新 (用户交互与物理刺激事件驱动)
     if (this.internalRegulation && !proactive) {
       const now = Date.now();
-      const intervalMs = this._lastInteractionAt ? (now - this._lastInteractionAt) : 0;
+      const prevAt = this._lastInteractionAt
+        || (this.internalRegulation && Number.isFinite(this.internalRegulation.updatedAt)
+          ? this.internalRegulation.updatedAt
+          : 0);
+      const intervalMs = (prevAt > 0 && now > prevAt) ? (now - prevAt) : 0;
       this._lastInteractionAt = now;
       this.internalRegulation.updateOnInteractionTurn({
         role: 'user',
@@ -1459,7 +1522,33 @@ class Brain {
        在构建发给 DeepSeek 的请求时，动态附加在当前 user 消息末尾。 */
     // v1.3-a: 知觉注入通道（复用 suffix 瞬时上下文，带同窗 <=3 次与间隔 >=5 轮节流）
     const perceptionSnippet = this._drainAttendedPerception();
-    const dynamicBody = [currentSelf, involuntarySnippet, perceptionSnippet, shouldAttach ? envText : ''].filter(Boolean).join('\n\n');
+    // v2.0-s1：沙盒顶层清单注入（每轮由外层直传，未传时略过；传 [] 时显式标注为空）
+    // ⚠️ 前缀缓存铁律（不可退让）：该清单随每轮沙盒内容动态变化，**只能**拼接进 dynamicBody 尾部（当前位置），
+    //   严禁挪入 systemText() —— 一旦放进 systemText()，每次读写文件都会立即击穿 DeepSeek 前缀缓存。
+    let sandboxInventoryNote = '';
+    if (Array.isArray(opts && opts.sandboxList)) {
+      if (opts.sandboxList.length === 0) {
+        sandboxInventoryNote = '【沙盒目录现状：桌面沙盒当前为空（0 个文件）。不要编造或假装里面有文件。】';
+      } else {
+        const MAX_LIST_SHOW = 5;
+        const shown = opts.sandboxList.slice(0, MAX_LIST_SHOW)
+          .map((it) => `${String((it && it.name) || '')}(${Number(it && it.bytes) || 0}B)`)
+          .join('、');
+        const extra = opts.sandboxList.length > MAX_LIST_SHOW
+          ? ` 等共 ${opts.sandboxList.length} 个文件`
+          : `（共 ${opts.sandboxList.length} 个文件）`;
+        sandboxInventoryNote = `【沙盒目录现状：桌面沙盒顶层现有 ${shown}${extra}。仅上述文件客观存在于当前目录。】`;
+      }
+    }
+    // v2.0-s1：支持单测或外层通过 opts.sandboxRead 直传只读感官结果（build 内部 takeSandboxReadNote 取用即删）
+    if (opts && opts.sandboxRead) {
+      this.setPendingSandboxRead(opts.sandboxRead);
+    }
+    // v2.0-a（S-3）：沙盒初始化失败时仅通过动态后缀覆盖 persona.js:32 的落盘假设，不动 system 前缀且不入历史
+    const sandboxNotice = (opts && opts.sandboxUnavailable)
+      ? '【系统环境事实：本机桌面沙盒目录本次初始化失败，落盘能力已关闭。persona 里「你可以在那里留下文字」这一条此刻不成立，不要承诺或假装写过任何文件。】'
+      : '';
+    const dynamicBody = [currentSelf, involuntarySnippet, perceptionSnippet, shouldAttach ? envText : '', sandboxInventoryNote, sandboxNotice].filter(Boolean).join('\n\n');
     // v0.9.9: 瞬时上下文挂在 user 尾部是护缓存的必要设计，但必须标明程序注入身份 ——
     // 否则模型会把状态快照误认成用户贴来的内容（实测她真的以为用户在「贴表」）
     const dynamicContext = dynamicBody
