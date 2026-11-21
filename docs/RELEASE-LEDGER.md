@@ -21,6 +21,52 @@
 
 ---
 
+## v2.0.0 · 2026-11-21
+
+| 项 | 值 |
+|---|---|
+| 版本 | **2.0.0** |
+| 代号 | 《房间与分寸》 |
+| 公库 tag | `v2.0.0`（annotated，tag 对象 `e0b284b` → 提交 `cbd8c95`） |
+| 公库提交 | **`cbd8c95`**（`v2.0.0` 发布同步；随后另有 `c791371` 补记 `v2.0-c` 归档暂缓结论） |
+| 私库提交 | `9b0f1ea`（版本收口 `140370d` → 修复 `config.load()` 无参 `realKey()` 抛错 `9b0f1ea`；随后 `d1df2cf` 归档 `v2.0-c`） |
+| Release | https://github.com/andabaoyue/Life/releases/tag/v2.0.0 |
+| 公库提交总数 | 66（发布同步 `cbd8c95` 时为 65，补记暂缓结论 `c791371` 后为 66，未 force） |
+| 公开集文件数 | **360**（上次同步 343） |
+
+### 交付物
+
+| 文件 | 字节数 | SHA-256 |
+|---|---|---|
+| `Life-2.0.0-win-x64-portable.exe` | 100,671,239 | `1a32664d21291cf1e7655a10a833fdd5b6bf9ebb0eb9fd1ec87a3cf226c42f9a` |
+| `Life-2.0.0-win-x64.zip` | 153,765,924 | `3aa4449981223b8cdcff7f18834819a82bc83cd4d8ea5f1ee9ee6bb8f247375f` |
+
+> ✅ 两个 digest 来自 `gh release view v2.0.0 --json assets`，与本地 `Get-FileHash -Algorithm SHA256` 逐位核对一致。
+
+> 🔴 **为什么本版仍未附 `Setup.exe`**（仅 2 个资产）：
+> 与 v1.9.0 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`Error writing temporary file`，exit code `3221225794`），非管理员无法加排除项。已清除构建残留的 `231,861` 字节空壳存根，留存的两个产物已通过 `tools/release-check.js` PE overlay 校验（`portable.exe` overlay = `95.9MB`）。
+
+> 📌 **打包基线如实注记（`08:41–08:43Z` 构建 vs `09:01+08` 提交 `9b0f1ea`）**：
+> 上述两份安装包构建于私库 `140370d` 时刻（经 `@electron/asar` 抽检确认包内 `src/config.js` 尚未包含 `9b0f1ea` 的 `realKey()` 无参 `undefined` 兜底修复）。生产聊天链路经 `main.js` 的 `brain && brain.cfg` 短路保护从不触发无参 `load()`，用户下载运行零影响；该修复仅在公库/测试替身无参调用 `load()` 时被命中并已在源码中修正。
+
+### 主要内容
+
+- **架构底座收口（v2.0-a）**：`CAPABILITY_META` 冻结只读策略开关采用加法式判据；新增 `src/agent-router.js` 统一分派 `turn_chat / proactive_idle / window_closed` 与单点消费 `_pendingAgentIntent`；关闭 `S-3` 沙盒不可用运行时告知缺口（仅挂 `dynamicBody`，不碰前缀缓存）。
+- **沙盒感官与结构层（v2.0-s1 / s2）**：新增 `workspace.list` 非递归顶层清单与独立白名单 `workspace.read`（只读槽位物理隔离、绝不入 `selfNotes`）；接通 `workspace.mkdir / move / remove`（`remove` 永禁免确认、强制 Gate 4 与双端 `realpath` 防逃逸）与观察档补读；自留便签全面接入 `ACTIVE / FADING / DORMANT` 三阶渐褪与线索唤醒。
+- **Ticket 生命周期与反猜测防线（v2.0-b ~ b3）**：新增 `src/agent-lifecycle.js`（`open ⇄ paused → ended`，原子落盘 `agent-tickets.json`）与「未完事项」D-005 纯只读观察面板；拆除关键词正则猜意愿并新增 `test/v20b3-no-regex-guess.test.js` 静态门禁；改用关窗时五重客观条件（`capability / user / lookup / consumed / TTL` + 同会话去重）做零猜测转单。
+- **关键机制修复与数值校准（v2.0-b2-a / b4 / 9b0f1ea）**：`deepseek.complete()` 对齐关闭思维链（实机验证已推动第 6 窗在 101 轮关窗并进入第 7 窗，`experiences.jsonl` 已铸入 8 条 `self_note`）；校准 `InternalRegulationManager` ≥12s 衰减系数为 `8/16` 并补 5 项单调性/60 轮/源码变异门禁；修复 `config.load()` 无参调用下 `realKey()` 二次抛错。
+- **门禁**：145 个已编号套件（144 Node + 1 Python）/ 5320 项断言全绿。
+
+### 已知限制（随 Release 公开）
+
+- **本版未附 `Setup.exe`**：与 v1.9.0 同因（NSIS 卸载器导出被 Defender 实时保护阻断）。
+- **Ticket 目前几乎没有生产者**：b3 拆除正则猜测后仅余关窗超时未决提案一条客观来源，票据池长期为空属正常状态。
+- **`v2.0-c`（单并发 Worker）与受限 Mandate 暂缓**：草案归档暂缓（私库不随公库导出，见 `docs/PENDING-TASKS.md` §8.7），待真机积累真实 Ticket 数据后再议。
+- **`agentTriggerEnabled` 出厂默认仍为 `false`**：自主触发默认关闭；新写便签在当前窗关闭前 `engraved === false` 属正常待铸。
+- **延续 v1.9.0 同口径限制**：观测面板多组数值未逐项真机核对、重逢心境仍仅验证 1–7 天档、STT 需独立配置 Key、视觉探针能力判定仅放行支持图片输入的特定模型名、高级连接设置遗留 P1（部分预设无默认模型名、`anthropic-native` 无适配层、`local` 暂未豁免非空 Key、`mimo-token-plan` 保持隐藏）。
+
+---
+
 ## v1.9.0 · 2026-11-12
 
 | 项 | 值 |
