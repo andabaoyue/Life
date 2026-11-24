@@ -33,8 +33,10 @@ function isAppLocalUrl(url, appDir) {
   } catch {
     return false;
   }
-  // Windows file URL 形如 /C:/... —— 归一化后必须落在 app 目录内
-  if (/^\/[A-Za-z]:/.test(filePath)) filePath = filePath.slice(1);
+  // Windows file URL 形如 /C:/... —— 归一化后必须落在 app 目录内。
+  // 仅在 Windows 下剥离前导 /：POSIX 上剥离后会变成相对路径并被 path.resolve 拼到 cwd 下，
+  // 当 cwd === appDir 时会误判为「落在 app 目录内」（2026-11-24 Linux CI 实测复现）。
+  if (process.platform === 'win32' && /^\/[A-Za-z]:/.test(filePath)) filePath = filePath.slice(1);
   const resolved = path.resolve(filePath);
   const root = path.resolve(appDir);
   return resolved === root || resolved.startsWith(root + path.sep);
