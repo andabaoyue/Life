@@ -71,6 +71,9 @@ jobs:
   # 档 2：真构建 + 产物闭包断言。
   # 用独立 job 是有意的 —— 它要下载 Electron（100MB+、2~4 分钟），
   # 挂在每次 push 上会拖慢快速反馈；只在 PR 与手动触发时跑。
+  # 🔴 2026-11-24：本仓常态直接 push 到 main（少走 PR），仅配 PR/手动导致
+  #    tools/asar-check.js 在真实工作流中长期从未触发；补上 push 到 main 分支，
+  #    既保留其它分支快速反馈，也确保主线每次提交都跑 ASAR 闭包校验。
   #
   # ⚠️ 诚实边界：配置里只有 win 目标，在 Linux CI 上走 --dir --linux，
   #    验证的是**文件闭包**（与平台无关），不是 Windows 安装包本身。
@@ -79,7 +82,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

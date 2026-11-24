@@ -1,7 +1,7 @@
 appId: com.andabaoyue.life
 productName: Life
 copyright: "Copyright © 2026 andabaoyue"
-electronVersion: "44.4.5"
+electronVersion: "44.11.5"
 
 directories:
   output: dist

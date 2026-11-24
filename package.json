@@ -23,7 +23,7 @@
     "build:dir:linux": "electron-builder --dir --linux"
   },
   "devDependencies": {
-    "electron": "^44.4.3",
+    "electron": "^44.11.5",
     "electron-builder": "^26.15.3"
   },
   "author": "andabaoyue",
