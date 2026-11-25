@@ -165,6 +165,7 @@
       for (const item of this.behaviorPool) {
         let w = item.weight || 1.0;
         if (reg) {
+          const approaching = reg.approachingOverload === true;
           if (item.id === ANIMATION_STATES.YAWN) {
             // restPressure: [0, 100], 高疲劳打哈欠权重最高放大至 2.5 倍
             const pressure = typeof reg.restPressure === 'number' ? reg.restPressure : 0;
@@ -173,12 +174,14 @@
             // energy: [0, 100], 低体能伸懒腰权重最高放大至 2.0 倍
             const energy = typeof reg.energy === 'number' ? reg.energy : 100;
             w = w * (1.0 + ((100 - energy) / 100) * 1.0);
+            if (approaching) w = w * 0.75;
           } else if (item.id === ANIMATION_STATES.LOOK_AROUND) {
             // arousal: [0, 100], 高唤醒（警觉）张望权重最高放大至 2.0 倍
             const arousal = typeof reg.arousal === 'number' ? reg.arousal : 50;
             if (arousal > 50) {
               w = w * (1.0 + ((arousal - 50) / 50) * 1.0);
             }
+            if (approaching) w = w * 0.75;
           } else if (item.id === ANIMATION_STATES.TIDY_HAIR) {
             // 低唤醒度（平静）时梳理头发概率稍高
             const arousal = typeof reg.arousal === 'number' ? reg.arousal : 50;

@@ -98,7 +98,8 @@ const DEFAULT_EXPERIMENT_MODULES = Object.freeze({
   attentionGate: false,
   biographicalCanalization: false,
   memoryDynamics: false,
-  sleepConsolidation: false
+  sleepConsolidation: false,
+  allostasisPrior: false
 });
 
 module.exports = {

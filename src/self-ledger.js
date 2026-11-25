@@ -380,6 +380,37 @@ class SelfLedger {
     return calculateRevisionPressure(target);
   }
 
+  /**
+   * 只读汇总自我账本的反思撕裂压力（v2.1-b，严守 D-005 不增删不改写任何条目）
+   * @returns {{ highConflictCount: number, maxPressure: number, meanConflictRatio: number, totalEntries: number }}
+   */
+  getRevisionTensionSummary() {
+    const list = Array.isArray(this.entries) ? this.entries : [];
+    if (!list.length) {
+      return Object.freeze({
+        highConflictCount: 0,
+        maxPressure: 0,
+        meanConflictRatio: 0,
+        totalEntries: 0
+      });
+    }
+    let highConflictCount = 0;
+    let maxPressure = 0;
+    let sumRatio = 0;
+    for (const e of list) {
+      const m = calculateRevisionPressure(e);
+      if (m.revisionPressure >= 0.4) highConflictCount++;
+      if (m.revisionPressure > maxPressure) maxPressure = m.revisionPressure;
+      sumRatio += m.counterEvidenceRatio;
+    }
+    return Object.freeze({
+      highConflictCount,
+      maxPressure: Number(maxPressure.toFixed(4)),
+      meanConflictRatio: Number((sumRatio / list.length).toFixed(4)),
+      totalEntries: list.length
+    });
+  }
+
   /** Current Self 是解释性投影，不是真相；优先保留最近证据，但带出反向证据与反思压力。 */
   currentSelfText() {
     if (!this.entries.length) return '';

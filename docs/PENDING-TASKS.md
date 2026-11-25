@@ -176,6 +176,17 @@
 
 **重新激活条件**：用户明确要求断网可用。
 
+### 4.4 记忆再巩固（v2.1-d）
+
+| 项 | 现状 |
+|---|---|
+| 观测埋点 | 已在 `reactivateByContext()` 后接入只读遥测 `reconsolidation_candidate_observed`（`experiment-telemetry.jsonl`） |
+| 主体再解释 | **暂缓**（当前刚至第 7 窗，`ΔW >= 6` 休眠样本尚不充分） |
+
+**重新激活条件**：
+1. `experiment-telemetry.jsonl` 自然累计 **≥ 5 条** `reconsolidation_candidate_observed`；
+2. 人工抽检对话日志，确认至少出现 **2 次** 她对旧记忆给出不同于当时的自主新角度理解（`SUBJECT_GENERATED`）。
+
 ---
 
 ## 5. 🚫 明确归档（4 项，需重新讨论才做）

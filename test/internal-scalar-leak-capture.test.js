@@ -59,7 +59,13 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     'restPressure',
     'salienceThreshold',
     'cognitiveLoadProxy',
-    'interactionDensity'
+    'interactionDensity',
+    'gapSurprise',
+    'typicalGapMs',
+    'approachingOverload',
+    'revisionPressure',
+    'epistemicTension',
+    'lastWindowTension'
   ];
 
   if (brain.internalRegulation) {
@@ -69,6 +75,11 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     brain.internalRegulation.salienceThreshold = SENTINEL_VALUES.salienceThreshold;
     brain.internalRegulation.cognitiveLoadProxy = SENTINEL_VALUES.cognitiveLoadProxy;
     brain.internalRegulation.interactionDensity = SENTINEL_VALUES.interactionDensity;
+    brain.internalRegulation.lastWindowTension = 0.6184;
+    if (brain.internalRegulation.allostasisPrior) {
+      brain.internalRegulation.allostasisPrior.lastSurprise = 2.3419;
+      brain.internalRegulation.allostasisPrior.recentGapsMs = [7193456, 7193456, 7193456];
+    }
   }
 
   // 3. 拦截捕获所有发往 LLM 的完整消息列表

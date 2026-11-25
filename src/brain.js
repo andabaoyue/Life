@@ -856,6 +856,12 @@ class Brain {
         rec.primaryConnectionId = data.primaryConnectionId || null;
         rec.fallbackConnectionId = data.fallbackConnectionId || null;
       }
+      if (data.recordType === 'reconsolidation_candidate_observed') {
+        rec.traceId = data.traceId || null;
+        rec.sourceWindowNo = Number.isFinite(data.sourceWindowNo) ? data.sourceWindowNo : null;
+        rec.reactivatedWindowNo = Number.isFinite(data.reactivatedWindowNo) ? data.reactivatedWindowNo : null;
+        rec.prevTier = data.prevTier || null;
+      }
       if (!fs.existsSync(this.dir)) {
         fs.mkdirSync(this.dir, { recursive: true });
       }
@@ -1496,12 +1502,35 @@ class Brain {
           }
         }
       } catch (e) { /* 惰性结算失败绝不影响本次回复 */ }
+
+      // v2.1-a：置于 updateOnInteractionTurn / 静默回补 / 惰性苏醒之后、currentSelfContext() 之前：
+      // 防止 updateOnInteractionTurn 在长静默后把 arousal 回归 50 时抹除正预测误差 (+4~+8) 增益，
+      // 同时避开 proactive 走 takeReunionNote() 的污染与一轮错位。
+      if (typeof this.internalRegulation.recordUserTurnAndAllostasis === 'function') {
+        this.internalRegulation.recordUserTurnAndAllostasis(now);
+      }
     }
 
     // v0.9.7: 关联线索触发休眠记忆重新激活 (Contextual Reactivation)
     let involuntarySnippet = '';
     if (this.memory && this.memory.engramManager && !proactive) {
-      this.memory.reactivateByContext(userText, this.memory.data.windowNo);
+      const reactivated = this.memory.reactivateByContext(userText, this.memory.data.windowNo);
+      // v2.1-d：记忆再巩固只读观测埋点（仅记录 FADING/DORMANT 跨窗唤醒，baseline 跳过，绝不写入 agent-observations.jsonl）
+      if (Array.isArray(reactivated) && reactivated.length > 0 && this.cfg && this.cfg.experimentMode !== 'baseline') {
+        for (const trItem of reactivated) {
+          if (trItem && (trItem.tier === 'FADING' || trItem.tier === 'DORMANT')) {
+            this.appendTelemetry({
+              recordType: 'reconsolidation_candidate_observed',
+              traceId: trItem.traceId || null,
+              sourceWindowNo: Number.isFinite(trItem.sourceWindowNo)
+                ? trItem.sourceWindowNo
+                : (Number.isFinite(trItem.createdWindow) ? trItem.createdWindow : null),
+              reactivatedWindowNo: this.memory.data ? this.memory.data.windowNo : null,
+              prevTier: trItem.tier
+            });
+          }
+        }
+      }
       // v1.0.5: 普鲁斯特式非自愿回忆浮现 (仅在非主动搭话的自然交互中触发，避开 proactive 误消耗冷却)
       const inv = typeof this.memory.triggerInvoluntaryRecall === 'function'
         ? this.memory.triggerInvoluntaryRecall(this.memory.data.windowNo)
@@ -2407,9 +2436,30 @@ class Brain {
         // Phase 0.5: 内部调节中枢快照归档 (Internal Regulation Snapshot)
         if (this.internalRegulation && this.isExperimentModuleActive('internalRegulation')) {
           try {
+            // v2.1-c：用本窗真实唤醒轨迹与证据冲突计算无模型调用的 lastWindowTension ∈ [0, 1]
+            let lastWindowTension = 0;
+            try {
+              const { computeWindowArousalTrajectory, evaluateDreamGate } = require('./dream-system');
+              const regHistory = Array.isArray(this.internalRegulation.history) ? this.internalRegulation.history : [];
+              const traj = computeWindowArousalTrajectory(
+                snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory }
+              );
+              const gateMetrics = evaluateDreamGate({
+                windowNo: snap.windowNo,
+                arousalTrajectory: traj,
+                verifiedEvidence: verifiedEvidence || [],
+                dreamHistory: this.dreamHistory || []
+              }).metrics || {};
+              const varNorm = Math.min(1, (Number(gateMetrics.arousalVariance) || 0) / 30);
+              const spikeNorm = Math.min(1, (Number(gateMetrics.maxArousalSpike) || 0) / 30);
+              const conflictNorm = Math.min(1, (Number(gateMetrics.cognitiveConflictScore) || 0) / 1.5);
+              lastWindowTension = Math.max(0, Math.min(1, Math.max(varNorm, spikeNorm) * 0.6 + conflictNorm * 0.4));
+            } catch { /* 张力计算失败降级为 0，绝不阻塞关窗 */ }
+
             this.internalRegulation.updateOnWindowClose(snap.windowNo, {
               turnsRecorded: snap.actualTurnCount,
-              moodTone: syn.moodTone
+              moodTone: syn.moodTone,
+              lastWindowTension
             });
             if (this.experiencesArchive) {
               const regSnapshot = this.internalRegulation.createSnapshotRecord(snap.windowNo);
@@ -2476,7 +2526,17 @@ class Brain {
           this.cfg.experimentModules = this.currentWindowSnapshot.modules;
 
           if (this.internalRegulation) {
-            this.internalRegulation.enabled = Boolean(this.currentWindowSnapshot.modules?.internalRegulation);
+            const mods = this.currentWindowSnapshot.modules || {};
+            this.internalRegulation.enabled = Boolean(mods.internalRegulation);
+            this.internalRegulation.allostasisEnabled = this.internalRegulation.enabled && (
+              Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
+                ? Boolean(mods.allostasisPrior)
+                : true
+            );
+            if (!this.internalRegulation.enabled) {
+              this.internalRegulation._recentLoadTrail = [];
+              this.internalRegulation.approachingOverload = false;
+            }
           }
           if (this.memory) {
             this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);

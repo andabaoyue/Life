@@ -6,7 +6,7 @@ const { ObservationLog } = require('./src/agent-observations');
 const { Brain } = require('./src/brain');
 const { Wardrobe, CATALOG } = require('./src/wardrobe');
 const { ActivityTracker } = require('./src/tracker');
-const { TriggerEngine, COOLDOWN_MS, IDLE_MS } = require('./src/trigger');
+const { TriggerEngine, COOLDOWN_MS, IDLE_MS, computeEpistemicTension } = require('./src/trigger');
 const { DesktopMotion } = require('./src/desktop-motion');
 const { PowerMonitorSource } = require('./src/power-monitor-source');
 const { checkAssets } = require('./src/asset-check');
@@ -1550,7 +1550,29 @@ function evaluateTriggerWithCuriosity() {
     ? mem.nextCuriosity() : null;
   const curPending = (mem && mem.data && Array.isArray(mem.data.curiosityQueue))
     ? mem.data.curiosityQueue.filter((x) => x && x.asked !== true).length : 0;
-  return trigger.evaluate({ curiosityPending: curPending, curiosityQuestion: curQuestion });
+  const regState = (brain && brain.internalRegulation && typeof brain.internalRegulation.getState === 'function')
+    ? brain.internalRegulation.getState() : null;
+  const isBaseline = Boolean(brain && brain.cfg && brain.cfg.experimentMode === 'baseline');
+  const ledgerSummary = (brain && brain.selfLedger && typeof brain.selfLedger.getRevisionTensionSummary === 'function')
+    ? brain.selfLedger.getRevisionTensionSummary() : null;
+  const allostasisSummary = (brain && brain.internalRegulation && typeof brain.internalRegulation.getAllostasisSummary === 'function')
+    ? brain.internalRegulation.getAllostasisSummary() : null;
+  const lastWindowTension = (brain && brain.internalRegulation && typeof brain.internalRegulation.getLastWindowTension === 'function')
+    ? brain.internalRegulation.getLastWindowTension() : 0;
+  const epistemicTension = (typeof computeEpistemicTension === 'function')
+    ? computeEpistemicTension({
+      baseline: isBaseline,
+      ledgerMaxPressure: ledgerSummary ? ledgerSummary.maxPressure : 0,
+      reunionSurprise: allostasisSummary ? allostasisSummary.lastSurprise : 0,
+      lastWindowTension,
+    })
+    : 0;
+  return trigger.evaluate({
+    curiosityPending: curPending,
+    curiosityQuestion: curQuestion,
+    approachingOverload: Boolean(regState && regState.approachingOverload === true),
+    epistemicTension,
+  });
 }
 
 /** 提案派发留痕（2026-10-19）。为什么值得记：昨夜排查时 `proactive-declined` 有审计

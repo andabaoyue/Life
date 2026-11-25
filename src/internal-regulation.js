@@ -34,6 +34,7 @@ const {
   PROVENANCE_SOURCE_KINDS
 } = require('./experiment-types');
 const { wrapArchiveRecord } = require('./experience-schema');
+const { AllostasisPrior } = require('./allostasis-prior');
 
 /**
  * 辅助数值限制
@@ -126,12 +127,25 @@ class InternalRegulationManager {
     this.enabled = opts.enabled !== undefined
       ? Boolean(opts.enabled)
       : (opts.experimentModules ? Boolean(opts.experimentModules.internalRegulation) : true);
+    // v2.1-a：关系节奏先验双开关守卫（baseline 或 internalRegulation=false 时强制关闭，显式 allostasisPrior=false 时独立消融）
+    this.allostasisEnabled = this.enabled && (
+      opts.experimentModules && Object.prototype.hasOwnProperty.call(opts.experimentModules, 'allostasisPrior')
+        ? Boolean(opts.experimentModules.allostasisPrior)
+        : true
+    );
+    this.allostasisPrior = new AllostasisPrior();
+    this._preservedAllostasis = null;
 
     this.energy = REGULATION_BOUNDS.energy.default;
     this.restPressure = REGULATION_BOUNDS.restPressure.default;
     this.arousal = REGULATION_BOUNDS.arousal.default;
     this.interactionDensity = REGULATION_BOUNDS.interactionDensity.default;
     this.cognitiveLoadProxy = REGULATION_BOUNDS.cognitiveLoadProxy.default;
+    // v2.1-b：交互负荷轻量滑窗（仅内存态，上限 3）与逼近过载预警态
+    this._recentLoadTrail = [];
+    this.approachingOverload = false;
+    // v2.1-c：最近一次关窗认知张力标量（仅内存/同盘持久化，严禁进 Prompt）
+    this.lastWindowTension = 0;
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this.moodWarmth = REGULATION_BOUNDS.moodWarmth.default;
     this.moodStillness = REGULATION_BOUNDS.moodStillness.default;
@@ -198,6 +212,43 @@ class InternalRegulationManager {
   _computeSalienceThreshold(arousal) {
     const raw = 70 - (arousal * 0.5);
     return clamp(symmetricRound(raw), REGULATION_BOUNDS.salienceThreshold.min, REGULATION_BOUNDS.salienceThreshold.max);
+  }
+
+  /**
+   * v2.1-b：更新交互负荷滑窗与边界逼近预警态（仅内存态、绝不落盘）
+   * - 仅在真实刺激事件 (user / poke / drag) 且密度发生变化时采样，彻底忽略 assistant 回合
+   * - 任意途径密度下降、回落 < 35 或进入 >= 60 过载区时立即熄灭 approachingOverload
+   */
+  _updateLoadTrail(prevDensity, isStimulus) {
+    if (!this.enabled) {
+      this._recentLoadTrail = [];
+      this.approachingOverload = false;
+      return;
+    }
+    const cur = this.interactionDensity;
+    if (cur < prevDensity) {
+      this.approachingOverload = false;
+      if (isStimulus || cur > 0) {
+        this._recentLoadTrail.push(cur);
+        if (this._recentLoadTrail.length > 3) this._recentLoadTrail.shift();
+      } else {
+        this._recentLoadTrail = [];
+      }
+      return;
+    }
+    if (!isStimulus || cur === prevDensity) {
+      if (cur < 35 || cur >= 60) this.approachingOverload = false;
+      return;
+    }
+    this._recentLoadTrail.push(cur);
+    if (this._recentLoadTrail.length > 3) {
+      this._recentLoadTrail.shift();
+    }
+    const inWarningBand = cur >= 35 && cur < 60;
+    const strictlyRising = this._recentLoadTrail.length === 3
+      && this._recentLoadTrail[0] < this._recentLoadTrail[1]
+      && this._recentLoadTrail[1] < this._recentLoadTrail[2];
+    this.approachingOverload = Boolean(inWarningBand && strictlyRising);
   }
 
   /**
@@ -299,6 +350,7 @@ class InternalRegulationManager {
       salienceThreshold: this.salienceThreshold,
       interactionDensity: this.interactionDensity,
       cognitiveLoadProxy: this.cognitiveLoadProxy,
+      approachingOverload: Boolean(this.enabled && this.approachingOverload),
       isSleeping: this.isSleeping,
       updatedAt: this.updatedAt,
       watermark: {
@@ -376,6 +428,92 @@ class InternalRegulationManager {
    */
   isSubjectAccessible(key) {
     return false;
+  }
+
+  /**
+   * 获取只读关系节奏先验摘要（供快照与后续认知张力层读取）
+   */
+  getAllostasisSummary() {
+    if (!this.enabled || !this.allostasisEnabled) {
+      return Object.freeze({
+        priorReady: false,
+        sampleCount: 0,
+        typicalGapMs: null,
+        lastSurprise: 0
+      });
+    }
+    return this.allostasisPrior.getSummary();
+  }
+
+  /**
+   * 读取最近一次关窗认知张力（v2.1-c，baseline 恒返回 0，严禁入 Prompt）
+   */
+  getLastWindowTension() {
+    if (!this.enabled) return 0;
+    return Number.isFinite(this.lastWindowTension) ? clamp(this.lastWindowTension, 0, 1) : 0;
+  }
+
+  /**
+   * v2.1-a：将预测误差（gapSurprise）温和注入内稳态
+   * - gapSurprise >= 1.2：温和抬升 arousal（+4 ~ +8），通过 _computeSalienceThreshold 间接联动门限，绝不直接覆写字段
+   * - gapSurprise <= -1.0：先衰减历史心境，再温和抬升 moodWarmth（+2 ~ +4）
+   */
+  updateOnReunionSurprise(gapSurprise, at = Date.now()) {
+    if (!this.enabled || !this.allostasisEnabled) return this.getState();
+    if (!Number.isFinite(gapSurprise)) return this.getState();
+
+    const prev = {
+      energy: this.energy,
+      restPressure: this.restPressure,
+      arousal: this.arousal,
+      interactionDensity: this.interactionDensity,
+      cognitiveLoadProxy: this.cognitiveLoadProxy
+    };
+    const deltas = {};
+
+    if (gapSurprise >= 1.2) {
+      const ratio = clamp((gapSurprise - 1.2) / (3.0 - 1.2), 0, 1);
+      const boost = symmetricRound(4 + ratio * 4);
+      deltas.arousal = boost;
+      this.arousal = clamp(this.arousal + boost, REGULATION_BOUNDS.arousal.min, REGULATION_BOUNDS.arousal.max);
+      this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
+    } else if (gapSurprise <= -1.0) {
+      this._decayMood(at);
+      const ratio = clamp((-gapSurprise - 1.0) / (2.0 - 1.0), 0, 1);
+      const warmthBoost = symmetricRound(2 + ratio * 2);
+      deltas.moodWarmth = warmthBoost;
+      this.moodWarmth = clamp(this.moodWarmth + warmthBoost, REGULATION_BOUNDS.moodWarmth.min, REGULATION_BOUNDS.moodWarmth.max);
+      this.moodUpdatedAt = at;
+    }
+
+    if (Object.keys(deltas).length > 0) {
+      this._recordTransition('allostasis_reunion_surprise', deltas, prev, at);
+      this.save();
+      return this._emitChange(this.getState());
+    }
+    return this.getState();
+  }
+
+  /**
+   * v2.1-a：记录真实用户输入（!proactive）并按先验误差调节内态
+   */
+  recordUserTurnAndAllostasis(at = Date.now()) {
+    if (!this.enabled || !this.allostasisEnabled) {
+      return { reconnected: false, priorReady: false, gapSurprise: 0, awayMs: null, disabled: true };
+    }
+    const verdict = this.allostasisPrior.recordUserTurn(at);
+    if (verdict.invalidClock || verdict.clockRollback) {
+      return verdict;
+    }
+    let adjusted = false;
+    if (verdict.reconnected && verdict.priorReady && (verdict.gapSurprise >= 1.2 || verdict.gapSurprise <= -1.0)) {
+      this.updateOnReunionSurprise(verdict.gapSurprise, at);
+      adjusted = true;
+    }
+    if (!adjusted) {
+      this.save();
+    }
+    return verdict;
   }
 
   /**
@@ -467,6 +605,7 @@ class InternalRegulationManager {
     if (deltas.interactionDensity) this.interactionDensity = clamp(this.interactionDensity + deltas.interactionDensity, REGULATION_BOUNDS.interactionDensity.min, REGULATION_BOUNDS.interactionDensity.max);
     if (deltas.cognitiveLoadProxy) this.cognitiveLoadProxy = clamp(this.cognitiveLoadProxy + deltas.cognitiveLoadProxy, REGULATION_BOUNDS.cognitiveLoadProxy.min, REGULATION_BOUNDS.cognitiveLoadProxy.max);
 
+    this._updateLoadTrail(prev.interactionDensity, role === 'user');
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(`interaction_${role}`, deltas, prev, at);
     this.save();   // v1.0 疲惫跨重启契约（用户实测报障：退出重进归零）——逐轮更新必须落盘
@@ -761,6 +900,7 @@ class InternalRegulationManager {
     if (deltas.interactionDensity) this.interactionDensity = clamp(this.interactionDensity + deltas.interactionDensity, REGULATION_BOUNDS.interactionDensity.min, REGULATION_BOUNDS.interactionDensity.max);
     if (deltas.cognitiveLoadProxy) this.cognitiveLoadProxy = clamp(this.cognitiveLoadProxy + deltas.cognitiveLoadProxy, REGULATION_BOUNDS.cognitiveLoadProxy.min, REGULATION_BOUNDS.cognitiveLoadProxy.max);
 
+    this._updateLoadTrail(prev.interactionDensity, activityKind === 'poke' || activityKind === 'drag');
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(`activity_${activityKind}`, deltas, prev, at);
     this.save();   // v1.0 疲惫跨重启契约 —— 活动更新同落盘
@@ -924,6 +1064,7 @@ class InternalRegulationManager {
     if (deltas.restPressure) this.restPressure = clamp(this.restPressure + deltas.restPressure, REGULATION_BOUNDS.restPressure.min, REGULATION_BOUNDS.restPressure.max);
     if (deltas.arousal) this.arousal = clamp(this.arousal + deltas.arousal, REGULATION_BOUNDS.arousal.min, REGULATION_BOUNDS.arousal.max);
 
+    this._updateLoadTrail(prev.interactionDensity, false);
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
     this._recordTransition(isSleeping ? 'enter_sleep' : 'wake_up', deltas, prev, at);
 
@@ -955,11 +1096,17 @@ class InternalRegulationManager {
     // 关窗期认知负荷排空，短期交互密度半衰结算
     this.cognitiveLoadProxy = 0;
     this.interactionDensity = Math.floor(this.interactionDensity * 0.5);
+    this._updateLoadTrail(prev.interactionDensity, false);
     this.salienceThreshold = this._computeSalienceThreshold(this.arousal);
 
     // v1.0.3 心境基调注入（若有 moodTone 则注入，无则自然顺延衰减）
     if ('moodTone' in details) {
       this.updateMoodOnWindowClose(details.moodTone, at);
+    }
+
+    // v2.1-c：持久化最近一次关窗认知张力（防重启归零）
+    if (Number.isFinite(details.lastWindowTension)) {
+      this.lastWindowTension = clamp(Number(Number(details.lastWindowTension).toFixed(4)), 0, 1);
     }
 
     this._recordTransition(`window_close_${windowNo}`, {}, prev, at);
@@ -980,6 +1127,7 @@ class InternalRegulationManager {
       mood: this.getMood(),
       salienceThreshold: this.salienceThreshold,
       recentTransitionsCount: this.history.length,
+      allostasis: this.allostasisEnabled ? this.allostasisPrior.getSummary() : null,
       timestamp: Date.now(),
       ...extra
     };
@@ -1087,6 +1235,16 @@ class InternalRegulationManager {
           this.consumedAttentionEvents = new Set(
             Array.from(this.persistedConsumedAttentionEvents).slice(-this.maxConsumedAttentionEvents)
           );
+          if (raw.allostasis && typeof raw.allostasis === 'object') {
+            if (this.allostasisEnabled) {
+              this.allostasisPrior.fromJSON(raw.allostasis);
+            } else {
+              this._preservedAllostasis = raw.allostasis;
+            }
+          }
+          if (Number.isFinite(raw.lastWindowTension)) {
+            this.lastWindowTension = clamp(raw.lastWindowTension, 0, 1);
+          }
           return true;
         }
         this.persistenceHealthy = false;
@@ -1134,6 +1292,8 @@ class InternalRegulationManager {
         },
         persistedConsumedAttentionEvents: Array.from(this.persistedConsumedAttentionEvents),
         consumedAttentionEvents: Array.from(this.consumedAttentionEvents).slice(-this.maxConsumedAttentionEvents),
+        allostasis: this.allostasisEnabled ? this.allostasisPrior.toJSON() : (this._preservedAllostasis || undefined),
+        lastWindowTension: Number.isFinite(this.lastWindowTension) ? this.lastWindowTension : 0,
         history: this.history
       };
       writeJsonAtomic(this.path, data);

@@ -144,7 +144,8 @@ const DEFAULTS = {
     attentionGate: false,
     biographicalCanalization: false,
     memoryDynamics: true,      // v1.2.y D-011 通电：出厂默认启用长期记忆三阶动力学梯度
-    sleepConsolidation: true   // v2.0 拍板：真睡眠开梦（baseline 仍关；显式 false 可关）
+    sleepConsolidation: true,  // v2.0 拍板：真睡眠开梦（baseline 仍关；显式 false 可关）
+    allostasisPrior: true      // v2.1-a：关系节奏先验与异稳态调节（baseline 仍关；显式 false 可关）
   }
 };
 
@@ -308,7 +309,8 @@ function sanitize(raw = {}) {
         attentionGate: pick('attentionGate'),
         biographicalCanalization: pick('biographicalCanalization'),
         memoryDynamics: pick('memoryDynamics'),
-        sleepConsolidation: pick('sleepConsolidation')
+        sleepConsolidation: pick('sleepConsolidation'),
+        allostasisPrior: pick('allostasisPrior')
       };
 
       return { experimentMode, experimentModules };

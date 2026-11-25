@@ -51,6 +51,29 @@ function computeInitiativeBias(traits = {}) {
   return Math.max(0.5, Math.min(1.5, Number(raw.toFixed(4))));
 }
 
+/**
+ * 纯本地认知张力计算（v2.1-c，零 LLM 调用、零正则猜测）
+ * @param {object} [inputs]
+ * @param {boolean} [inputs.baseline=false] baseline 隔离时恒返回 0
+ * @param {number} [inputs.ledgerMaxPressure=0] 来自 SelfLedger.getRevisionTensionSummary().maxPressure [0, 1]
+ * @param {number} [inputs.reunionSurprise=0] 来自 AllostasisPrior.getSummary().lastSurprise [-2, 3]
+ * @param {number} [inputs.lastWindowTension=0] 来自最近一次关窗的认知张力 [0, 1]
+ * @returns {number} 归一化认知张力 ∈ [0, 1]
+ */
+function computeEpistemicTension(inputs = {}) {
+  const src = (inputs && typeof inputs === 'object' && !Array.isArray(inputs)) ? inputs : {};
+  if (src.baseline === true) return 0;
+  const clamp01 = (v) => Math.max(0, Math.min(1, Number.isFinite(Number(v)) ? Number(v) : 0));
+  const ledgerNorm = clamp01(src.ledgerMaxPressure);
+  const rawSurprise = Number(src.reunionSurprise);
+  const surpriseNorm = Number.isFinite(rawSurprise) && rawSurprise > 0
+    ? Math.max(0, Math.min(1, rawSurprise / 3))
+    : 0;
+  const windowNorm = clamp01(src.lastWindowTension);
+  const tension = 0.40 * ledgerNorm + 0.30 * surpriseNorm + 0.30 * windowNorm;
+  return Number(Math.max(0, Math.min(1, tension)).toFixed(4));
+}
+
 class TriggerEngine {
   constructor(tracker, opts = {}) {
     this.tracker = tracker;
@@ -118,13 +141,17 @@ class TriggerEngine {
     const intent = computeSelfIntent({
       traits: this.traits,
       idleMinutes,
-      // 🔴 D-17：把可配阈值透传下去（默认 120，验证时可调小）
-      selfNoteMinMinutes: Math.round(this.selfNoteIdleMs / 60000),
+      // 🔴 D-17 / v2.1-c：优先使用经认知张力调制后的有效阈值，缺省回退实例配置
+      selfNoteMinMinutes: Number.isFinite(Number(curiosity && curiosity.selfNoteMinMinutes))
+        ? Number(curiosity.selfNoteMinMinutes)
+        : Math.round(this.selfNoteIdleMs / 60000),
       // 🔴 D-25：好奇破冰的三项事实全部由调用方供（引擎不碰时钟、不碰磁盘）：
       //   pending = 待问计数、question = 队首原话、blocked = 40 分钟节流位。
       curiosityPending: curiosity && curiosity.pending,
       curiosityQuestion: curiosity && curiosity.question,
-      curiosityMinMinutes: Math.round(this.curiosityIdleMs / 60000),
+      curiosityMinMinutes: Number.isFinite(Number(curiosity && curiosity.curiosityMinMinutes))
+        ? Number(curiosity.curiosityMinMinutes)
+        : Math.round(this.curiosityIdleMs / 60000),
       curiosityBlocked: !!(curiosity && curiosity.blocked === true),
     });
     this.selfIntent = intent;
@@ -157,8 +184,12 @@ class TriggerEngine {
     const pokeNeed = Math.max(3, Math.min(8, Math.round(POKE_THRESHOLD / bias)));
     // 🔴 D-17：基准换成本实例的 this.idleMs（默认 IDLE_MS，验证时可调小）。
     //   **铁律结构一字未改**：仍是 max(基准/2, min(基准*2, 基准/bias))。
+    //   v2.1-b：逼近过载预警带 (approachingOverload=true) 时只允许温和拉长 1.25x，绝不缩短。
     const base = this.idleMs;
-    const idleNeed = Math.max(base / 2, Math.min(base * 2, Math.round(base / bias)));
+    let idleNeed = Math.max(base / 2, Math.min(base * 2, Math.round(base / bias)));
+    if (opts && opts.approachingOverload === true) {
+      idleNeed = Math.round(idleNeed * 1.25);
+    }
 
     const pokes = tr.recentClicks(WINDOW_MS, at);
     // 🔴 D-7：自意图在这里算，**在全部三道铁律之后**。
@@ -166,9 +197,22 @@ class TriggerEngine {
     //   绝不能改变「说不说」。若把它算在 sleepMode 之前，
     //   一个睡着的状态也会产出意图 —— 那正是本轮要防的形态。
     const idleMs = at - tr.lastInteractionAt;
+    // v2.1-c：轻量认知张力有界调制自发便签 (0.8x~1.2x) 与好奇破冰 (1.0x~1.2x) 静默门槛，
+    // 绝不突破外层 idleNeed 与冷却/睡眠/单次刹车三道防骚扰铁律。
+    let effectiveSelfNoteMin = Math.round(this.selfNoteIdleMs / 60000);
+    let effectiveCuriosityMin = Math.round(this.curiosityIdleMs / 60000);
+    if (opts && Number.isFinite(Number(opts.epistemicTension))) {
+      const t = Math.max(0, Math.min(1, Number(opts.epistemicTension)));
+      const selfNoteFactor = 1.2 - 0.4 * t;
+      const curiosityFactor = t < 0.5 ? (1.2 - 0.4 * t) : 1.0;
+      effectiveSelfNoteMin = Math.max(1, Math.round(effectiveSelfNoteMin * selfNoteFactor));
+      effectiveCuriosityMin = Math.max(1, Math.round(effectiveCuriosityMin * curiosityFactor));
+    }
     const selfIntent = this.computeIntentNow(Math.max(0, Math.round(idleMs / 60000)), {
       pending: opts.curiosityPending,
       question: opts.curiosityQuestion,
+      selfNoteMinMinutes: effectiveSelfNoteMin,
+      curiosityMinMinutes: effectiveCuriosityMin,
       // 🔴 D-25：40 分钟独立节流 —— 问过之后四十分钟内不再问下一个。
       //   与「一次离开只写一张纸条」（selfNoteDuringIdle）同族的克制，但按时序而非单次。
       //   ⚠️ lastCuriosityAt === 0 表示「从未问过」，必须显式放行 ——
@@ -504,7 +548,7 @@ function rankOf(kind) {
 }
 
 module.exports = {
-  TriggerEngine, computeInitiativeBias, computeSelfIntent,
+  TriggerEngine, computeInitiativeBias, computeEpistemicTension, computeSelfIntent,
   SELF_INTENT_KINDS, TRAIT_LABEL,
   WINDOW_MS, POKE_THRESHOLD, POKE_OVERLOAD_THRESHOLD, COOLDOWN_MS, IDLE_MS,
   CURIOSITY_IDLE_MS, CURIOSITY_THROTTLE_MS,
