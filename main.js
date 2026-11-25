@@ -1559,14 +1559,16 @@ function evaluateTriggerWithCuriosity() {
     ? brain.internalRegulation.getAllostasisSummary() : null;
   const lastWindowTension = (brain && brain.internalRegulation && typeof brain.internalRegulation.getLastWindowTension === 'function')
     ? brain.internalRegulation.getLastWindowTension() : 0;
-  const epistemicTension = (typeof computeEpistemicTension === 'function')
-    ? computeEpistemicTension({
-      baseline: isBaseline,
-      ledgerMaxPressure: ledgerSummary ? ledgerSummary.maxPressure : 0,
-      reunionSurprise: allostasisSummary ? allostasisSummary.lastSurprise : 0,
-      lastWindowTension,
-    })
-    : 0;
+  const epistemicTension = isBaseline
+    ? undefined
+    : ((typeof computeEpistemicTension === 'function')
+      ? computeEpistemicTension({
+        baseline: false,
+        ledgerMaxPressure: ledgerSummary ? ledgerSummary.maxPressure : 0,
+        reunionSurprise: allostasisSummary ? allostasisSummary.lastSurprise : 0,
+        lastWindowTension,
+      })
+      : undefined);
   return trigger.evaluate({
     curiosityPending: curPending,
     curiosityQuestion: curQuestion,

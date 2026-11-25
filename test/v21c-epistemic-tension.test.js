@@ -122,6 +122,28 @@ function check(name, cond, extra) {
     fakeNow += 200 * MIN;
     check('2.6c 睡眠闸门在高张力下仍不可突破',
       engine.evaluate({ epistemicTension: 1.0, curiosityPending: 1, curiosityQuestion: 'q' }) === null);
+
+    // 2.7 undefined / null / '' 均必须绕过张力调制，严禁被 Number(null)===0 误伤为 1.2x 拉长
+    let nowIso = T0;
+    const trIso = new ActivityTracker({ now: () => nowIso });
+    const engIso = new TriggerEngine(trIso, { now: () => nowIso });
+    nowIso = T0 + 125 * MIN;
+    const isoNoteUndef = engIso.evaluate({ epistemicTension: undefined });
+    const isoNoteNull = engIso.evaluate({ epistemicTension: null });
+    const isoNoteEmpty = engIso.evaluate({ epistemicTension: '' });
+    const isoNoteZero = engIso.evaluate({ epistemicTension: 0 });
+    nowIso = T0 + 31 * MIN;
+    const isoCurUndef = engIso.evaluate({ epistemicTension: undefined, curiosityPending: 1, curiosityQuestion: 'q' });
+    const isoCurNull = engIso.evaluate({ epistemicTension: null, curiosityPending: 1, curiosityQuestion: 'q' });
+    const isoCurZero = engIso.evaluate({ epistemicTension: 0, curiosityPending: 1, curiosityQuestion: 'q' });
+    check('2.7 undefined/null/空串严格绕过张力调制（125min 出自发便签、31min 出好奇问句，区别于 0 的 1.2x 拉长）',
+      isoNoteUndef && isoNoteUndef.selfIntent && isoNoteUndef.selfIntent.kind === 'wantToLeaveSomething' &&
+      isoNoteNull && isoNoteNull.selfIntent && isoNoteNull.selfIntent.kind === 'wantToLeaveSomething' &&
+      isoNoteEmpty && isoNoteEmpty.selfIntent && isoNoteEmpty.selfIntent.kind === 'wantToLeaveSomething' &&
+      isoNoteZero && (!isoNoteZero.selfIntent || isoNoteZero.selfIntent.kind !== 'wantToLeaveSomething') &&
+      isoCurUndef && isoCurUndef.selfIntent && isoCurUndef.selfIntent.kind === 'curiosityAsk' &&
+      isoCurNull && isoCurNull.selfIntent && isoCurNull.selfIntent.kind === 'curiosityAsk' &&
+      isoCurZero && (!isoCurZero.selfIntent || isoCurZero.selfIntent.kind !== 'curiosityAsk'));
   }
 
   // ---- 3. lastWindowTension 持久化、Brain.closeWindow 写入与 baseline 隔离 ----
@@ -294,6 +316,9 @@ function check(name, cond, extra) {
     const fnBody = (fnStart >= 0 && fnEnd > fnStart) ? mainSrc.slice(fnStart, fnEnd + 2) : '';
     check('5.1 main.js evaluateTriggerWithCuriosity() 计算 epistemicTension 且绝不扫 experiences.jsonl',
       fnBody.length > 0 && /computeEpistemicTension/.test(fnBody) && !/experiences|readAll/.test(fnBody));
+
+    check('5.1b main.js baseline 模式将 epistemicTension 置为 undefined 而非数值 0',
+      /const\s+epistemicTension\s*=\s*isBaseline\s*\?\s*undefined/.test(fnBody));
 
     const stripComments = (s) => s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
     const trSrc = stripComments(fs.readFileSync(path.join(ROOT, 'src', 'trigger.js'), 'utf8'));

@@ -2456,13 +2456,19 @@ class Brain {
               lastWindowTension = Math.max(0, Math.min(1, Math.max(varNorm, spikeNorm) * 0.6 + conflictNorm * 0.4));
             } catch { /* 张力计算失败降级为 0，绝不阻塞关窗 */ }
 
+            // v2.1 审核修复：在 updateOnWindowClose 自然清零 lastSurprise 前锁存本窗真实 allostasis 快照
+            const snapshotExtra = (
+              this.internalRegulation.allostasisEnabled &&
+              typeof this.internalRegulation.getAllostasisSummary === 'function'
+            ) ? { allostasis: this.internalRegulation.getAllostasisSummary() } : {};
+
             this.internalRegulation.updateOnWindowClose(snap.windowNo, {
               turnsRecorded: snap.actualTurnCount,
               moodTone: syn.moodTone,
               lastWindowTension
             });
             if (this.experiencesArchive) {
-              const regSnapshot = this.internalRegulation.createSnapshotRecord(snap.windowNo);
+              const regSnapshot = this.internalRegulation.createSnapshotRecord(snap.windowNo, snapshotExtra);
               this.experiencesArchive.append(regSnapshot);
             }
           } catch (e) {
@@ -2528,11 +2534,14 @@ class Brain {
           if (this.internalRegulation) {
             const mods = this.currentWindowSnapshot.modules || {};
             this.internalRegulation.enabled = Boolean(mods.internalRegulation);
-            this.internalRegulation.allostasisEnabled = this.internalRegulation.enabled && (
-              Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
-                ? Boolean(mods.allostasisPrior)
-                : true
-            );
+            const nextAllostasis = Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
+              ? Boolean(mods.allostasisPrior)
+              : true;
+            if (typeof this.internalRegulation.setAllostasisEnabled === 'function') {
+              this.internalRegulation.setAllostasisEnabled(nextAllostasis);
+            } else {
+              this.internalRegulation.allostasisEnabled = this.internalRegulation.enabled && nextAllostasis;
+            }
             if (!this.internalRegulation.enabled) {
               this.internalRegulation._recentLoadTrail = [];
               this.internalRegulation.approachingOverload = false;

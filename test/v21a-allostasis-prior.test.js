@@ -172,6 +172,23 @@ function check(name, cond, extra) {
     check('4.5 认识论边界：isSubjectAccessible=false 且不入 SubjectState.ALLOWED_TRAITS',
       reloaded.isSubjectAccessible('gapSurprise') === false &&
       !ALLOWED_TRAITS.has('gapSurprise') && !ALLOWED_TRAITS.has('typicalGapMs'));
+
+    // 4.6 关窗结算自然清零 lastSurprise，避免跨窗无限滞留，同时完整保留历史样本与锚点
+    const wcDir = makeTempDir();
+    const wcMgr = new InternalRegulationManager(wcDir, { enabled: true });
+    wcMgr.allostasisPrior.lastUserTurnAt = T0;
+    wcMgr.allostasisPrior.recentGapsMs = [2 * H, 2 * H, 2 * H];
+    const wcVerdict = wcMgr.recordUserTurnAndAllostasis(T0 + 24 * H);
+    const hadSurprise = wcVerdict.gapSurprise >= 1.2 && wcMgr.allostasisPrior.lastSurprise >= 1.2;
+    wcMgr.updateOnWindowClose(8, {});
+    const wcReloaded = new InternalRegulationManager(wcDir, { enabled: true });
+    check('4.6 关窗结算将 allostasisPrior.lastSurprise 归零并保留 recentGapsMs 与 lastUserTurnAt',
+      hadSurprise &&
+      wcMgr.allostasisPrior.lastSurprise === 0 &&
+      wcMgr.allostasisPrior.recentGapsMs.length === 4 &&
+      wcMgr.allostasisPrior.lastUserTurnAt === T0 + 24 * H &&
+      wcReloaded.getAllostasisSummary().lastSurprise === 0 &&
+      wcReloaded.allostasisPrior.recentGapsMs.length === 4);
   }
 
   // ---- 5. Config 白名单、baseline 与单模块消融隔离 ----
@@ -224,6 +241,34 @@ function check(name, cond, extra) {
     check('5.7 Brain 经 runManifest 与窗口快照透传 allostasisPrior=false 消融开关',
       ablBrain.currentWindowSnapshot.modules.allostasisPrior === false &&
       ablBrain.internalRegulation.allostasisEnabled === false);
+
+    // 5.8 运行中或跨窗从 allostasisPrior=false 切回 true 时回灌 _preservedAllostasis，save() 不清空历史样本
+    const toggleDir = makeTempDir();
+    const seedToggle = new InternalRegulationManager(toggleDir, {
+      enabled: true,
+      experimentModules: { internalRegulation: true, allostasisPrior: true }
+    });
+    seedToggle.allostasisPrior.lastUserTurnAt = T0 + 6 * H;
+    seedToggle.allostasisPrior.recentGapsMs = [2 * H, 2 * H, 2 * H];
+    seedToggle.save();
+
+    const toggledMgr = new InternalRegulationManager(toggleDir, {
+      enabled: true,
+      experimentModules: { internalRegulation: true, allostasisPrior: false }
+    });
+    const turnedOn = toggledMgr.setAllostasisEnabled(true);
+    toggledMgr.save();
+    const afterToggleReload = new InternalRegulationManager(toggleDir, {
+      enabled: true,
+      experimentModules: { internalRegulation: true, allostasisPrior: true }
+    });
+    check('5.8 运行中切回 allostasisPrior=true 完整回灌 _preservedAllostasis 且 save() 不清空 3 条历史样本',
+      turnedOn === true &&
+      toggledMgr.allostasisPrior.recentGapsMs.length === 3 &&
+      toggledMgr.allostasisPrior.lastUserTurnAt === T0 + 6 * H &&
+      afterToggleReload.getAllostasisSummary().priorReady === true &&
+      afterToggleReload.allostasisPrior.recentGapsMs.length === 3 &&
+      afterToggleReload.allostasisPrior.lastUserTurnAt === T0 + 6 * H);
   }
 
   // ---- 6. Brain 端到端：proactive 防污染 + 同轮零错位 + systemText 不变 + reunion 零改动 ----

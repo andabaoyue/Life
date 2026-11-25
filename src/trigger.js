@@ -201,7 +201,7 @@ class TriggerEngine {
     // 绝不突破外层 idleNeed 与冷却/睡眠/单次刹车三道防骚扰铁律。
     let effectiveSelfNoteMin = Math.round(this.selfNoteIdleMs / 60000);
     let effectiveCuriosityMin = Math.round(this.curiosityIdleMs / 60000);
-    if (opts && Number.isFinite(Number(opts.epistemicTension))) {
+    if (opts && opts.epistemicTension != null && opts.epistemicTension !== '' && Number.isFinite(Number(opts.epistemicTension))) {
       const t = Math.max(0, Math.min(1, Number(opts.epistemicTension)));
       const selfNoteFactor = 1.2 - 0.4 * t;
       const curiosityFactor = t < 0.5 ? (1.2 - 0.4 * t) : 1.0;

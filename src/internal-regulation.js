@@ -431,6 +431,30 @@ class InternalRegulationManager {
   }
 
   /**
+   * 运行中或跨窗切换 allostasisPrior 开关时，双向保全磁盘暂存的先验历史（_preservedAllostasis）
+   * @param {boolean} enabled
+   * @returns {boolean}
+   */
+  setAllostasisEnabled(enabled) {
+    const nextEnabled = Boolean(this.enabled && enabled);
+    if (nextEnabled) {
+      if (
+        this._preservedAllostasis &&
+        typeof this._preservedAllostasis === 'object' &&
+        this.allostasisPrior.recentGapsMs.length === 0 &&
+        this.allostasisPrior.lastUserTurnAt === 0
+      ) {
+        this.allostasisPrior.fromJSON(this._preservedAllostasis);
+        this._preservedAllostasis = null;
+      }
+    } else if (this.allostasisPrior.recentGapsMs.length > 0 || this.allostasisPrior.lastUserTurnAt > 0) {
+      this._preservedAllostasis = this.allostasisPrior.toJSON();
+    }
+    this.allostasisEnabled = nextEnabled;
+    return this.allostasisEnabled;
+  }
+
+  /**
    * 获取只读关系节奏先验摘要（供快照与后续认知张力层读取）
    */
   getAllostasisSummary() {
@@ -1107,6 +1131,12 @@ class InternalRegulationManager {
     // v2.1-c：持久化最近一次关窗认知张力（防重启归零）
     if (Number.isFinite(details.lastWindowTension)) {
       this.lastWindowTension = clamp(Number(Number(details.lastWindowTension).toFixed(4)), 0, 1);
+    }
+
+    // v2.1 审核修复：关窗结算时自然清零上一窗的重逢惊奇 lastSurprise，防止高频对话期跨窗无限滞留
+    // （recentGapsMs 与 lastUserTurnAt 完整保留；Brain 侧在关窗前提前锁定本窗真实快照摘要）
+    if (this.allostasisEnabled && this.allostasisPrior) {
+      this.allostasisPrior.lastSurprise = 0;
     }
 
     this._recordTransition(`window_close_${windowNo}`, {}, prev, at);

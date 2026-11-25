@@ -75,6 +75,7 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     brain.internalRegulation.salienceThreshold = SENTINEL_VALUES.salienceThreshold;
     brain.internalRegulation.cognitiveLoadProxy = SENTINEL_VALUES.cognitiveLoadProxy;
     brain.internalRegulation.interactionDensity = SENTINEL_VALUES.interactionDensity;
+    brain.internalRegulation.approachingOverload = true;
     brain.internalRegulation.lastWindowTension = 0.6184;
     if (brain.internalRegulation.allostasisPrior) {
       brain.internalRegulation.allostasisPrior.lastSurprise = 2.3419;
