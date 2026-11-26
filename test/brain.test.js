@@ -23,8 +23,44 @@ let mode = 'ok';
 let replySeq = 0;
 let summaryDelay = 0;   // 让小结调用挂起，制造「小结在飞、用户又发消息」的窗口
 let chatDelay = 0;      // 让对话回复挂起，制造「打断后旧请求 catch 晚到」的窗口
+let onSummaryRequest = null; // 确定性门控：小结请求到达假服务时触发
+let summaryGate = null;      // 确定性门控：放行小结响应的 Promise
+let onChatStreamStart = null;// 确定性门控：对话流请求到达假服务时触发
+let chatGate = null;         // 确定性门控：放行对话流的 Promise
 let stateReply = null;  // 覆盖对话回复内容，用于测试 [state:xx] 解析
 let summaryReply = null;// 覆盖小结回复内容，用于测试 5x20 结构化小结与 Provenance
+
+function armSummaryGate() {
+  let arrivedResolve, releaseResolve;
+  const arrived = new Promise(r => { arrivedResolve = r; });
+  const gate = new Promise(r => { releaseResolve = r; });
+  onSummaryRequest = arrivedResolve;
+  summaryGate = gate;
+  return {
+    arrived,
+    release: () => {
+      if (summaryGate === gate) summaryGate = null;
+      if (onSummaryRequest === arrivedResolve) onSummaryRequest = null;
+      releaseResolve();
+    }
+  };
+}
+
+function armChatGate() {
+  let arrivedResolve, releaseResolve;
+  const arrived = new Promise(r => { arrivedResolve = r; });
+  const gate = new Promise(r => { releaseResolve = r; });
+  onChatStreamStart = arrivedResolve;
+  chatGate = gate;
+  return {
+    arrived,
+    release: () => {
+      if (chatGate === gate) chatGate = null;
+      if (onChatStreamStart === arrivedResolve) onChatStreamStart = null;
+      releaseResolve();
+    }
+  };
+}
 
 const sig = (ms) => ms.map(m => m.role + '::' + m.content);
 
@@ -67,13 +103,31 @@ const server = http.createServer((req, res) => {
     };
 
     if (!j.stream) {
-      if (kind === 'summary' && summaryDelay) await sleep(summaryDelay);
+      if (kind === 'summary') {
+        const gate = summaryGate;
+        if (onSummaryRequest) { const fn = onSummaryRequest; onSummaryRequest = null; fn(); }
+        if (gate) {
+          await Promise.race([gate, new Promise(r => res.once('close', r))]);
+          if (res.writableEnded || res.destroyed) return;
+        } else if (summaryDelay) {
+          await sleep(summaryDelay);
+        }
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ choices: [{ message: { content: reply } }], usage }));
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    if (chatDelay && kind === 'chat') await sleep(chatDelay);
+    if (kind === 'chat') {
+      const gate = chatGate;
+      if (onChatStreamStart) { const fn = onChatStreamStart; onChatStreamStart = null; fn(); }
+      if (gate) {
+        await Promise.race([gate, new Promise(r => res.once('close', r))]);
+        if (res.writableEnded || res.destroyed) return;
+      } else if (chatDelay) {
+        await sleep(chatDelay);
+      }
+    }
     for (const ch of reply) {
       res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: ch } }] }) + '\n\n');
     }
@@ -241,12 +295,18 @@ async function main() {
   /* ---- 用例 5.5：小结在飞时用户又发消息，不能把新对话裁掉 ---- */
   brain = new Brain(tmpDir(), { ...cfg, windowTurns: 2, keepTailMessages: 2 });
   reqs.length = 0;
-  summaryDelay = 250;
   await brain.ask('A1', () => {});
-  const p2 = brain.ask('A2 触发关窗', () => {});      // 回答完进入关窗，小结挂起 250ms
-  await sleep(60);
-  const p3 = brain.ask('A3 小结期间发的', () => {});
-  await p2; await p3;
+  const sumGate55 = armSummaryGate();
+  let p2, p3;
+  try {
+    p2 = brain.ask('A2 触发关窗', () => {});          // 回答完进入关窗，小结在假服务门控处挂起
+    await sumGate55.arrived;                           // 确保 A2 流已结束且关窗小结确实在飞
+    p3 = brain.ask('A3 小结期间发的', () => {});
+    await p3;                                          // 确保 A3 在小结落盘前完成（boundary 保护防重入）
+  } finally {
+    sumGate55.release();
+  }
+  await p2;
   let hist = brain.memory.history.map(m => m.content);
   check('小结在飞时新发的对话没被裁掉',
     hist.indexOf('A3 小结期间发的') >= 0 && hist.indexOf('A3 小结期间发的') % 2 === 0,
@@ -255,33 +315,50 @@ async function main() {
     brain.memory.history.length === 4, 'history=' + brain.memory.history.length);
   check('新窗口轮数含小结期间追加的那轮',
     brain.memory.data.turnsInWindow === 1, 'turns=' + brain.memory.data.turnsInWindow);
-  summaryDelay = 0;
 
   /* ---- 用例 5.6：小结期间点「清空记忆」，旧快照必须作废 ---- */
   brain = new Brain(tmpDir(), { ...cfg, windowTurns: 2, keepTailMessages: 2 });
-  summaryDelay = 200;
   await brain.ask('B1', () => {});
-  const p4 = brain.ask('B2', () => {});
-  await sleep(50);
-  brain.clearMemory();
+  const sumGate56 = armSummaryGate();
+  let p4;
+  try {
+    p4 = brain.ask('B2', () => {});
+    await sumGate56.arrived;                           // 确保 B2 已拍完快照且小结请求在飞
+    brain.clearMemory();
+  } finally {
+    sumGate56.release();
+  }
   await p4;
   check('reset 后过期快照不再写入小结',
     brain.memory.windows.length === 0, 'windows=' + brain.memory.windows.length);
   check('reset 后历史确实为空', brain.memory.history.length === 0);
-  summaryDelay = 0;
 
   /* ---- 用例 5.7：连续两次打断，旧请求的 catch 不能抹掉新请求的 ctrl ---- */
   brain = new Brain(tmpDir(), { ...cfg, windowTurns: 999 });
-  chatDelay = 400;
+  const chatGate1 = armChatGate();
   const pa = brain.ask('C1 会被打断', () => {}).catch(e => e.name || e.message);
-  await sleep(60);                       // C1 的流还在挂起
-  brain.abort();
-  const pb = brain.ask('C2 也会被打断', () => {}).catch(e => e.name || e.message);
-  await sleep(60);                       // 此刻 C1 的 AbortError 才进 catch
-  brain.abort();
-  const rc = await brain.ask('C3 正常完成', () => {});
+  let pb, errA, rc, errB;
+  const chatGate2 = (() => {
+    // 延后到 C1 到达后再武装 chatGate2，避免覆盖 C1 的 onChatStreamStart
+    return { gate: null };
+  })();
+  try {
+    await chatGate1.arrived;                           // C1 的流已到达假服务并挂起
+    brain.abort();
+    chatGate1.release();
+    chatGate2.gate = armChatGate();
+    pb = brain.ask('C2 也会被打断', () => {}).catch(e => e.name || e.message);
+    await chatGate2.gate.arrived;                      // C2 已在飞（持有新 ctrl）
+    errA = await pa;                                   // 确定性等到 C1 的 catch 跑完，再打断 C2
+    brain.abort();
+    chatGate2.gate.release();
+    rc = await brain.ask('C3 正常完成', () => {});
+    errB = await pb;
+  } finally {
+    chatGate1.release();
+    if (chatGate2.gate) chatGate2.gate.release();
+  }
   check('两次打断后第三次正常回复', typeof rc.text === 'string' && rc.text.length > 0);
-  const errA = await pa, errB = await pb;
   check('旧请求 catch 未抹掉新 ctrl（abort 仍生效）',
     errA === 'AbortError' && errB === 'AbortError', errA + '/' + errB);
   const roles2 = brain.memory.history.map(m => m.role);
@@ -291,7 +368,6 @@ async function main() {
     roles2.join(','));
   check('连续打断后轮数正确', brain.memory.data.turnsInWindow === 1,
     'turns=' + brain.memory.data.turnsInWindow);
-  chatDelay = 0;
 
   /* ---- 用例 6：重启后记忆原样接上 ---- */
   const dir = tmpDir();
