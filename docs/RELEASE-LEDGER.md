@@ -26,8 +26,10 @@
 | 项 | 值 |
 |---|---|
 | 版本 | **2.1.0** |
-| 公库 tag | `v2.1.0`（本轮收口同步后打标） |
-| Release | 待创建 GitHub Release（`https://github.com/andabaoyue/Life/releases/tag/v2.1.0`）并上传下述安装包后补链 |
+| 公库 tag | `v2.1.0`（annotated，tag 对象 `26ec225` → 提交 `d0cd70a`） |
+| 公库提交 | **`d0cd70a`**（`v2.1.0` 发布同步） |
+| 私库提交 | `ad3ece6`（版本收口、CHANGELOG、产物 SHA-256 账本与 `asar-check` 合规文件修正） |
+| Release | https://github.com/andabaoyue/Life/releases/tag/v2.1.0 |
 | 公开集文件数 | **368**（按规则排除 42 个私库/开发文件） |
 
 ### 交付物
@@ -37,7 +39,7 @@
 | `Life-2.1.0-win-x64-portable.exe` | 100,775,459 | `9edd56bab5eb509212621c0bb724d99693bd4380deebc0b3a7dc90ace55f997c` |
 | `Life-2.1.0-win-x64.zip` | 153,921,094 | `cdf93df9cb49d153e9493c1aa92fd04fc8c83fec27e4e7789d81cec9d5079e19` |
 
-> ✅ 两个校验和来自构建后本地 `Get-FileHash -Algorithm SHA256` 实测。
+> ✅ 两个 digest 来自 `gh release view v2.1.0 --json assets`，与本地 `Get-FileHash -Algorithm SHA256` 逐位核对一致。
 
 > 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
 > 与 v1.9.0 / v2.0.0 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,860` 字节 `Life-2.1.0-Setup.exe` 空壳存根及 `life-2.1.0-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.1.0-win-x64.zip` 均包含完整 `LICENSE`（4,435 字节）与 `NOTICE`（1,205 字节），并通过 `tools/release-check.js`（PASS 13 / WARN 0 / FAIL 0，含 `portable.exe` PE overlay = `96.0MB`）与 `tools/artifact-freshness.js`（103 个运行入口逐字节一致）。
