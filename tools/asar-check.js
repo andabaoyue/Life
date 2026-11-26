@@ -48,10 +48,11 @@ const REQUIRED_FILES = [
   'ui-provider-presets.js',
   'ui-outfit-complete.js',
   'ui-agent-confirm.js',
-  'package.json',
-  'LICENSE',
-  'NOTICE'
+  'package.json'
 ];
+/* 开源合规文件：electron-builder 的 extraFiles 会将其放进安装根目录并自动从 app.asar 剔除，
+   故允许位于 app.asar 内或 unpacked 安装根目录（resources/ 的上一级），且必须非空。 */
+const COMPLIANCE_FILES = ['LICENSE', 'NOTICE'];
 const REQUIRED_DIRS = ['src', 'assets'];
 /* 源码专用内容：进包就是打包泄漏（体积、或把研究材料/内测文档发给用户） */
 const FORBIDDEN_PREFIXES = ['test/', 'tools/', 'research/', 'dist/'];
@@ -150,6 +151,20 @@ function main() {
   const missing = REQUIRED_FILES.filter((f) => !set.has(f));
   if (missing.length) report('FAIL', '必需运行入口', '产物内缺失 ' + missing.length + ' 个: ' + missing.join(', '));
   else report('PASS', '必需运行入口', REQUIRED_FILES.length + ' 个入口全部在产物内');
+
+  // 1b. 开源合规文件（app.asar 内或安装根目录 extraFiles）
+  const appRoot = path.resolve(path.dirname(asarPath), '..');
+  const missingCompliance = COMPLIANCE_FILES.filter((f) => {
+    if (set.has(f)) return false;
+    const rootFile = path.join(appRoot, f);
+    try { return !fs.statSync(rootFile).isFile() || fs.statSync(rootFile).size === 0; } catch { return true; }
+  });
+  if (missingCompliance.length) {
+    report('FAIL', '合规文件检查', 'app.asar 及安装根目录均缺失或为空: ' + missingCompliance.join(', '));
+  } else {
+    const loc = COMPLIANCE_FILES.map((f) => set.has(f) ? f + '(asar)' : f + '(root)').join(', ');
+    report('PASS', '合规文件检查', COMPLIANCE_FILES.length + ' 个合规文件就绪: ' + loc);
+  }
 
   // 2. 必需目录非空（src/**、assets/** 在白名单里是通配，需确认真的打进去了）
   const emptyDirs = [];

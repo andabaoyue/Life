@@ -21,6 +21,35 @@
 
 ---
 
+## v2.1.0 · 2026-11-26
+
+| 项 | 值 |
+|---|---|
+| 版本 | **2.1.0** |
+| 公库 tag | `v2.1.0`（本轮收口同步后打标） |
+| Release | 待创建 GitHub Release（`https://github.com/andabaoyue/Life/releases/tag/v2.1.0`）并上传下述安装包后补链 |
+| 公开集文件数 | **368**（按规则排除 42 个私库/开发文件） |
+
+### 交付物
+
+| 文件 | 字节数 | SHA-256 |
+|---|---|---|
+| `Life-2.1.0-win-x64-portable.exe` | 100,775,459 | `9edd56bab5eb509212621c0bb724d99693bd4380deebc0b3a7dc90ace55f997c` |
+| `Life-2.1.0-win-x64.zip` | 153,921,094 | `cdf93df9cb49d153e9493c1aa92fd04fc8c83fec27e4e7789d81cec9d5079e19` |
+
+> ✅ 两个校验和来自构建后本地 `Get-FileHash -Algorithm SHA256` 实测。
+
+> 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
+> 与 v1.9.0 / v2.0.0 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,860` 字节 `Life-2.1.0-Setup.exe` 空壳存根及 `life-2.1.0-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.1.0-win-x64.zip` 均包含完整 `LICENSE`（4,435 字节）与 `NOTICE`（1,205 字节），并通过 `tools/release-check.js`（PASS 13 / WARN 0 / FAIL 0，含 `portable.exe` PE overlay = `96.0MB`）与 `tools/artifact-freshness.js`（103 个运行入口逐字节一致）。
+
+### 主要内容
+
+- **生命动力学升级（v2.1-a ~ d）**：`src/allostasis-prior.js` 预测性异稳态与关系节奏先验、`approachingOverload` 生成认知边界滑窗与 `SelfLedger` 冲突汇总、`computeEpistemicTension` 轻量认知张力调制与关窗 `lastWindowTension` 持久化（守住反骚扰三铁律与 `baseline` 隔离），以及记忆再巩固只读观测埋点（`reconsolidation_candidate_observed`）。
+- **全仓深度审计三批闭环（10 项 P0 + 23 项 P1 + 6 项 P2）**：涵盖生命核心恢复/塑性/睡眠延后同步与关窗锚点加固、Agent 预算预检/符号链接与 Junction 防线/凭据脱敏与多屏视觉校准、熔断器半开防死锁/双窗流式同步/衣橱与动画竞态修复、研究导出原子落盘/截断元数据/单 fd 批量读取，以及 CI 防假绿与 `LICENSE`/`NOTICE` 打包合规检查（含修正 `tools/asar-check.js` 兼容 `electron-builder` `extraFiles` 安装根目录放置合规文件）。
+- **门禁**：148 个已标项数套件（147 Node + 1 Python）/ 5446 项断言（连同自检门禁共 149 个测试文件）全绿；`tools/release-check.js` PASS 13 / WARN 0 / FAIL 0。
+
+---
+
 ## v2.0.0 · 2026-11-21
 
 | 项 | 值 |
