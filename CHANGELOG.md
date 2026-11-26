@@ -5,6 +5,33 @@
 
 ---
 
+## [2.1.1] - 2026-11-26
+
+> **相比 `v2.1.0`**，本版为二轮全仓深度审计的稳定性、并发安全与边界加固维护版本，共完成 **9 项 P0 止血修复 + 22 项 P1 深度加固**（全链路零功能退让、无已知回归）。以下按模块边界归纳：
+
+### 🛡️ 安全边界与凭据防线
+
+- **工作区沙盒与视觉裁剪硬边界**：`src/agent-executor.js` 新增沙盒祖先目录逐级 `lstat` 检查与前后相对路径一致校验，封堵嵌套目录 symlink 穿透；`src/vision.js` 与 `main.js` 严格校验多屏源匹配（失配不再回落 `sources[0]`）、`pickerWindow` 发送者归属与整型裁剪边界。
+- **连接重绑与密钥脱敏防线**：`src/connections.js` 与 `main.js` 在修改连接 `baseURL` 跨 origin 时要求显式携带 `allowOriginChange: true`（并继续保留 `PROVIDER_POLICY_REJECTED` 优先级）；`stt:set-config` 接入配置校验并在 origin 变更未传新密钥时清理旧 STT 凭据；`src/connections.js` 隔离 DeepSeek `cred:deepseek-` 凭据命名空间。
+- **全字符前缀与 URL userinfo 脱敏**：`src/redact.js`、`src/agent-interfaces.js`、`src/agent-observations.js` 补全 `plain:v1:` 全字符及 `https://user:pass@` URL 账密脱敏，`AuditLog.append` 与 `ObservationLog.append` 均在落盘与内存入队前统一度量脱敏。
+
+### 🧬 核心生命周期、并发记忆与归档认证
+
+- **热切换与流式生命周期竞态修复**：`src/brain-hot-swap.js` 严格遵循 `oldBrain.abort()` → `oldBrain.flushAll()` → `createCandidate()` 预刷盘序列并理顺 `powerMonitorSource` 所有权；`src/brain.js` 修复 `ask/abort` 竞态与梦境停机/跨睡期守卫；`Brain.flushAll()` 按模块 `try/catch` 隔离落盘；`DeferredWriter` 支持 `cancel()` 与指数退避重排。
+- **记忆窗口边界与归档完整认证**：`src/memory.js` 新增 `msgSeq`、`snapshotMaxSeq` 与 `snapshotTailIds` 混合锚点防止快照末条淘汰后的假边界；`src/brain.js` 梦境碎片写入后同步调用 `this.memory.save(true)`；`src/archive-integrity.js` 收敛混合链哈希校验与 `self_note_state` 外部背书强制要求；`src/experiences-archive.js` 按 `(windowNo, epoch)` 判重防新血脉撞号误跳过。
+- **恢复与基线门禁补齐**：`src/internal-regulation.js` 修复停用时基线返回与 `sleepStartTime` / `allostasis` 恢复一致性；`src/subject-state.js` 跨重启延续 `RECOVERY_UNCERTIFIED` 阻断；`src/self-ledger.js` 在损坏态拒绝写入并避免写入失败提前清零备份标志；`src/tracker.js` 修正挂机梯级步长增量。
+
+### 🖥️ 渲染交互、研究查询与构建门禁
+
+- **语音启动、双窗气泡与流式超时**：`chat.js` 显式覆盖麦克风 `starting` 态并支持 `ESC` / `blur` / 页面隐藏立即取消与释放音轨；`pet.js` 守卫流式气泡不被忙态覆盖、为重放轮询补充 `try/catch` 与卸载清理；`src/provider-policy.js` 放行 `http://[::1]`；`src/adapters/openai-compatible-adapter.js` 与 `src/deepseek.js` 先拒绝再 `ctrl.abort()` 保留真实 `TimeoutError`；`src/animation-controller.js` 守卫睡眠戳击回落 `SLEEP` 与 `EYE_STATES.CLOSE`。
+- **研究批量读与 CI 严格 freshness**：`src/research-index.js` 与 `src/research-query.js` 修复 `readRecordsAtOffsets` 兼容字段并打通 `getWindowDetail` 单 fd 批量读；`src/research-export.js` 与 `src/research-service.js` 拦截空串 / `.` / `..` 非法导出文件名并为 `state_changes` / `evidence` 子导出透传截断元数据；`tools/artifact-freshness.js` 与 `.github/workflows/ci.yml` 落地 `--strict` 产物强门禁。
+
+### 🧪 门禁规模
+
+- 已标项数门禁扩展至 **150 个套件 / 5504 项断言**（`test/docs.test.js` 全量执行 `executed=150` 0 FAIL，含 `ui_test.py` 171/171；详见 [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md)）。
+
+---
+
 ## [2.1.0] - 2026-11-26
 
 > **相比上一个公开版本 v2.0.0**，本版完成了 `v2.1-a ~ d` 生命动力学演进与全仓深度审计三批闭环加固（10 项 P0 + 23 项 P1 + 6 项 P2），覆盖预测性异稳态先验、认知边界自适应、轻量认知张力调制、记忆再巩固只读观测，以及沙盒/凭据/传输/研究导出/打包与 CI 门禁的全链路加固。以下按功能线归纳，不逐笔罗列提交。

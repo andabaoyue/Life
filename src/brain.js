@@ -495,6 +495,7 @@ class Brain {
   bindPowerMonitorSource(source) {
     this.powerMonitorSource = source || null;
     if (this.powerMonitorSource && typeof this.powerMonitorSource.start === 'function') {
+      this.powerMonitorSource._ownerBrain = this;
       this.powerMonitorSource.start((evt) => {
         if (typeof this.processEnvironmentalPerception === 'function') {
           this.processEnvironmentalPerception(evt);
@@ -765,6 +766,10 @@ class Brain {
             reg._moodState.coldActive = reg.moodWarmth <= 38;
             if (reg.moodWarmth <= 50) { reg._moodState.warmthActive = false; reg._moodState.warmthExitAt = 0; }
             if (reg.moodWarmth >= 50) { reg._moodState.coldActive = false; reg._moodState.coldExitAt = 0; }
+            reg._moodState.stillActive = reg.moodStillness >= 62;
+            reg._moodState.restlessActive = reg.moodStillness <= 38;
+            if (reg.moodStillness <= 50) { reg._moodState.stillActive = false; reg._moodState.stillExitAt = 0; }
+            if (reg.moodStillness >= 50) { reg._moodState.restlessActive = false; reg._moodState.restlessExitAt = 0; }
           }
         }
         if (typeof s.isSleeping === 'boolean') {
@@ -775,13 +780,15 @@ class Brain {
         } else if (typeof latestPayload.sleepStartTime === 'number' && Number.isFinite(latestPayload.sleepStartTime)) {
           reg.sleepStartTime = latestPayload.sleepStartTime;
         }
+        if (reg.isSleeping && !Number.isFinite(reg.sleepStartTime)) {
+          reg.isSleeping = false;
+          reg.sleepStartTime = null;
+        }
         if (latestPayload.allostasis && typeof latestPayload.allostasis === 'object' && reg.allostasisEnabled && reg.allostasisPrior) {
           const allo = latestPayload.allostasis;
           if (Array.isArray(allo.recentGapsMs)) {
             reg.allostasisPrior.fromJSON(allo);
             reg._preservedAllostasis = allo;
-          } else if (typeof allo.lastSurprise === 'number' && Number.isFinite(allo.lastSurprise)) {
-            reg.allostasisPrior.lastSurprise = Math.max(-2, Math.min(3, allo.lastSurprise));
           }
         }
         reg.save();
@@ -1232,11 +1239,19 @@ class Brain {
   }
 
   flushAll() {
-    if (this.memory && typeof this.memory.flush === 'function') this.memory.flush();
-    if (this.selfLedger && typeof this.selfLedger.flush === 'function') this.selfLedger.flush();
-    if (this.subjectState && typeof this.subjectState.flush === 'function') this.subjectState.flush();
-    if (this.experiencesArchive && typeof this.experiencesArchive.flush === 'function') this.experiencesArchive.flush();
-    if (this.statsWriter && typeof this.statsWriter.flush === 'function') this.statsWriter.flush();
+    for (const [name, mod] of [
+      ['memory', this.memory],
+      ['selfLedger', this.selfLedger],
+      ['subjectState', this.subjectState],
+      ['experiencesArchive', this.experiencesArchive],
+      ['statsWriter', this.statsWriter]
+    ]) {
+      if (mod && typeof mod.flush === 'function') {
+        try { mod.flush(); } catch (err) {
+          console.warn(`[Brain] flush ${name} 失败:`, err && err.message ? err.message : err);
+        }
+      }
+    }
   }
 
   get ready() { return !!this.cfg.apiKey; }
@@ -1245,7 +1260,8 @@ class Brain {
     this.shutdownRequested = true;
     this.generationId++;
     this.abort();
-    if (this.powerMonitorSource && typeof this.powerMonitorSource.stop === 'function') {
+    if (this.powerMonitorSource && typeof this.powerMonitorSource.stop === 'function'
+        && (!this.powerMonitorSource._ownerBrain || this.powerMonitorSource._ownerBrain === this)) {
       this.powerMonitorSource.stop();
     }
     this.flushAll();
@@ -1406,6 +1422,8 @@ class Brain {
     // 对缓存无害：model 变了不影响 system 文本，窗口参数也不进 prompt。
     this.refreshConfig();
     if (!this.ready) throw new Error('还没填 API Key');
+    // 防并发重入：若仍有上一轮在飞请求，先同步中止并回滚，避免产生连续双 user
+    if (this.ctrl) this.abort();
 
     /* ---- 本地活动：意图判定 + 环境快照 ----
        顺序要紧：recordUserInput 要在快照之前，否则"静默多久"算的是这一句之前。 */
@@ -1746,8 +1764,18 @@ class Brain {
       throw err;
     }
 
-    if (this.ctrl === ctrl) this.ctrl = null;
-    this.pendingUser = false;
+    const isCurrentReq = (this.ctrl === ctrl);
+    if (isCurrentReq) {
+      this.ctrl = null;
+      this.pendingUser = false;
+    }
+
+    // 若本轮已被中止、已被后续请求接管或 Brain 已停机，严禁触碰新请求的 pendingUser/history
+    if (!isCurrentReq || ctrl.signal.aborted || this.shutdownRequested) {
+      const abortErr = new Error('请求已中止');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
 
     if (!text) {
       // v0.9.9 P1-b 更正：原注释写「主动搭话没追加过，也就没什么可回滚」，与上面
@@ -1942,7 +1970,7 @@ class Brain {
 
     // P0-2: 若当前窗口已在 Archive 中成功归档且 SubjectState 已恢复/前进，直接推进 Memory 关窗完成幂等收尾
     if (this.experiencesArchive && this.experiencesArchive.hasWindowArchive &&
-        this.experiencesArchive.hasWindowArchive(snap.windowNo) &&
+        this.experiencesArchive.hasWindowArchive(snap.windowNo, snap.epoch) &&
         (!this.subjectState || this.subjectState.currentWindowNo > snap.windowNo)) {
       console.warn(`[Brain] 窗口 #${snap.windowNo} 已经归档且状态已前进，直接推进 Memory 关窗完成幂等收尾`);
       const existing = this.experiencesArchive.getByWindow(snap.windowNo).find(r => r.recordType === 'window_summary' || r.recordType === 'window_archive' || r.type === 'window_archive');
@@ -2349,7 +2377,7 @@ class Brain {
       };
       let archiveSuccess = false;
       if (this.experiencesArchive) {
-        if (this.experiencesArchive.hasWindowArchive && this.experiencesArchive.hasWindowArchive(snap.windowNo)) {
+        if (this.experiencesArchive.hasWindowArchive && this.experiencesArchive.hasWindowArchive(snap.windowNo, snap.epoch)) {
           console.warn(`[Brain] 窗口 #${snap.windowNo} 经历已在 Archive 中，跳过重复写入`);
           archiveSuccess = true;
         } else {
@@ -2547,6 +2575,7 @@ class Brain {
           // v2.0：梦境机器抽为 _dreamCycle（关窗与入睡共用同一台）；此处行为与原先一字不差
           await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments, isWindowClose: true, preClose: false });
         }
+        if (this.shutdownRequested) return done;
 
         // 🔴 D-24（A 段）：关窗铸造 —— 她自发写下的字铸进经历档案（单一事实源：experiences.jsonl）。
         //   刻意放在 growSelf 之前（防坑锦囊 1）：本窗「自发留痕事实」要带进当轮成长反思，
@@ -2789,6 +2818,8 @@ class Brain {
    * @returns {Promise<Object|null>} 实际生成的梦境记录；未生成返回 null
    */
   async _settleDreamOnWake(trigger = 'wake', preset = null) {
+    if (this._settlingDreamOnWake || this.shutdownRequested) return null;
+    this._settlingDreamOnWake = true;
     try {
       const reg = this.internalRegulation;
       if (!reg) return null;
@@ -2842,9 +2873,14 @@ class Brain {
         produced = this.dreamHistory[this.dreamHistory.length - 1];
       }
 
-      // 原料一次性消费：做梦与否都清空，防止同一份睡眠原料反复做梦。
-      reg.clearSleepContext();
-      reg.save();
+      if (this.shutdownRequested) return null;
+
+      // 原料一次性消费：仅当未进入新的睡眠周期时才清空，防跨睡眠周期竞态抹除新入睡上下文
+      const stillSameSleep = (!reg.isSleeping) || (reg.sleepStartTime === sleepStartTime);
+      if (stillSameSleep) {
+        reg.clearSleepContext();
+        reg.save();
+      }
 
       if (produced) {
         console.log('[Brain] 苏醒结算梦境（' + trigger + '，睡了 ' +
@@ -2857,6 +2893,8 @@ class Brain {
     } catch (err) {
       console.error('[Brain] 苏醒结算梦境失败 (Fail-Safe):', redactSecrets(err.message));
       return null;
+    } finally {
+      this._settlingDreamOnWake = false;
     }
   }
 
@@ -2959,6 +2997,7 @@ class Brain {
                 }
               }
 
+              const dreamStartGen = this.generationId;
               const dreamRecord = await synthesizeDream(this.api, dreamPrompt, {
                 windowNo: snap.windowNo,
                 preClose: Boolean(ctx.preClose),
@@ -2986,6 +3025,9 @@ class Brain {
                 now
               });
 
+              if (this.shutdownRequested || this.generationId !== dreamStartGen) {
+                return;
+              }
               if (dreamRecord) {
                 // 🔴 D-26：深睡突触巩固 —— 梦**真实产出后**才记账（合成失败/被门禁拦下都零巩固）。
                 //   不变式见 memory-dynamics.consolidateByDream：只加固既有真实 trace 的抗衰减能力
@@ -2999,7 +3041,7 @@ class Brain {
                     if (c && Array.isArray(c.consolidated) && c.consolidated.length) {
                       dreamRecord.payload = dreamRecord.payload || {};
                       dreamRecord.payload.consolidatedTraceIds = c.consolidated;
-                      this.memory.save();
+                      this.memory.save(true);
                     }
                   } catch (e) {
                     // 巩固是旁路增益：失败绝不影响梦境归档本身（与 Dream fail-safe 同款纪律）
@@ -3036,7 +3078,7 @@ class Brain {
                       this.memory.data.pendingDreamFragments = this.memory.data.pendingDreamFragments.slice(-3);
                     }
                   }
-                  this.memory.save();
+                  this.memory.save(true);
                 }
                 if (dreamRecord.usage) {
                   this.track(dreamRecord.usage, true, 'dream');

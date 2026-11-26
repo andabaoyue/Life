@@ -925,14 +925,14 @@ async function refreshWardrobe() {
 }
 
 function say(text, ms = 3600) {
-  if (streaming) return;
+  if (streaming || remoteStreaming) return;
   clearTimeout(bubbleTimer);
   render(text);
   bubbleTimer = setTimeout(hideBubble, ms);
 }
 
 function hideBubble() {
-  if (streaming) return;
+  if (streaming || remoteStreaming) return;
   bubble.classList.add('hidden');
   syncMotionPriority();
   // 气泡收起 = 这一轮表现结束，状态必须回落 idle。
@@ -1745,7 +1745,8 @@ if (langSelect) {
     setLocale(langSelect.value);
     renderI18nPanel();
     renderProviderPanel();
-    if (chatTitle) chatTitle.textContent = t('chat.title');
+    const chatTitleEl = document.getElementById('chatTitle');
+    if (chatTitleEl) chatTitleEl.textContent = t('chat.title');
     refreshMem();
     refreshTickets();
     refreshWardrobe();
@@ -1860,6 +1861,7 @@ if (api) {
 if (api && api.onChatBusy) {
   api.onChatBusy((p) => {
     if (p && p.busy) {
+      clearTimeout(bubbleTimer);
       acc = '';
       remoteStreaming = true;
       setState('thinking');
@@ -3581,58 +3583,66 @@ async function startReplay(opts = {}) {
     const taskId = startRes && startRes.taskId;
     if (!taskId) {
       if (card) card.textContent = t('research.replay.startFailed', '启动 Replay 失败');
+      if (cancelBtn) cancelBtn.disabled = true;
       return;
     }
 
     if (activeReplayPollingTimer) clearInterval(activeReplayPollingTimer);
     activeReplayPollingTimer = setInterval(async () => {
-      const st = await api.research.replayStatus(taskId);
-      if (!st) return;
-      if (fill) fill.style.width = (st.percent || 0) + '%';
-      if (pctEl) pctEl.textContent = (st.percent || 0) + '%';
-      if (stageEl) stageEl.textContent = `${st.stage} (${st.currentWindow}/${st.totalWindows} Windows)`;
+      try {
+        const st = await api.research.replayStatus(taskId);
+        if (!st) return;
+        if (fill) fill.style.width = (st.percent || 0) + '%';
+        if (pctEl) pctEl.textContent = (st.percent || 0) + '%';
+        if (stageEl) stageEl.textContent = `${st.stage} (${st.currentWindow}/${st.totalWindows} Windows)`;
 
-      if (st.status === 'completed' || st.status === 'cancelled' || st.status === 'failed') {
+        if (st.status === 'completed' || st.status === 'cancelled' || st.status === 'failed') {
+          clearInterval(activeReplayPollingTimer);
+          activeReplayPollingTimer = null;
+          if (cancelBtn) cancelBtn.disabled = true;
+
+          if (st.status === 'cancelled') {
+            if (card) card.textContent = t('research.replay.cancelled', 'Replay 已由用户取消。');
+            return;
+          }
+          if (st.status === 'failed') {
+            if (card) card.textContent = t('research.replay.failedPrefix', 'Replay 异常失败: ') + st.error;
+            return;
+          }
+
+          const res = st.result || {};
+          card.textContent = '';
+          const b = (t) => { const el = document.createElement('b'); el.textContent = String(t); return el; };
+          const br = () => document.createElement('br');
+
+          card.append(
+            t('research.replay.resultLabel', '推演结果: '), b(res.replayStatus ? res.replayStatus.toUpperCase() : 'COMPLETE'),
+            t('research.replay.integrityLabel', ' | 完整性认证: '), b(res.integrity ? res.integrity.toUpperCase() : 'CERTIFIED'),
+            br(),
+            t('research.replay.scCountLabel', '状态跃迁总计: '), b(res.stateChanges ? res.stateChanges.length : 0), t('research.replay.scTimes', ' 次'),
+            t('research.replay.acceptedEvLabel', ' | 接受证据: '), b(res.acceptedEvidenceCount || 0), t('research.replay.evCount', ' 条'),
+            br()
+          );
+
+          if (res.failure) {
+            const failSpan = document.createElement('div');
+            failSpan.style.color = '#ff6b81';
+            failSpan.style.marginTop = '4px';
+            failSpan.textContent = t('research.replay.fuseBlown', 'Fail-Stop 熔断: 第 {line} 行数据损坏 ({reason})，推演已冻结在第 {last} 行', { line: res.failure.line, reason: res.failure.reason, last: res.lastValidRecord });
+            card.appendChild(failSpan);
+          } else {
+            const okSpan = document.createElement('div');
+            okSpan.style.color = '#2ecc71';
+            okSpan.style.marginTop = '4px';
+            okSpan.textContent = t('research.replay.certifiedOk', 'Replay 推演与当前主体状态完全一致 (Certified)');
+            card.appendChild(okSpan);
+          }
+        }
+      } catch (pollErr) {
         clearInterval(activeReplayPollingTimer);
         activeReplayPollingTimer = null;
         if (cancelBtn) cancelBtn.disabled = true;
-
-        if (st.status === 'cancelled') {
-          if (card) card.textContent = t('research.replay.cancelled', 'Replay 已由用户取消。');
-          return;
-        }
-        if (st.status === 'failed') {
-          if (card) card.textContent = t('research.replay.failedPrefix', 'Replay 异常失败: ') + st.error;
-          return;
-        }
-
-        const res = st.result || {};
-        card.textContent = '';
-        const b = (t) => { const el = document.createElement('b'); el.textContent = String(t); return el; };
-        const br = () => document.createElement('br');
-
-        card.append(
-          t('research.replay.resultLabel', '推演结果: '), b(res.replayStatus ? res.replayStatus.toUpperCase() : 'COMPLETE'),
-          t('research.replay.integrityLabel', ' | 完整性认证: '), b(res.integrity ? res.integrity.toUpperCase() : 'CERTIFIED'),
-          br(),
-          t('research.replay.scCountLabel', '状态跃迁总计: '), b(res.stateChanges ? res.stateChanges.length : 0), t('research.replay.scTimes', ' 次'),
-          t('research.replay.acceptedEvLabel', ' | 接受证据: '), b(res.acceptedEvidenceCount || 0), t('research.replay.evCount', ' 条'),
-          br()
-        );
-
-        if (res.failure) {
-          const failSpan = document.createElement('div');
-          failSpan.style.color = '#ff6b81';
-          failSpan.style.marginTop = '4px';
-          failSpan.textContent = t('research.replay.fuseBlown', 'Fail-Stop 熔断: 第 {line} 行数据损坏 ({reason})，推演已冻结在第 {last} 行', { line: res.failure.line, reason: res.failure.reason, last: res.lastValidRecord });
-          card.appendChild(failSpan);
-        } else {
-          const okSpan = document.createElement('div');
-          okSpan.style.color = '#2ecc71';
-          okSpan.style.marginTop = '4px';
-          okSpan.textContent = t('research.replay.certifiedOk', 'Replay 推演与当前主体状态完全一致 (Certified)');
-          card.appendChild(okSpan);
-        }
+        if (card) card.textContent = t('research.replay.exceptionPrefix', 'Replay 异常: ') + (pollErr && pollErr.message ? pollErr.message : String(pollErr));
       }
     }, 150);
 
@@ -4115,6 +4125,10 @@ if (!api) {
 
 // 页面卸载时注销主循环与计时器，杜绝后台泄漏
 window.addEventListener('beforeunload', () => {
+  if (activeReplayPollingTimer) {
+    clearInterval(activeReplayPollingTimer);
+    activeReplayPollingTimer = null;
+  }
   if (currentFrameStopper) currentFrameStopper();
   if (behaviorScheduler) behaviorScheduler.destroy();
   if (animController) animController.destroy();

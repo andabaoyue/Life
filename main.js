@@ -2207,11 +2207,14 @@ ipcGuard.handle('connections:create', (e, opts = {}) => {
 
 ipcGuard.handle('connections:update', (e, opts = {}) => {
   const { connectionId, patch = {}, credential } = opts;
-  // immutable 字段（credentialRef/connectionId/credentialOwnership）在模块层拒绝
-  const r = connectionsMod.updateConnection(app.getPath('userData'), connectionId, patch || {});
+  const hasNewCred = typeof credential === 'string' && credential.trim().length > 0;
+  // immutable 字段（credentialRef/connectionId/credentialOwnership）在模块层拒绝；变更 baseURL origin 未带新密钥同拒
+  const r = connectionsMod.updateConnection(app.getPath('userData'), connectionId, patch || {}, {
+    allowOriginChange: hasNewCred
+  });
   if (!r.ok) return r;
-  if (typeof credential === 'string' && credential) {
-    const w = secureCreds.setCredential(r.connection.credentialRef, credential, { dir: app.getPath('userData'), getSS });
+  if (hasNewCred) {
+    const w = secureCreds.setCredential(r.connection.credentialRef, credential.trim(), { dir: app.getPath('userData'), getSS });
     if (!w.ok) return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
   }
   return { ok: true };
@@ -2369,18 +2372,34 @@ ipcGuard.handle('stt:get-config', () => {
   };
 });
 
+function getUrlOrigin(raw) {
+  try { return typeof raw === 'string' && raw.trim() ? new URL(raw.trim()).origin : ''; } catch { return ''; }
+}
+
 ipcGuard.handle('stt:set-config', (e, opts = {}) => {
   const patch = {
     endpoint: typeof opts.endpoint === 'string' ? opts.endpoint : '',
     model: typeof opts.model === 'string' ? opts.model : '',
     lang: typeof opts.lang === 'string' ? opts.lang : ''
   };
+  if (patch.endpoint.trim()) {
+    const v = require('./src/stt-transport').validateConfig({
+      endpoint: patch.endpoint, apiKey: 'v', model: patch.model || 'v', lang: patch.lang
+    });
+    if (!v.ok) return { ok: false, errorType: v.errorType, error: v.detail || v.errorType };
+  }
+  const prevOrigin = getUrlOrigin(readSttConfig().endpoint);
   const saved = writeSttConfig(patch);
   if (!saved) return { ok: false, errorType: 'config_write_failed' };
 
+  const hasNewCred = typeof opts.credential === 'string' && opts.credential.trim().length > 0;
+  if (prevOrigin && prevOrigin !== getUrlOrigin(saved.endpoint) && !hasNewCred) {
+    try { secureCreds.deleteCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS }); } catch {}
+  }
+
   // credential 为空 = 不改密钥（用户只改端点/模型时不必重填）
   let encrypted = null;
-  if (typeof opts.credential === 'string' && opts.credential.trim()) {
+  if (hasNewCred) {
     const w = secureCreds.setCredential(STT_CREDENTIAL_REF, opts.credential.trim(), {
       dir: app.getPath('userData'), getSS
     });
@@ -2535,12 +2554,19 @@ ipcGuard.handle('vision:capture', async (e, opts = {}) => {
   };
 
   const visionMod = require('./src/vision');
-  const displayId = (opts && opts.displayId !== undefined && opts.displayId !== null)
-    ? opts.displayId
+  const visionPicker = require('./src/vision-picker-window');
+  const pw = typeof visionPicker.getPickerWindow === 'function' ? visionPicker.getPickerWindow() : null;
+  if (!pw || (typeof pw.isDestroyed === 'function' && pw.isDestroyed()) || !e || e.sender !== pw.webContents) {
+    return fail('picker_not_active');
+  }
+  const rawOpts = (opts && typeof opts === 'object') ? opts : {};
+  const displayId = (rawOpts.displayId !== undefined && rawOpts.displayId !== null)
+    ? rawOpts.displayId
     : (typeof visionPicker.getPickerDisplayId === 'function' ? visionPicker.getPickerDisplayId() : null);
   const allDisplays = typeof screen.getAllDisplays === 'function' ? screen.getAllDisplays() : [];
   const display = visionMod.resolveCaptureDisplay(allDisplays, screen.getPrimaryDisplay(), displayId);
-  const rect = visionMod.normalizeRect(opts.rect, {
+  if (!display || !display.size) return fail('no_screen_source');
+  const rect = visionMod.normalizeRect(rawOpts.rect, {
     maxW: display.size.width,
     maxH: display.size.height
   });
@@ -2571,20 +2597,25 @@ ipcGuard.handle('vision:capture', async (e, opts = {}) => {
 
     // 选与框选窗同一块显示器（多屏时不至于截错）
     const target = visionMod.pickCaptureSource(sources, display);
+    if (!target) return fail('display_mismatch');
     const full = target.thumbnail;
     if (!full || (typeof full.isEmpty === 'function' && full.isEmpty())) {
       return fail('capture_failed');
     }
 
     const fullSize = full.getSize();
-    // 缩略图尺寸 == 屏幕逻辑尺寸时，矩形可直接用；否则按比例换算
+    // 缩略图尺寸 == 屏幕逻辑尺寸时，矩形可直接用；否则按比例换算并严格钳位到物理边界内
     const sx = fullSize.width / display.size.width;
     const sy = fullSize.height / display.size.height;
+    const rawX = Math.max(0, Math.round(rect.x * sx));
+    const rawY = Math.max(0, Math.round(rect.y * sy));
+    const clampedX = fullSize.width > 0 ? Math.min(rawX, fullSize.width - 1) : 0;
+    const clampedY = fullSize.height > 0 ? Math.min(rawY, fullSize.height - 1) : 0;
     const cropRect = {
-      x: Math.max(0, Math.round(rect.x * sx)),
-      y: Math.max(0, Math.round(rect.y * sy)),
-      width: Math.max(1, Math.round(rect.width * sx)),
-      height: Math.max(1, Math.round(rect.height * sy))
+      x: clampedX,
+      y: clampedY,
+      width: Math.max(1, Math.min(Math.round(rect.width * sx), Math.max(1, fullSize.width - clampedX))),
+      height: Math.max(1, Math.min(Math.round(rect.height * sy), Math.max(1, fullSize.height - clampedY)))
     };
 
     // 🔴 只裁框选那一块 —— 整屏像素在本函数结束时即弃
@@ -2696,10 +2727,15 @@ ipcGuard.handle('vision:stage', (e, opts = {}) => {
     const overSize = typeof opts.dataUrl === 'string' && opts.dataUrl.length > visionMod.MAX_STAGE_DATA_URL_CHARS;
     return { ok: false, errorType: overSize ? 'payload_too_large' : 'bad_image' };
   }
+  const MAX_STAGE_DIM = 16384;
+  if (!Number.isInteger(opts.width) || opts.width <= 0 || opts.width > MAX_STAGE_DIM
+      || !Number.isInteger(opts.height) || opts.height <= 0 || opts.height > MAX_STAGE_DIM) {
+    return { ok: false, errorType: 'bad_dimensions' };
+  }
   const ok = brain.stageVisionPick({
     dataUrl: opts.dataUrl,
-    width: Number.isFinite(opts.width) ? opts.width : 0,
-    height: Number.isFinite(opts.height) ? opts.height : 0
+    width: opts.width,
+    height: opts.height
   });
   return ok ? { ok: true } : { ok: false, errorType: 'stage_failed' };
 });

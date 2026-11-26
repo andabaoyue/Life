@@ -670,7 +670,15 @@ class AuditLog {
    * 故返回落盘状态供调用方决定是否中止。
    */
   append(event = {}) {
-    const record = Object.freeze({ at: Date.now(), ...event });
+    // 字段过滤与 redactSecrets 前移到入口，确保内存 events（agent:get-audit-log）与磁盘审计同口径脱敏。
+    const safe = { at: Date.now() };
+    for (const [k, v] of Object.entries(event || {})) {
+      if (/key|token|secret|password|credential|cookie/i.test(k)) continue;
+      const cleaned = redactSecrets(v);
+      if (typeof cleaned === 'string' && cleaned.length > 500) safe[k] = cleaned.slice(0, 500);
+      else safe[k] = cleaned;
+    }
+    const record = Object.freeze(safe);
     this.events.push(record);
     if (this.events.length > this.maxMemory) this.events.shift();
     let persisted = null;
@@ -682,15 +690,7 @@ class AuditLog {
     try {
       const fs = require('fs');
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      // 只落元数据：剔除任何形似凭据的键值（纵深防御，正常调用方本就不该传这些），并经 redactSecrets 清洗值。
-      const safe = {};
-      for (const [k, v] of Object.entries(record)) {
-        if (/key|token|secret|password|credential|cookie/i.test(k)) continue;
-        const cleaned = redactSecrets(v);
-        if (typeof cleaned === 'string' && cleaned.length > 500) safe[k] = cleaned.slice(0, 500);
-        else safe[k] = cleaned;
-      }
-      fs.appendFileSync(this.file, JSON.stringify(safe) + '\n', 'utf8');
+      fs.appendFileSync(this.file, JSON.stringify(record) + '\n', 'utf8');
       return true;
     } catch {
       return false;   // 调用方可据此中止；但绝不能因此跳过审计本身

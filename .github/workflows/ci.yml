@@ -93,4 +93,4 @@ jobs:
       - name: Assert ASAR runtime closure
         run: node tools/asar-check.js
       - name: Assert ASAR freshness against working tree
-        run: node tools/artifact-freshness.js
+        run: node tools/artifact-freshness.js --strict

@@ -23,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 // 🔵 2026-11-05 C-3：轮转时整文件重写，必须原子（审计 P3 #11）。
 const { writeFileAtomic } = require('./atomic');
+const { redactSecrets } = require('./redact');
 
 /** 最多保留多少条（按「观察窗口需要几个样本」定，不是按能存多久定）。 */
 const MAX_OBSERVATION_LINES = 100;
@@ -70,14 +71,16 @@ class ObservationLog {
       return { ok: false, persisted: null, reason: 'TOO_LONG' };
     }
 
+    const safeContent = redactSecrets(content);
+    const safeScopeName = redactSecrets(String(entry.scopeName || '').slice(0, 200));
     const record = Object.freeze({
       at: Date.now(),
       capability: String(entry.capability || ''),
       intentKind: entry.intentKind == null ? null : String(entry.intentKind),
       proposalSource: entry.proposalSource == null ? null : String(entry.proposalSource),
-      scopeName: String(entry.scopeName || '').slice(0, 200),
-      content,
-      contentBytes: Buffer.byteLength(content, 'utf8'),
+      scopeName: typeof safeScopeName === 'string' ? safeScopeName : String(safeScopeName || ''),
+      content: typeof safeContent === 'string' ? safeContent : String(safeContent || ''),
+      contentBytes: Buffer.byteLength(typeof safeContent === 'string' ? safeContent : String(safeContent || ''), 'utf8'),
       wouldHaveExecuted: true,
       reason: 'observed',
     });

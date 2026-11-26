@@ -332,7 +332,7 @@ function sseRes(chunks) {
     });
     check('candidate 初始化失败 -> candidate 被清理（shutdown 复用）', res.ok === false && res.candidateDisposed === true && candidateCleaned);
     check('hot-swap rollback：配置回滚到旧状态', res.rolledBack === true && calls.length === 2 && calls[1].apiKey === 'sk-old');
-    check('旧 Brain 仍可工作（未被 shutdown、无残留）', oldBrain.shut === false && oldBrain.flushed === false);
+    check('旧 Brain 仍可工作（未被 shutdown、仅执行安全预刷盘）', oldBrain.shut === false && oldBrain.flushed === true);
 
     // 成功路径回归：切换引用、旧 Brain 正常关闭
     const okCalls = [];
@@ -347,24 +347,25 @@ function sseRes(chunks) {
     });
     check('hot-swap 成功路径：candidate 采纳、旧 Brain 关闭', res2.ok === true && res2.brain === fresh && oldBrain.shut === true);
 
-    // M11: 顺序契约断言 —— 完整 Brain 由 shutdown 统一收尾，swapBrain 绝不在 shutdown 之前提前调 flushAll
+    // M11 + P0-4: 顺序契约断言 —— 切换前先 abort 再预刷盘（早于 createCandidate），成功后再由 shutdown 统一收尾
     const order = [];
     const orderOldBrain = {
       abort() { order.push('abort'); },
-      shutdown() { order.push('abort'); order.push('flush'); },
-      flushAll() { order.push('premature_flush'); }
+      flushAll() { order.push('flush'); },
+      shutdown() { order.push('shutdown'); }
     };
     swapBrain({
       oldBrain: orderOldBrain,
       oldCfg: { provider: 'deepseek' },
       nextCfg: { provider: 'generic' },
-      createCandidate: () => ({ shutdown() {} }),
+      createCandidate: () => { order.push('create'); return { shutdown() {} }; },
       bindCandidate: () => {},
       persistCfg: () => {}
     });
-    check('M11 hot-swap 停机顺序：shutdown 接管收尾，禁止提前 flushAll', order.length === 2 && order[0] === 'abort' && order[1] === 'flush');
+    check('M11 hot-swap 停机顺序：切换前先 abort 再预刷盘，create 之后由 shutdown 收尾',
+      order.length === 4 && order[0] === 'abort' && order[1] === 'flush' && order[2] === 'create' && order[3] === 'shutdown');
 
-    // M11: 退化形态契约 —— 无 shutdown 时先 abort 后 flushAll 兜底
+    // M11: 退化形态契约 —— 无 shutdown 时先 abort 后 flushAll 兜底（预刷盘与收尾均守住先 abort 后 flushAll）
     const degradedOrder = [];
     const degradedOldBrain = {
       abort() { degradedOrder.push('abort'); },
@@ -378,7 +379,9 @@ function sseRes(chunks) {
       bindCandidate: () => {},
       persistCfg: () => {}
     });
-    check('M11 hot-swap 退化形态：无 shutdown 时先 abort 再 flushAll', degradedOrder.length === 2 && degradedOrder[0] === 'abort' && degradedOrder[1] === 'flush');
+    check('M11 hot-swap 退化形态：无 shutdown 时先 abort 再 flushAll',
+      degradedOrder.length === 4 && degradedOrder[0] === 'abort' && degradedOrder[1] === 'flush'
+      && degradedOrder[2] === 'abort' && degradedOrder[3] === 'flush');
 
     // M11: 仅 flushAll 退化形态 —— 兜底刷盘依然被调用不丢失
     let onlyFlushed = false;

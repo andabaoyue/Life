@@ -254,9 +254,14 @@ module.exports = {
 };
 
 if (require.main === module) {
+  const strict = process.argv.includes('--strict');
   const root = path.resolve(__dirname, '..');
   const asarPath = discoverAsar(root);
   if (!asarPath) {
+    if (strict) {
+      console.error('FAIL: 未找到 dist/app.asar (--strict)');
+      process.exit(1);
+    }
     console.log('SKIP: 未找到 dist/app.asar');
     process.exit(0);
   }
@@ -264,11 +269,16 @@ if (require.main === module) {
   try { srcVer = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch {}
   const packedVer = readArtifactVersion(asarPath);
   if (!packedVer || !srcVer || packedVer !== srcVer) {
-    console.log(`SKIP: 产物版本(${packedVer || 'unknown'}) != 源码版本(${srcVer || 'unknown'})`);
+    const msg = `产物版本(${packedVer || 'unknown'}) != 源码版本(${srcVer || 'unknown'})`;
+    if (strict) {
+      console.error('FAIL (--strict): ' + msg);
+      process.exit(1);
+    }
+    console.log('SKIP: ' + msg);
     process.exit(0);
   }
   const res = compareArtifact({ root, readPacked: (name) => readAsarEntry(asarPath, name) });
-  if (res.missing.length || res.stale.length) {
+  if (res.missing.length || res.stale.length || (strict && res.checked === 0)) {
     console.error(`FAIL: checked=${res.checked} missing=${JSON.stringify(res.missing)} stale=${JSON.stringify(res.stale)}`);
     process.exit(1);
   }

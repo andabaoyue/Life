@@ -451,8 +451,9 @@ class ExperiencesArchive {
   /**
    * 检查指定窗口是否已存在可靠完成的 window_summary / window_archive 记录
    */
-  hasWindowArchive(windowNo) {
+  hasWindowArchive(windowNo, epoch = null) {
     if (typeof windowNo !== 'number' || Number.isNaN(windowNo)) return false;
+    const hasEpochFilter = (typeof epoch === 'number' && Number.isFinite(epoch));
     const records = this.readAll();
     return records.some(r => {
       const type = r.recordType || r.type;
@@ -461,6 +462,12 @@ class ExperiencesArchive {
         ? r.windowNo
         : (r.payload && typeof r.payload.windowNo === 'number' && !Number.isNaN(r.payload.windowNo) ? r.payload.windowNo : null);
       if (wNo !== windowNo) return false;
+      if (hasEpochFilter) {
+        const recEpoch = (r.payload && typeof r.payload.epoch === 'number' && Number.isFinite(r.payload.epoch))
+          ? r.payload.epoch
+          : (typeof r.epoch === 'number' && Number.isFinite(r.epoch) ? r.epoch : null);
+        if (recEpoch !== null && recEpoch !== epoch) return false;
+      }
 
       // 若声明了 recordType 但 payload 为 null 或非对象，属于半截/损坏记录，不能作为有效完成态
       if (r.recordType && (!r.payload || typeof r.payload !== 'object' || Array.isArray(r.payload))) {
@@ -491,7 +498,8 @@ class ExperiencesArchive {
       ? data.windowNo
       : (data.windowNo === null ? null : (data.windowNo !== undefined ? data.windowNo : null));
 
-    if (windowNo !== null && !opts.allowDuplicate && this.hasWindowArchive(windowNo)) {
+    const dataEpoch = (typeof data.epoch === 'number' && Number.isFinite(data.epoch)) ? data.epoch : null;
+    if (windowNo !== null && !opts.allowDuplicate && this.hasWindowArchive(windowNo, dataEpoch)) {
       console.warn(`[ExperiencesArchive] 窗口 #${windowNo} 已存在 window_summary 记录，跳过重复写入以保证 Exactly-Once 语义`);
       return true;
     }

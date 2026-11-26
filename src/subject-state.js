@@ -180,6 +180,10 @@ class SubjectState {
             }
           }
           this.recoveryStatus = this.data.recoveryStatus || 'NORMAL';
+          if (this.recoveryStatus === 'RECOVERY_UNCERTIFIED') {
+            this.recoveryPending = true;
+            this.recoveryPendingReason = 'recovery_uncertified';
+          }
 
           // P0-01: 检查是否存在未决的 Archive 记录导致 Persisted State 落后于 Archive (Recovery Pending)
           this.checkAndAutoRecoverConsistency();

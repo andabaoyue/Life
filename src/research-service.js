@@ -490,7 +490,7 @@ class ResearchService {
       } else if (hasLegacyAdapter || archiveReport.hasLegacyAdapter) {
         replayStatus = 'complete';
         integrity = 'uncertified';
-      } else if (windowStates.length === 0) {
+      } else if (windowStates.length === 0 && archiveReport.integrity === 'certified' && archiveReport.totalLines === 0) {
         replayStatus = 'complete';
         integrity = 'certified';
       }
@@ -539,20 +539,28 @@ class ResearchService {
       return content;
     }
     if (type === 'state_changes') {
-      const items = this.query.getStateChanges({ limit: 10000 }).items;
+      const res = this.query.getStateChanges({ limit: 10000 });
+      const items = Array.isArray(res && res.items) ? res.items : [];
+      const totalCount = (res && typeof res.total === 'number' && !Number.isNaN(res.total)) ? res.total : items.length;
+      const exportedCount = items.length;
+      const truncated = totalCount > exportedCount;
       const content = exportStateChanges(items, format);
       if (targetDir !== null && targetDir !== undefined) {
         const filePath = writeExportFileToDir(targetDir, `life-export-state_changes.${ext}`, content);
-        return { saved: true, filePath, format: ext, content };
+        return { saved: true, filePath, format: ext, content, truncated, totalCount, exportedCount };
       }
       return content;
     }
     if (type === 'evidence') {
-      const items = this.query.getEvidence({ limit: 10000 }).items;
+      const res = this.query.getEvidence({ limit: 10000 });
+      const items = Array.isArray(res && res.items) ? res.items : [];
+      const totalCount = (res && typeof res.total === 'number' && !Number.isNaN(res.total)) ? res.total : items.length;
+      const exportedCount = items.length;
+      const truncated = totalCount > exportedCount;
       const content = exportEvidence(items, format);
       if (targetDir !== null && targetDir !== undefined) {
         const filePath = writeExportFileToDir(targetDir, `life-export-evidence.${ext}`, content);
-        return { saved: true, filePath, format: ext, content };
+        return { saved: true, filePath, format: ext, content, truncated, totalCount, exportedCount };
       }
       return content;
     }

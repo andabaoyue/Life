@@ -21,6 +21,37 @@
 
 ---
 
+## v2.1.1 · 2026-11-26
+
+| 项 | 值 |
+|---|---|
+| 版本 | **2.1.1** |
+| 公库 tag | `v2.1.1`（发布后补记） |
+| 公库提交 | 待同步（`v2.1.1` 发布同步） |
+| 私库提交 | 待提交（二轮 9 P0 + 22 P1 修复及 `v2.1.1` 发布收口） |
+| Release | 发布后补记 |
+| 公开集文件数 | **370**（按规则排除 42 个私库/开发文件） |
+
+### 交付物
+
+| 文件 | 字节数 | SHA-256 |
+|---|---|---|
+| `Life-2.1.1-win-x64-portable.exe` | 100,777,583 | `ac8feb857a0f40b28061309a98ffb0694ed274cea2e2df35c4b433d64e57cab9` |
+| `Life-2.1.1-win-x64.zip` | 153,925,028 | `bfe241cf6c41864bea24bcf0613a6eb18807dcb68b9b447ff5a9735e9c5deddd` |
+
+> ℹ️ 上表两个 SHA-256 为本地 `Get-FileHash -Algorithm SHA256` 实测值（小写）；GitHub Release 创建后将核对 `gh release view v2.1.1 --json assets` digest 并补记最终提交与 Release 链接。
+
+> 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
+> 与 v1.9.0 / v2.0.0 / v2.1.0 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,855` 字节 `Life-2.1.1-Setup.exe` 空壳存根及 `life-2.1.1-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.1.1-win-x64.zip` 均包含完整 `LICENSE`（4,435 字节）与 `NOTICE`（1,205 字节），并通过 `tools/asar-check.js`（PASS 8 / FAIL 0）、`tools/artifact-freshness.js --strict`（103 个运行入口逐字节一致）与 `tools/release-check.js`（PASS 13 / WARN 0 / FAIL 0，含 `portable.exe` PE overlay = `96.0MB`）。
+
+### 主要内容
+
+- **二轮全仓深度审计 9 项 P0 止血修复**：`main.js` `visionPicker` 判空、`src/connections.js` DeepSeek `cred:deepseek-` 命名空间隔离、`pet.js` `chatTitle` 竞争、`src/brain-hot-swap.js` 预中止预刷盘与 `powerMonitorSource` 所有权、`src/brain.js` `ask/abort` 竞态与梦境停机/跨睡守卫、`src/research-service.js` 导出防洗白、`src/archive-integrity.js` 混合链哈希校验与 `src/experiences-archive.js` 按 `(windowNo, epoch)` 判重。
+- **二轮全仓深度审计 22 项 P1 深度加固（R2-P1-1 ~ 22）**：沙盒嵌套目录 symlink 检查、跨 origin 重绑授权及 `stt:set-config` 校验、`plain:v1:` 全字符与 URL userinfo 脱敏及日志写前清洗、多屏捕获/裁剪/DPI 边界、`msgSeq` 混合锚点与梦境同步写盘、内稳态归档恢复与停用基线隔离、`RECOVERY_UNCERTIFIED` 跨重启延续与 `SelfLedger` 损坏态拒写、挂机梯级步长/`flushAll` 隔离/`DeferredWriter` 退避重排、语音 `starting` 取消/双窗流式气泡/`[::1]` 放行/空闲超时保真、`self_note_state` 外部背书强制认证、`getWindowDetail` 单 fd 批量读与 `tools/artifact-freshness.js --strict` 构建强门禁。
+- **门禁**：**150 个已标项数套件 / 5504 项断言**（`test/docs.test.js` 全量执行 `executed=150` 0 FAIL，含 `ui_test.py` 171/171）+ `test/gate-selfcheck.test.js` 全绿；`tools/release-check.js` PASS 13 / WARN 0 / FAIL 0。
+
+---
+
 ## v2.1.0 · 2026-11-26
 
 | 项 | 值 |

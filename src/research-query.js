@@ -448,12 +448,10 @@ class ResearchQuery {
     if (this.index && this.index.ensureIndex()) {
       this._lastQueryMode = 'INDEX';
       const descs = this.index.getWindowDescriptors(windowNo) || [];
-      for (const d of descs) {
-        const rec = this.index.readRecordAtOffset(d.byteOffset, d.byteLength);
-        if (rec) {
-          const norm = normalizeArchiveRecord(rec);
-          if (norm) records.push(norm);
-        }
+      const rawRecords = this.index.readRecordsAtOffsets(descs);
+      for (const rec of rawRecords) {
+        const norm = normalizeArchiveRecord(rec);
+        if (norm) records.push(norm);
       }
     } else {
       this._lastQueryMode = 'FULL_SCAN';

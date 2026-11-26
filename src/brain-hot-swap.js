@@ -44,7 +44,22 @@ function swapBrain({
     return { ok: false, error: '配置持久化失败: ' + err.message, candidateDisposed: false, rolledBack: false };
   }
 
-  // 2. 创建 + 绑定 candidate；任一步失败 -> cleanup + 配置回滚，旧 Brain 继续服务
+  // 1.5 若有在飞请求先叫停再把旧 Brain 的延迟写盘缓冲刷到磁盘，
+  // 避免边写边刷或新 candidate 读到滞后旧盘并在后续写盘时静默覆盖新对话
+  if (oldBrain) {
+    if (typeof oldBrain.abort === 'function') {
+      try { oldBrain.abort(); } catch (abortErr) {
+        console.warn('[HotSwap] 切换前旧 Brain abort 异常（非致命）:', abortErr.message);
+      }
+    }
+    if (typeof oldBrain.flushAll === 'function') {
+      try { oldBrain.flushAll(); } catch (flushErr) {
+        console.warn('[HotSwap] 切换前旧 Brain 预刷盘异常（非致命）:', flushErr.message);
+      }
+    }
+  }
+
+  // 2. 创建 + 绑定 candidate；任一步失败 -> cleanup + 配置回滚 + 恢复旧 Brain 绑定
   let candidate = null;
   try {
     candidate = createCandidate(nextCfg);
@@ -54,6 +69,11 @@ function swapBrain({
     if (candidate) {
       try { disposeCandidate(candidate); disposed = true; } catch (e) {
         console.error('[HotSwap] candidate cleanup 失败:', e.message);
+      }
+    }
+    if (oldBrain && typeof bindCandidate === 'function') {
+      try { bindCandidate(oldBrain); } catch (rebindErr) {
+        console.error('[Rollback] 恢复旧 Brain 依赖绑定失败:', rebindErr.message);
       }
     }
     try {

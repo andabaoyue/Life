@@ -208,7 +208,11 @@
      */
     poke() {
       if (this._destroyed) return;
-      const targetFallback = this.motion.isMoving ? ANIMATION_STATES.WALK : ANIMATION_STATES.IDLE;
+      const inSleep = this.state === ANIMATION_STATES.SLEEP
+        || (this.state === ANIMATION_STATES.POKE && this.stateFallback === ANIMATION_STATES.SLEEP);
+      const targetFallback = inSleep
+        ? ANIMATION_STATES.SLEEP
+        : (this.motion.isMoving ? ANIMATION_STATES.WALK : ANIMATION_STATES.IDLE);
       this.transitionTo(ANIMATION_STATES.POKE, {
         duration: this.pokeDurationMs,
         fallbackState: targetFallback,
@@ -446,6 +450,9 @@
             this.eyeState = EYE_STATES.OPEN;
             this.isBlinking = false;
             this.nextBlinkTime = now + this._randomBlinkInterval();
+          } else if (targetFallback === ANIMATION_STATES.SLEEP) {
+            this.eyeState = EYE_STATES.CLOSE;
+            this.isBlinking = false;
           }
 
           this.onEvent('action_completed', { action: finishedState });

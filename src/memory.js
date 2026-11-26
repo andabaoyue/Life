@@ -667,15 +667,17 @@ class Memory {
 
   append(role, content, meta = {}) {
     this.data.nextMessageSeq = (this.data.nextMessageSeq || 0) + 1;
-    const messageId = meta.messageId || ('m-' + String(this.data.nextMessageSeq).padStart(6, '0'));
+    const msgSeq = this.data.nextMessageSeq;
+    const messageId = meta.messageId || ('m-' + String(msgSeq).padStart(6, '0'));
     const bridge = meta.bridge === true;
     const windowNo = meta.windowNo ?? this.data.windowNo;
     const isUserTurn = role === 'user' && !meta.synthetic && !bridge;
     const roundNo = meta.roundNo ?? (isUserTurn ? this.data.turnsInWindow + 1 : this.data.turnsInWindow);
 
-    // M12: 防御 meta 意外覆盖核心因果字段（如 content/windowNo/roundNo/t/bridge/role/messageId 等）
+    // M12: 防御 meta 意外覆盖核心因果字段（如 content/windowNo/roundNo/t/bridge/role/messageId/msgSeq 等）
     const {
       messageId: _mId,
+      msgSeq: _mSeq,
       role: _r,
       content: _c,
       windowNo: _wNo,
@@ -689,6 +691,7 @@ class Memory {
     const entry = {
       ...safeMeta,
       messageId,
+      msgSeq,
       role,
       content,
       windowNo,
@@ -1953,6 +1956,15 @@ class Memory {
     const lastSnapshotMsgId = (len > drop && this.data.history[len - 1] && this.data.history[len - 1].messageId)
       ? this.data.history[len - 1].messageId
       : null;
+    // R2-P1-5：快照尾部单调序号与 ID 集合（即使原末条被 abort 弹出，也不穿孔误标新窗消息为 bridge）
+    let snapshotMaxSeq = null;
+    for (let i = len - 1; i >= 0; i--) {
+      if (this.data.history[i] && typeof this.data.history[i].msgSeq === 'number') {
+        snapshotMaxSeq = this.data.history[i].msgSeq;
+        break;
+      }
+    }
+    const snapshotTailIds = this.data.history.slice(drop, len).map(m => m && m.messageId).filter(Boolean);
     const closeReason = opts.closeReason || (snapshotTurnCount >= targetTurnCount ? 'turn_limit' : (this.needsWindowReset() ? 'token_limit' : 'turn_limit'));
 
     return {
@@ -1961,6 +1973,8 @@ class Memory {
       drop,
       len,
       lastSnapshotMsgId,
+      snapshotMaxSeq,
+      snapshotTailIds,
       epoch: this.data.epoch,
       windowNo: currentWindowNo,
       snapshotTurnCount,
@@ -2041,19 +2055,37 @@ class Memory {
     // 快照之后可能被 rollback 弹掉几条，drop 不能越过当前长度
     this.data.history.splice(0, Math.min(snap.drop, this.data.history.length));
 
-    // 快照内的尾部保留消息（0 .. keptFromSnapshotCount - 1）属于已归档窗口，标记为 bridge: true
-    // 快照之后等待期间新追加的消息（keptFromSnapshotCount .. end）属于新窗口，更新 windowNo 且 bridge: false
-    // P1-11：优先用 lastSnapshotMsgId 锚定快照边界（防止并发 ask+abort 时把新窗消息误标为 bridge: true）；找不到时再回退长度差计算。
+    // 快照内的尾部保留消息属于已归档窗口，标记为 bridge: true
+    // 快照之后等待期间新追加的消息属于新窗口，更新 windowNo 且 bridge: false
+    // P1-11 + R2-P1-5：优先用 lastSnapshotMsgId 锚定；若尾部消息已被 abort 弹出，依次回落 snapshotMaxSeq / snapshotTailIds，均无时再回退长度差计算。
     let keptFromSnapshotCount = Math.max(0, Math.min(this.data.history.length, snap.len - snap.drop));
+    const hasSeqAnchor = typeof snap.snapshotMaxSeq === 'number';
+    const tailIdSet = Array.isArray(snap.snapshotTailIds) && snap.snapshotTailIds.length > 0
+      ? new Set(snap.snapshotTailIds)
+      : null;
+    let anchoredByLastId = false;
     if (snap && snap.lastSnapshotMsgId) {
       const anchorIdx = this.data.history.findIndex(m => m && m.messageId === snap.lastSnapshotMsgId);
       if (anchorIdx >= 0) {
         keptFromSnapshotCount = anchorIdx + 1;
+        anchoredByLastId = true;
       }
     }
     for (let i = 0; i < this.data.history.length; i++) {
       const m = this.data.history[i];
-      if (i < keptFromSnapshotCount) {
+      let isFromSnapshot;
+      if (anchoredByLastId) {
+        isFromSnapshot = i < keptFromSnapshotCount;
+      } else if (hasSeqAnchor && m && typeof m.msgSeq === 'number') {
+        isFromSnapshot = m.msgSeq <= snap.snapshotMaxSeq;
+      } else if (tailIdSet && m && m.messageId) {
+        isFromSnapshot = tailIdSet.has(m.messageId);
+      } else if (hasSeqAnchor || tailIdSet) {
+        isFromSnapshot = false;
+      } else {
+        isFromSnapshot = i < keptFromSnapshotCount;
+      }
+      if (isFromSnapshot) {
         m.bridge = true;
       } else {
         m.bridge = false;

@@ -54,9 +54,11 @@ function newConnectionId() {
   return 'conn-' + crypto.randomBytes(6).toString('hex');
 }
 
-/** 全新独占 credentialRef：不复用、不派生自 connectionId（两者语义不同） */
-function newCredentialRef() {
-  return 'cred:' + crypto.randomBytes(8).toString('hex');
+/** 全新独占 credentialRef：不复用、不派生自 connectionId（DeepSeek 官方连接带 deepseek- 命名空间前缀以满足策略隔离） */
+function newCredentialRef(providerId = '') {
+  const pid = String(providerId == null ? '' : providerId).trim().toLowerCase();
+  const prefix = pid === 'deepseek' ? 'deepseek-' : '';
+  return 'cred:' + prefix + crypto.randomBytes(8).toString('hex');
 }
 
 function normalizeCapabilitySnapshot(caps) {
@@ -251,7 +253,7 @@ function createConnection(dir, input = {}) {
   }
   const connection = buildConnection(input, {
     connectionId: newConnectionId(),
-    credentialRef: newCredentialRef(),
+    credentialRef: newCredentialRef(input.providerId),
     credentialOwnership: 'exclusive'
   });
   const v = validateConnection(connection);
@@ -269,8 +271,16 @@ function createConnection(dir, input = {}) {
   return { ok: true, connection, store: saved.store };
 }
 
-/** 事务：更新连接（connectionId / credentialRef / credentialOwnership 不可变） */
-function updateConnection(dir, connectionId, patch = {}) {
+function safeUrlOrigin(rawUrl) {
+  try {
+    return typeof rawUrl === 'string' && rawUrl.trim() ? new URL(rawUrl.trim()).origin : '';
+  } catch {
+    return '';
+  }
+}
+
+/** 事务：更新连接（connectionId / credentialRef / credentialOwnership 不可变；变更 baseURL origin 需显式授权新凭据） */
+function updateConnection(dir, connectionId, patch = {}, opts = {}) {
   for (const k of ['connectionId', 'credentialRef', 'credentialOwnership']) {
     if (patch[k] !== undefined && patch[k] !== null) {
       return { ok: false, error: 'IMMUTABLE_FIELD: ' + k };
@@ -311,6 +321,13 @@ function updateConnection(dir, connectionId, patch = {}) {
   };
   const v = validateConnection(next);
   if (!v.ok) return { ok: false, error: 'CONNECTION_INVALID: ' + v.errors.join('; ') };
+  if (patch.baseURL !== undefined) {
+    const prevOrigin = safeUrlOrigin(current.baseURL);
+    const nextOrigin = safeUrlOrigin(next.baseURL);
+    if (prevOrigin && nextOrigin !== prevOrigin && opts.allowOriginChange !== true) {
+      return { ok: false, error: 'CREDENTIAL_REQUIRED_ON_ORIGIN_CHANGE' };
+    }
+  }
   loaded.store.connections[idx] = next;
   const saved = saveStore(dir, loaded.store);
   if (!saved.ok) return { ok: false, error: saved.error };
@@ -445,7 +462,7 @@ function credentialTypeFromRef(credentialRef) {
   const parsed = parseCredentialRef(credentialRef);
   const key = (parsed && (parsed.key || parsed.namespaceKey)) || '';
   const ns = String(key).trim().toLowerCase();
-  return ns === 'deepseek' ? 'deepseek-api-key' : 'apiKey';
+  return (ns === 'deepseek' || ns.startsWith('deepseek-')) ? 'deepseek-api-key' : 'apiKey';
 }
 
 /** Z2-A：credentialType 归属（与 config.sanitize 同规则：DeepSeek 官方 key 类型独立） */

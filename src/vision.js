@@ -192,13 +192,15 @@ function resolveCaptureDisplay(displays, primaryDisplay, displayId) {
   return primaryDisplay || list[0] || null;
 }
 
-/** 按目标显示器的 id 匹配 desktopCapturer 的屏幕源，找不到时安全回退 sources[0]。 */
+/** 按目标显示器的 id 匹配 desktopCapturer 的屏幕源；多屏失配时返回 null 防误截另一块屏。 */
 function pickCaptureSource(sources, display) {
   const list = Array.isArray(sources) ? sources : [];
   if (!list.length) return null;
   if (display && display.id !== undefined && display.id !== null) {
     const matched = list.find((s) => s && String(s.display_id) === String(display.id));
     if (matched) return matched;
+    const hasAnyDisplayId = list.some((s) => s && s.display_id !== undefined && s.display_id !== null && String(s.display_id) !== '');
+    if (list.length > 1 || hasAnyDisplayId) return null;
   }
   return list[0];
 }

@@ -332,6 +332,12 @@ class InternalRegulationManager {
    * @param {number} [at=Date.now()]
    */
   getMood(at = Date.now()) {
+    if (!this.enabled) {
+      return Object.freeze({
+        warmth: REGULATION_BOUNDS.moodWarmth.default,
+        stillness: REGULATION_BOUNDS.moodStillness.default
+      });
+    }
     const decayed = this._computeDecayedMood(at);
     return Object.freeze({
       warmth: symmetricRound(decayed.warmth),
@@ -343,6 +349,26 @@ class InternalRegulationManager {
    * 获取当前不可变状态投影
    */
   getState() {
+    const watermark = {
+      scope: 'global',
+      runtimeCacheCapacity: this.maxConsumedAttentionEvents,
+      runtimeCachedCount: this.consumedAttentionEvents.size,
+      persistedCount: this.persistedConsumedAttentionEvents.size
+    };
+    if (!this.enabled) {
+      return Object.freeze({
+        energy: REGULATION_BOUNDS.energy.default,
+        restPressure: REGULATION_BOUNDS.restPressure.default,
+        arousal: REGULATION_BOUNDS.arousal.default,
+        salienceThreshold: this._computeSalienceThreshold(REGULATION_BOUNDS.arousal.default),
+        interactionDensity: REGULATION_BOUNDS.interactionDensity.default,
+        cognitiveLoadProxy: REGULATION_BOUNDS.cognitiveLoadProxy.default,
+        approachingOverload: false,
+        isSleeping: false,
+        updatedAt: this.updatedAt,
+        watermark
+      });
+    }
     return Object.freeze({
       energy: this.energy,
       restPressure: this.restPressure,
@@ -353,12 +379,7 @@ class InternalRegulationManager {
       approachingOverload: Boolean(this.enabled && this.approachingOverload),
       isSleeping: this.isSleeping,
       updatedAt: this.updatedAt,
-      watermark: {
-        scope: 'global',
-        runtimeCacheCapacity: this.maxConsumedAttentionEvents,
-        runtimeCachedCount: this.consumedAttentionEvents.size,
-        persistedCount: this.persistedConsumedAttentionEvents.size
-      }
+      watermark
     });
   }
 
@@ -1157,6 +1178,7 @@ class InternalRegulationManager {
       mood: this.getMood(),
       salienceThreshold: this.salienceThreshold,
       recentTransitionsCount: this.history.length,
+      sleepStartTime: this.isSleeping && Number.isFinite(this.sleepStartTime) ? this.sleepStartTime : null,
       allostasis: this.allostasisEnabled ? this.allostasisPrior.getSummary() : null,
       timestamp: Date.now(),
       ...extra

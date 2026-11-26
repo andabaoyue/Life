@@ -178,8 +178,8 @@ class SelfLedger {
     if (!this._preserveBackupPending && fs.existsSync(this.path)) {
       try { fs.copyFileSync(this.path, this.backupPath); } catch { /* 原子写仍优先 */ }
     }
-    this._preserveBackupPending = false;
     writeJsonAtomic(this.path, { version: SCHEMA_VERSION, birthAt: this.birthAt, birthTimezone: this.birthTimezone, entries: this.entries });
+    this._preserveBackupPending = false;
   }
 
   loadFile(file) {
@@ -273,6 +273,7 @@ class SelfLedger {
    * meta.rejected    — 接收被拒绝条目/证据原因的可选数组
    */
   append(entries, meta = {}) {
+    if (!this.status.ok) return 0;
     const at = Number.isFinite(meta.at) ? meta.at : Date.now();
     const window = Number.isInteger(meta.window) ? meta.window : 0;
     const rawList = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
@@ -337,6 +338,7 @@ class SelfLedger {
   }
 
   recordOpposingEvidence(traitOrId, rawOpposingEvidence, meta = {}) {
+    if (!this.status.ok) return { ok: false, created: false, updated: false, error: 'LEDGER_CORRUPTED' };
     const at = Number.isFinite(meta.at) ? meta.at : Date.now();
     const window = Number.isInteger(meta.window) ? meta.window : 0;
     const cleanKey = cleanText(traitOrId);

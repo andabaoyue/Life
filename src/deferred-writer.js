@@ -19,11 +19,16 @@ class DeferredWriter {
     const delay = (opts && typeof opts.delayMs === 'number' && opts.delayMs >= 0)
       ? opts.delayMs
       : 3000;
+    const retryBaseMs = (opts && typeof opts.retryBaseMs === 'number' && opts.retryBaseMs >= 0)
+      ? opts.retryBaseMs
+      : 2000;
 
     this._writeFn = writeFn;
     this._delayMs = delay;
+    this._retryBaseMs = retryBaseMs;
     this._dirty = false;
     this._timer = null;
+    this._retryCount = 0;
   }
 
   /**
@@ -34,6 +39,31 @@ class DeferredWriter {
     return this._dirty;
   }
 
+  _schedule(delayMs) {
+    if (this._timer) return;
+    this._timer = setTimeout(() => {
+      this._timer = null;
+      if (!this._dirty) {
+        return;
+      }
+      this._dirty = false;
+      try {
+        this._writeFn();
+        this._retryCount = 0;
+      } catch (err) {
+        this._dirty = true;
+        this._retryCount++;
+        const retryDelay = Math.min(30000, this._retryBaseMs * Math.pow(2, Math.min(4, this._retryCount - 1)));
+        console.error('[DeferredWriter] 延迟写入失败，将在 ' + retryDelay + 'ms 后重试:', err);
+        this._schedule(retryDelay);
+      }
+    }, delayMs);
+
+    if (this._timer && typeof this._timer.unref === 'function') {
+      this._timer.unref();
+    }
+  }
+
   /**
    * 标记数据为脏。
    * 如果当前没有待执行的定时器，则启动防抖定时器。
@@ -41,25 +71,18 @@ class DeferredWriter {
    */
   markDirty() {
     this._dirty = true;
-    if (!this._timer) {
-      this._timer = setTimeout(() => {
-        this._timer = null;
-        if (!this._dirty) {
-          return;
-        }
-        this._dirty = false;
-        try {
-          this._writeFn();
-        } catch (err) {
-          this._dirty = true;
-          console.error('[DeferredWriter] 延迟写入失败:', err);
-        }
-      }, this._delayMs);
+    this._schedule(this._delayMs);
+  }
 
-      if (this._timer && typeof this._timer.unref === 'function') {
-        this._timer.unref();
-      }
+  /**
+   * 取消未决的延迟写定时器。
+   */
+  cancel() {
+    if (this._timer) {
+      clearTimeout(this._timer);
+      this._timer = null;
     }
+    this._retryCount = 0;
   }
 
   /**
@@ -68,10 +91,7 @@ class DeferredWriter {
    * 若写入抛出异常，恢复脏标记并重新抛出异常（由调用方处理）。
    */
   flush() {
-    if (this._timer) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
+    this.cancel();
     if (!this._dirty) {
       return;
     }

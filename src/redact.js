@@ -33,7 +33,7 @@ const SECRET_STRING_PATTERNS = [
   /\bhf_[A-Za-z0-9]{20,}/g,          // Hugging Face token
   /\bgsk_[A-Za-z0-9]{20,}/g,         // Groq API key
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
-  /plain:v1:[A-Za-z0-9+/=]+/g        // 本仓降级明文凭据前缀
+  /plain:v1:[^\s"',;)&]+/g            // 本仓降级明文凭据前缀（含 base64url / -_.）
 ];
 
 const SECRET_HEADER_KEYS = new Set([
@@ -55,6 +55,8 @@ function isSecretKey(key) {
 function redactString(text) {
   let out = String(text);
   try {
+    // URL 内嵌凭据（https://user:pass@host）优先脱敏，防错误消息带出账密
+    out = out.replace(/(https?:\/\/)([^:\s/@]+):([^@\s/]+)@/gi, '$1[REDACTED]:[REDACTED]@');
     // 整段 Cookie / Set-Cookie HTTP 头值脱敏（到换行结束；(?<!["']) 保留 JSON `"cookie": "..."` 结构交由下方 pattern[2]）
     out = out.replace(/(?<!["'])\b((?:set-)?cookie\s*:\s*)([^\r\n]+)/gi, '$1[REDACTED]');
     out = out.replace(SECRET_STRING_PATTERNS[0], (_m, scheme) => `${scheme} [REDACTED]`);

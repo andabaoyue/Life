@@ -95,7 +95,8 @@ const FACTUAL_RECORD_TYPES = new Set([
   'observation',
   'interpretation',
   'evidence',
-  'state_change'
+  'state_change',
+  'self_note_state'
 ]);
 
 function recordTypeOf(record) {
@@ -939,7 +940,20 @@ class ArchiveIntegrityService {
       }
       sequence_integrity = seqOk ? 'monotonic' : 'invalid';
     } else if (sequenced.length > 0 && sequenced.length < validRecords.length) {
-      sequence_integrity = 'partial_unsequenced';
+      // 含 Legacy 前缀的混合归档：仍须对现代链切片做单调递增校验，防篡改绕过
+      let seqOk = true;
+      for (let j = 1; j < sequenced.length; j++) {
+        const expectedSeq = sequenced[j - 1].archiveSeq + 1;
+        if (sequenced[j].archiveSeq !== expectedSeq) {
+          seqOk = false;
+          diagnostics.push({
+            lineNumber: j + 1,
+            error: `SEQUENCE_MISMATCH: expected archiveSeq ${expectedSeq}, got ${sequenced[j].archiveSeq}`
+          });
+          break;
+        }
+      }
+      sequence_integrity = seqOk ? 'partial_unsequenced' : 'invalid';
     }
 
     const hashed = validRecords.filter(r => typeof r.recordHash === 'string' && r.recordHash);
@@ -978,6 +992,33 @@ class ArchiveIntegrityService {
         }
       }
       hash_integrity = hashOk ? 'verified' : 'mismatch';
+    } else if (hashed.length > 0 && hashed.length < validRecords.length) {
+      // 含 Legacy 前缀的混合归档：仍须对所有现代记录做规范化哈希与 prevHash 链校验，防头部前置 Legacy 绕过篡改检测
+      let hashOk = true;
+      for (let j = 0; j < hashed.length; j++) {
+        const rec = hashed[j];
+        const expectedHash = computeCanonicalRecordHash(rec);
+        if (rec.recordHash !== expectedHash) {
+          hashOk = false;
+          diagnostics.push({
+            lineNumber: j + 1,
+            error: `RECORD_HASH_MISMATCH: recordId ${rec.recordId || j}`
+          });
+          break;
+        }
+        if (j > 0) {
+          const prevRec = hashed[j - 1];
+          if (rec.prevHash !== prevRec.recordHash) {
+            hashOk = false;
+            diagnostics.push({
+              lineNumber: j + 1,
+              error: `PREV_HASH_CHAIN_BROKEN: at record ${rec.recordId || j}, expected ${prevRec.recordHash}, got ${rec.prevHash}`
+            });
+            break;
+          }
+        }
+      }
+      if (!hashOk) hash_integrity = 'mismatch';
     }
 
     if (hash_integrity === 'mismatch' || sequence_integrity === 'invalid' || relationship_integrity === 'invalid') {

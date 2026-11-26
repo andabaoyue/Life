@@ -509,19 +509,42 @@ class ControlledAgentExecutor {
           return fail('DISALLOWED_FILENAME');
         }
 
-        // 🔴 P1-4：在 resolveRealPath 解引用之前先对原始路径执行 _lstatBest，
-        // 阻止「沙盒内 symlink -> 沙盒内文件」绕过下游 isSymbolicLink 检查而误删/误移目标。
-        try {
-          const srcLstat = this._lstatBest(entry.src);
-          if (srcLstat && typeof srcLstat.isSymbolicLink === 'function' && srcLstat.isSymbolicLink()) {
-            symlinkEscape = true;
-            break;
+        // 🔴 P1-4 + R2-P1-1：在 resolveRealPath 解引用之前，对相对沙盒根的每一级祖先目录
+        // 与叶路径逐段执行 _lstatBest，阻止嵌套目录 symlink/junction 穿透误删或误移目标。
+        const findAncestorSymlinkOrUnresolvedRel = (targetPath) => {
+          const resolvedTarget = path.resolve(targetPath);
+          const matchedRawRoot = roots.find((r) => isPathInsideRoot(resolvedTarget, path.resolve(r)));
+          if (!matchedRawRoot) return { bad: true };
+          const rawRootAbs = path.resolve(matchedRawRoot);
+          const rawRel = path.relative(rawRootAbs, resolvedTarget);
+          const segments = rawRel ? rawRel.split(/[\\/]/).filter(Boolean) : [];
+          for (let i = 1; i <= segments.length; i++) {
+            const cur = path.join(rawRootAbs, ...segments.slice(0, i));
+            try {
+              const st = this._lstatBest(cur);
+              if (st && typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) {
+                return { bad: true };
+              }
+            } catch (err) {
+              if (err && err.code !== 'ENOENT') return { bad: true };
+            }
           }
-        } catch (err) {
-          if (err && err.code !== 'ENOENT') {
-            symlinkEscape = true;
-            break;
+          try {
+            const leafStat = this._lstatBest(targetPath);
+            if (leafStat && typeof leafStat.isSymbolicLink === 'function' && leafStat.isSymbolicLink()) {
+              return { bad: true };
+            }
+          } catch (err) {
+            if (err && err.code !== 'ENOENT') return { bad: true };
           }
+          const expectedRel = segments.join('/');
+          return { bad: false, expectedRel: process.platform === 'win32' ? expectedRel.toLowerCase() : expectedRel };
+        };
+
+        const srcPre = findAncestorSymlinkOrUnresolvedRel(entry.src);
+        if (srcPre.bad) {
+          symlinkEscape = true;
+          break;
         }
         const realSrc = (this.resolveRealPath || resolveRealPath)(entry.src, this.fs);
         const matchedSrcRoot = isInsideAnyRealRoot(realSrc);
@@ -529,24 +552,27 @@ class ControlledAgentExecutor {
           symlinkEscape = true;
           break;
         }
+        const actualSrcRel = path.relative(matchedSrcRoot, realSrc).replace(/\\/g, '/');
+        if ((process.platform === 'win32' ? actualSrcRel.toLowerCase() : actualSrcRel) !== srcPre.expectedRel) {
+          symlinkEscape = true;
+          break;
+        }
         let realDst = null;
         let matchedDstRoot = null;
         if (proposal.capability === 'workspace.move') {
-          try {
-            const dstLstat = this._lstatBest(entry.dst);
-            if (dstLstat && typeof dstLstat.isSymbolicLink === 'function' && dstLstat.isSymbolicLink()) {
-              symlinkEscape = true;
-              break;
-            }
-          } catch (err) {
-            if (err && err.code !== 'ENOENT') {
-              symlinkEscape = true;
-              break;
-            }
+          const dstPre = findAncestorSymlinkOrUnresolvedRel(entry.dst);
+          if (dstPre.bad) {
+            symlinkEscape = true;
+            break;
           }
           realDst = (this.resolveRealPath || resolveRealPath)(entry.dst, this.fs);
           matchedDstRoot = isInsideAnyRealRoot(realDst);
           if (!realDst || !matchedDstRoot || !path.relative(matchedDstRoot, realDst)) {
+            symlinkEscape = true;
+            break;
+          }
+          const actualDstRel = path.relative(matchedDstRoot, realDst).replace(/\\/g, '/');
+          if ((process.platform === 'win32' ? actualDstRel.toLowerCase() : actualDstRel) !== dstPre.expectedRel) {
             symlinkEscape = true;
             break;
           }

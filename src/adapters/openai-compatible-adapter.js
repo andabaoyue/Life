@@ -243,13 +243,15 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
         const dec = new TextDecoder();
         const streamIdleTimeoutMs = Number.isFinite(cfg && cfg.streamIdleTimeoutMs)
           ? cfg.streamIdleTimeoutMs : 20000;
+        const hasIdleTimeout = streamIdleTimeoutMs > 0;
         let streamFinished = false;
         try {
           for (;;) {
             if (ctrl.signal.aborted) {
               const reason = ctrl.signal.reason;
               const err = reason instanceof Error ? reason : new Error(reason || 'aborted');
-              err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+              err.name = (err.name === 'TimeoutError' || err.message === 'request timeout' || err.message === 'stream idle timeout')
+                ? 'TimeoutError' : 'AbortError';
               throw err;
             }
             let idleTimer = null;
@@ -258,23 +260,28 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             try {
               const readPromise = reader.read();
               readPromise.catch(() => {});
-              const idlePromise = new Promise((_, reject) => {
-                idleTimer = setTimeout(() => {
-                  const err = new Error('stream idle timeout');
-                  err.name = 'TimeoutError';
-                  reject(err);
-                }, streamIdleTimeoutMs);
-              });
               const abortPromise = new Promise((_, reject) => {
                 onAbortHandler = () => {
                   const reason = ctrl.signal.reason;
                   const err = reason instanceof Error ? reason : new Error(reason || 'aborted');
-                  err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+                  err.name = (err.name === 'TimeoutError' || err.message === 'request timeout' || err.message === 'stream idle timeout')
+                    ? 'TimeoutError' : 'AbortError';
                   reject(err);
                 };
                 ctrl.signal.addEventListener('abort', onAbortHandler, { once: true });
               });
-              chunk = await Promise.race([readPromise, idlePromise, abortPromise]);
+              const raceList = [readPromise, abortPromise];
+              if (hasIdleTimeout) {
+                raceList.push(new Promise((_, reject) => {
+                  idleTimer = setTimeout(() => {
+                    const err = new Error('stream idle timeout');
+                    err.name = 'TimeoutError';
+                    reject(err);
+                    try { ctrl.abort(err); } catch {}
+                  }, streamIdleTimeoutMs);
+                }));
+              }
+              chunk = await Promise.race(raceList);
             } finally {
               if (idleTimer) clearTimeout(idleTimer);
               if (onAbortHandler) ctrl.signal.removeEventListener('abort', onAbortHandler);
@@ -309,9 +316,14 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
         lastNormalizedUsage = normalizeUsage(usage, providerId);
         return { text: full, usage, observedModel, attempts: res.attempts || 1 };
       } catch (e) {
-        if (e && e.partial === undefined) e.partial = full;
-        if (e && e.outputYielded === undefined) e.outputYielded = yielded;
-        throw toUnifiedError(e, providerId);
+        let outErr = e;
+        if (ctrl.signal.aborted && ctrl.signal.reason && ctrl.signal.reason.name === 'TimeoutError'
+            && (!outErr || (outErr.name !== 'TimeoutError' && outErr.name !== 'AbortError'))) {
+          outErr = ctrl.signal.reason;
+        }
+        if (outErr && outErr.partial === undefined) outErr.partial = full;
+        if (outErr && outErr.outputYielded === undefined) outErr.outputYielded = yielded;
+        throw toUnifiedError(outErr, providerId);
       } finally {
         if (requestTimer) clearTimeout(requestTimer);
         if (callerSignal) callerSignal.removeEventListener('abort', forwardAbort);

@@ -355,7 +355,7 @@ class ResearchIndex {
     try {
       fd = fs.openSync(archivePath, 'r');
       for (const entry of entries) {
-        if (!entry || !entry.valid || !Number.isFinite(entry.byteLength) || entry.byteLength <= 0) continue;
+        if (!entry || entry.valid === false || !Number.isFinite(entry.byteLength) || entry.byteLength <= 0) continue;
         if (entry.byteLength > buf.length) {
           buf = Buffer.alloc(entry.byteLength);
         }

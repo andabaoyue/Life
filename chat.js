@@ -329,6 +329,7 @@ let mediaStream = null;
 let micChunks = [];
 let micStartedAt = 0;
 let micTimer = null;
+let micStartCancelled = false;
 
 /** 按状态刷新按钮外观与可点性。不碰输入框内容。 */
 function renderMicState() {
@@ -339,6 +340,13 @@ function renderMicState() {
     micBtn.textContent = '🎤';
     micBtn.title = t('stt.notConfigured', '未配置语音识别服务');
     micBtn.setAttribute('aria-label', t('stt.notConfigured', '未配置语音识别服务'));
+  } else if (micState === 'starting') {
+    // 申请麦克风权限过程中禁点防重入
+    micBtn.disabled = true;
+    micBtn.classList.add('mic-busy');
+    micBtn.textContent = '…';
+    micBtn.title = t('stt.starting', '准备录音…');
+    micBtn.setAttribute('aria-label', t('stt.starting', '准备录音…'));
   } else if (micState === 'idle') {
     micBtn.disabled = false;
     micBtn.textContent = '🎤';
@@ -444,8 +452,8 @@ async function syncMicState() {
   // 只有「有 Key + 有端点 + 有模型」才算可用的完整配置
   const ready = !!(cfg && cfg.ok && cfg.hasKey
     && String(cfg.endpoint || '').trim() && String(cfg.model || '').trim());
-  // 正在录音/识别时不打断当前流程
-  if (micState === 'recording' || micState === 'transcribing') return;
+  // 正在启动、录音或识别时不打断当前流程（防权限弹窗触发 focus 覆写回 idle 引发并发音轨泄漏）
+  if (micState === 'starting' || micState === 'recording' || micState === 'transcribing') return;
   micState = ready ? 'idle' : 'disabled';
   renderMicState();
 }
@@ -476,6 +484,7 @@ function stopMicTracks() {
 /** 开始录音。失败一律静默降级成一行提示。 */
 async function startRecording() {
   if (micState !== 'idle') return;
+  micStartCancelled = false;
   micState = 'starting';
   renderMicState();
   micHint('');
@@ -485,12 +494,22 @@ async function startRecording() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     // 权限被拒 / 无设备：都走静默提示，不弹窗；归位 idle 解除并发锁
+    micStartCancelled = false;
     micState = 'idle';
     renderMicState();
     const name = e && e.name;
     micHint(name === 'NotAllowedError'
       ? t('stt.denied', '麦克风权限被拒绝')
       : t('stt.noDevice', '没有找到麦克风'));
+    return;
+  }
+
+  // R2-P1-12：等待权限期间若已触发 ESC/失焦/隐藏取消，立即释放刚拿到的音轨并归位 idle
+  if (micStartCancelled || document.hidden || micState !== 'starting') {
+    try { stream.getTracks().forEach((tr) => tr.stop()); } catch (e) {}
+    micStartCancelled = false;
+    micState = 'idle';
+    renderMicState();
     return;
   }
 
@@ -689,15 +708,36 @@ window.addEventListener('keydown', (e) => {
     e.stopImmediatePropagation();
     stopRecording(true);
     micHint('');
+  } else if (e.key === 'Escape' && micState === 'starting') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    micStartCancelled = true;
+    micState = 'idle';
+    renderMicState();
+    micHint('');
   }
 });
 
-// 失焦 / 窗口隐藏：丢弃当前录音（半句话不算数）
+// 失焦 / 窗口隐藏：丢弃当前录音或取消权限申请中的启动态（半句话不算数）
 window.addEventListener('blur', () => {
-  if (MIC_LOST_FOCUS_DISCARD) stopRecording(true);
+  if (MIC_LOST_FOCUS_DISCARD) {
+    if (micState === 'starting') {
+      micStartCancelled = true;
+      micState = 'idle';
+      renderMicState();
+    }
+    stopRecording(true);
+  }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && MIC_LOST_FOCUS_DISCARD) stopRecording(true);
+  if (document.hidden && MIC_LOST_FOCUS_DISCARD) {
+    if (micState === 'starting') {
+      micStartCancelled = true;
+      micState = 'idle';
+      renderMicState();
+    }
+    stopRecording(true);
+  }
 });
 
 // 配置变更后回到对话窗 → 立刻同步按钮（否则用户配完 Key 还得重开窗口）

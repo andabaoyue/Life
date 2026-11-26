@@ -284,15 +284,17 @@ class DeepSeek {
         }
       };
 
-      // P1-2: streamIdleTimeoutMs 仅约束连续 chunk 之间的等待空闲时间
+      // P1-2: streamIdleTimeoutMs 仅约束连续 chunk 之间的等待空闲时间（<= 0 视为禁用）
       const streamIdleTimeoutMs = Number.isFinite(this.cfg.streamIdleTimeoutMs)
         ? this.cfg.streamIdleTimeoutMs : 20000;
+      const hasIdleTimeout = streamIdleTimeoutMs > 0;
 
       while (true) {
         if (ctrl.signal.aborted) {
           const abortReason = ctrl.signal.reason;
           const err = abortReason instanceof Error ? abortReason : new Error(abortReason || 'aborted');
-          err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+          err.name = (err.name === 'TimeoutError' || err.message === 'request timeout' || err.message === 'stream idle timeout')
+            ? 'TimeoutError' : 'AbortError';
           throw err;
         }
 
@@ -303,25 +305,30 @@ class DeepSeek {
           const readPromise = reader.read();
           readPromise.catch(() => {});
 
-          const idlePromise = new Promise((_, reject) => {
-            idleTimer = setTimeout(() => {
-              const err = new Error('stream idle timeout');
-              err.name = 'TimeoutError';
-              reject(err);
-            }, streamIdleTimeoutMs);
-          });
-
           const abortPromise = new Promise((_, reject) => {
             onAbortHandler = () => {
               const abortReason = ctrl.signal.reason;
               const err = abortReason instanceof Error ? abortReason : new Error(abortReason || 'aborted');
-              err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+              err.name = (err.name === 'TimeoutError' || err.message === 'request timeout' || err.message === 'stream idle timeout')
+                ? 'TimeoutError' : 'AbortError';
               reject(err);
             };
             ctrl.signal.addEventListener('abort', onAbortHandler, { once: true });
           });
 
-          const { done, value } = await Promise.race([readPromise, idlePromise, abortPromise]);
+          const raceList = [readPromise, abortPromise];
+          if (hasIdleTimeout) {
+            raceList.push(new Promise((_, reject) => {
+              idleTimer = setTimeout(() => {
+                const err = new Error('stream idle timeout');
+                err.name = 'TimeoutError';
+                reject(err);
+                try { ctrl.abort(err); } catch {}
+              }, streamIdleTimeoutMs);
+            }));
+          }
+
+          const { done, value } = await Promise.race(raceList);
 
           if (idleTimer) clearTimeout(idleTimer);
           if (onAbortHandler) ctrl.signal.removeEventListener('abort', onAbortHandler);
@@ -385,7 +392,11 @@ class DeepSeek {
       if (reader) {
         try { await reader.cancel(); } catch {}
       }
-      if (outerErr.message === 'request timeout') {
+      if (ctrl && ctrl.signal && ctrl.signal.aborted && ctrl.signal.reason && ctrl.signal.reason.name === 'TimeoutError'
+          && outerErr && outerErr.name !== 'TimeoutError' && outerErr.name !== 'AbortError') {
+        outerErr = ctrl.signal.reason;
+      }
+      if (outerErr.message === 'request timeout' || outerErr.message === 'stream idle timeout') {
         outerErr.name = 'TimeoutError';
       }
       if (outerErr.partial === undefined) {

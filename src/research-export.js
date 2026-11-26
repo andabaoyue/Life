@@ -175,7 +175,10 @@ function resolveSafeExportDir(targetDir) {
  */
 function writeExportFileToDir(targetDir, filename, content) {
   const canonicalDir = resolveSafeExportDir(targetDir);
-  const safeFilename = path.basename(filename);
+  const safeFilename = path.basename(String(filename || ''));
+  if (!safeFilename || safeFilename === '.' || safeFilename === '..') {
+    throw new Error('INVALID_EXPORT_FILENAME: 导出文件名非法');
+  }
   const filePath = path.join(canonicalDir, safeFilename);
   writeFileAtomic(filePath, content);
   return filePath;
