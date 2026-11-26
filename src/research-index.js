@@ -340,6 +340,46 @@ class ResearchIndex {
   }
 
   /**
+   * 批量读取多个偏移条目的 JSON 记录：仅执行一次 openSync / closeSync（P1-21），
+   * 消除万行归档全量查询时的 N 次同步开关文件开销。
+   */
+  readRecordsAtOffsets(archivePathOrEntries, maybeEntries) {
+    const archivePath = Array.isArray(archivePathOrEntries) ? this.archivePath : (archivePathOrEntries || this.archivePath);
+    const entries = Array.isArray(archivePathOrEntries) ? archivePathOrEntries : (maybeEntries || []);
+    if (!Array.isArray(entries) || entries.length === 0 || !archivePath || !fs.existsSync(archivePath)) {
+      return [];
+    }
+    const records = [];
+    let fd = null;
+    let buf = Buffer.alloc(65536);
+    try {
+      fd = fs.openSync(archivePath, 'r');
+      for (const entry of entries) {
+        if (!entry || !entry.valid || !Number.isFinite(entry.byteLength) || entry.byteLength <= 0) continue;
+        if (entry.byteLength > buf.length) {
+          buf = Buffer.alloc(entry.byteLength);
+        }
+        try {
+          const bytesRead = fs.readSync(fd, buf, 0, entry.byteLength, entry.byteOffset);
+          if (bytesRead < entry.byteLength) continue;
+          const rec = JSON.parse(buf.toString('utf8', 0, bytesRead));
+          if (rec) records.push(rec);
+        } catch {
+          // 单条解析失败不影响同批其余有效记录
+        }
+      }
+      return records;
+    } catch (e) {
+      console.error('[ResearchIndex] readRecordsAtOffsets error:', e.message);
+      return records;
+    } finally {
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch {}
+      }
+    }
+  }
+
+  /**
    * 按 ID 检索并读取目标归档记录
    */
   getRecordById(id) {

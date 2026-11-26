@@ -91,9 +91,24 @@ class ResearchQuery {
       return ArchiveIntegrityService.checkArchive(this.archivePath);
     }
 
+    const sidecarStamp = (p) => {
+      try {
+        const st = fs.statSync(p);
+        return `${st.size}-${st.mtimeMs}`;
+      } catch {
+        return 'missing';
+      }
+    };
+
     try {
       const stat = fs.statSync(this.archivePath);
-      const cacheKey = `${stat.size}-${stat.mtimeMs}`;
+      // P1-20：缓存键纳入 anchor / provenance / subject-state sidecar 状态，任意附属文件改动均立即失效重建
+      const cacheKey = [
+        `${stat.size}-${stat.mtimeMs}`,
+        sidecarStamp(this.archivePath + '.anchor.json'),
+        sidecarStamp(this.archivePath + '.provenance.json'),
+        sidecarStamp(this.statePath)
+      ].join('|');
       if (this._integrityCache && this._integrityCache.key === cacheKey) {
         return this._integrityCache.report;
       }
@@ -110,12 +125,20 @@ class ResearchQuery {
   }
 
   // ---------------------------------------------------------------------------
-  // 辅助方法：读取归档记录 (P1-03: 优先经由 Index 检索)
+  // 辅助方法：读取归档记录 (P1-03: 优先经由 Index 检索；P1-21: 单次 fd 批量读取)
   // ---------------------------------------------------------------------------
   _readArchiveRecords() {
     if (this.index && this.index.ensureIndex()) {
       this._lastQueryMode = 'INDEX';
       const records = [];
+      if (typeof this.index.readRecordsAtOffsets === 'function') {
+        const rawList = this.index.readRecordsAtOffsets(this.archivePath, this.index.lineEntries);
+        for (const rec of rawList) {
+          const norm = normalizeArchiveRecord(rec);
+          if (norm) records.push(norm);
+        }
+        return records;
+      }
       for (const entry of this.index.lineEntries) {
         if (entry.valid) {
           const rec = this.index.readRecordAtOffset(entry.byteOffset, entry.byteLength);

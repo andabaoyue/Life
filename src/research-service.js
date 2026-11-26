@@ -19,7 +19,8 @@ const {
   exportStateTrajectory,
   exportStateChanges,
   exportEvidence,
-  exportFullResearchBundle
+  exportFullResearchBundle,
+  writeExportFileToDir
 } = require('./research-export');
 const { SubjectState, DEFAULT_TRAITS, ALLOWED_TRAITS } = require('./subject-state');
 const { normalizeArchiveRecord } = require('./experience-schema');
@@ -526,18 +527,34 @@ class ResearchService {
   // ---------------------------------------------------------------------------
   exportData(options = {}) {
     const { type = 'full', format = 'json', targetDir = null } = options;
+    const ext = format === 'csv' ? 'csv' : 'json';
 
     if (type === 'trajectory') {
       const items = this.query.getStateTrajectory(options);
-      return exportStateTrajectory(items, format);
+      const content = exportStateTrajectory(items, format);
+      if (targetDir !== null && targetDir !== undefined) {
+        const filePath = writeExportFileToDir(targetDir, `life-export-trajectory.${ext}`, content);
+        return { saved: true, filePath, format: ext, content };
+      }
+      return content;
     }
     if (type === 'state_changes') {
       const items = this.query.getStateChanges({ limit: 10000 }).items;
-      return exportStateChanges(items, format);
+      const content = exportStateChanges(items, format);
+      if (targetDir !== null && targetDir !== undefined) {
+        const filePath = writeExportFileToDir(targetDir, `life-export-state_changes.${ext}`, content);
+        return { saved: true, filePath, format: ext, content };
+      }
+      return content;
     }
     if (type === 'evidence') {
       const items = this.query.getEvidence({ limit: 10000 }).items;
-      return exportEvidence(items, format);
+      const content = exportEvidence(items, format);
+      if (targetDir !== null && targetDir !== undefined) {
+        const filePath = writeExportFileToDir(targetDir, `life-export-evidence.${ext}`, content);
+        return { saved: true, filePath, format: ext, content };
+      }
+      return content;
     }
     // Full bundle
     return exportFullResearchBundle(this.query, { targetDir });

@@ -362,6 +362,18 @@ const baseCfg = () => ({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model
     check('P1-12b 超长增量先判后拼（partial 未超限）并在提前退出时调用 reader.cancel()',
       bigErr && midCancel === true && typeof bigErr.partial === 'string' && bigErr.partial.length <= MAX_STREAM_TEXT_CHARS);
     globalThis.fetch = realFetch;
+
+    // P2 #6: SSEParser 复用实例级 TextDecoder({ stream: true }) 解码跨 Uint8Array 分片多字节字符
+    const { createSSEParser } = require('../src/sse-parser');
+    const seenTexts = [];
+    const sseP = createSSEParser({ onEvent: (ev) => { if (ev.json) seenTexts.push(ev.json.t); } });
+    const rawSse = enc.encode('data: {"t":"星辰🌸海"}\n\n');
+    const cut = rawSse.indexOf(0xF0) + 1;
+    sseP.feed(rawSse.slice(0, cut));
+    sseP.feed(rawSse.slice(cut));
+    sseP.flush();
+    check('P2-6 createSSEParser 跨 Uint8Array chunk 流式解码多字节 UTF-8 不乱码',
+      seenTexts.length === 1 && seenTexts[0] === '星辰🌸海');
   }
 
   globalThis.fetch = realFetch;

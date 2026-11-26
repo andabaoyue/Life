@@ -252,3 +252,25 @@ module.exports = {
   compareArtifact,
   discoverAsar
 };
+
+if (require.main === module) {
+  const root = path.resolve(__dirname, '..');
+  const asarPath = discoverAsar(root);
+  if (!asarPath) {
+    console.log('SKIP: 未找到 dist/app.asar');
+    process.exit(0);
+  }
+  let srcVer = null;
+  try { srcVer = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch {}
+  const packedVer = readArtifactVersion(asarPath);
+  if (!packedVer || !srcVer || packedVer !== srcVer) {
+    console.log(`SKIP: 产物版本(${packedVer || 'unknown'}) != 源码版本(${srcVer || 'unknown'})`);
+    process.exit(0);
+  }
+  const res = compareArtifact({ root, readPacked: (name) => readAsarEntry(asarPath, name) });
+  if (res.missing.length || res.stale.length) {
+    console.error(`FAIL: checked=${res.checked} missing=${JSON.stringify(res.missing)} stale=${JSON.stringify(res.stale)}`);
+    process.exit(1);
+  }
+  console.log(`PASS: artifact-freshness checked=${res.checked} stale=0 missing=0`);
+}

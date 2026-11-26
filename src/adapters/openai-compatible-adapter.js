@@ -257,6 +257,7 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             let chunk;
             try {
               const readPromise = reader.read();
+              readPromise.catch(() => {});
               const idlePromise = new Promise((_, reject) => {
                 idleTimer = setTimeout(() => {
                   const err = new Error('stream idle timeout');

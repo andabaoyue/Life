@@ -167,7 +167,8 @@ function isSpawnUnsupported(e) {
  *  而不是硬跑出一个假 FAIL。 */
 function resolvePython() {
   const candidates = [];
-  if (process.env.DESPET_PY) candidates.push(process.env.DESPET_PY);
+  const envPy = process.env.DESKPET_PY || process.env.DESPET_PY;
+  if (envPy) candidates.push(envPy);
   candidates.push(
     path.join(os.homedir(), '.workbuddy', 'binaries', 'python', 'envs', 'default',
       'Scripts', process.platform === 'win32' ? 'python.exe' : 'python'));
@@ -305,6 +306,7 @@ function countPass(out) {
     }
   }
 
+  let executedSuites = 0;
   for (const c of claims) {
     const self = path.join(ROOT, c.file) === __filename;
     if (self) {
@@ -339,6 +341,7 @@ function countPass(out) {
         continue;
       }
     }
+    executedSuites++;
     const r = countPass(out);
     check(c.file + ' 全绿（0 项 FAIL）', r.fail === 0 && !runError, runError ? '子进程非零退出: ' + String(runError.message || runError).slice(0, 100) : ('FAIL=' + r.fail));
     check(c.file + ' 项数与 README 一致', r.pass === c.n,
@@ -384,6 +387,7 @@ function countPass(out) {
   check('test/ 下每个测试都在测试清单被点名', unlisted.length === 0, unlisted.join(', '));
 
   if (srv) srv.kill();
+  check('至少真正执行了 1 个测试套件（防止全跳过造成 0 FAIL 假绿）', executedSuites > 0, 'executed=' + executedSuites);
   if (skipped) {
     console.log('\n---- 跳过明细（环境限制，非测试失败）----');
     skipList.forEach(s => console.log('  ' + s));

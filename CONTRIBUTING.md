@@ -42,7 +42,7 @@ Life 平台的 64×80 Q 版点阵精灵正进入公开源码后的社区协同�
    # 2. 发布包资源与完整性检查（含 electron-builder 白名单闭包断言）
    node tools/release-check.js
 
-   # 3. 全量测试套件执行（test/ 下 117 个 node 测试文件 + 1 个真实 UI 测试 test/ui_test.py）
+   # 3. 全量测试套件执行（test/ 下全部已登记测试套件 + gate-selfcheck，含真实 UI 测试 test/ui_test.py）
    npm test
 
    # 4. 改了 electron-builder.yml / 打包相关内容时，追加产物闭包实测：

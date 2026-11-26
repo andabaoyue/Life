@@ -126,6 +126,16 @@ function check(name, cond, extra) {
     costOf({}, { hit: 1 }) === null && costOf(null, {}) === null);
   check('E-02 costOf(null) 绝不伪装为 0 消费', costOf(null, { hit: 1, miss: 1, out: 1 }) === null);
   check('DEFAULT_PRICING_VERSION 可记录（无版本价格表时）', DEFAULT_PRICING_VERSION === 'unversioned-legacy');
+
+  // P2 #6: 兼容 OpenAI 标准 prompt_tokens_details.cached_tokens
+  const uOai = normalizeUsage({
+    prompt_tokens: 100,
+    completion_tokens: 20,
+    total_tokens: 120,
+    prompt_tokens_details: { cached_tokens: 64 }
+  }, 'openai-compatible');
+  check('P2-6 normalizeUsage 兼容读取 OpenAI prompt_tokens_details.cached_tokens',
+    uOai.cacheHitTokens === 64 && uOai.promptTokens === 100 && uOai.usageSource === 'provider_response');
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

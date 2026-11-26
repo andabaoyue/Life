@@ -156,6 +156,23 @@ async function runTests() {
     }
     check('空目标目录被底层抛出 INVALID_TARGET_DIR', emptyDirCaught);
 
+    // -------------------------------------------------------------------------
+    // 场景 6: P1-18 三类子导出 saveToDisk 真实原子落盘 + 合法双点目录名放行
+    // -------------------------------------------------------------------------
+    const { ResearchService } = require('../src/research-service');
+    const realSvc = new ResearchService(testDir);
+    const validDoubleDotDir = path.join(testDir, 'v2.1..final');
+    const resTraj = realSvc.exportData({ type: 'trajectory', format: 'csv', targetDir: validDoubleDotDir });
+    const resSc = realSvc.exportData({ type: 'state_changes', format: 'json', targetDir: validDoubleDotDir });
+    const resEv = realSvc.exportData({ type: 'evidence', format: 'csv', targetDir: validDoubleDotDir });
+    check('P1-18a trajectory/state_changes/evidence 传入 targetDir 均原子写入磁盘且返回 filePath/content',
+      resTraj && resTraj.saved === true && fs.existsSync(resTraj.filePath)
+      && fs.readFileSync(resTraj.filePath, 'utf8') === resTraj.content
+      && resSc && resSc.saved === true && fs.existsSync(resSc.filePath)
+      && resEv && resEv.saved === true && fs.existsSync(resEv.filePath));
+    check('P1-18b 合法双点目录名 v2.1..final 放行不被子串误杀',
+      fs.existsSync(path.join(validDoubleDotDir, 'life-export-trajectory.csv')));
+
   } finally {
     try {
       fs.rmSync(testDir, { recursive: true, force: true });

@@ -606,7 +606,9 @@ function main(argv) {
     // 用「是否以仓库根为前缀」判断，不要用 path.relative 的 '..' 判断：
     // Windows 上跨盘符时 relative 会直接返回绝对路径（因为无法表达相对关系），
     // 于是「D 盘仓库 → C 盘 TEMP」会被误判成「在仓库内」而遭到拒绝（实测踩过）。
-    const insideRepo = dest === ROOT || dest.indexOf(ROOT + path.sep) === 0;
+    const destCmp = process.platform === 'win32' ? dest.toLowerCase() : dest;
+    const rootCmp = process.platform === 'win32' ? ROOT.toLowerCase() : ROOT;
+    const insideRepo = destCmp === rootCmp || destCmp.indexOf(rootCmp + path.sep) === 0;
     if (insideRepo) { console.error('FAIL  导出目标不得落在仓库目录内：' + dest); process.exit(1); }
     if (fs.existsSync(dest) && fs.readdirSync(dest).length && !has('--force')) {
       console.error('FAIL  目标目录非空，需显式 --force：' + dest); process.exit(1);

@@ -930,7 +930,7 @@ function createWindow() {
     alwaysOnTop: true, skipTaskbar: true, hasShadow: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false
+      contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true
     }
   });
   win.loadFile('index.html');
@@ -1153,7 +1153,7 @@ function createChatWindow() {
     alwaysOnTop: true, show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false
+      contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true
     }
   });
   chatWin.loadFile('chat.html');

@@ -301,6 +301,7 @@ class DeepSeek {
 
         try {
           const readPromise = reader.read();
+          readPromise.catch(() => {});
 
           const idlePromise = new Promise((_, reject) => {
             idleTimer = setTimeout(() => {

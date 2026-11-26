@@ -31,11 +31,69 @@ src/canalization.js  沃丁顿发育景观与经历依赖塑性衰减模型（Wa
 src/memory-dynamics.js 零 API 成本记忆动力学与突触修剪（艾宾浩斯幂律、三级状态流转）
 src/dream-system.js  成本门禁式弗洛伊德梦境系统（本地认知张力门禁、两道防线、DREAM_GENERATED_ARTIFACT）
 src/internal-regulation.js 内部状态调节中枢（短时调节与长期特质双轨分离、严格事件驱动、唤醒度与门限反向耦合）
+src/allostasis-prior.js    关系节奏先验（间隔预测误差 Winsorize 队列，仅作用于 internalRegulation）
+src/digital-umwelt.js      数字环周感知流水线（过滤→降采样→显著性评估→仅产出 SUBJECT_ACQUIRED=false 候选）
+src/internal-state.js      内部标量只读/内部投影边界辅助
 src/attention-gate.js      注意力闸门与感知分流（显著性与认知负荷过滤、ATTENDED≠SUBJECT_ACQUIRED 铁律防线）
-research/ENGINEERING-DECISION-LOG.md 工程与实验架构不可逆决策账本（D-001~D-008）
+src/power-monitor-source.js 宿主电源与锁屏事件注入适配器
+research/ENGINEERING-DECISION-LOG.md 工程与实验架构不可逆决策账本（D-001~D-011）
 research/LIFECYCLE-WIRING-AUDIT.md 生命周期运行链审计与因果图谱报告
-src/agent-interfaces.js Agent 预留接口：能力、权限、提案、审计和 Mock
-src/provider-policy.js Provider / Endpoint / Credential 边界策略
+# ---- Agent 底座、沙盒与执行治理 ----
+src/agent-interfaces.js Agent 预留接口：能力白名单、作用域权限、提案、预算熔断与审计
+src/agent-confirmation.js 第四道闸门：用户显式确认、TTL 与防篡改指纹
+src/agent-sandbox.js      桌面沙盒目录、只读感官白名单与符号链接防线
+src/agent-transaction.js  单文件写事务 WAL + 备份 + 崩溃自愈
+src/agent-executor.js     受控执行器（6 项核准能力的真实磁盘落地）
+src/agent-ipc.js          Agent 治理与 Ticket IPC 注册入口（经 ipcGuard 收口）
+src/agent-trigger.js      自主动作触发总开关（默认关闭）
+src/agent-intent.js       用户语句提案意图识别
+src/agent-router.js       提案与环境事件统一路由（含沙盒 L1 物理门禁）
+src/agent-lifecycle.js    提案超时与待决状态流转管理
+src/agent-observations.js 只读观察档记录与只读日志
+src/agent-history.js      提案→确认→执行因果链投影
+src/constraints.js        共享人格与留痕系统公共约束常量
+# ---- 多 Provider、连接管理与传输安全 ----
+src/provider-policy.js    Provider / Endpoint / Credential 边界策略
+src/provider-adapter.js   统一 Provider Adapter 契约与错误归一化
+src/provider-registry.js  Adapter 注册表（无凭据、非运行时证据信任根）
+src/provider-routing.js   路由契约储备
+src/provider-runtime-trust.js 运行时 evidence 绑定与可信度核验
+src/openai-transport.js   通用 OpenAI 兼容传输、重试与响应硬上限
+src/sse-parser.js         原生流式 SSE 分帧解析器
+src/usage-normalizer.js   用量事实层归一化
+src/cache-strategy.js     DeepSeek 前缀缓存命中解析策略
+src/cost-strategy.js      模型定价与成本策略
+src/fallback-adapter.js   主/备端点容灾回落与半开探测保护
+src/circuit-breaker.js    端点熔断器状态机
+src/budget-guard.js       单轮/会话模型 Token 预算护栏
+src/generation-attempt.js 生成尝试元数据储备
+src/connections.js        多连接档案管理
+src/connection-switch.js  安全连接切换器
+src/connection-test.js    连接连通性只读探测
+src/secure-credentials.js 分域凭据索引与迁移辅助
+src/adapters/deepseek-adapter.js          DeepSeek 适配器实现
+src/adapters/openai-compatible-adapter.js 通用 OpenAI 兼容适配器实现
+# ---- 视觉、STT 语音、重逢、观测与安全边界 ----
+src/vision.js             屏幕局部视觉探针纯逻辑（能力判定/矩形校验/多屏匹配）
+src/vision-picker-window.js 全屏透明框选窗生命周期管理（仅隐藏不销毁 + ESC 逃生）
+src/stt-transport.js      OpenAI 兼容语音转文字传输层（1MB 响应上限 + 零落盘）
+src/reunion.js            跨重启主观离别时长判定与事实行生成
+src/observability.js      个体观测面板声明式只读注册表
+src/ipc-guard.js          IPC 发送者 / frame / 本地 URL 三重校验与导航守卫
+src/redact.js             统一凭据与 Cookie/Bearer/现代 API Key 脱敏层
+# ---- 实验研究、完整度校验与离线 Replay ----
+src/research-service.js   Research 只读服务与异步 Replay 任务管道
+src/research-query.js     研究查询层（归档/证据/状态轨迹/EOI 分页）
+src/research-index.js     归档字节偏移索引与批量读取器
+src/research-export.js    轨迹/证据/研究包 CSV & JSON 只读原子导出器（含公式注入防护）
+src/research-ipc.js       研究 IPC 通道与本地原生目录选择安全边界
+src/archive-integrity.js  归档哈希链与 Anchor 完整性服务
+src/experiment-metadata.js 实验条件元数据（Generation Context）构造
+src/experiment-run.js     窗口不可变实验快照与运行清单
+src/experiment-types.js   实验模式/模块开关配置归一与校验
+src/null-hypothesis.js    基线对照与零假设检验辅助
+src/biographical-candidate.js 自传候选整理辅助
+src/sleep-consolidation-types.js 睡眠梦境巩固类型定义
 src/persona.js   人设（只写身份，不写穿着细节；不含旧耳坠设定）
 src/wardrobe.js  换装数据层：槽位、衣柜、预设、校验、持久化
 src/tracker.js   本地活动：被戳/被拖的真实计数（双轨 + 水位线）、晚安与唤醒

@@ -48,7 +48,9 @@ function normalizeUsage(rawUsage, providerId = 'deepseek') {
     providerRawUsage = null;
   }
 
-  const cacheHitTokens = numOrNull(rawUsage.prompt_cache_hit_tokens);
+  const promptDetails = (rawUsage.prompt_tokens_details && typeof rawUsage.prompt_tokens_details === 'object')
+    ? rawUsage.prompt_tokens_details : null;
+  const cacheHitTokens = numOrNull(rawUsage.prompt_cache_hit_tokens ?? (promptDetails && promptDetails.cached_tokens));
   const cacheMissTokens = numOrNull(rawUsage.prompt_cache_miss_tokens);
   const completionTokens = numOrNull(rawUsage.completion_tokens);
 

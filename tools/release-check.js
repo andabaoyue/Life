@@ -49,7 +49,7 @@ function checkJsSyntax() {
   const jsFiles = [];
   function walk(dir) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name.startsWith('.')) continue;
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p);
       else if (e.name.endsWith('.js')) jsFiles.push(p);

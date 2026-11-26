@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeFileAtomic } = require('./atomic');
 
 /**
  * 当前软件版本唯一来源：package.json (P1-01)
@@ -153,52 +154,96 @@ function exportEvidence(evidenceList, format = 'json') {
 }
 
 /**
+ * 校验导出目标目录并确保目录存在（禁止包含 `..` 路径段，放行如 `v2.1..final` 合法文件夹名）。
+ */
+function resolveSafeExportDir(targetDir) {
+  if (typeof targetDir !== 'string' || !targetDir.trim()) {
+    throw new Error('INVALID_TARGET_DIR: Target directory must be a valid non-empty string');
+  }
+  if (targetDir.split(/[\\/]+/).some((seg) => seg === '..')) {
+    throw new Error('PATH_TRAVERSAL_DETECTED: Target directory cannot contain traversal sequence (..)');
+  }
+  const canonicalDir = path.resolve(targetDir);
+  if (!fs.existsSync(canonicalDir)) {
+    fs.mkdirSync(canonicalDir, { recursive: true });
+  }
+  return canonicalDir;
+}
+
+/**
+ * 原子写入单个子导出文件到受信任目标目录（P1-18）。
+ */
+function writeExportFileToDir(targetDir, filename, content) {
+  const canonicalDir = resolveSafeExportDir(targetDir);
+  const safeFilename = path.basename(filename);
+  const filePath = path.join(canonicalDir, safeFilename);
+  writeFileAtomic(filePath, content);
+  return filePath;
+}
+
+function summarizePaginatedExport(res) {
+  const items = Array.isArray(res && res.items) ? res.items : (Array.isArray(res) ? res : []);
+  const totalCount = (res && typeof res.total === 'number' && !Number.isNaN(res.total)) ? res.total : items.length;
+  const exportedCount = items.length;
+  return {
+    items,
+    meta: {
+      exportedCount,
+      totalCount,
+      truncated: exportedCount < totalCount
+    }
+  };
+}
+
+/**
  * 导出完整实验包 (Full Research Bundle)
  */
 function exportFullResearchBundle(researchQuery, options = {}) {
   const { targetDir = null } = options;
+
+  const subjectState = researchQuery.getSubjectState();
+  const stateTrajectory = researchQuery.getStateTrajectory();
+  const evBucket = summarizePaginatedExport(researchQuery.getEvents({ limit: 10000 }));
+  const obsBucket = summarizePaginatedExport(researchQuery.getObservations({ limit: 10000 }));
+  const interpBucket = summarizePaginatedExport(researchQuery.getInterpretations({ limit: 10000 }));
+  const evidenceBucket = summarizePaginatedExport(researchQuery.getEvidence({ limit: 10000 }));
+  const scBucket = summarizePaginatedExport(researchQuery.getStateChanges({ limit: 10000 }));
+
+  const counts = {
+    events: evBucket.meta,
+    observations: obsBucket.meta,
+    interpretations: interpBucket.meta,
+    evidence: evidenceBucket.meta,
+    stateChanges: scBucket.meta
+  };
+  const hasTruncation = Object.values(counts).some((c) => c.truncated === true);
 
   const metadata = {
     schemaVersion: 1,
     appVersion: getAppVersion(),
     archiveSchemaVersion: 1,
     subjectStateSchemaVersion: 1,
-    exportTimestamp: Date.now()
+    exportTimestamp: Date.now(),
+    counts,
+    hasTruncation
   };
-
-  const subjectState = researchQuery.getSubjectState();
-  const stateTrajectory = researchQuery.getStateTrajectory();
-  const events = researchQuery.getEvents({ limit: 10000 }).items;
-  const observations = researchQuery.getObservations({ limit: 10000 }).items;
-  const interpretations = researchQuery.getInterpretations({ limit: 10000 }).items;
-  const evidence = researchQuery.getEvidence({ limit: 10000 }).items;
-  const stateChanges = researchQuery.getStateChanges({ limit: 10000 }).items;
 
   const bundle = {
     'metadata.json': JSON.stringify(metadata, null, 2),
     'state.json': JSON.stringify(subjectState, null, 2),
     'state-history.json': JSON.stringify(stateTrajectory, null, 2),
-    'events.json': JSON.stringify(events, null, 2),
-    'observations.json': JSON.stringify(observations, null, 2),
-    'interpretations.json': JSON.stringify(interpretations, null, 2),
-    'evidence.json': JSON.stringify(evidence, null, 2),
-    'state-changes.json': JSON.stringify(stateChanges, null, 2)
+    'events.json': JSON.stringify(evBucket.items, null, 2),
+    'observations.json': JSON.stringify(obsBucket.items, null, 2),
+    'interpretations.json': JSON.stringify(interpBucket.items, null, 2),
+    'evidence.json': JSON.stringify(evidenceBucket.items, null, 2),
+    'state-changes.json': JSON.stringify(scBucket.items, null, 2)
   };
 
-  if (targetDir) {
-    if (typeof targetDir !== 'string' || !targetDir.trim()) {
-      throw new Error('INVALID_TARGET_DIR: Target directory must be a valid non-empty string');
-    }
-    if (targetDir.includes('..')) {
-      throw new Error('PATH_TRAVERSAL_DETECTED: Target directory cannot contain traversal sequence (..)');
-    }
-    const canonicalDir = path.resolve(targetDir);
-    if (!fs.existsSync(canonicalDir)) {
-      fs.mkdirSync(canonicalDir, { recursive: true });
-    }
+  if (targetDir !== null && targetDir !== undefined) {
+    const canonicalDir = resolveSafeExportDir(targetDir);
     for (const [filename, content] of Object.entries(bundle)) {
       const safeFilename = path.basename(filename);
-      fs.writeFileSync(path.join(canonicalDir, safeFilename), content, 'utf8');
+      writeFileAtomic(path.join(canonicalDir, safeFilename), content);
     }
   }
 
@@ -213,5 +258,7 @@ module.exports = {
   exportStateTrajectory,
   exportStateChanges,
   exportEvidence,
-  exportFullResearchBundle
+  exportFullResearchBundle,
+  writeExportFileToDir,
+  resolveSafeExportDir
 };

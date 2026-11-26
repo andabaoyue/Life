@@ -283,6 +283,19 @@ check('v1.0.5 markCuriosityIncubated 潜意识发酵标记且保持 systemText �
       && tailLast.content === '新窗第一句'
       && tailLast.bridge === false
       && tailLast.windowNo === pm.data.windowNo);
+
+    // P2 #1: reset() 清空 selfNotes / observedNotes / observeEpoch 与 engramManager.traces
+    const pmDyn = new Memory(pDir, { persona: 'p', memoryDynamics: true });
+    pmDyn.addSelfNote({ content: '待清除的便签', name: 'clr.md', source: 'selfNote', windowNo: 1 });
+    pmDyn.data.observedNotes.push({ at: Date.now(), capability: 'workspace.read' });
+    pmDyn.data.observeEpoch = { 'workspace.read': { active: true } };
+    pmDyn.engramManager.registerTrace({ sourceWindowNo: 1, createdWindow: 1, salienceBonus: 0.2, contentRef: '旧印痕' });
+    pmDyn.reset();
+    check('P2-1 Memory.reset() 清空 selfNotes、observedNotes、observeEpoch 与 engramManager.traces',
+      pmDyn.data.selfNotes.length === 0
+      && pmDyn.data.observedNotes.length === 0
+      && Object.keys(pmDyn.data.observeEpoch).length === 0
+      && pmDyn.engramManager.traces.size === 0);
   } finally {
     try { fs.rmSync(pDir, { recursive: true, force: true }); } catch {}
   }

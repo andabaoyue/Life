@@ -2173,7 +2173,10 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], selfNotes: [], observedNotes: [], observeEpoch: {}, lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
+    if (this.engramManager && this.engramManager.traces && typeof this.engramManager.traces.clear === 'function') {
+      this.engramManager.traces.clear();
+    }
     this.save(true);
   }
 }

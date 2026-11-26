@@ -1107,6 +1107,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   }));
 
   // 10. 建一条（id 与 windowNo 一律由主进程填，绝不接受渲染端传入）
+  // 边界说明（D-005）：preload.js 仅暴露只读 agent:ticket-list，下列 3 条写通道从不向前端渲染层开放，保留以兼容 v2.0-b2 12 通道契约与门禁测试。
   ipcGuard.handle('agent:ticket-create', guard((event, raw = {}) => {
     assertByHandler(event);
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');

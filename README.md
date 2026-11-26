@@ -152,9 +152,9 @@
 
 ***Just want to run it.** Grab `Life-2.0.0-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
 
-**开发者。** 需要 Node.js 18 以上：
+**开发者。** 需要 Node.js 20 以上：
 
-***Developers.** Node.js 18 or newer:*
+***Developers.** Node.js 20 or newer:*
 
 ```bash
 git clone https://github.com/Andabaoyue/Life.git

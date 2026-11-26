@@ -129,7 +129,8 @@ function evaluateSalience(filteredData, internalState) {
 
   // 如果内部状态定义了不同的门限或神经唤醒度，可产生微调
   if (internalState && internalState.values) {
-    const arousal = internalState.values.arousal || 50;
+    const arousal = (typeof internalState.values.arousal === 'number' && !Number.isNaN(internalState.values.arousal))
+      ? internalState.values.arousal : 50;
     // 高唤醒度时对刺激更敏感，低唤醒度时更迟钝
     const arousalWeight = arousal / 50;
     salience = Math.max(0, Math.min(100, Math.round(salience * arousalWeight)));

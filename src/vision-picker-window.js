@@ -106,7 +106,9 @@ function openVisionPicker(deps = {}) {
     webPreferences: {
       preload: path.join(__dirname, '..', 'vision-picker-preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true
     }
   });
 

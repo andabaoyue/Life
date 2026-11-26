@@ -53,20 +53,15 @@ jobs:
         run: node tools/check.js
       - name: Release integrity check (tools/release-check.js)
         run: node tools/release-check.js
+      - name: Gate self-check (test/gate-selfcheck.test.js)
+        run: node test/gate-selfcheck.test.js
       - name: Warm static UI asset cache
         run: |
           if [ -d assets ]; then
             find assets -type f -print0 | xargs -0 cat > /dev/null
           fi
       - name: Run full test suite
-        run: |
-          for attempt in 1 2 3; do
-            if npm test; then
-              exit 0
-            fi
-            echo "npm test failed on attempt ${attempt}; retrying the complete suite"
-          done
-          exit 1
+        run: npm test
 
   # 档 2：真构建 + 产物闭包断言。
   # 用独立 job 是有意的 —— 它要下载 Electron（100MB+、2~4 分钟），
@@ -97,3 +92,5 @@ jobs:
         run: npm run build:dir:linux   # 走锁定依赖的脚本，不用 npx 现拉版本
       - name: Assert ASAR runtime closure
         run: node tools/asar-check.js
+      - name: Assert ASAR freshness against working tree
+        run: node tools/artifact-freshness.js

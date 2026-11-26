@@ -70,7 +70,10 @@ const hardcodedPy = callLines(/['"]python3?['"]\s*$/).filter(({ l }) =>
   /spawn\(|spawnSync\(|execFileSync\(/.test(l));
 check('.py 解释器不再直接写死 python', hardcodedPy.length === 0,
   hardcodedPy.length ? '第 ' + hardcodedPy.map(x => x.i).join(',') + ' 行' : '');
-check('python 解释器可经DESPET_PY 覆盖', /DESPET_PY/.test(src));
+check('python 解释器可经 DESKPET_PY / DESPET_PY 覆盖',
+  /DESKPET_PY/.test(src) && /DESPET_PY/.test(src));
+check('存在全跳过防假绿守卫（至少真正执行 1 个套件）',
+  /executedSuites\s*>\s*0/.test(src));
 check('探测 playwright 可用性（缺依赖报 SKIP 而非假 FAIL）',
   /hasPlaywright/.test(src));
 

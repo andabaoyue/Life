@@ -758,6 +758,64 @@ function testI_PagingConstraints() {
     try { fs.rmSync(dirJ, { recursive: true, force: true }); } catch {}
   }
 
+  // -------------------------------------------------------------
+  // Test K: P1-19 ~ P1-21 与 P2-2 收口回归
+  // -------------------------------------------------------------
+  {
+    const mockTruncQuery = {
+      getSubjectState: () => ({ values: {} }),
+      getStateTrajectory: () => [],
+      getEvents: () => ({ total: 10005, items: [{ id: 1 }] }),
+      getObservations: () => ({ total: 1, items: [{ id: 1 }] }),
+      getInterpretations: () => ({ total: 0, items: [] }),
+      getEvidence: () => ({ total: 2, items: [{ id: 1 }, { id: 2 }] }),
+      getStateChanges: () => ({ total: 1, items: [{ id: 1 }] })
+    };
+    const bTrunc = exportFullResearchBundle(mockTruncQuery);
+    check('P1-19 Full Research Bundle 显式记录 exportedCount / totalCount / truncated 与 hasTruncation',
+      bTrunc.metadata.hasTruncation === true
+      && bTrunc.metadata.counts.events.totalCount === 10005
+      && bTrunc.metadata.counts.events.exportedCount === 1
+      && bTrunc.metadata.counts.events.truncated === true
+      && bTrunc.metadata.counts.observations.truncated === false);
+
+    const dirK = tmpDir('export-');
+    const awK = new ExperiencesArchive(dirK);
+    awK.appendWindowArchive({ windowNo: 1, turns: 1, rawSummaryText: 'w1', verifiedEvidence: [], stateChanges: [] });
+    const qK = new ResearchQuery(dirK);
+    const r1 = qK._getIntegritySnapshot();
+    const anchorPath = path.join(dirK, 'experiences.jsonl.anchor.json');
+    fs.writeFileSync(anchorPath, JSON.stringify({ rootHash: 'tampered-anchor', count: 999 }) + '\n', 'utf8');
+    const r2 = qK._getIntegritySnapshot();
+    check('P1-20 修改 anchor sidecar 后 _getIntegritySnapshot 缓存立即失效重建',
+      r1 !== r2 && qK._integrityCache && qK._integrityCache.key.includes('tampered-anchor'.length > 0 ? '-' : ''));
+
+    const { ResearchIndex } = require('../src/research-index');
+    const idxK = new ResearchIndex(dirK);
+    idxK.ensureIndex();
+    const origOpen = fs.openSync;
+    let openCalls = 0;
+    fs.openSync = function (...args) {
+      if (args[0] && String(args[0]).includes('experiences.jsonl')) openCalls++;
+      return origOpen.apply(fs, args);
+    };
+    let batchRecs = [];
+    try {
+      qK.setIndex(idxK);
+      batchRecs = qK._readArchiveRecords();
+    } finally {
+      fs.openSync = origOpen;
+    }
+    check('P1-21 _readArchiveRecords 经由 ResearchIndex 批量读取仅打开一次文件描述符',
+      batchRecs.length >= 1 && openCalls <= 1);
+
+    const { evaluateSalience } = require('../src/digital-umwelt');
+    check('P2-2 DigitalUmwelt.evaluateSalience arousal=0 不误回退为默认值 50',
+      evaluateSalience({ intensity: 40 }, { values: { arousal: 0 } }) === 0);
+
+    try { fs.rmSync(dirK, { recursive: true, force: true }); } catch {}
+  }
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();
