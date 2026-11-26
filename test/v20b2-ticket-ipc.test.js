@@ -395,8 +395,9 @@ function buildHarness(opts = {}) {
       && invoked[0].ch === 'agent:ticket-list');
 
     const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-    const petSrc = fs.readFileSync(path.join(ROOT, 'pet.js'), 'utf8');
-    const selectBodyMatch = /function selectPanelSection\([\s\S]*?\n\}/.exec(petSrc);
+    const petSrc = ['pet.js', 'ui-settings.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
+    const selectBodyMatch = /function selectPanelSection\([\s\S]*?\n\s{0,4}\}/.exec(petSrc);
     const selectBody = selectBodyMatch ? selectBodyMatch[0] : '';
 
     check('T3.2 面板结构与只读纪律：PANEL_SECTIONS 含 tickets、index.html 含 tab 与列表、无人工新建/修改按钮',

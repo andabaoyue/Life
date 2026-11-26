@@ -51,7 +51,9 @@ const fakeWin = {
 };
 const origLoad = Module._load;
 let liveEngine = null;// 🔴 D-8a：抓住 main.js 自己 new 出来的 TriggerEngine 实例
+const motionBlockEvents = [];
 const RealTriggerMod = require(path.join(ROOT, 'src/trigger.js'));
+const RealMotionMod = require(path.join(ROOT, 'src/desktop-motion.js'));
 Module._load = function (request) {
   if (request === 'electron') return {
     app: { getPath: () => DIR, whenReady: () => Promise.resolve(),
@@ -87,6 +89,19 @@ Module._load = function (request) {
       },
     });
     return wrapped;
+  }
+  if (request === './src/desktop-motion') {
+    return Object.assign({}, RealMotionMod, {
+      DesktopMotion: function (...a) {
+        const inst = new RealMotionMod.DesktopMotion(...a);
+        const origSetBlocked = inst.setBlocked.bind(inst);
+        inst.setBlocked = (blocked, reason) => {
+          motionBlockEvents.push({ blocked, reason });
+          return origSetBlocked(blocked, reason);
+        };
+        return inst;
+      },
+    });
   }
   return origLoad.apply(this, arguments);
 };
@@ -566,6 +581,47 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('N-08 显式确认后 reset 生效',
     confirmed.ok === true && confirmed.birthAt === brain.birthAt);
 
+  /* ============ NEW-P1: chat-send 并发打断代际守卫（A 被 B 打断时 chatBusy 不提前清零） ============ */
+  {
+    const prevStream = brain.api.stream;
+    motionBlockEvents.length = 0;
+    let callIdx = 0;
+    let releaseB = null;
+    brain.api.stream = (_msgs, onDelta, opts = {}) => {
+      callIdx++;
+      if (callIdx === 1) {
+        return new Promise((_resolve, reject) => {
+          const sig = opts && opts.signal;
+          const onAbort = () => {
+            const ae = new Error('aborted');
+            ae.name = 'AbortError';
+            reject(ae);
+          };
+          if (sig && sig.aborted) setImmediate(onAbort);
+          else if (sig) sig.addEventListener('abort', () => setImmediate(onAbort), { once: true });
+        });
+      }
+      return new Promise((resolve) => {
+        releaseB = () => {
+          onDelta('B');
+          resolve({ text: 'B', usage: {} });
+        };
+      });
+    };
+    const reqA = invoke('chat-send', '请求A');
+    const reqB = invoke('chat-send', '请求B');
+    await reqA;
+    const unblockedBeforeB = motionBlockEvents.some((ev) => ev.blocked === false && ev.reason === 'chat-done');
+    if (releaseB) releaseB();
+    const resB = await reqB;
+    const lastEv = motionBlockEvents[motionBlockEvents.length - 1];
+    brain.api.stream = prevStream;
+    check('NEW-P1: 并发 chat-send A 被 B 打断退出 finally 时不提前解除 chatBusy，直到 B 完成才 chat-done',
+      !unblockedBeforeB && resB && resB.ok === true
+      && lastEv && (lastEv.blocked === false || lastEv.blocked === null) && lastEv.reason === 'chat-done',
+      JSON.stringify({ unblockedBeforeB, lastEv }));
+  }
+
   check('本层跑完没有残留临时文件',
     fs.readdirSync(DIR).filter(x => x.includes('.tmp-')).length === 0);
   fs.rmSync(DIR, { recursive: true, force: true });
@@ -585,6 +641,26 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('chat-history 返回非空数组且投影恰为 8 字段白名单（多一字段即红）',
     Array.isArray(chList) && chList.length > 0
     && chList.every(m => Object.keys(m).sort().join(',') === 'bedside,bridge,content,messageId,role,synthetic,t,windowNo'));
+
+  /* ============ UI-P1-3 & UI-P1-4：单实例守卫、退出资源清理、destroyVisionPicker 与 SIGINT/SIGTERM ============ */
+  {
+    const mainSrc = ['main.js', 'src/main-window-ipc.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
+    check('UI-P1-3: main.js 仅在 singleInstance 为真时进入 whenReady / before-quit / 信号注册',
+      /if\s*\(\s*singleInstance\s*\)\s*\{[\s\S]*app\.whenReady\(\)\.then\(/.test(mainSrc)
+      && /app\.on\('before-quit'[\s\S]*?if\s*\(\s*!singleInstance\s*\)\s*return;/.test(mainSrc));
+
+    const vpw = require(path.join(ROOT, 'src/vision-picker-window.js'));
+    check('UI-P1-4: main.js 补齐 win.closed、isDestroyed 守卫、before-quit 资源回收与 SIGINT/SIGTERM 兜底',
+      typeof vpw.destroyVisionPicker === 'function'
+      && /win\.on\('closed'/.test(mainSrc)
+      && /function togglePinState\(\)\s*\{\s*(?:const win = getWin\(\);\s*)?if\s*\(!win\s*\|\|\s*win\.isDestroyed\(\)\)/.test(mainSrc)
+      && /destroyVisionPicker\(\)/.test(mainSrc)
+      && /tray\.destroy/.test(mainSrc)
+      && /motion\.stop\('before-quit'\)/.test(mainSrc)
+      && /process\.on\('SIGINT'/.test(mainSrc)
+      && /process\.on\('SIGTERM'/.test(mainSrc));
+  }
 
   console.log('\n' + (failures ? failures + ' 项失败' : 'main 层测试全部通过'));
   process.exit(failures ? 1 : 0);

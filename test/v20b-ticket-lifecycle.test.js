@@ -335,6 +335,23 @@ function check(name, cond, detail) {
       && brain.ticketStore.list().length === 2);
   }
 
+  // Batch 3.2: TicketStore 200 条容量上限拦截
+  {
+    const dirCap = fs.mkdtempSync(path.join(os.tmpdir(), 'v20b-'));
+    try {
+      const capStore = new TicketStore({ dir: dirCap });
+      for (let i = 0; i < 200; i++) {
+        const r = capStore.createTicket({ title: `t-${i}`, now: 1000 + i });
+        if (!r.ok) throw new Error('unexpected fail before 200');
+      }
+      const over = capStore.createTicket({ title: 'overflow-201', now: 9999 });
+      check('7.1 Batch3.2: TicketStore 达 200 条上限时拒绝新增并返回 TICKET_LIMIT_REACHED',
+        over.ok === false && over.code === 'TICKET_LIMIT_REACHED' && capStore.list().length === 200);
+    } finally {
+      try { fs.rmSync(dirCap, { recursive: true, force: true }); } catch {}
+    }
+  }
+
   console.log(`\nv20b-ticket-lifecycle: PASS=${pass}, FAIL=${failures}`);
   if (failures > 0) process.exit(1);
 })();

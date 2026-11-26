@@ -256,7 +256,7 @@ check('Test G (IPC window): { windowNo: null } 必须保持 null', ipcCalls[0].w
 
 ipcCalls.length = 0;
 handleGetWindow({}, {});
-check('Test G (IPC window): 空参数 {} 作为 UI 导航默认展示 Window 1', ipcCalls[0].wNo === 1);
+check('Test G (IPC window): 空参数 {} 默认传 null（不再伪造 Window 1）', ipcCalls[0].wNo === null);
 
 try {
   fs.rmSync(dirA, { recursive: true, force: true });

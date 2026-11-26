@@ -189,9 +189,12 @@ console.log('--- D-20 自述持久化门禁 ---');
 
 /* ============ 8. 防漂移：接线仍在 ============ */
 {
-  const memSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.js'), 'utf8');
+  const memSrc = [
+    fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.js'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '..', 'src', 'memory-self-notes.js'), 'utf8'),
+  ].join('\n');
   check('❌ addSelfNote 里确实调了 save(true)（立即落盘）',
-    /this\.save\(true\);/.test(memSrc));
+    /\b(?:this|mem)\.save\(true\);/.test(memSrc));
   // ⚠️ 必须**剔掉注释行**再查：文件里有两处注释在讲历史原因
   //   （「原设计把队列放在 this 上（this.selfNotes = []）」），
   //   直接对整个源码用正则会被它们误伤 —— 那不是代码，是解释。

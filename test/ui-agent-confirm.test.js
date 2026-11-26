@@ -525,6 +525,13 @@ check('UXSEC-U3 show() 将覆写警告安全渲染至 warn 字段（纯 textCont
     f.nodes['[data-agent-field="content-full"]'].textContent === ''
     && f.nodes['[data-agent-box="content-full"]'].classList.contains('hidden'));
 
+  const vmI18n = buildViewModel(goodProposal, {
+    dangerLevel: 'high',
+    t: (k, fb) => (k === 'agent.cap.write' ? 'Write File' : (k === 'agent.danger.high' ? 'High Risk' : fb)),
+  });
+  check('Batch3.3: buildViewModel 通过 t() 本地化 capabilityLabel 与 dangerLabel',
+    vmI18n.capabilityLabel === 'Write File' && vmI18n.dangerLabel === 'High Risk');
+
   if (origDoc === undefined) delete global.document; else global.document = origDoc;
 
   console.log(failures === 0 ? '\nall ui-agent-confirm tests passed' : `\n${failures} FAILED`);

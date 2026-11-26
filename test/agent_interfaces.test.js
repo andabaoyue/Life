@@ -205,12 +205,14 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
     const third = b.recordError();
     return third === false && b.state().tripped === true && b.state().tripReason === 'max_consecutive_errors';
   })());
-  check('C3 成功动作重置连续错误计数（偶发失败不误熔断）', (() => {
+  check('C3 成功动作通过 recordSuccess 重置连续错误计数（consume 不再清零）', (() => {
     const b = new ExecutionBudget({ maxActionsPerSession: 99, maxWritesPerSession: 99, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
     b.recordError(); b.recordError();
-    b.consume();                // 成功一次
+    b.consume();
+    const mid = b.state().consecutiveErrors;
+    b.recordSuccess();
     const after = b.state().consecutiveErrors;
-    return after === 0 && b.consume() === true;
+    return mid === 2 && after === 0 && b.consume() === true;
   })());
   check('C3 会话墙钟不因常驻时间熔断（由单次提案时限承载）', (() => {
     const b = new ExecutionBudget({ maxActionsPerSession: 99, maxWritesPerSession: 99, maxConsecutiveErrors: 99, maxWallClockMs: 600000 });
@@ -236,15 +238,17 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
     const s = b.state();
     return s.remainingActions === 3 && s.remainingWrites === 1 && s.actions === 2 && s.writes === 1;
   })());
-  check('C3 opts.free=true 只读豁免不消耗 actions 且仍重置连续错误计数', (() => {
+  check('C3 opts.free=true 只读豁免不消耗 actions 且不重置连续错误计数', (() => {
     const b = new ExecutionBudget({ maxActionsPerSession: 2, maxWritesPerSession: 5, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
     b.recordError();
     const ok1 = b.consume(false, Date.now(), { free: true });
     const ok2 = b.consume(false, Date.now(), { free: true });
     const ok3 = b.consume(false, Date.now(), { free: true });
+    const mid = b.state().consecutiveErrors;
+    b.recordSuccess();
     const s = b.state();
     return ok1 === true && ok2 === true && ok3 === true
-      && s.actions === 0 && s.remainingActions === 2 && s.consecutiveErrors === 0 && s.tripped === false;
+      && mid === 1 && s.actions === 0 && s.remainingActions === 2 && s.consecutiveErrors === 0 && s.tripped === false;
   })());
   check('C3 已熔断后即使 opts.free=true 也必须拦截放行', (() => {
     const b = new ExecutionBudget({ maxActionsPerSession: 1, maxWritesPerSession: 5, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
@@ -296,13 +300,15 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
   })());
 
   /* ===== 提案状态机 ===== */
-  check('提案状态机：合法状态可构造', (() => {
-    const p = createActionProposal({ capability: 'workspace.read', scope: inside, status: 'approved' });
-    return p.status === 'approved';
+  check('提案状态机：仅 trustedOpts 可设状态，忽略 input.status / input.createdAt', (() => {
+    const pTrusted = createActionProposal({ capability: 'workspace.read', scope: inside, status: 'executed', createdAt: 123 }, null, 'user', null, { status: 'approved', createdAt: 999 });
+    const pUntrusted = createActionProposal({ capability: 'workspace.read', scope: inside, status: 'approved', createdAt: 123 });
+    return pTrusted.status === 'approved' && pTrusted.createdAt === 999
+      && pUntrusted.status === 'proposed' && pUntrusted.createdAt > 1700000000000;
   })());
   check('提案状态机：非法状态被拒（防状态被随手写坏）', (() => {
     let threw = false;
-    try { createActionProposal({ capability: 'workspace.read', scope: inside, status: 'whatever' }); }
+    try { createActionProposal({ capability: 'workspace.read', scope: inside }, null, 'user', null, { status: 'whatever' }); }
     catch { threw = true; }
     return threw === true && PROPOSAL_STATES.includes('rolled_back');
   })());

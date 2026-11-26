@@ -41,6 +41,7 @@ const {
 const { UserConfirmationGate } = require(path.join(ROOT, 'src', 'agent-confirmation'));
 const { WriteTransactionManager } = require(path.join(ROOT, 'src', 'agent-transaction'));
 const {
+  ControlledAgentExecutor,
   EXECUTABLE_CAPABILITIES,
   READ_ONLY_EXEMPT_CAPABILITIES,
   REVERSIBLE_EXEMPT_CAPABILITIES,
@@ -577,6 +578,101 @@ function testReadScope(rawHint, sandboxDir) {
 
     check('6.2 auto 档读取与回声全程 systemText() 前缀缓存逐字节未变',
       brain.memory.systemText() === sysInitial);
+  }
+
+  /* ============ 7. SEC-P1-1：workspace.move 目标扩展名白名单闭环 ============ */
+  {
+    const e = makeEnv();
+    const srcFile = path.join(e.sandbox, 'source.txt');
+    fs.writeFileSync(srcFile, 'hello', 'utf8');
+    const badExts = ['.bat', '.ps1', '.html'];
+    const proposeAllRejected = badExts.every((ext) => {
+      const r = e.ipc.proposeInternal({
+        capability: 'workspace.move',
+        scope: srcFile,
+        dst: path.join(e.sandbox, 'evil' + ext),
+        reason: '尝试改名成危险扩展名',
+      }, 'ipc');
+      return !r.ok && r.error === 'DISALLOWED_EXTENSION';
+    });
+    // 执行期直调绕过建案也要被 _moveEntries 拦下并吊销授权
+    const directProp = createActionProposal({
+      capability: 'workspace.move',
+      scope: srcFile,
+      dst: path.join(e.sandbox, 'bypass.ps1'),
+      reason: '执行期直调',
+    });
+    const directStore = new Map([[directProp.id, directProp]]);
+    const directExecObj = new ControlledAgentExecutor({
+      policy: e.policy,
+      confirmation: e.confirmation,
+      budget: e.budget,
+      proposalStore: directStore,
+      transactionManager: e.txn,
+      auditLog: e.auditLog,
+    });
+    e.confirmation.confirm(directProp.id, 'approved', { status: 'proposed' });
+    const directExec = directExecObj.execute({ proposalId: directProp.id });
+    check('7.1 SEC-P1-1: workspace.move 改名为 .bat/.ps1/.html 在建案期与执行期双层拦截 DISALLOWED_EXTENSION',
+      proposeAllRejected && !directExec.ok && directExec.code === 'DISALLOWED_EXTENSION'
+      && fs.existsSync(srcFile) && !fs.existsSync(path.join(e.sandbox, 'bypass.ps1')));
+
+    const dstMd = path.join(e.sandbox, 'renamed.md');
+    const okFileProp = e.ipc.proposeInternal({
+      capability: 'workspace.move',
+      scope: srcFile,
+      dst: dstMd,
+      reason: '合法 txt -> md',
+    }, 'ipc');
+    e.confirmation.confirm(okFileProp.proposal.id, 'approved', { status: 'proposed' });
+    const okFileExec = e.ipc.executeInternal({ proposalId: okFileProp.proposal.id });
+    const dirSrc = path.join(e.sandbox, 'subA');
+    const dirDst = path.join(e.sandbox, 'subB');
+    fs.mkdirSync(dirSrc, { recursive: true });
+    const okDirProp = e.ipc.proposeInternal({
+      capability: 'workspace.move',
+      scope: dirSrc,
+      dst: dirDst,
+      reason: '合法子目录重命名',
+    }, 'ipc');
+    e.confirmation.confirm(okDirProp.proposal.id, 'approved', { status: 'proposed' });
+    const okDirExec = e.ipc.executeInternal({ proposalId: okDirProp.proposal.id });
+    check('7.2 SEC-P1-1: 合法 .txt -> .md 与普通子目录重命名均放行成功',
+      okFileExec.ok && fs.existsSync(dstMd) && okDirExec.ok && fs.existsSync(dirDst));
+
+    // Batch3.2: _moveEntries 第二步失败逆序回滚已完成的第一步重命名
+    const eRb = makeEnv();
+    const mv1Src = path.join(eRb.sandbox, 'm1.txt');
+    const mv2Src = path.join(eRb.sandbox, 'm2.txt');
+    const mv1Dst = path.join(eRb.sandbox, 'm1-done.txt');
+    const mv2Dst = path.join(eRb.sandbox, 'm2-done.txt');
+    fs.writeFileSync(mv1Src, 'one', 'utf8');
+    fs.writeFileSync(mv2Src, 'two', 'utf8');
+    let renCount = 0;
+    const partialFailFs = Object.assign({}, fs, {
+      renameSync(from, to) {
+        renCount++;
+        if (renCount === 2 && from === mv2Src) {
+          throw new Error('SIMULATED_RENAME_FAIL');
+        }
+        return fs.renameSync(from, to);
+      },
+    });
+    const rbStore = new Map();
+    const rbExec = new ControlledAgentExecutor({
+      policy: eRb.policy, confirmation: eRb.confirmation, budget: eRb.budget,
+      proposalStore: rbStore, transactionManager: eRb.txn, auditLog: eRb.auditLog, fs: partialFailFs,
+    });
+    const rbProp = createActionProposal({
+      capability: 'workspace.move',
+      targets: [{ src: mv1Src, dst: mv1Dst }, { src: mv2Src, dst: mv2Dst }],
+      scope: mv1Src,
+    });
+    rbStore.set(rbProp.id, rbProp);
+    eRb.confirmation.confirm(rbProp.id, 'approved', { status: 'proposed' });
+    const rbRes = rbExec.execute({ proposalId: rbProp.id });
+    check('7.3 Batch3.2: _moveEntries 第二项重命名失败时逆序回滚第一项，保持原状态',
+      rbRes.ok === false && fs.existsSync(mv1Src) && !fs.existsSync(mv1Dst) && fs.existsSync(mv2Src));
   }
 
   console.log(`\nv20s2-sandbox-structure: PASS=${pass}, FAIL=${failures}`);

@@ -44,11 +44,12 @@ function cleanup(dir) {
   const ROOT = path.resolve(__dirname, '..');
 
   // ── P0-1: main.js vision:capture 引入 visionPicker 且判空 ──
-  const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-vision-ipc.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   const capIdx = mainSrc.indexOf("ipcGuard.handle('vision:capture'");
   const capSlice = capIdx >= 0 ? mainSrc.slice(capIdx, capIdx + 1800) : '';
   check('P0-1a main.js vision:capture 显式引入 visionPicker',
-    capSlice.includes("const visionPicker = require('./src/vision-picker-window')"));
+    /const visionPicker = require\('\.(?:\/src)?\/vision-picker-window'\)/.test(capSlice));
   check('P0-1b main.js vision:capture 对 opts 与 display 做空值守卫',
     capSlice.includes("const rawOpts = (opts && typeof opts === 'object') ? opts : {}")
     && capSlice.includes("if (!display || !display.size) return fail('no_screen_source')"));
@@ -159,12 +160,13 @@ function cleanup(dir) {
 
   // ── P0-6: Brain 停机守卫与 _settleDreamOnWake 跨睡眠周期防清空 ──
   {
-    const brainSrc = fs.readFileSync(path.join(ROOT, 'src', 'brain.js'), 'utf8');
+    const brainSrc = ['brain.js', 'brain-window-pipeline.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8')).join('\n');
     check('P0-6a _dreamCycle 合成后检查 shutdownRequested 与 generationId',
-      brainSrc.includes('const dreamStartGen = this.generationId;')
-      && brainSrc.includes('if (this.shutdownRequested || this.generationId !== dreamStartGen)'));
+      /const dreamStartGen = (?:this|b)\.generationId;/.test(brainSrc)
+      && /if \((?:this|b)\.shutdownRequested \|\| (?:this|b)\.generationId !== dreamStartGen\)/.test(brainSrc));
     check('P0-6b _settleDreamOnWake 具并发锁并校验 stillSameSleep 防跨睡眠清零',
-      brainSrc.includes('if (this._settlingDreamOnWake || this.shutdownRequested) return null;')
+      /if \((?:this|b)\._settlingDreamOnWake \|\| (?:this|b)\.shutdownRequested\) return null;/.test(brainSrc)
       && brainSrc.includes('const stillSameSleep = (!reg.isSleeping) || (reg.sleepStartTime === sleepStartTime);'));
   }
 

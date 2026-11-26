@@ -27,14 +27,21 @@ function migrate(data, currentVersion, migrations, opts) {
     : 'schemaVersion';
 
   const rawVersion = (data && typeof data === 'object') ? data[versionKey] : undefined;
-  const fromVersion = Number.isFinite(rawVersion) ? rawVersion : 0;
+  if (Number.isFinite(rawVersion) && (!Number.isInteger(rawVersion) || rawVersion < 0)) {
+    const err = new Error(`非法的 ${versionKey} (${rawVersion})`);
+    err.code = 'INVALID_SCHEMA_VERSION';
+    throw err;
+  }
+  const fromVersion = Number.isInteger(rawVersion) ? rawVersion : 0;
 
   if (fromVersion === currentVersion) {
     return { data, migrated: false, fromVersion };
   }
 
   if (fromVersion > currentVersion) {
-    throw new Error(`数据版本 (${fromVersion}) 高于程序版本 (${currentVersion})，请升级程序`);
+    const err = new Error(`数据版本 (${fromVersion}) 高于程序版本 (${currentVersion})，请升级程序`);
+    err.code = 'SCHEMA_VERSION_TOO_HIGH';
+    throw err;
   }
 
   let currentData = data;

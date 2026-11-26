@@ -31,10 +31,6 @@ function registerResearchIpc(ipcMain, researchService, options = {}) {
       wNo = opts;
     } else if (opts && opts.windowNo !== undefined) {
       wNo = opts.windowNo;
-    } else if (opts === null) {
-      wNo = null;
-    } else {
-      wNo = (opts && opts.windowNo) ?? 1;
     }
     return researchService.query.getWindowDetail(wNo);
   });
@@ -134,7 +130,18 @@ function registerResearchIpc(ipcMain, researchService, options = {}) {
           format,
           targetDir: trustedTargetDir
         });
-        return { ok: true, targetDir: trustedTargetDir, result };
+        return {
+          ok: true,
+          targetDir: trustedTargetDir,
+          summary: {
+            type,
+            format,
+            saved: result && result.saved !== false,
+            filePath: (result && result.filePath) || null,
+            files: (result && result.files) || null,
+            byteLength: (result && typeof result.content === 'string') ? Buffer.byteLength(result.content, 'utf8') : null
+          }
+        };
       } catch (err) {
         return { ok: false, error: err.message };
       }

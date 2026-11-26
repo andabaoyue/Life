@@ -24,7 +24,8 @@ const path = require('path');
 const vision = require('../src/vision');
 
 const ROOT = path.join(__dirname, '..');
-const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const mainSrc = ['main.js', 'src/main-vision-ipc.js']
+  .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 const brainSrc = fs.readFileSync(path.join(ROOT, 'src', 'brain.js'), 'utf8');
 const memSrc = fs.readFileSync(path.join(ROOT, 'src', 'memory.js'), 'utf8');
 const regSrc = fs.readFileSync(path.join(ROOT, 'src', 'provider-registry.js'), 'utf8');
@@ -201,7 +202,7 @@ check('🔴 数组拒绝', vision.normalizeRect([1, 2, 3, 4]) === null);
    *   那不是本次要修的范围，硬改成 fail() 是越界改动。
    *   改用「handler 结束的 `});` + 后续注释块起点」定位。
    */
-  const endMark = start >= 0 ? mainSrc.indexOf('打开全屏框选窗', start) : -1;
+  const endMark = start >= 0 ? mainSrc.indexOf("ipcGuard.handle('vision:open-picker'", start) : -1;
   const body = (start >= 0 && endMark > start) ? mainSrc.slice(start, endMark) : '';
   const noComment = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 

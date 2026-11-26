@@ -165,11 +165,12 @@ function cleanup(dir) {
       check('R2-P1-2c 带新凭据授权跨 origin 变更允许保存',
         crossOriginWithAuth.ok === true && crossOriginWithAuth.connection.baseURL === 'https://b.example.com/v1');
 
-      const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+      const mainSrc = ['main.js', 'src/main-stt-ipc.js']
+        .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
       const sttSetIdx = mainSrc.indexOf("ipcGuard.handle('stt:set-config'");
       const sttSetSlice = sttSetIdx >= 0 ? mainSrc.slice(sttSetIdx, sttSetIdx + 1200) : '';
       check('R2-P1-2d main.js stt:set-config 校验端点合法性且 origin 变更未传新密钥时清除旧 STT 凭据',
-        sttSetSlice.includes("require('./src/stt-transport').validateConfig")
+        /require\('\.(?:\/src)?\/stt-transport'\)\.validateConfig/.test(sttSetSlice)
         && sttSetSlice.includes('deleteCredential(STT_CREDENTIAL_REF'));
     } finally {
       cleanup(dir);
@@ -230,7 +231,8 @@ function cleanup(dir) {
     check('R2-P1-4b pickCaptureSource 单屏无 display_id 仍放行',
       pickCaptureSource([singleNoId], { id: 101 }) === singleNoId);
 
-    const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const mainSrc = ['main.js', 'src/main-vision-ipc.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
     const capIdx = mainSrc.indexOf("ipcGuard.handle('vision:capture'");
     const capSlice = capIdx >= 0 ? mainSrc.slice(capIdx, capIdx + 5000) : '';
     const stageIdx = mainSrc.indexOf("ipcGuard.handle('vision:stage'");
@@ -268,11 +270,12 @@ function cleanup(dir) {
 
   // ── R2-P1-6: pendingDreamFragments 写入改为同步落盘 this.memory.save(true) ──
   {
-    const brainSrc = fs.readFileSync(path.join(ROOT, 'src', 'brain.js'), 'utf8');
-    const fragIdx = brainSrc.indexOf('this.memory.data.pendingDreamFragments.push');
+    const brainSrc = ['brain.js', 'brain-window-pipeline.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8')).join('\n');
+    const fragIdx = brainSrc.indexOf('memory.data.pendingDreamFragments.push');
     const fragSlice = fragIdx >= 0 ? brainSrc.slice(fragIdx, fragIdx + 450) : '';
     check('R2-P1-6 _dreamCycle 写入 pendingDreamFragments 后调用 this.memory.save(true) 同步原子落盘',
-      fragSlice.includes('this.memory.save(true)'));
+      /\.memory\.save\(true\)/.test(fragSlice));
   }
 
   // ── R2-P1-7: _restoreInternalRegulationFromArchive 滞回/孤立睡眠/allostasis 完整性 ──
@@ -575,18 +578,20 @@ function cleanup(dir) {
     ctrl.destroy();
   }
 
-  // ── R2-P1-17: pet.js startReplay() 轮询 try/catch、!taskId 复原取消按钮与 beforeunload 清理 ──
+  // ── R2-P1-17: startReplay() 轮询 try/catch、!taskId 复原取消按钮与 beforeunload 清理 ──
   {
     const petSrc = fs.readFileSync(path.join(ROOT, 'pet.js'), 'utf8');
-    const repIdx = petSrc.indexOf('async function startReplay');
-    const repSlice = repIdx >= 0 ? petSrc.slice(repIdx, repIdx + 4000) : '';
+    const resSrc = fs.readFileSync(path.join(ROOT, 'ui-research.js'), 'utf8');
+    const repIdx = resSrc.indexOf('async function startReplay');
+    const repSlice = repIdx >= 0 ? resSrc.slice(repIdx, repIdx + 4000) : '';
     const unloadIdx = petSrc.indexOf("window.addEventListener('beforeunload'");
-    const unloadSlice = unloadIdx >= 0 ? petSrc.slice(unloadIdx, unloadIdx + 300) : '';
-    check('R2-P1-17 pet.js startReplay 轮询 try/catch 保护、!taskId 复原按钮且 beforeunload 清理定时器',
+    const unloadSlice = unloadIdx >= 0 ? petSrc.slice(unloadIdx, unloadIdx + 450) : '';
+    check('R2-P1-17 startReplay 轮询 try/catch 保护、!taskId 复原按钮且 beforeunload 清理定时器',
       repSlice.includes('if (!taskId)')
       && repSlice.includes('if (cancelBtn) cancelBtn.disabled = true;')
       && repSlice.includes('catch (pollErr)')
-      && unloadSlice.includes('clearInterval(activeReplayPollingTimer)'));
+      && resSrc.includes('clearTimeout(activeReplayPollingTimer)')
+      && unloadSlice.includes('stopReplayPolling()'));
   }
 
   // ── R2-P1-18: self_note_state 纳入 FACTUAL_RECORD_TYPES，缺外部背书不得 CERTIFIED ──

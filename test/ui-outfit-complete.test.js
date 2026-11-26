@@ -62,13 +62,13 @@ check('9 防御：缺失 catalog / 未知锚 → null / 空计划不崩',
   && planOutfit(null, null).length === 0);
 
 check('10 P0-6 结构守卫：wdAnchor / wdPendingPlan 与 #wdSuggestBtn 监听绑定均位于 refreshWardrobe 外部模块作用域', (() => {
-  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'ui-wardrobe.js'), 'utf8');
   const idxFn = petSrc.indexOf('async function refreshWardrobe()');
   const idxAnchor = petSrc.indexOf('let wdAnchor = null;');
   const idxPlan = petSrc.indexOf('let wdPendingPlan = [];');
   const idxBind = petSrc.indexOf("if (wdSuggestBtn) wdSuggestBtn.addEventListener('click'");
   const fnBodyStart = idxFn;
-  const fnBodyEnd = petSrc.indexOf('\nfunction say(', fnBodyStart);
+  const fnBodyEnd = petSrc.indexOf('function toggleWardrobe(', fnBodyStart);
   const fnBody = petSrc.slice(fnBodyStart, fnBodyEnd);
   return idxFn > 0 && idxAnchor > 0 && idxPlan > 0 && idxBind > 0
     && idxAnchor < idxFn && idxPlan < idxFn && idxBind < idxFn
@@ -77,8 +77,8 @@ check('10 P0-6 结构守卫：wdAnchor / wdPendingPlan 与 #wdSuggestBtn 监听�
 })());
 
 check('11 P0-6 行为模拟：连续刷新衣橱不叠加 #wdSuggestBtn 监听器且点击单品后锚点保留触发单次建议', (() => {
-  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
-  const m = petSrc.match(/\/\* -{10} 智能成套建议[\s\S]*?(?=\nasync function refreshWardrobe\(\))/);
+  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'ui-wardrobe.js'), 'utf8');
+  const m = petSrc.match(/\/\* -{10} 智能成套建议[\s\S]*?(?=\n\s*async function refreshWardrobe\(\))/);
   if (!m) return false;
   let btnClicks = 0;
   let wardrobeSetCalls = 0;

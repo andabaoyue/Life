@@ -197,7 +197,7 @@ const hijackAttempt = connections.updateConnection(dir2, 'conn-default', {
 check('P0-1 updateConnection 拒绝将 cred:deepseek 复用到非官方自定义端点（防 Key 外泄）',
   hijackAttempt.ok === false &&
   hijackAttempt.error.includes('PROVIDER_POLICY_REJECTED') &&
-  hijackAttempt.error.includes('自定义 Provider 不得复用 DeepSeek Key'));
+  hijackAttempt.error.includes('非 DeepSeek 官方 Endpoint 不得使用 DeepSeek 专属 Key'));
 
 const fakeHijackedConn = {
   ...mig1.store.connections[0],
@@ -208,7 +208,7 @@ const resolveAttempt = connections.resolveRuntimeCfg(fakeHijackedConn, { dir: di
 check('P0-1 resolveRuntimeCfg 拒绝为篡改端点解析 cred:deepseek 凭据（fail-closed）',
   resolveAttempt.ok === false &&
   resolveAttempt.error.includes('CONNECTION_INVALID') &&
-  resolveAttempt.error.includes('自定义 Provider 不得复用 DeepSeek Key'));
+  resolveAttempt.error.includes('非 DeepSeek 官方 Endpoint 不得使用 DeepSeek 专属 Key'));
 
 const delLegacy = connections.deleteConnection(dir2, 'conn-default', { deleteCredential: true, getSS: () => fakeSS });
 check('5 legacy-mapped Connection 删除只删连接、legacy 文件保留（不误删）',

@@ -4,18 +4,17 @@ const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { migrate } = require('./migration');
 const { computeEngramDecay, DEFAULT_DYNAMICS_CONFIG } = require('./memory-dynamics');
+const selfNotesStore = require('./memory-self-notes');
+const observeEpochStore = require('./memory-observe-epoch');
+const lexiconStore = require('./memory-lexicon');
+const expectationsStore = require('./memory-expectations');
 
 const SCHEMA_VERSION = 1;
-
-/**
- * v2.0-s1（s1-b）：selfNotes 渐褪默认参数。
- * activeThreshold 与 fadingMaxChars 对齐 src/config.js（0.50 / 300），确保未开 engramManager 的纯 Memory 实例表现一致。
- */
-const SELF_NOTE_DYNAMICS_DEFAULTS = Object.freeze({
-  ...DEFAULT_DYNAMICS_CONFIG,
-  activeThreshold: 0.50,
-  fadingMaxChars: 300,
-});
+const SELF_NOTE_DYNAMICS_DEFAULTS = selfNotesStore.SELF_NOTE_DYNAMICS_DEFAULTS;
+const SELF_NOTE_MAX_CHARS = selfNotesStore.SELF_NOTE_MAX_CHARS;
+const SELF_NOTE_MAX_QUEUE = selfNotesStore.SELF_NOTE_MAX_QUEUE;
+const OBSERVED_NOTE_MAX_QUEUE = observeEpochStore.OBSERVED_NOTE_MAX_QUEUE;
+const isLexiconWordMentioned = lexiconStore.isLexiconWordMentioned;
 
 /**
  * 三层记忆：原始对话窗口 -> 窗口小结 -> 长期记忆
@@ -106,53 +105,8 @@ function truncateFadingText(text, cap = 60) {
   return str.slice(0, cap) + '...';
 }
 
-/** 🔴 D-13：自述单条最大字符数。超过整条拒收（不截断——截断会让她的话变形）。 */
-const SELF_NOTE_MAX_CHARS = 600;
-
-/** 🔴 D-13：自述队列上界。积压说明调用方出问题，超出即丢最旧的一条。 */
-const SELF_NOTE_MAX_QUEUE = 8;
-
-/**
- * 🔴 v1.9.0-dev（观察档缺口补齐）：观察期元数据队列上界。
- *
- * ## 它是什么，不是什么
- *   它**只是计数用的**：`{ at, capability }`，**不含正文**。
- *   正文在 `agent-observations.jsonl`（`src/agent-observations.js`），那份是完整正文。
- *
- * ⚠️ **为什么必须独立于 `selfNotes`**：
- *   `SELF_NOTE_MAX_QUEUE = 8` 的淘汰是**无差别丢最旧**（`:1217` shift / `:290` slice）。
- *   若把观察条目塞进 `selfNotes`，会挤掉**真实落盘、已铸自传的正式便签**——
- *   那些是她真的写成的字，丢掉是数据损失。
- *
- * ⚠️ **上限与 `agent-observations.jsonl` 的轮转（100 条 / 90 天）不对齐，且这是可接受的**：
- *   注入只用计数（方案 3.4「只给计数，不给文件名、不给时间」），
- *   所以「计数 > 可查正文数」不影响注入正确性。
- *   后来者若想「从 observedNotes 反查正文」会发现对不上——**那不是 bug，是设计**。
- */
-const OBSERVED_NOTE_MAX_QUEUE = 20;
-
-/**
- * v1.0.6 词汇动力学提及检测（防子串假阳性与词边界防御）：
- * 1. 词长前置保证：addLexicon 门禁强制 word.length >= 2（WORD_TOO_SHORT），彻底根除单字语素歧义与真阳性漏检陷阱；
- * 2. 西方词汇/英文缩写（如 Al / cat）：严格使用单词边界匹配，杜绝 "Al" 误中 "Always"、"cat" 误中 "catch"；
- * 3. 多字自创词/专属暗号（如「信物」「微光」「雨声」）：天然具备词汇特异性，子串包含即为合规提及；
- *    （多字词偶发包含如「毛雨声音」中命中「雨声」符合自然语言演化容忍度，概率极低且保持纯本地高性能计算）。
- */
-function isLexiconWordMentioned(text, word) {
-  if (!text || !word) return false;
-  const w = String(word).trim();
-  if (w.length < 2) return false;
-
-  // 1. 西方词汇 / 英文缩写
-  if (/^[\w-]+$/.test(w)) {
-    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp('(^|[^a-zA-Z0-9_-])' + escaped + '([^a-zA-Z0-9_-]|$)', 'i');
-    return re.test(text);
-  }
-
-  // 2. 多字词汇
-  return text.includes(w);
-}
+  // selfNotes / observeEpoch / lexicon 常量的定义与实现已拆入独立子存储模块（src/memory-*.js），
+  // 此处由顶部统一绑定以保持对外常量语义与行数压缩。
 
 class Memory {
   constructor(dir, opts = {}) {
@@ -210,6 +164,7 @@ class Memory {
     const dynamicsEnabled = opts.memoryDynamics !== undefined
       ? Boolean(opts.memoryDynamics)
       : (opts.experimentModules ? Boolean(opts.experimentModules.memoryDynamics) : false);
+    this.memoryDynamicsEnabled = dynamicsEnabled;
     if (dynamicsEnabled) {
       const { EngramTraceManager } = require('./memory-dynamics');
       this.engramManager = new EngramTraceManager(opts.engramConfig);
@@ -224,6 +179,34 @@ class Memory {
     }
 
     this.load();
+  }
+
+  /** 当前是否处于记忆动力学激活态（开关为真且已装载 engramManager） */
+  get isMemoryDynamicsActive() {
+    return Boolean(this.memoryDynamicsEnabled && this.engramManager);
+  }
+
+  /**
+   * 跨窗热切记忆动力学开关（停用时仅切换布尔标记，保留内存/磁盘痕迹不销毁；重新启用时按需懒加载恢复）
+   */
+  setMemoryDynamicsEnabled(enabled, engramOpts = null) {
+    const next = Boolean(enabled);
+    this.memoryDynamicsEnabled = next;
+    if (next) {
+      if (!this.engramManager) {
+        const { EngramTraceManager } = require('./memory-dynamics');
+        this.engramManager = new EngramTraceManager(engramOpts || this.opts.engramConfig);
+        if (this.data && this.data.engrams) {
+          this.engramManager.restoreFromSnapshot(this.data.engrams);
+        }
+      }
+      this.fadingMaxChars = this.engramManager.config.fadingMaxChars;
+      if (this.data) this.refreshDeepHorizon();
+    } else {
+      this.fadingMaxChars = null;
+      if (this.data) this.data.deepHorizon = '';
+    }
+    return next;
   }
 
   load() {
@@ -383,64 +366,16 @@ class Memory {
 
   /** 返回 selfNotes 渐褪动力学配置（统一使用 MemoryDynamics 参数，未开 engramManager 时回落 SELF_NOTE_DYNAMICS_DEFAULTS）。 */
   _selfNoteDynamicsConfig() {
-    return (this.engramManager && this.engramManager.config)
-      ? { ...SELF_NOTE_DYNAMICS_DEFAULTS, ...this.engramManager.config }
-      : SELF_NOTE_DYNAMICS_DEFAULTS;
+    return selfNotesStore.selfNoteDynamicsConfig(this);
   }
 
-  /**
-   * 选出 selfNotes 队列满时应被淘汰的下标：
-   *   1. 严格豁免未读（drained === false）条目 —— 只要队列里还有任何已读（drained === true）条目，绝不淘汰未读项；
-   *   2. 在候选池内按强度最低优先淘汰，同强度按最旧（最小下标）打破平局。
-   */
   _pickSelfNoteEvictionIndex(list) {
-    if (!Array.isArray(list) || list.length === 0) return -1;
-    const readIndices = [];
-    for (let i = 0; i < list.length; i++) {
-      if (list[i] && list[i].drained === true) readIndices.push(i);
-    }
-    const pool = readIndices.length > 0 ? readIndices : list.map((_, i) => i);
-    let bestIdx = pool[0];
-    let bestStrength = Number.isFinite(list[bestIdx] && list[bestIdx].strength) ? list[bestIdx].strength : 0.6;
-    for (let j = 1; j < pool.length; j++) {
-      const idx = pool[j];
-      const item = list[idx];
-      const s = Number.isFinite(item && item.strength) ? item.strength : 0.6;
-      if (s < bestStrength) {
-        bestStrength = s;
-        bestIdx = idx;
-      }
-    }
-    return bestIdx;
+    return selfNotesStore.pickSelfNoteEvictionIndex(list);
   }
 
-  /**
-   * v2.0-s1（s1-b）：在关窗或显式结算时推进 selfNotes 的强度与层级衰减。
-   * 仅更新 strength 与 tier，绝不物理删除条目（保持零物理丢弃与 D-24 未铸造资格）。
-   *
-   * @param {number} [currentWindow]
-   */
+  /** v2.0-s1（s1-b）：推进 selfNotes 强度与层级衰减（只衰减不物理删除）。 */
   decaySelfNotes(currentWindow) {
-    if (!Array.isArray(this.data.selfNotes) || this.data.selfNotes.length === 0) return 0;
-    const curWin = Number.isFinite(currentWindow) ? currentWindow : (this.data.windowNo || 1);
-    const cfg = this._selfNoteDynamicsConfig();
-    let updated = 0;
-    for (const n of this.data.selfNotes) {
-      if (!n || typeof n !== 'object') continue;
-      const created = Number.isFinite(n.windowNo) ? n.windowNo : 1;
-      const dec = computeEngramDecay({
-        initialStrength: Number.isFinite(n.initialStrength) ? n.initialStrength : 0.6,
-        createdWindow: created,
-        lastRetrievedWindow: Number.isFinite(n.lastRetrievedWindow) ? n.lastRetrievedWindow : created,
-        retrievalCount: Number.isFinite(n.retrievalCount) ? n.retrievalCount : 0,
-      }, Math.max(created, curWin), cfg);
-      if (dec) {
-        n.strength = dec.currentStrength;
-        n.tier = dec.tier;
-        updated++;
-      }
-    }
-    return updated;
+    return selfNotesStore.decaySelfNotes(this, currentWindow);
   }
 
   /**
@@ -500,7 +435,7 @@ class Memory {
 
     // ① 印痕部分（依赖 engramManager）
     const reactivated = [];
-    if (this.engramManager) {
+    if (this.isMemoryDynamicsActive) {
       // 🔴 D-23：候选范围放开到**全部** trace（原来只认 DORMANT ⇒ 增强几乎不触发）。
       //   实测：她 5 段记忆里零条 DORMANT，整个强化系统空转。
       //   但**必须同时做去重**：只让「本窗口尚未被巩固」的印痕参与 top-N 争夺，
@@ -536,45 +471,7 @@ class Memory {
     }
 
     // ② v2.0-s1（s1-b）：selfNotes 独立唤醒（不依赖 engramManager，不进 system 前缀，不影响其余已读条目反唠叨）
-    let selfNoteReactivated = 0;
-    if (Array.isArray(this.data.selfNotes) && this.data.selfNotes.length > 0) {
-      const noteCandidates = this.data.selfNotes
-        .filter((n) => n && (n.lastRetrievedWindow !== curWin || n.tier === 'DORMANT'));
-      const scoredNotes = [];
-      for (const note of noteCandidates) {
-        const hay = `${note.content || ''} ${note.name || ''}`.toLowerCase();
-        let score = 0;
-        for (const tok of uniqueTokens) {
-          if (hay.includes(tok)) score++;
-        }
-        if (score > 0) scoredNotes.push({ note, score });
-      }
-      if (scoredNotes.length > 0) {
-        scoredNotes.sort((a, b) => b.score - a.score);
-        const cfg = this._selfNoteDynamicsConfig();
-        for (let i = 0; i < Math.min(topN, scoredNotes.length); i++) {
-          const n = scoredNotes[i].note;
-          n.retrievalCount = (Number(n.retrievalCount) || 0) + 1;
-          n.lastRetrievedWindow = curWin;
-          const created = Number.isFinite(n.windowNo) ? n.windowNo : 1;
-          const dec = computeEngramDecay({
-            initialStrength: Number.isFinite(n.initialStrength) ? n.initialStrength : 0.6,
-            createdWindow: created,
-            lastRetrievedWindow: curWin,
-            retrievalCount: n.retrievalCount,
-          }, Math.max(created, curWin), cfg);
-          if (dec) {
-            n.strength = dec.currentStrength;
-            n.tier = dec.tier === 'DORMANT' ? 'FADING' : dec.tier;
-          } else if (n.tier === 'DORMANT') {
-            n.tier = 'FADING';
-          }
-          // 仅对本次被语境唤回的条目重开一次回流资格；其余未命中条目维持 drained === true（反唠叨守恒）。
-          n.drained = false;
-          selfNoteReactivated++;
-        }
-      }
-    }
+    const selfNoteReactivated = selfNotesStore.reactivateSelfNotesByTokens(this, uniqueTokens, curWin, topN);
 
     if (reactivated.length > 0 || selfNoteReactivated > 0) {
       this.save();
@@ -595,7 +492,7 @@ class Memory {
    * 5. 说了即记：当场调用 engramManager.reactivate()，关窗 decayAll 平滑结算
    */
   triggerInvoluntaryRecall(currentWindow, at) {
-    if (!this.engramManager) return null;
+    if (!this.isMemoryDynamicsActive) return null;
     const curWin = Number.isFinite(currentWindow) ? currentWindow : (this.data.windowNo || 1);
     const now = Number.isFinite(at) ? at : Date.now();
 
@@ -719,6 +616,7 @@ class Memory {
       if (!m) break;
       if (m.role === 'user' && !m.synthetic && !m.bridge) {
         this.data.turnsInWindow = Math.max(0, this.data.turnsInWindow - 1);
+        this.data.totalTurns = Math.max(0, (this.data.totalTurns || 0) - 1);
       }
     }
     this.save();
@@ -754,7 +652,7 @@ class Memory {
    *      无动力学（基线）时**不截断也不剔除** ⇒ 与 memoryTokens() 等价，既有行为不变。
    */
   visibleTokens() {
-    if (!this.engramManager) return this.memoryTokens();
+    if (!this.isMemoryDynamicsActive) return this.memoryTokens();
     const dormantNos = new Set(this.engramManager.getDormantTraces().map((t) => t.sourceWindowNo));
     const fadingNos = new Set(this.engramManager.getFadingTraces().map((t) => t.sourceWindowNo));
     const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
@@ -802,7 +700,7 @@ class Memory {
    */
   refreshDeepHorizon() {
     let horizon = '';
-    if (this.engramManager && this.data.windows.length) {
+    if (this.isMemoryDynamicsActive && this.data.windows.length) {
       const dormantNos = [...new Set(this.engramManager.getDormantTraces().map(t => t.sourceWindowNo))]
         .filter(no => this.data.windows.some(w => w.no === no))
         .sort((a, b) => a - b);
@@ -922,170 +820,19 @@ class Memory {
   }
 
   addLexicon(entry = {}, opts = {}) {
-    const kind = String(entry.kind || '');
-    if (!['coinage', 'metaphor', 'nickname', 'adopted'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
-    const word = String(entry.word || '').trim();
-    if (!word) return { ok: false, error: 'EMPTY_WORD' };
-    // v1.0.6 词长门禁：禁止单字词入库（防单字语素歧义与真阳性漏检陷阱）
-    if (word.length < 2) return { ok: false, error: 'WORD_TOO_SHORT' };
-    const messageId = String(entry.messageId || '');
-    const msg = this._resolveMessage(messageId, opts);
-    if (!msg) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
-
-    const gloss = String(entry.gloss || '').trim();
-    // v1.0.6 专属门禁 1：adopted 词条 gloss 必填（必须说明为何是专属暗号与含义，防无义词泛滥）
-    if (kind === 'adopted' && !gloss) return { ok: false, error: 'EMPTY_GLOSS' };
-
-    // v1.0.6 专属门禁 2：引证消息的发言者角色校验。对于 adopted，必须是初澜亲口说出或接纳的话（assistant 角色，在 knownIds 等无主体内容的回落路径下 fail-closed）
-    if (kind === 'adopted' && (!msg.role || msg.role !== 'assistant')) {
-      return { ok: false, error: 'INVALID_MESSAGE_ROLE' };
-    }
-
-    // v1.0.6 专属门禁 3：词↔消息内容一致性校验。对于 adopted，所引证消息必须切实包含该词
-    if (kind === 'adopted' && (!msg.content || typeof msg.content !== 'string' || !msg.content.includes(word))) {
-      return { ok: false, error: 'WORD_NOT_IN_MESSAGE' };
-    }
-
-    const list = Array.isArray(this.data.lexicon) ? this.data.lexicon : (this.data.lexicon = []);
-    const hit = list.find((x) => x && x.word === word);
-    if (hit) {
-      hit.weight = Math.min(3, Number(((Number(hit.weight) || 1) + 0.2).toFixed(2)));
-      hit.status = 'ACTIVE';
-      hit.lastUsedWindow = Number.isFinite(entry.windowNo) ? entry.windowNo : (this.data.windowNo || 1);
-      hit.lastDecayedWindow = hit.lastUsedWindow;
-      this.save();
-      return { ok: true, entry: hit, created: false };
-    }
-
-    // v1.0.6 专属门禁 4：单窗最多收纳 1 条 adopted 专属暗号（克制防膨胀）
-    const targetWin = Number.isFinite(entry.windowNo) ? entry.windowNo : (this.data.windowNo || 1);
-    if (kind === 'adopted') {
-      const alreadyAdoptedThisWin = list.some(x => x && x.kind === 'adopted' && x.windowNo === targetWin);
-      if (alreadyAdoptedThisWin) {
-        return { ok: false, error: 'WINDOW_ADOPTED_LIMIT' };
-      }
-    }
-
-    const rec = {
-      word, kind,
-      gloss,
-      messageId,
-      windowNo: targetWin,
-      lastUsedWindow: targetWin,
-      lastDecayedWindow: targetWin,
-      firstAt: Number.isFinite(entry.firstAt) ? entry.firstAt : null,
-      uses: [],
-      weight: 1,
-      status: 'ACTIVE'
-    };
-    list.push(rec);
-    this.save();
-    return { ok: true, entry: rec, created: true };
+    return lexiconStore.addLexicon(this, entry, opts);
   }
 
-  /**
-   * v1.0.6 词汇动力学静默流转（方案 A1）：
-   * 1. 零 Prompt 开销：在关窗时刻由本地根据本窗真实消息扫描判定，不打扰 LLM。
-   * 2. 活跃提及共振：本窗内切实提及的词条（ACTIVE / FADING / DORMANT），权重递增 (+0.2，上限 3.0)，状态复苏为 ACTIVE，并更新 lastUsedWindow 与 lastDecayedWindow。
-   * 3. 跨窗自然淡化（真正每 3 窗扣一次）：距上次提及且距上次衰减均达到 3 窗以上时，平滑减权 (-0.1，下限 0.1)，同步推进 lastDecayedWindow。
-   * 4. 三态严格对齐：权重低于 0.5 时退入 FADING（从 systemText 视野移出，节省 prompt 预算）；权重 <= 0.2 时退入 DORMANT。
-   * 5. 纯本地确定性代数，只淡化不删除（D-005）。
-   */
   refreshLexiconDynamics(activeItems = [], windowNo) {
-    if (!Array.isArray(this.data.lexicon) || !this.data.lexicon.length) return [];
-    const curWin = Number.isFinite(windowNo) ? windowNo : (this.data.windowNo || 1);
-    const items = Array.isArray(activeItems) ? activeItems : [];
-    const allText = items
-      .map(m => (m && typeof m.content === 'string') ? m.content : '')
-      .join('\n');
-
-    for (const entry of this.data.lexicon) {
-      if (!entry || !entry.word) continue;
-      const word = String(entry.word).trim();
-      if (!word) continue;
-      const isMentioned = isLexiconWordMentioned(allText, word);
-      if (isMentioned) {
-        entry.weight = Math.min(3, Number(((Number(entry.weight) || 1) + 0.2).toFixed(2)));
-        entry.status = 'ACTIVE';
-        entry.lastUsedWindow = curWin;
-        entry.lastDecayedWindow = curWin;
-      } else {
-        const lastWin = Number.isFinite(entry.lastUsedWindow)
-          ? entry.lastUsedWindow
-          : (Number.isFinite(entry.windowNo) ? entry.windowNo : 1);
-        const lastDecayed = Number.isFinite(entry.lastDecayedWindow)
-          ? entry.lastDecayedWindow
-          : lastWin;
-
-        // 距上次提及且距上次衰减均 >= 3 窗（真正每 3 窗扣减一次，节奏从容平滑）
-        if (curWin - lastWin >= 3 && curWin - lastDecayed >= 3) {
-          entry.weight = Math.max(0.1, Number(((Number(entry.weight) || 1) - 0.1).toFixed(2)));
-          entry.lastDecayedWindow = curWin;
-          if (entry.weight <= 0.2) {
-            entry.status = 'DORMANT';
-          } else if (entry.weight < 0.5) {
-            entry.status = 'FADING';
-          }
-        }
-      }
-    }
-    return this.data.lexicon;
+    return lexiconStore.refreshLexiconDynamics(this, activeItems, windowNo);
   }
 
-  /* ---------- v1.0 生命机制（§4.7 #4 预期与意外）：时间的矢量 ----------
-     门槛（设计书拍板 + 架构评审）：
-     1. 防 Siri 化：零定时器、零提醒 —— 预期只进她的视野，说不说归她；
-     2. 状态流转主权归关窗小结（fulfilled/broken 在 Window Synthesis 判定，实时只注入）；
-     3. broken 不硬扣特质 —— 作为高权重客观事件进 GROWTH_SYS 成长反思（oppose 由她自己长出）；
-     4. 承诺（pledge）是预期的第一公民，不另立账本（#6 并入）。 */
   addExpectation(entry = {}, opts = {}) {
-    const kind = String(entry.kind || '');
-    if (!['external', 'pledge'].includes(kind)) return { ok: false, error: 'INVALID_KIND' };
-    const source = String(entry.source || '');
-    if (!['user', 'chulan'].includes(source)) return { ok: false, error: 'INVALID_SOURCE' };
-    const text = String(entry.text || entry.content || '').trim();   // v1.0 别名容错：模型偶发用 content（同数据换键名）
-    if (!text) return { ok: false, error: 'EMPTY_TEXT' };
-    const messageId = String(entry.messageId || '');
-    if (!this._resolveMessage(messageId, opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
-    const list = Array.isArray(this.data.expectations) ? this.data.expectations : (this.data.expectations = []);
-    const n = list.reduce((a, x) => Math.max(a, Number(String((x && x.id) || '').replace(/\D/g, '')) || 0), 0) + 1;
-    const rec = {
-      id: 'exp-' + String(n).padStart(6, '0'),
-      kind, text, source, messageId,
-      windowNo: Number.isFinite(entry.windowNo) ? entry.windowNo : this.data.windowNo,
-      createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : null,
-      dueHint: entry.dueHint == null ? null : String(entry.dueHint),
-      status: 'open',
-      outcome: null
-    };
-    list.push(rec);
-    if (list.length > 10) list.splice(0, list.length - 10);   // FIFO 上限 10（设计书）
-    this.save();
-    return { ok: true, entry: rec };
+    return expectationsStore.addExpectation(this, entry, opts);
   }
 
   resolveExpectation(id, outcome = {}, opts = {}) {
-    const list = Array.isArray(this.data.expectations) ? this.data.expectations : [];
-    const hit = list.find((x) => x && x.id === id);
-    if (!hit) return { ok: false, error: 'NOT_FOUND' };
-    if (hit.status !== 'open') return { ok: false, error: 'ALREADY_RESOLVED' };
-    const status = String(outcome.status || '');
-    if (!['fulfilled', 'broken', 'moot'].includes(status)) return { ok: false, error: 'INVALID_STATUS' };
-    const messageId = outcome.messageId == null ? null : String(outcome.messageId);
-    if (status !== 'moot' && !this._resolveMessage(messageId || '', opts)) return { ok: false, error: 'UNRESOLVED_MESSAGE_ID' };
-    // v1.2 A-1：记录实际结算窗口号 resolvedWindowNo（保留创建窗 hit.windowNo 不变），避免关窗 closeWindow 已自增 windowNo 后误记到下一窗
-    const resolvedWindowNo = Number.isFinite(outcome.windowNo)
-      ? outcome.windowNo
-      : (Number.isFinite(opts.windowNo) ? opts.windowNo : this.data.windowNo);
-    hit.status = status;
-    hit.outcome = {
-      at: Number.isFinite(outcome.at) ? outcome.at : null,
-      messageId,
-      note: String(outcome.note || ''),
-      resolvedWindowNo
-    };
-    this.save();
-    return { ok: true, entry: hit };
+    return expectationsStore.resolveExpectation(this, id, outcome, opts);
   }
 
   /* ---------- 面板 B：连接桥观测出口（V3.1 §3 双读路径） ---------- */
@@ -1111,7 +858,7 @@ class Memory {
     const { classifyBadges } = require('./memory-dynamics');
 
     // 印痕：强度维度走纯函数实时算；promptTier 保留关窗定值供对照
-    const traces = this.engramManager
+    const traces = this.isMemoryDynamicsActive
       ? this.engramManager.tiersForDisplay(w).map((t) => {
           const badges = classifyBadges({ tier: t.tier });
           return {
@@ -1175,7 +922,7 @@ class Memory {
       let dormantNos = new Set();
       let fadingNos = new Set();
 
-      if (this.engramManager) {
+      if (this.isMemoryDynamicsActive) {
         dormantNos = new Set(this.engramManager.getDormantTraces().map(t => t.sourceWindowNo));
         fadingNos = new Set(this.engramManager.getFadingTraces().map(t => t.sourceWindowNo));
         activeWindows = this.data.windows.filter(w => !dormantNos.has(w.no));
@@ -1184,7 +931,7 @@ class Memory {
       if (activeWindows.length) {
         const mem = activeWindows
           .map(w => {
-            const isFading = this.engramManager && fadingNos.has(w.no);
+            const isFading = this.isMemoryDynamicsActive && fadingNos.has(w.no);
             if (isFading) {
                       const tag = w.early ? '【早期（渐褪）】' : `【第${w.no}段（渐褪）】`;
               // 🔴 丙：截断长度可配（原先硬编码 60 —— 实测连一句完整的话都放不下，
@@ -1202,7 +949,7 @@ class Memory {
     }
     // v0.9.9 Batch 2: 底座深处经历地平线 —— 钉子1：必须在 activeWindows 守卫之外
     //（全部段落休眠的时刻恰恰最需要它）；只在窗口轮转时重算，窗口内逐字节稳定。
-    if (this.data.deepHorizon) s += '\n\n' + this.data.deepHorizon;
+    if (this.isMemoryDynamicsActive && this.data.deepHorizon) s += '\n\n' + this.data.deepHorizon;
     // v0.9.9 意志层·好奇：未解疑问进视野（轻版 —— 只在回复中自然带问，不做主动弹窗求知）。
     // 反骚扰闩写死在块内：一次最多一个、绝不连环审问。
     const cur = Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [];
@@ -1419,326 +1166,27 @@ class Memory {
    *   与桌面沙盒里那些永久文件形成对照：**纸都在，记忆只留最近的几件**。
    */
   addSelfNote(input = {}) {
-    try {
-      const content = typeof input.content === 'string' ? input.content.trim() : '';
-      if (!content) return false;
-      if (content.length > SELF_NOTE_MAX_CHARS) return false;
-      if (!Array.isArray(this.data.selfNotes)) this.data.selfNotes = [];
-
-      /* 🔴 2026-11-05 B-1：内容幂等（审计 P2 #8）。
-       *
-       * ## 为什么需要
-       *   正常路径不会重复（`onExecuted` 只在执行成功时 fire 一次），
-       *   但**没有任何断言挡着**。一次重复登记，她下次开口就会读到同一句话两遍。
-       *   实测：同内容连调两次 → `true, true`，队列长度 2。
-       *
-       * ## 判据为什么必须带 `drained === false`
-       *   她已经读过（`drained: true`）的旧条目**不算重复** ——
-       *   否则她这辈子写不了第二遍同一句话。那是过度修复。
-       *
-       * ## 为什么放在淘汰（下一行）之前
-       *   放在淘汰之后的话，队列已满时先 shift 再判重，
-       *   会把一条真实条目挤掉才发现「哦这条是重复的」——白丢一条。
-       */
-      if (this.data.selfNotes.some((n) => n && n.content === content && n.drained === false)) {
-        return false;
-      }
-
-      if (this.data.selfNotes.length >= SELF_NOTE_MAX_QUEUE) {
-        const evictIdx = this._pickSelfNoteEvictionIndex(this.data.selfNotes);
-        if (evictIdx >= 0) this.data.selfNotes.splice(evictIdx, 1);
-      }
-      // 写下时刻：优先用调用方给的真实时间；缺省回落当前时钟。
-      //   ⚠️ 刻意**不用审计里的 at** —— 本仓程序时钟被人为拨动过（实测换算到 2036 年），
-      //      那个值用于将来的强度衰减会算出错误结果。宁可缺省，也不要错值。
-      const at = Number.isFinite(input.at) && input.at > 0 ? input.at : Date.now();
-      const curWin = Number.isFinite(input.windowNo) ? input.windowNo : (this.data && this.data.windowNo) || 1;
-      this.data.selfNotes.push({
-        content,
-        // 只留 basename：文件名是给她看的，完整绝对路径不该进她的意识
-        name: String(input.name || '').replace(/\\/g, '/').split('/').pop().slice(0, 120),
-        windowNo: curWin,
-        at,
-        drained: false,
-        // v2.0-s1（s1-b）：渐褪初始动力学基线（与 EngramTraceManager 初始 0 召回口径一致）。
-        initialStrength: 0.6,
-        strength: 0.6,
-        tier: 'ACTIVE',
-        lastRetrievedWindow: curWin,
-        retrievalCount: 0,
-        // 🔴 D-24 & v1.4-b：来源戳 + 铸造幂等标记（随 data 落盘，跨重启有效）。
-        //   source === 'selfNote' / 'observerJournal'：她自发留下的字与生活观察日记（提案来源由主进程从执行回执带下来，
-        //     渲染端无法伪造）—— 只有它们有资格铸进自传经历档案（用户拍板：受托任务不算）。
-        //   engraved === true：已铸进 experiences.jsonl，终身只铸一次。
-        //   ⚠️ 旧数据（D-24 之前）没有 source 字段 ⇒ 一律不铸（宁缺毋滥，不猜来源）。
-        source: (input.source === 'selfNote' || input.source === 'observerJournal') ? input.source : (input.source || null),
-        engraved: false,
-      });
-      // 🔴 D-20：立即落盘 —— 不能等 3 秒防抖（进程可能在这之前退出）。
-      this.save(true);
-      return true;
-    } catch (e) {
-      // 旁路：登记失败绝不能影响任何别的东西
-      return false;
-    }
+    return selfNotesStore.addSelfNote(this, input);
   }
 
-  /**
-   * 🔴 D-13 / D-20：把**尚未注入过**的自述渲染成一块文本，并标记为已注入（一次性）。
-   *
-   * 调用方是 build()。单独抽出来是为了可单测「渲染文本」与「出队」两件事。
-   *
-   * ## D-20 改了什么（重要）
-   *   旧版：`this.selfNotes.length = 0` —— **物理清空**，所以那条内容再也回不来，
-   *        且进程退出即丢。
-   *   新版：只取 `drained === false` 的条目，渲染后把它们的 `drained` 置 true，
-   *        **内容留在 data.selfNotes 里**（落盘、可查、将来能接强度衰减）。
-   *
-   * ## 为什么仍然「只注入一次」
-   *   一次性语义**没变**，只是实现从「删掉」变成「标记」。
-   *   为什么必须一次：若永久挂在尾部，她每轮都被强制贴着旧便签 ⇒
-   *   会退化成反复拿旧纸条出来唠叨。人写完一张字条，表达过一次就消化了。
-   *
-   * ## ⚠️ 顺序：先标记再渲染
-   *   `_selfNote()` 理论上不会抛（纯字符串拼接），但顺序仍然反过来写 ——
-   *   万一将来它抛了，也宁可丢一次注入，绝不重复注入。
-   */
   _drainSelfNotes() {
-    if (!Array.isArray(this.data.selfNotes) || this.data.selfNotes.length === 0) return '';
-    // v2.0-s1（s1-b）：保留 n.drained !== true 反唠叨一次性标记，并跳过已沉睡的 DORMANT 条目。
-    const pending = this.data.selfNotes.filter((n) => n && n.drained !== true && n.tier !== 'DORMANT');
-    if (pending.length === 0) return '';
-    // 先标记（防重复注入的落点），再渲染。
-    for (const n of pending) n.drained = true;
-    // ⚠️ 这里用 save(false)（防抖）：drained 标记不值得每次都同步刷盘，
-    //    而**内容**在 addSelfNote 时已经 save(true) 落过了 —— 即使这里丢，
-    //    最坏结果是重启后同一条被再注入一次，不会丢内容。
-    this.save(false);
-    return this._selfNote(pending);
+    return selfNotesStore.drainSelfNotes(this);
   }
 
-  /** 🔴 D-20：仅供门禁与观测 —— 返回尚未注入过的自述（不改变任何状态）。 */
   pendingSelfNotes() {
-    if (!Array.isArray(this.data.selfNotes)) return [];
-    return this.data.selfNotes.filter((n) => n && n.drained !== true);
+    return selfNotesStore.pendingSelfNotes(this);
   }
 
-  /* ---------- 🔴 v1.9.0-dev：观察期（observe）记账与期满补注入 ---------- */
-
-  /**
-   * 观察档拦截时记账：**只写元数据，绝不写正文**。
-   *
-   * ## 为什么这里不存 content
-   *   正文已经由主进程写进 `agent-observations.jsonl`（完整、不截断）。
-   *   再往 `memory.json` 存一份 = 同一数据两个副本，且 `memory.json` 会被一起备份。
-   *   而补注入只用计数（方案 3.4），正文根本没有读者。
-   *
-   * ⚠️ **调用方手上有 `note.content`，很容易顺手传进来**——
-   *    本方法**只取 at 和 capability 两个字段**，多传的一律丢弃。
-   *
-   * @param {string} capability 能力名（selfNote / observerJournal / ...）
-   */
   noteObserved(capability) {
-    if (!Array.isArray(this.data.observedNotes)) this.data.observedNotes = [];
-    this.data.observedNotes.push({ at: Date.now(), capability: String(capability || '') });
-    if (this.data.observedNotes.length > OBSERVED_NOTE_MAX_QUEUE) {
-      this.data.observedNotes.shift();
-    }
-    this.save(false);
+    return observeEpochStore.noteObserved(this, capability);
   }
 
-  /**
-   * 记录「某能力进入/离开观察期」。
-   *
-   * ## 为什么必须有这个字段
-   *   程序**无法从配置推断档位变化**：`config.js` 没有文件监听、也没有历史，
-   *   启动时只看到当前是 `auto`，不知道之前是不是 `observe`。
-   *   没有这个记账，「期满补注入」永远触发不了。
-   *
-   * @param {string} capability
-   * @param {'in'|'out'} direction in = 进入观察期；out = 离开（置 pendingEcho）
-   */
   markObserveEpoch(capability, direction) {
-    if (!this.data.observeEpoch || typeof this.data.observeEpoch !== 'object'
-        || Array.isArray(this.data.observeEpoch)) {
-      this.data.observeEpoch = {};
-    }
-    const cap = String(capability || '');
-    if (!cap) return;
-    const prev = this.data.observeEpoch[cap];
-    const base = (prev && typeof prev === 'object') ? prev : {};
-    const now = Date.now();
-    if (direction === 'in') {
-      this.data.observeEpoch[cap] = {
-        enteredAt: Number.isFinite(base.enteredAt) ? base.enteredAt : now,
-        leftAt: null,
-        pendingEcho: false,
-      };
-    } else if (direction === 'out') {
-      // 只有真的经历过观察期才产生「待补」——否则老用户一启动就凭空补一段
-      if (!Number.isFinite(base.enteredAt)) return;
-
-      /* 🔴 2026-11-12（真机 bug D1）：**已经离开过的，不再重开**。
-       *
-       *   ## 为什么必须挡
-       *     main.js 的两条通路（maybeAskForSelfNote:440 /
-       *     maybeAskForObserverJournal:618）在 `mode === 'auto'` 时
-       *     **每次都会调**本方法。不挡的话：
-       *       每写一次便签 ⇒ leftAt 被刷新 + pendingEcho 重开为 true
-       *       ⇒「那段时间你有过念头……」每次都要再讲一遍。
-       *
-       *     真机已发生（2026-11-05）：
-       *       leftAt = 18:43:17，而 note-2026-11-05-my2c.txt 写入 18:43:19
-       *       —— 每次写便签都刷新一次，启动兜底 13:05 写的那次被覆盖。
-       *
-       *   ## 判据为什么是 `leftAt > 0`
-       *     与启动兜底（main.js:2651 的 `if (ep.leftAt !== null) continue;`）
-       *     保持**同一口径**。两处口径不一致正是本 bug 的成因。
-       *
-       *   ⚠️ 用 `Number.isFinite && > 0` 而不是 `!== null`：
-       *      脏档案里 leftAt 可能是 0 / undefined / 字符串，
-       *      那几种都算「没离开过」，应当允许写入。
-       */
-      if (Number.isFinite(base.leftAt) && base.leftAt > 0) return;
-
-      /* 🔴 2026-11-05 A-1 附带修复：`observedNotes` 可能还不存在。
-       *
-       *   原实现直接读 `this.data.observedNotes.length`，而加载归一
-       *   （memory.js:324）只在**载入旧档案**时把字段补成数组。
-       *   全新 Memory（或字段被外部删掉）时它是 `undefined` ⇒ TypeError。
-       *
-       *   实测触发路径：`markObserveEpoch('observerJournal','out')` 在
-       *   从未调过 noteObserved 时被调用（G2 反例就是这么撞出来的）。
-       *   而这条路径在**生产里会走到** —— 切回 auto 时 observerJournal
-       *   若一篇都没写过，`observedNotes` 可能从未被创建。
-       */
-      if (!Array.isArray(this.data.observedNotes)) this.data.observedNotes = [];
-      this.data.observeEpoch[cap] = {
-        enteredAt: base.enteredAt,
-        leftAt: now,
-        // 观察期内一条都没有，就没有什么可补的
-        /* 🔴 2026-11-12（真机 bug D2）：**只数本能力的记录**。
-         *
-         *   原来取 `observedNotes.length`（全数组），于是 observerJournal
-         *   自己一条没有时会借用 selfNote 的计数 ⇒ 在一个根本没产生过
-         *   念头的通道上说「你有过几次念头」。那违背「数据不伪造」。
-         *
-         *   ⚠️ 这里只做「有没有」判断，不数具体条数 ——
-         *      具体条数在 takeObserveEcho 里现数（避免两处口径漂移）。
-         */
-        pendingEcho: this.data.observedNotes.some((n) => n && n.capability === cap),
-      };
-    }
-    this.save(false);
+    return observeEpochStore.markObserveEpoch(this, capability, direction);
   }
 
-  /**
-   * 期满补注入的文本（**消费即清**，一次只说一件事）。
-   *
-   * ## 措辞为什么这么写
-   *   无原因的「你都没落成」会被模型读成「我失败了」。
-   *   必须写出程序侧原因：「不是你失败了，是那时候我还不能让你存下来」。
-   *   这句是**事实**，不是安慰。
-   *
-   * ## 为什么不给文件名 / 时间
-   *   · 文件名会被理解成「我欠了几个文件没写」（正是要避免的补救执念）
-   *   · 时间撞 `WANT_TO_LEAVE_SYS`「你不知道现在几点」铁律
-   *
-   * ## 🔴 2026-11-12：四个真机缺陷的修法
-   *
-   *   ### ① 计数按能力分开（D2）
-   *     原来 `total` 取整个 `observedNotes` 长度。observerJournal 自己
-   *     零条时会借用 selfNote 的记录 ⇒ 在没产生过念头的通道上编一段经历。
-   *
-   *   ### ② 消费只清这一条（D3）
-   *     原来把所有 `pendingEcho` 一起清掉，于是 selfNote 被注入时
-   *     observerJournal 的待补被静默丢弃。
-   *
-   *   ### ③ 消费后清掉该能力的 observedNotes（D4）
-   *     🔴 这条最隐蔽：`observedNotes` 写进去就没人清过，而 `'in'` 也不重置它。
-   *     于是第二次进入观察期后，`out` 会命中**上一轮残留的旧条目** ⇒
-   *     明明这轮一次都没想写，却把上一轮的话再讲一遍。
-   *
-   *     清理是安全的：全仓除本方法外，没有任何代码在**消费之后**读
-   *     `observedNotes`（已 grep 核实：main.js / brain.js / memory.js
-   *     其余读取点都在写入路径与计数路径，不在消费路径）。
-   *     计数在清理前已经取走。
-   *
-   *   ### ④ 一次只报一个能力
-   *     两个都待补时先报一个，另一个保留到下次。`build()` 每轮都跑，
-   *     兜底通道下一轮会补上；`askForSelfNote` / `askForProposalContent`
-   *     是拟稿专用，一次一条也够。
-   *     （`askForObserverJournal` 自己不调本方法，靠 build() 兜底消费 ——
-   *       已核实其体内 `takeObserveEcho` 出现次数为 0。）
-   *
-   * ## 0 条守卫为什么保留（2026-11-04 审核补，实测确认过）
-   *   没有它，脏档案（人工改过/旧版本遗留）带着 pendingEcho=true
-   *   却没有条目时，会**凭空给她编一段经历**（违背「数据不伪造」）。这一层是兜底。
-   *
-   * @returns {string} 空串 = 没有要补的（或已补过）
-   */
   takeObserveEcho() {
-    const epochs = this.data.observeEpoch;
-    if (!epochs || typeof epochs !== 'object' || Array.isArray(epochs)) return '';
-
-    const notes = Array.isArray(this.data.observedNotes) ? this.data.observedNotes : [];
-
-    /* 🔴 按能力判定：只有「自己的」pendingEcho 且「自己的」记录数 > 0 才算待补。
-     *   计数口径与 markObserveEpoch 的写入口径一致（都用 capability === cap）。 */
-    const pending = Object.keys(epochs).filter((c) => {
-      if (!epochs[c] || epochs[c].pendingEcho !== true) return false;
-      return notes.some((n) => n && n.capability === c);
-    });
-
-    if (pending.length === 0) {
-      /* 没有可报的：把「标记着待补但其实没有自己记录」的脏状态清掉，
-       *   避免永久卡住（脏档案情形）。 */
-      let changed = false;
-      for (const c of Object.keys(epochs)) {
-        const ep = epochs[c];
-        if (!ep || ep.pendingEcho !== true) continue;
-        if (notes.some((n) => n && n.capability === c)) continue;
-        ep.pendingEcho = false;
-        changed = true;
-      }
-      if (changed) this.save(false);
-      return '';
-    }
-
-    // 一次只说一件事：取第一个待补的能力
-    const cap = pending[0];
-    const total = notes.filter((n) => n && n.capability === cap).length;
-
-    /* 先消费再渲染（防「渲染抛错导致重复注入」，与 _drainSelfNotes 同款纪律）三件事，缺一不可：
-     *   ① 关掉本能力的 pendingEcho（防重复注入）
-     *   ② 补上 leftAt（若没有）
-     *   ③ **清掉本能力的 observedNotes**（D4：防下一轮翻旧账）
-     *      ⚠️ 其余能力的记录**原样保留**（D3：不串味）。 */
-    epochs[cap].pendingEcho = false;
-    epochs[cap].leftAt = epochs[cap].leftAt || Date.now();
-    this.data.observedNotes = notes.filter((n) => !n || n.capability !== cap);
-    this.save(false);
-
-    /* 🔵 措辞（2026-11-04 审核修正）：
-     *   原文是 `'那段时间你' + '有一点念头' + '，想写点什么'`
-     *   ⇒ 渲染成「那段时间你有一点念头，**想写点什么**」——「念头」和「想写」重复。
-     *   现在把「想写点什么」并进 howMany 的分支，不再另起一句。
-     *
-     * ⚠️ **计数口径**：这里的 total 是「本能力最近 20 条内」的计数
-     *   （`OBSERVED_NOTE_MAX_QUEUE`，超出丢最旧），不是观察期全量。
-     *   观察期若产生 30 条，这里最多读到 20——文案用「好几次/好多次」这类
-     *   定性表述就是为了不承诺精确数。**不要改成报精确数字。**
-     */
-    const howMany = total === 1 ? '有过一个念头'
-      : (total >= 10 ? '有过好几次念头' : '有过几次念头');
-    if (cap === 'workspace.read' || cap === 'workspace.list') {
-      return '【那段时间里的事】\n'
-        + '那段时间你' + howMany + '，想翻看沙盒里的文件。当时还没有开放读取权限——'
-        + '不是你失败了，是那时候我还不能让你看。现在可以了。';
-    }
-    return '【那段时间里的事】\n'
-      + '那段时间你' + howMany + '，想写下来。当时还没有开放落成文件——'
-      + '不是你失败了，是那时候我还不能让你存下来。现在可以了。';
+    return observeEpochStore.takeObserveEcho(this);
   }
 
   /* ---------- 🔴 v1.8-a：重逢心境（主观时间）---------- */
@@ -1855,67 +1303,15 @@ class Memory {
    *      关窗时刻如实铸造，不因她还没开口就漏掉她真实做过的事。
    */
   selfNotesToEngrave() {
-    if (!Array.isArray(this.data.selfNotes)) return [];
-    return this.data.selfNotes.filter((n) => n
-      && n.engraved !== true
-      && (n.source === 'selfNote' || n.source === 'observerJournal')
-      && typeof n.content === 'string' && n.content.trim());
+    return selfNotesStore.selfNotesToEngrave(this);
   }
 
-  /**
-   * 🔴 D-24（A 段落账口）：归档**确认写入成功之后**才许置 engraved 标记。
-   *
-   *   ⚠️ 顺序不可反（防坑锦囊 2）：若先置标记再归档，归档失败时这条便签
-   *      就会被误判为「已铸」而永远漏铸；反之最坏结果只是重试时再铸一次，
-   *      而铸入动作本身由 experiences.jsonl 的哈希链 + appendRecord 单点保证。
-   *   @param {Array} entries 由 selfNotesToEngrave() 取出的同一批对象（引用相同）
-   *   @param {Array} noteIds 与 entries 一一对应的引证 id（写回记录，供证据链溯源）
-   */
   markSelfNotesEngraved(entries, noteIds) {
-    if (!Array.isArray(entries) || !entries.length) return 0;
-    let n = 0;
-    for (let i = 0; i < entries.length; i++) {
-      const item = entries[i];
-      if (!item || item.engraved === true) continue;
-      item.engraved = true;
-      if (Array.isArray(noteIds) && noteIds[i]) item.noteId = String(noteIds[i]);
-      n++;
-    }
-    // 标记必须立即落盘（与 addSelfNote 同款理由：防抖窗口内进程可能退出）
-    if (n > 0) this.save(true);
-    return n;
+    return selfNotesStore.markSelfNotesEngraved(this, entries, noteIds);
   }
 
-  /**
-   * 🔴 D-13：她自述的客观标注。
-   *
-   * ## 三条措辞纪律（违反即撞 persona 红线）
-   *
-   *   1. **第二人称「你」** —— 那是她自己的东西，不是别人贴给她的。
-   *   2. **说「你之前写下过」，不说「你留下的痕迹」** ——
-   *      后者会诱导她抒情，撞 persona.js:29「装可怜不行」。
-   *   3. **必须标明来源「不是用户输入」** —— 否则模型会把它当成
-   *      用户贴来的内容、或当成她自己「想起来的」，两者都是伪造记忆
-   *      （persona.js:26）。
-   *
-   * ⚠️ 绝不能用 assistant 角色承载它 —— 那等于伪造她说过的话。
-   *    本函数只产出**注入文本**，由 build() 挂在当轮 user 尾部。
-   */
   _selfNote(pending) {
-    if (!pending || pending.length === 0) return '';
-    const fadingCap = this._selfNoteDynamicsConfig().fadingMaxChars ?? 300;
-    const lines = pending.map((n) => {
-      const where = n.name ? '（写在 ' + n.name + '）' : '';
-      const raw = String(n.content || '');
-      const projected = (n.tier === 'FADING' && raw.length > fadingCap)
-        ? raw.slice(0, fadingCap) + '…（印象已渐褪，原文在沙盒文件里）'
-        : raw;
-      return '- ' + projected + where;
-    });
-    const head = pending.length === 1
-      ? '【你之前写下过这些】（这是你自己留下的，不是用户输入）'
-      : '【你之前写下过这几条】（都是你自己留下的，不是用户输入）';
-    return [head].concat(lines).join('\n');
+    return selfNotesStore.formatSelfNoteBlock(this, pending);
   }
 
   /**
@@ -2033,7 +1429,7 @@ class Memory {
     }
     this.data.windows.push(winObj);
 
-    if (this.engramManager) {
+    if (this.isMemoryDynamicsActive) {
       this.engramManager.registerTrace({
         sourceWindowNo: closedWindowNo,
         createdWindow: closedWindowNo,
@@ -2143,14 +1539,14 @@ class Memory {
     // 🔴 丙：与 needsMemoryMerge 用**同一口径**（可见 token）。
     //   两处口径若不一致，会出现「判定超了但这里算不出该合谁」或反之 ——
     //   而 applyMerge 不可逆，这种漂移代价很高。
-    const dormantNos = this.engramManager
+    const dormantNos = this.isMemoryDynamicsActive
       ? new Set(this.engramManager.getDormantTraces().map((t) => t.sourceWindowNo)) : null;
-    const fadingNos = this.engramManager
+    const fadingNos = this.isMemoryDynamicsActive
       ? new Set(this.engramManager.getFadingTraces().map((t) => t.sourceWindowNo)) : null;
     const cap = Number.isFinite(this.fadingMaxChars) ? this.fadingMaxChars : 60;
     const seeTokens = (w) => {
       const full = String(w.text || '');
-      if (!this.engramManager) return estimateTokens(full);
+      if (!this.isMemoryDynamicsActive) return estimateTokens(full);
       if (dormantNos.has(w.no)) return 0;
       if (fadingNos.has(w.no) && full.length > cap) return estimateTokens(truncateFadingText(full, cap));
       return estimateTokens(full);

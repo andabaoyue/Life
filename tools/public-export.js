@@ -44,12 +44,7 @@ const INCLUDE = [
   'chat.js',
   'pet.js',
   'style.css',
-  'ui-i18n.js',
-  'ui-chat-store.js',
-  'ui-chat-render.js',
-  'ui-provider-presets.js',
-  'ui-outfit-complete.js',
-  'ui-agent-confirm.js',
+  'ui-*.js',
   'package.json',
   'package-lock.json',
   'electron-builder.yml',
@@ -371,13 +366,18 @@ function normPath(s) {
   return s.replace(/\\{2,}/g, '\\').replace(/\\/g, '/').toLowerCase();
 }
 
+const BENIGN_ABS_EXACT = new Set([
+  'c:/program',       // TOKEN_STOP 在空格处截断 'C:\\Program Files' 的前半截
+  'c:/users/',        // 注释里的占位说明 'C:/Users/<真名>'（不含任何具体用户名）
+  'd:/repo-other',    // agent-interfaces.js:249 注释里的虚构仓库反例
+]);
+
 function isBenignAbs(token) {
   const t = normPath(token);
+  if (BENIGN_ABS_EXACT.has(t)) return true;
   return BENIGN_ABS.some(pair => {
-    const b = normPath(pair[0]);
-    // 双向前缀：token 落在豁免根之下（C:/users/example/desktop），或 token 只是豁免根的前半截
-    // （'C:\Program Files' 中间有空格，会被 token 切分截成 'C:\Program'）。
-    return t.startsWith(b) || b.startsWith(t);
+    const bTrim = normPath(pair[0]).replace(/\/+$/, '');
+    return t === bTrim || t.startsWith(bTrim + '/');
   });
 }
 
@@ -575,82 +575,7 @@ function syncToWorktree(target, files) {
 /* ============================================================
  * 八、CLI
  * ============================================================ */
-function main(argv) {
-  const has = f => argv.includes(f);
-  let r;
-  try {
-    r = report();
-  } catch (e) {
-    console.error('FAIL  ' + e.message);
-    process.exit(1);
-  }
-
-  if (has('--list')) {
-    console.log('公开集 ' + r.included.length + ' 个文件：');
-    r.included.forEach(f => console.log('   + ' + f));
-    console.log('');
-    console.log('挡住 ' + r.excluded.length + ' 个文件：');
-    r.excluded.forEach(x => console.log('   - ' + x.file + '   ← ' + x.reason));
-    if (r.unclassified.length) {
-      console.log('');
-      console.log('未分类（既不在 INCLUDE 也不在 EXCLUDE，默认拒绝）：');
-      r.unclassified.forEach(f => console.log('   ? ' + f));
-    }
-    return;
-  }
-
-  const outIdx = argv.indexOf('--out');
-  if (outIdx >= 0) {
-    const dest = path.resolve(argv[outIdx + 1] || '');
-    if (!argv[outIdx + 1]) { console.error('FAIL  --out 需要一个目标目录'); process.exit(1); }
-    // 用「是否以仓库根为前缀」判断，不要用 path.relative 的 '..' 判断：
-    // Windows 上跨盘符时 relative 会直接返回绝对路径（因为无法表达相对关系），
-    // 于是「D 盘仓库 → C 盘 TEMP」会被误判成「在仓库内」而遭到拒绝（实测踩过）。
-    const destCmp = process.platform === 'win32' ? dest.toLowerCase() : dest;
-    const rootCmp = process.platform === 'win32' ? ROOT.toLowerCase() : ROOT;
-    const insideRepo = destCmp === rootCmp || destCmp.indexOf(rootCmp + path.sep) === 0;
-    if (insideRepo) { console.error('FAIL  导出目标不得落在仓库目录内：' + dest); process.exit(1); }
-    if (fs.existsSync(dest) && fs.readdirSync(dest).length && !has('--force')) {
-      console.error('FAIL  目标目录非空，需显式 --force：' + dest); process.exit(1);
-    }
-    for (const f of r.included) {
-      const to = path.join(dest, f);
-      fs.mkdirSync(path.dirname(to), { recursive: true });
-      fs.copyFileSync(path.join(ROOT, f), to);
-    }
-    console.log('已导出 ' + r.included.length + ' 个文件 → ' + dest);
-    return;
-  }
-
-  const syncIdx = argv.indexOf('--sync');
-  if (syncIdx >= 0) {
-    const dest = argv[syncIdx + 1];
-    if (!dest || dest.indexOf('--') === 0) { console.error('FAIL  --sync 需要一个目标工作树目录'); process.exit(1); }
-    let target;
-    try {
-      target = assertSyncTarget(dest);
-    } catch (e) {
-      console.error('FAIL  --sync 守卫拦下（' + (e.reason || 'UNKNOWN') + '）：' + e.message);
-      process.exit(1);
-    }
-    const apply = has('--yes');
-    const tracked = listTrackedFiles(target);
-    console.log('目标工作树: ' + target);
-    console.log('将重写目标已跟踪的 ' + tracked.length + ' 个文件，铺入公开集 ' + r.included.length + ' 个文件');
-    console.log('未跟踪内容（node_modules / dist / .workbuddy 等）原样保留，.git 永不触碰');
-    if (!apply) {
-      console.log('（预演）确认无误后加 --yes 才会真正执行');
-      return;
-    }
-    const res = syncToWorktree(target, r.included);
-    console.log('已删除旧内容 ' + res.removed + ' 个文件，铺入 ' + res.copied + ' 个文件');
-    console.log('下一步（在该工作树内执行）:');
-    console.log('  git add -A');
-    console.log('  git commit -m "feat(v1.6): 同步 v1.2~v1.6 全部代码、测试与规划文档"');
-    return;
-  }
-
-  // 默认 = --check
+function assertReportClean(r, exitFn = process.exit) {
   let bad = 0;
   if (r.unclassified.length) {
     bad++;
@@ -673,8 +598,95 @@ function main(argv) {
   }
   if (bad) {
     console.log('\n公开集 ' + r.included.length + ' 个 / 挡住 ' + r.excluded.length + ' 个：剥离门禁未通过');
-    process.exit(1);
+    exitFn(1);
+    return false;
   }
+  return true;
+}
+
+function main(argv, opts = {}) {
+  const has = f => argv.includes(f);
+  const reportFn = typeof opts.reportFn === 'function' ? opts.reportFn : report;
+  const exitFn = typeof opts.exit === 'function' ? opts.exit : process.exit;
+  let r;
+  try {
+    r = reportFn();
+  } catch (e) {
+    console.error('FAIL  ' + e.message);
+    exitFn(1);
+    return;
+  }
+
+  if (has('--list')) {
+    console.log('公开集 ' + r.included.length + ' 个文件：');
+    r.included.forEach(f => console.log('   + ' + f));
+    console.log('');
+    console.log('挡住 ' + r.excluded.length + ' 个文件：');
+    r.excluded.forEach(x => console.log('   - ' + x.file + '   ← ' + x.reason));
+    if (r.unclassified.length) {
+      console.log('');
+      console.log('未分类（既不在 INCLUDE 也不在 EXCLUDE，默认拒绝）：');
+      r.unclassified.forEach(f => console.log('   ? ' + f));
+    }
+    return;
+  }
+
+  const outIdx = argv.indexOf('--out');
+  if (outIdx >= 0) {
+    if (!assertReportClean(r, exitFn)) return;
+    const dest = path.resolve(argv[outIdx + 1] || '');
+    if (!argv[outIdx + 1]) { console.error('FAIL  --out 需要一个目标目录'); exitFn(1); return; }
+    // 用「是否以仓库根为前缀」判断，不要用 path.relative 的 '..' 判断：
+    // Windows 上跨盘符时 relative 会直接返回绝对路径（因为无法表达相对关系），
+    // 于是「D 盘仓库 → C 盘 TEMP」会被误判成「在仓库内」而遭到拒绝（实测踩过）。
+    const destCmp = process.platform === 'win32' ? dest.toLowerCase() : dest;
+    const rootCmp = process.platform === 'win32' ? ROOT.toLowerCase() : ROOT;
+    const insideRepo = destCmp === rootCmp || destCmp.indexOf(rootCmp + path.sep) === 0;
+    if (insideRepo) { console.error('FAIL  导出目标不得落在仓库目录内：' + dest); exitFn(1); return; }
+    if (fs.existsSync(dest) && fs.readdirSync(dest).length && !has('--force')) {
+      console.error('FAIL  目标目录非空，需显式 --force：' + dest); exitFn(1); return;
+    }
+    for (const f of r.included) {
+      const to = path.join(dest, f);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(path.join(ROOT, f), to);
+    }
+    console.log('已导出 ' + r.included.length + ' 个文件 → ' + dest);
+    return;
+  }
+
+  const syncIdx = argv.indexOf('--sync');
+  if (syncIdx >= 0) {
+    if (!assertReportClean(r, exitFn)) return;
+    const dest = argv[syncIdx + 1];
+    if (!dest || dest.indexOf('--') === 0) { console.error('FAIL  --sync 需要一个目标工作树目录'); exitFn(1); return; }
+    let target;
+    try {
+      target = assertSyncTarget(dest);
+    } catch (e) {
+      console.error('FAIL  --sync 守卫拦下（' + (e.reason || 'UNKNOWN') + '）：' + e.message);
+      exitFn(1);
+      return;
+    }
+    const apply = has('--yes');
+    const tracked = listTrackedFiles(target);
+    console.log('目标工作树: ' + target);
+    console.log('将重写目标已跟踪的 ' + tracked.length + ' 个文件，铺入公开集 ' + r.included.length + ' 个文件');
+    console.log('未跟踪内容（node_modules / dist / .workbuddy 等）原样保留，.git 永不触碰');
+    if (!apply) {
+      console.log('（预演）确认无误后加 --yes 才会真正执行');
+      return;
+    }
+    const res = syncToWorktree(target, r.included);
+    console.log('已删除旧内容 ' + res.removed + ' 个文件，铺入 ' + res.copied + ' 个文件');
+    console.log('下一步（在该工作树内执行）:');
+    console.log('  git add -A');
+    console.log('  git commit -m "chore(release): 同步公开集代码、测试与文档"');
+    return;
+  }
+
+  // 默认 = --check
+  if (!assertReportClean(r, exitFn)) return;
   console.log('PASS  公开集 ' + r.included.length + ' 个文件，挡住 ' + r.excluded.length + ' 个；'
     + '绝对路径 0 处、凭据 0 处、断链 0 条');
 }
@@ -697,6 +709,8 @@ module.exports = {
   assertSyncTarget,
   syncToWorktree,
   checkLinks,
+  assertReportClean,
+  main,
   report
 };
 

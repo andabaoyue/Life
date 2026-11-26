@@ -157,25 +157,15 @@ console.log('--- D-11 她想留下点什么门禁 ---');
 
 /* ============ 6. 防漂移：主进程侧的接线仍在 ============ */
 {
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-agent-ipc.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
   check('❌ main.js 有 maybeAskForSelfNote（否则 content 永远无来源）',
     mainSrc.includes('function maybeAskForSelfNote('));   // 🔵 D-15：签名改为 (selfIntent)，匹配不带右括号
   check('❌ 它只在 wantToLeaveSomething 时跑（防止安静久了就写文件）',
     mainSrc.includes("intent.kind !== 'wantToLeaveSomething'"));
   check('❌ 主进程暂存内容且取用即删（重放不许重复写）',
     mainSrc.includes('pendingSelfNoteContent.delete(id)'));
-  /* 🔵 2026-11-01（初澜 2.0 observe 档）：判据从字面串 `'takeStashedContent }'`
-   *   改为「在 agentBuildDeps 对象里出现 takeStashedContent」。
-   *
-   *   为什么改：原判据要求 takeStashedContent 恰好在 deps 对象**末尾**（紧跟 `}`）。
-   *   这是**位置耦合**，不是语义判据——observe 档往 deps 里追加了 observationLog，
-   *   takeStashedContent 就从末尾变成了中间项，断言当场变红，而它要守的东西
-   *   （「takeStashedContent 真的被注入 agentIpc」）一个字都没变。
-   *   实测确认：改后 takeStashedContent 仍在 deps 里，只是不在末尾。
-   *
-   *   ⚠️ 这不是放松判据：仍然要求它出现在 agentBuildDeps 这个对象字面量内，
-   *      只是不再要求它排在最后。 */
-  const depsMatch = /agentBuildDeps\s*=\s*\{[\s\S]*?\n\s*\};/.exec(mainSrc);
+  const depsMatch = /(?:agentBuildDeps\s*=|setAgentBuildDeps\()\s*\{[\s\S]*?\n\s*\}[;)]/.exec(mainSrc);
   check('❌ main.js 把 takeStashedContent 注入了 agentIpc',
     Boolean(depsMatch) && /takeStashedContent/.test(depsMatch[0]),
     depsMatch ? 'deps 内出现' : '未找到 agentBuildDeps 对象');
@@ -201,7 +191,8 @@ console.log('--- D-11 她想留下点什么门禁 ---');
    *   三个 prompt 常量里都必须出现「能写」类表述。
    *   ⚠️ 只判「含沙盒」不够 —— 沙盒这个词本来就在别的上下文里出现过。
    */
-  const brainSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+  const brainSrc2 = ['brain.js', 'brain-autonomous-draft.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8')).join('\n');
   const promptNames = ['WANT_TO_LEAVE_SYS', 'OBSERVER_JOURNAL_SYS', 'PROPOSAL_DRAFT_SYS'];
   for (const name of promptNames) {
     const start = brainSrc2.indexOf('const ' + name + ' =');

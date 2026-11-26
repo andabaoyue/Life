@@ -127,20 +127,49 @@ class ResearchQuery {
   // ---------------------------------------------------------------------------
   // 辅助方法：读取归档记录 (P1-03: 优先经由 Index 检索；P1-21: 单次 fd 批量读取)
   // ---------------------------------------------------------------------------
-  _readArchiveRecords() {
+  _readArchiveRecords(opts = {}) {
+    if (opts && Array.isArray(opts._preloadedRecords)) {
+      return opts._preloadedRecords;
+    }
+    if (opts && Array.isArray(opts.records)) {
+      return opts.records;
+    }
     if (this.index && this.index.ensureIndex()) {
       this._lastQueryMode = 'INDEX';
+      let targetEntries = this.index.lineEntries;
+      if (opts && Array.isArray(opts.descriptors)) {
+        const seenOffsets = new Set();
+        targetEntries = [];
+        for (const d of opts.descriptors) {
+          if (!d || !Number.isFinite(d.byteOffset) || !Number.isFinite(d.byteLength) || d.byteLength <= 0) continue;
+          if (seenOffsets.has(d.byteOffset)) continue;
+          seenOffsets.add(d.byteOffset);
+          targetEntries.push(d);
+        }
+        targetEntries.sort((a, b) => a.byteOffset - b.byteOffset);
+      } else if (opts && opts.windowNo !== undefined && opts.windowNo !== null && typeof this.index.getWindowDescriptors === 'function') {
+        targetEntries = this.index.getWindowDescriptors(opts.windowNo) || [];
+      } else if (opts && (opts.excludeRecordTypes || opts.recordTypes || opts.fromWindow !== undefined || opts.toWindow !== undefined)) {
+        targetEntries = targetEntries.filter((entry) => {
+          if (!entry || entry.valid === false) return false;
+          if (opts.excludeRecordTypes && opts.excludeRecordTypes.has(entry.recordType)) return false;
+          if (opts.recordTypes && !opts.recordTypes.has(entry.recordType)) return false;
+          if (opts.fromWindow !== undefined && opts.fromWindow !== null && (typeof entry.windowNo !== 'number' || entry.windowNo < opts.fromWindow)) return false;
+          if (opts.toWindow !== undefined && opts.toWindow !== null && (typeof entry.windowNo !== 'number' || entry.windowNo > opts.toWindow)) return false;
+          return true;
+        });
+      }
       const records = [];
       if (typeof this.index.readRecordsAtOffsets === 'function') {
-        const rawList = this.index.readRecordsAtOffsets(this.archivePath, this.index.lineEntries);
+        const rawList = this.index.readRecordsAtOffsets(this.archivePath, targetEntries);
         for (const rec of rawList) {
           const norm = normalizeArchiveRecord(rec);
           if (norm) records.push(norm);
         }
         return records;
       }
-      for (const entry of this.index.lineEntries) {
-        if (entry.valid) {
+      for (const entry of targetEntries) {
+        if (entry.valid !== false) {
           const rec = this.index.readRecordAtOffset(entry.byteOffset, entry.byteLength);
           if (rec) {
             const norm = normalizeArchiveRecord(rec);
@@ -254,10 +283,15 @@ class ResearchQuery {
    * 获取特质演化轨迹数据
    */
   getStateTrajectory(options = {}) {
-    const { trait = null, fromWindow = null, toWindow = null } = options;
+    const { trait = null, fromWindow = null, toWindow = null, _preloadedRecords = null } = options;
     const stateData = this._readSubjectState();
     const stateChanges = Array.isArray(stateData.stateChanges) ? stateData.stateChanges : [];
-    const records = this._readArchiveRecords();
+    const records = this._readArchiveRecords({
+      _preloadedRecords,
+      fromWindow,
+      toWindow,
+      excludeRecordTypes: NON_STATE_RECORD_TYPES
+    });
 
     // 联合 stateChanges 与 archive 记录提取全部历史演化步骤
     const allChanges = [];
@@ -331,7 +365,10 @@ class ResearchQuery {
 
   getWindows(options = {}) {
     const { offset, limit } = normalizePaging(options.offset, options.limit);
-    const records = this._readArchiveRecords();
+    const records = this._readArchiveRecords({
+      _preloadedRecords: options._preloadedRecords,
+      excludeRecordTypes: NON_STATE_RECORD_TYPES
+    });
     const windowMap = new Map();
 
     for (const rec of records) {
@@ -685,7 +722,51 @@ class ResearchQuery {
   traceProvenance(stateChangeId) {
     if (!stateChangeId) return null;
     const stateData = this._readSubjectState();
-    const records = this._readArchiveRecords();
+    let targetDescriptors = null;
+    if (this.index && this.index.ensureIndex()) {
+      const descs = [];
+      let scFromState = null;
+      for (const sc of (stateData.stateChanges || [])) {
+        if ((sc.stateChangeId || sc.changeId) === stateChangeId) {
+          scFromState = sc;
+          break;
+        }
+      }
+      const scDesc = this.index.stateChangeIndex.get(stateChangeId);
+      if (scDesc) descs.push(scDesc);
+      if (scFromState && Array.isArray(scFromState.evidenceIds)) {
+        for (const eid of scFromState.evidenceIds) {
+          const evDesc = this.index.evidenceIndex.get(eid);
+          if (evDesc) {
+            descs.push(evDesc);
+            if (evDesc.messageId && this.index.messageIndex.has(evDesc.messageId)) {
+              descs.push(...this.index.messageIndex.get(evDesc.messageId));
+            }
+          }
+        }
+        if (typeof scFromState.windowNo === 'number' && typeof this.index.getWindowDescriptors === 'function') {
+          descs.push(...(this.index.getWindowDescriptors(scFromState.windowNo) || []));
+        }
+        targetDescriptors = descs;
+      } else if (scDesc) {
+        if (typeof scDesc.windowNo === 'number' && typeof this.index.getWindowDescriptors === 'function') {
+          descs.push(...(this.index.getWindowDescriptors(scDesc.windowNo) || []));
+        }
+        if (Array.isArray(scDesc.evidenceIds)) {
+          for (const eid of scDesc.evidenceIds) {
+            const evDesc = this.index.evidenceIndex.get(eid);
+            if (evDesc) {
+              descs.push(evDesc);
+              if (evDesc.messageId && this.index.messageIndex.has(evDesc.messageId)) {
+                descs.push(...this.index.messageIndex.get(evDesc.messageId));
+              }
+            }
+          }
+        }
+        targetDescriptors = descs;
+      }
+    }
+    const records = this._readArchiveRecords(targetDescriptors ? { descriptors: targetDescriptors } : {});
 
     // 1. 查找目标 StateChange
     let targetSc = null;
@@ -782,7 +863,43 @@ class ResearchQuery {
   traceEOI(id) {
     if (!id || typeof id !== 'string') return null;
     const cleanId = id.trim();
-    const records = this._readArchiveRecords();
+    let targetDescriptors = null;
+    if (this.index && this.index.ensureIndex()) {
+      const rootDesc = this.index.allIdsIndex.get(cleanId);
+      if (rootDesc) {
+        const descs = [rootDesc];
+        if (rootDesc.type === 'interpretation') {
+          for (const oid of (rootDesc.observationIds || [])) {
+            const oDesc = this.index.obsIndex.get(oid);
+            if (oDesc) {
+              descs.push(oDesc);
+              for (const eid of (oDesc.eventIds || [])) {
+                const eDesc = this.index.eventIndex.get(eid);
+                if (eDesc) descs.push(eDesc);
+              }
+            }
+          }
+        } else if (rootDesc.type === 'observation') {
+          for (const eid of (rootDesc.eventIds || [])) {
+            const eDesc = this.index.eventIndex.get(eid);
+            if (eDesc) descs.push(eDesc);
+          }
+          for (const iDesc of this.index.interpIndex.values()) {
+            if (Array.isArray(iDesc.observationIds) && iDesc.observationIds.includes(cleanId)) {
+              descs.push(iDesc);
+            }
+          }
+        } else if (rootDesc.type === 'event') {
+          for (const oDesc of this.index.obsIndex.values()) {
+            if (Array.isArray(oDesc.eventIds) && oDesc.eventIds.includes(cleanId)) {
+              descs.push(oDesc);
+            }
+          }
+        }
+        targetDescriptors = descs;
+      }
+    }
+    const records = this._readArchiveRecords(targetDescriptors ? { descriptors: targetDescriptors } : {});
 
     // 收集所有三层记录
     const eventsMap = new Map();
@@ -859,9 +976,9 @@ class ResearchQuery {
   // 分页列表查询方法
   // ---------------------------------------------------------------------------
   getEvents(options = {}) {
-    const { windowNo = null, type = null, source = null } = options;
+    const { windowNo = null, type = null, source = null, _preloadedRecords = null } = options;
     const { offset, limit } = normalizePaging(options.offset, options.limit);
-    const records = this._readArchiveRecords();
+    const records = this._readArchiveRecords({ _preloadedRecords, windowNo });
     let events = [];
 
     for (const rec of records) {
@@ -887,9 +1004,9 @@ class ResearchQuery {
   }
 
   getObservations(options = {}) {
-    const { windowNo = null, source = null } = options;
+    const { windowNo = null, source = null, _preloadedRecords = null } = options;
     const { offset, limit } = normalizePaging(options.offset, options.limit);
-    const records = this._readArchiveRecords();
+    const records = this._readArchiveRecords({ _preloadedRecords, windowNo });
     let items = [];
 
     for (const rec of records) {
@@ -912,9 +1029,9 @@ class ResearchQuery {
   }
 
   getInterpretations(options = {}) {
-    const { windowNo = null, perspective = null } = options;
+    const { windowNo = null, perspective = null, _preloadedRecords = null } = options;
     const { offset, limit } = normalizePaging(options.offset, options.limit);
-    const records = this._readArchiveRecords();
+    const records = this._readArchiveRecords({ _preloadedRecords, windowNo });
     let items = [];
 
     for (const rec of records) {
@@ -937,9 +1054,9 @@ class ResearchQuery {
   }
 
   getEvidence(options = {}) {
-    const { windowNo = null, status = null, trait = null } = options;
+    const { windowNo = null, status = null, trait = null, _preloadedRecords = null } = options;
     const { offset, limit } = normalizePaging(options.offset, options.limit);
-    const records = this._readArchiveRecords();
+    const records = this._readArchiveRecords({ _preloadedRecords, windowNo });
     let items = [];
 
     for (const rec of records) {
@@ -967,10 +1084,39 @@ class ResearchQuery {
   }
 
   getStateChanges(options = {}) {
-    const { windowNo = null, trait = null } = options;
+    const { windowNo = null, trait = null, _preloadedRecords = null } = options;
     const { offset, limit } = normalizePaging(options.offset, options.limit);
     const stateData = this._readSubjectState();
-    let items = Array.isArray(stateData.stateChanges) ? [...stateData.stateChanges] : [];
+    const stateChanges = Array.isArray(stateData.stateChanges) ? stateData.stateChanges : [];
+    const records = this._readArchiveRecords({
+      _preloadedRecords,
+      fromWindow: windowNo,
+      toWindow: windowNo,
+      excludeRecordTypes: NON_STATE_RECORD_TYPES
+    });
+    const allItems = [];
+    const seenScIds = new Set();
+    for (const sc of stateChanges) {
+      const id = sc && (sc.stateChangeId || sc.changeId);
+      if (id) {
+        if (seenScIds.has(id)) continue;
+        seenScIds.add(id);
+      }
+      if (sc) allItems.push(sc);
+    }
+    for (const rec of records) {
+      const p = rec.payload || rec;
+      const changes = Array.isArray(p.stateChanges) ? p.stateChanges : [];
+      for (const sc of changes) {
+        const id = sc && (sc.stateChangeId || sc.changeId);
+        if (id) {
+          if (seenScIds.has(id)) continue;
+          seenScIds.add(id);
+        }
+        if (sc) allItems.push(sc);
+      }
+    }
+    let items = allItems;
 
     if (windowNo !== null) items = items.filter(sc => sc.windowNo === windowNo);
     if (trait) items = items.filter(sc => sc.trait === trait);

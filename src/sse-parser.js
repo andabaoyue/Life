@@ -49,8 +49,9 @@ function createSSEParser({ onEvent, maxBufferBytes } = {}) {
   return {
     feed(chunk) {
       buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
-      // SEC-03: SSE buffer 硬上限 —— 恶意/异常 endpoint 持续发不完整 event 时不得无界增长
-      if (Number.isFinite(maxBufferBytes) && maxBufferBytes > 0 && buffer.length > maxBufferBytes) {
+      // SEC-03: SSE buffer 硬上限（按 UTF-8 byte 计量）—— 恶意/异常 endpoint 持续发不完整 event 时不得无界增长
+      const bufBytes = typeof Buffer !== 'undefined' ? Buffer.byteLength(buffer, 'utf8') : buffer.length;
+      if (Number.isFinite(maxBufferBytes) && maxBufferBytes > 0 && bufBytes > maxBufferBytes) {
         buffer = '';
         const err = new Error('SSE buffer exceeds ' + maxBufferBytes + ' bytes');
         err.name = 'ResponseTooLargeError';

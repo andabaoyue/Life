@@ -61,8 +61,10 @@ function check(name, cond, extra) {
   if (!cond) failures++;
 }
 
-const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN_SRC = ['main.js', 'src/main-agent-ipc.js']
+  .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
 const BRAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+const BRAIN_DRAFT_SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain-autonomous-draft.js'), 'utf8');
 const PRELOAD_SRC = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
 const PET_SRC = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
 
@@ -97,7 +99,7 @@ console.log('--- D-27 通路 B 内容生成与主体拒案门禁 ---');
   check('🔴 brain.js 有 askForProposalContent（独立拟稿调用）',
     typeof Brain.prototype.askForProposalContent === 'function');
   check('🔴 独立的系统提示词常量 PROPOSAL_DRAFT_SYS 存在',
-    /const PROPOSAL_DRAFT_SYS =/.test(BRAIN_SRC));
+    /const PROPOSAL_DRAFT_SYS =/.test(BRAIN_DRAFT_SRC));
   // 🔴 D-27 复核修订：这条原来是**恒真断言**（复核 D-额外1 抓到）。
   //   原写法：`!/PROPOSAL_DRAFT_SYS/.test(/\n{2,}const PERSONA/.test(SRC) ? '' : 'x')`
   //   —— 三元两边分别是 '' 和 'x'，都不含 PROPOSAL_DRAFT_SYS，取反恒为 true。
@@ -116,8 +118,11 @@ console.log('--- D-27 通路 B 内容生成与主体拒案门禁 ---');
       !/PROPOSAL_DRAFT_SYS/.test(PERSONA_SRC));
   }
   // 聊天返回路径里不能出现拟稿函数的调用
+  const askBodyStart = BRAIN_SRC.indexOf('async ask(');
+  const askBodyEnd = BRAIN_SRC.indexOf('_notePossibleTruncation(', askBodyStart);
+  const askBody = (askBodyStart >= 0 && askBodyEnd > askBodyStart) ? BRAIN_SRC.slice(askBodyStart, askBodyEnd) : BRAIN_SRC;
   check('❌ ask() 内不调用 askForProposalContent（否则就变回同一次调用了）',
-    !/async ask\([\s\S]{0,20000}?askForProposalContent/.test(BRAIN_SRC));
+    !/askForProposalContent/.test(askBody));
 }
 
 /* ============ 2. 三态：refused / unavailable / ok 必须可区分 ============
@@ -486,7 +491,7 @@ console.log('--- D-27 通路 B 内容生成与主体拒案门禁 ---');
     check('🔴 main.js 广播 agent-proposal-pending',
       MAIN_SRC.includes("broadcastToWindows('agent-proposal-pending'"));
     check('🔴 preload.js 监听 agent-proposal-pending',
-      PRELOAD_SRC.includes("ipcRenderer.on('agent-proposal-pending'"));
+      /(?:ipcRenderer\.on|sub)\('agent-proposal-pending'/.test(PRELOAD_SRC));
     check('🔴 pet.js 消费 onProposalPending（否则广播无人接）',
       PET_SRC.includes('api.agent.onProposalPending'));
     check('❌ 通路 B 不复用 agent-proposal-available（D-19 语义铁律）',
@@ -533,7 +538,7 @@ console.log('--- D-27 通路 B 内容生成与主体拒案门禁 ---');
    * 是被**跑出来**的，不是被 grep 出来的。 */
   {
     function loadFn(name) {
-      const m = MAIN_SRC.match(new RegExp('(?:async )?function ' + name + '\\([\\s\\S]*?\\n\\}'));
+      const m = MAIN_SRC.match(new RegExp('^([ \\t]*)(?:async )?function ' + name + '\\([\\s\\S]*?\\n\\1\\}(?=\\s*(?:\\n|$))', 'm'));
       return m ? m[0] : null;
     }
     const bssSrc = loadFn('buildSandboxScope');
@@ -572,9 +577,9 @@ console.log('--- D-27 通路 B 内容生成与主体拒案门禁 ---');
         //   实测踩过：三条审计断言全红而其它全绿，正是这个静默吞掉造成的。
         // 🔴 而且注入的必须是 main.js 里**那份真实源码**，不能是测试里手抄的复刻版 ——
         //   复刻版会让「审计写成什么样」脱离被测代码，改坏 main.js 也照样绿。
-        const f = new Function('path', 'brain', 'agentBuildDeps', 'proactiveAuditLog', 'auditProposalRefused',
+        const f = new Function('path', 'brain', 'ctx', 'agentBuildDeps', 'proactiveAuditLog', 'auditProposalRefused',
           bssSrc + '\n' + tbpSrc + '\n' + audSrc + '\nreturn { tryBuildProposalFromIntent };');
-        return { fn: f(path, brain, deps, null, undefined), brain, calls };
+        return { fn: f(path, brain, { getBrain: () => brain }, deps, null, undefined), brain, calls };
       };
 
       // ① 正常：建案 + 广播 + 意图清空

@@ -104,10 +104,10 @@ function buildViewModel(proposal, opts = {}) {
     visible: true,
     proposalId,
     capability,
-    capabilityLabel: capLabel.fallback,
+    capabilityLabel: capLabel.key ? t(capLabel.key, capLabel.fallback) : capLabel.fallback,
     capabilityLabelKey: capLabel.key,
     dangerLevel: String(opts.dangerLevel || 'unknown'),
-    dangerLabel: danger.fallback,
+    dangerLabel: t(danger.key, danger.fallback),
     dangerLabelKey: danger.key,
     // 高风险必须显式警示，不能只靠一个小标签。
     warnHighRisk: String(opts.dangerLevel) === 'high',

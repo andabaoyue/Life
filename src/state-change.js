@@ -19,6 +19,7 @@ function symmetricRound(x) {
   return Math.sign(x) * Math.round(Math.abs(x));
 }
 
+const SC_RUN_ID = Date.now().toString(36) + '-' + require('crypto').randomBytes(2).toString('hex');
 let stateChangeSeq = 0;
 
 /**
@@ -26,7 +27,7 @@ let stateChangeSeq = 0;
  */
 function createStateChange(opts = {}) {
   stateChangeSeq++;
-  const stateChangeId = opts.stateChangeId || opts.changeId || ('sc-' + String(stateChangeSeq).padStart(6, '0'));
+  const stateChangeId = opts.stateChangeId || opts.changeId || (`sc-${SC_RUN_ID}-` + String(stateChangeSeq).padStart(6, '0'));
   const previousValue = Number.isFinite(opts.previousValue) ? opts.previousValue : 0;
   const delta = Number.isFinite(opts.delta) ? opts.delta : 0;
   const newValue = Number.isFinite(opts.newValue) ? opts.newValue : (previousValue + delta);

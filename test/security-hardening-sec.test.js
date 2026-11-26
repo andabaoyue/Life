@@ -92,10 +92,19 @@ async function run() {
   check('SEC-01 window.open / 新窗口被拒绝',
     webContents._windowOpen && webContents._windowOpen({}).action === 'deny');
 
-  // 源码级：main.js 无任何绕过 guard 的直接注册
+  // 源码级：main.js 及拆出的 IPC 子模块无任何绕过 guard 的直接注册
+  const mainFiles = [
+    'main.js',
+    'src/main-agent-ipc.js',
+    'src/main-window-ipc.js',
+    'src/main-connections-ipc.js',
+    'src/main-stt-ipc.js',
+    'src/main-vision-ipc.js'
+  ];
+  const mainBundle = mainFiles.map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
-  check('SEC-01 main.js 全部 IPC 经 ipcGuard（无直接 ipcMain.handle/on）',
-    !/ipcMain\.(handle|on)\(/.test(mainSrc) &&
+  check('SEC-01 main.js 及所有 main-*-ipc 全部 IPC 经 ipcGuard（无直接 ipcMain.handle/on）',
+    !/ipcMain\.(handle|on)\(/.test(mainBundle) &&
     mainSrc.includes('registerResearchIpc(ipcGuard,') &&
     mainSrc.includes('ipcGuard.attachNavigationGuard(win.webContents)'));
 }
@@ -105,10 +114,10 @@ async function run() {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const m = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
   const csp = m ? m[1] : '';
-  check('SEC-02 CSP meta 存在且含基线指令',
+  check('SEC-02 CSP meta 存在且含基线指令（不含无效 frame-ancestors）',
     csp.includes("default-src 'self'") && csp.includes("script-src 'self'") &&
     csp.includes("object-src 'none'") && csp.includes("base-uri 'none'") &&
-    csp.includes("frame-ancestors 'none'"));
+    !csp.includes("frame-ancestors"));
   const scriptSrc = (csp.match(/script-src ([^;]+)/) || [])[1] || '';
   check('SEC-02 script-src 无 unsafe-inline / 远程 / 通配 / data:',
     scriptSrc.trim() === "'self'");

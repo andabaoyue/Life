@@ -11,6 +11,7 @@
 // v0.9.8 C-01: 铸造权限经专用信任根模块获取，并在铸造器上绑定受信 adapter='deepseek'。
 // 该能力不属于公共 metadata API；complete()/stream() 的真实 response 均经此铸造器注册。
 const { createProviderRuntimeMintAuthority } = require('./provider-runtime-trust');
+const { createSSEParser } = require('./sse-parser');
 
 function isPeakHour(now = new Date()) {
   // DeepSeek 峰谷：工作日 09:00-12:00、14:00-18:00 为高峰；周六周日全天低谷；
@@ -246,43 +247,38 @@ class DeepSeek {
       }, ctrl.signal);
 
       reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = '';
-
-      // 一行 SSE -> 文本增量/usage。抽出来是因为循环之外还要补处理最后一段。
-      const consume = (line) => {
-        const s = line.trim();
-        if (!s.startsWith('data:')) return;
-        const payload = s.slice(5).trim();
-        if (payload === '[DONE]') return;
-        let j;
-        try { j = JSON.parse(payload); } catch { return; }
-        if (typeof j.model === 'string' && j.model.trim()) {
-          observedModel = j.model.trim();
-        }
-        // OpenAI 兼容服务在流内报错时 HTTP 仍是 200，错误只出现在某一条 data 里
-        // （余额耗尽、限速、内容审核拦截）。不接住的话它会连同半截回复一起被
-        // 当成"成功"，最后只报一句"返回空内容"，真实原因永久丢失。
-        if (j.error) {
-          const e = j.error;
-          // P1-2: provider 错误文本同样过 redaction，防 secret 随错误消息外泄
-          const why = redactSecrets(e.message || e.msg || JSON.stringify(e));
-          streamError = new Error(why + (e.type || e.code ? '（' + (e.type || e.code) + '）' : ''));
-          return;
-        }
-        if (j.usage) usage = j.usage;
-        const d = j.choices?.[0]?.delta?.content;
-        if (d) {
-          // SEC-03: 累计文本上限 —— 追加前检查，不得先无界 full += d；走 streamError 出口保留 partial 语义
-          if (full.length + d.length > MAX_STREAM_TEXT_CHARS) {
-            const tooLarge = makeResponseTooLargeError(MAX_STREAM_TEXT_CHARS, 'stream');
-            ctrl.abort(tooLarge);
-            streamError = tooLarge;
+      const sseParser = createSSEParser({
+        maxBufferBytes: MAX_SSE_BUFFER_BYTES,
+        onEvent: (ev) => {
+          if (streamError || !ev || ev.done || ev.malformed || !ev.json) return;
+          const j = ev.json;
+          if (typeof j.model === 'string' && j.model.trim()) {
+            observedModel = j.model.trim();
+          }
+          // OpenAI 兼容服务在流内报错时 HTTP 仍是 200，错误只出现在某一条 data 里
+          // （余额耗尽、限速、内容审核拦截）。不接住的话它会连同半截回复一起被
+          // 当成"成功"，最后只报一句"返回空内容"，真实原因永久丢失。
+          if (j.error) {
+            const e = j.error;
+            // P1-2: provider 错误文本同样过 redaction，防 secret 随错误消息外泄
+            const why = redactSecrets(e.message || e.msg || JSON.stringify(e));
+            streamError = new Error(why + (e.type || e.code ? '（' + (e.type || e.code) + '）' : ''));
             return;
           }
-          full += d; onDelta && onDelta(d);
-        }
-      };
+          if (j.usage) usage = j.usage;
+          const d = j.choices?.[0]?.delta?.content;
+          if (d) {
+            // SEC-03: 累计文本上限 —— 追加前检查，不得先无界 full += d；走 streamError 出口保留 partial 语义
+            if (full.length + d.length > MAX_STREAM_TEXT_CHARS) {
+              const tooLarge = makeResponseTooLargeError(MAX_STREAM_TEXT_CHARS, 'stream');
+              ctrl.abort(tooLarge);
+              streamError = tooLarge;
+              return;
+            }
+            full += d; onDelta && onDelta(d);
+          }
+        },
+      });
 
       // P1-2: streamIdleTimeoutMs 仅约束连续 chunk 之间的等待空闲时间（<= 0 视为禁用）
       const streamIdleTimeoutMs = Number.isFinite(this.cfg.streamIdleTimeoutMs)
@@ -334,18 +330,14 @@ class DeepSeek {
           if (onAbortHandler) ctrl.signal.removeEventListener('abort', onAbortHandler);
 
           if (done) break;
-          buf += dec.decode(value, { stream: true });
-          // SEC-03: 未解析 SSE buffer 按 UTF-8 byte 硬上限（不换行的恶意流不得无限累积）
-          if (Buffer.byteLength(buf, 'utf8') > MAX_SSE_BUFFER_BYTES) {
-            const tooLarge = makeResponseTooLargeError(MAX_SSE_BUFFER_BYTES, 'stream');
-            ctrl.abort(tooLarge);
-            throw tooLarge;
+          try {
+            sseParser.feed(value);
+          } catch (sseErr) {
+            if (sseErr && sseErr.name === 'ResponseTooLargeError') {
+              ctrl.abort(sseErr);
+            }
+            throw sseErr;
           }
-
-          // SSE 按行解析，行尾可能是 \n 或 \r\n；没有换行的尾巴留在 buf 里等下一块
-          const lines = buf.split('\n');
-          buf = lines.pop();
-          for (const line of lines) consume(line);
           if (streamError) break;      // 已经报错就不用再读下去了（也避免挂到连接超时）
         } catch (readErr) {
           if (idleTimer) clearTimeout(idleTimer);
@@ -372,14 +364,7 @@ class DeepSeek {
       // 最后一段也没有换行触发循环内处理。真实 DeepSeek 的 usage 包就在
       // [DONE] 之前 —— 服务端少发一个换行，命中率/计费就会静默归零。
       if (!streamError) {
-        buf += dec.decode();         // 无参调用吐出 decoder 里剩余的字节
-        // SEC-03: flush 路径同样受 byte 上限约束
-        if (Buffer.byteLength(buf, 'utf8') > MAX_SSE_BUFFER_BYTES) {
-          const tooLarge = makeResponseTooLargeError(MAX_SSE_BUFFER_BYTES, 'stream');
-          ctrl.abort(tooLarge);
-          throw tooLarge;
-        }
-        if (buf) consume(buf);
+        sseParser.flush();
       }
       if (streamError) {
         // 把已经收到的半截回复一起带出去：调用方可以决定是丢弃还是保留，

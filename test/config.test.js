@@ -197,6 +197,19 @@ check('price 只按 peak/valley 两档合并，档内是整体替换', (() => {
                               budgetMaxOutputTokens: cfg.budgetMaxOutputTokens });
   check('P1-a 端到端：配置预算后 Budget Guard 真的可达（不再恒 NO_BUDGET_CONFIGURED）',
     probe.ok === false, JSON.stringify(probe));
+
+  // Batch 3.3: tryLoad 高版本抛错、link-local/localhost DeepSeek key 隔离
+  const { tryLoad } = require('../src/config');
+  const { validateCredentialTarget } = require('../src/provider-policy');
+  const highDir = mk();
+  writeRaw(highDir, { schemaVersion: 99, model: 'future-model' });
+  let highErr = null;
+  try { tryLoad(highDir); } catch (e) { highErr = e; }
+  check('Batch3.3: tryLoad 遇到高版本 schemaVersion 抛出 SCHEMA_VERSION_TOO_HIGH（不覆盖）',
+    highErr && highErr.code === 'SCHEMA_VERSION_TOO_HIGH');
+  check('Batch3.3: provider-policy 拦截 169.254.x.x SSRF 与 localhost 复用 DeepSeek Key',
+    validateCredentialTarget({ baseURL: 'http://169.254.169.254/latest', credentialType: 'apiKey' }).ok === false
+    && validateCredentialTarget({ baseURL: 'http://localhost:11434/v1', credentialType: 'deepseek-api-key' }).ok === false);
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

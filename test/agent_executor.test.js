@@ -1254,6 +1254,79 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   })());
 }
 
+/* ================= SEC-P1-2：连续执行失败熔断不因 propose/confirm 重置 ================= */
+{
+  check('SEC-P1-2 连续 3 次执行期失败精确触发 max_consecutive_errors 熔断，穿插 consume(false) 不得重置', (() => {
+    const e = env();
+    const budget = new ExecutionBudget({ maxActionsPerSession: 50, maxWritesPerSession: 50, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
+    const exec = new ControlledAgentExecutor({ policy: e.policy, confirmation: e.confirmation, budget, proposalStore: e.proposalStore, transactionManager: e.txnManager, auditLog: e.auditLog });
+    for (let i = 0; i < 3; i++) {
+      budget.consume(false); // 模拟 propose
+      const p = createActionProposal({ capability: 'workspace.read', scope: path.join(e.sandbox, `missing-${i}.txt`) });
+      e.proposalStore.set(p.id, p);
+      budget.consume(false); // 模拟 confirm
+      e.confirmation.confirm(p.id, 'approved', { status: 'proposed' });
+      exec.execute({ proposalId: p.id });
+    }
+    const st = budget.state();
+    const p4 = createActionProposal({ capability: 'workspace.read', scope: path.join(e.sandbox, 'missing-3.txt') });
+    e.proposalStore.set(p4.id, p4);
+    e.confirmation.confirm(p4.id, 'approved', { status: 'proposed' });
+    const r4 = exec.execute({ proposalId: p4.id });
+    return st.tripped === true && st.tripReason === 'max_consecutive_errors'
+      && st.consecutiveErrors === 3 && r4.ok === false && r4.code === 'BUDGET_TRIPPED';
+  })());
+
+  check('SEC-P1-2 执行期连续失败后成功执行 1 次才归零 consecutiveErrors', (() => {
+    const e = env();
+    const okFile = path.join(e.sandbox, 'ok.txt');
+    fs.writeFileSync(okFile, 'ok', 'utf8');
+    const budget = new ExecutionBudget({ maxActionsPerSession: 50, maxWritesPerSession: 50, maxConsecutiveErrors: 3, maxWallClockMs: 0 });
+    const exec = new ControlledAgentExecutor({ policy: e.policy, confirmation: e.confirmation, budget, proposalStore: e.proposalStore, transactionManager: e.txnManager, auditLog: e.auditLog });
+    for (let i = 0; i < 2; i++) {
+      const p = createActionProposal({ capability: 'workspace.read', scope: path.join(e.sandbox, `missing-${i}.txt`) });
+      e.proposalStore.set(p.id, p);
+      e.confirmation.confirm(p.id, 'approved', { status: 'proposed' });
+      exec.execute({ proposalId: p.id });
+    }
+    const mid = budget.state().consecutiveErrors;
+    const pOk = createActionProposal({ capability: 'workspace.read', scope: okFile });
+    e.proposalStore.set(pOk.id, pOk);
+    e.confirmation.confirm(pOk.id, 'approved', { status: 'proposed' });
+    const rOk = exec.execute({ proposalId: pOk.id });
+    return mid === 2 && rOk.ok === true && budget.state().consecutiveErrors === 0 && budget.state().tripped === false;
+  })());
+
+  check('Batch3.2: _readFile openSync(O_NOFOLLOW) 遇 ELOOP 拒为 SYMLINK_ESCAPE 且 sandbox 文件配额上限拦截 SANDBOX_QUOTA_EXCEEDED', (() => {
+    const e = env();
+    const f1 = path.join(e.sandbox, 'a.txt');
+    fs.writeFileSync(f1, 'hi', 'utf8');
+    const eloopFs = Object.assign({}, fs, {
+      openSync: () => { const err = new Error('ELOOP'); err.code = 'ELOOP'; throw err; },
+    });
+    const eloopExec = new ControlledAgentExecutor({
+      policy: e.policy, confirmation: e.confirmation, budget: e.budget,
+      proposalStore: e.proposalStore, transactionManager: e.txnManager, auditLog: e.auditLog, fs: eloopFs,
+    });
+    const pRead = createActionProposal({ capability: 'workspace.read', scope: f1 });
+    e.proposalStore.set(pRead.id, pRead);
+    e.confirmation.confirm(pRead.id, 'approved', { status: 'proposed' });
+    const rEloop = eloopExec.execute({ proposalId: pRead.id });
+
+    const quotaExec = new ControlledAgentExecutor({
+      policy: e.policy, confirmation: e.confirmation, budget: e.budget,
+      proposalStore: e.proposalStore, auditLog: e.auditLog,
+      maxSandboxFiles: 1,
+    });
+    const target2 = path.join(e.sandbox, 'b.txt');
+    const content = 'second file';
+    const pidWrite = authorizeProposal(e, { capability: 'workspace.write', scope: target2, content });
+    const rQuota = quotaExec.execute({ proposalId: pidWrite, content });
+    return rEloop.ok === false && rEloop.code === 'SYMLINK_ESCAPE'
+      && rQuota.ok === false && rQuota.code === 'SANDBOX_QUOTA_EXCEEDED' && !fs.existsSync(target2);
+  })());
+}
+
 /* ================= 汇总 ================= */
 console.log('--- D-4 受控执行器门禁结束---');
 if (failures > 0) {

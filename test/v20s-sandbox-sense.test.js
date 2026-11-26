@@ -359,7 +359,8 @@ function makeEnv() {
 
   /* ============ 6. main.js & persona.js 接线不变量 ============ */
   {
-    const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const mainSrc = ['main.js', 'src/main-agent-ipc.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
     check('6.1 main.js 含 buildReadSandboxScope、agentPolicy 放行 workspace.list、agentOnExecuted 屏蔽 readOnly',
       /function buildReadSandboxScope\(/.test(mainSrc)
       && /setScopeRoots\('workspace\.list'/.test(mainSrc)

@@ -47,6 +47,20 @@ function skip(name, reason) {
   skipList.push(name + ' —— ' + reason);
 }
 
+function isMissingPythonModule(out) {
+  return /ModuleNotFoundError|No module named/i.test(String(out || ''));
+}
+
+function classifyNonZeroSuite(code, out) {
+  const s = String(out || '');
+  if (code !== 0 && isMissingPythonModule(s)) {
+    const mod = (s.match(/No module named ['"]?[\w.]+/i) || ['?'])[0];
+    return { action: 'skip', reason: '缺少 Python 依赖（' + mod + '），无法在本环境验证' };
+  }
+  return { action: 'fail', error: new Error('子进程非零退出: ' + code) };
+}
+
+function runDocsChecks() {
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
 /* 🔴 2026-10-30：测试清单搬出 README —— README 只留门面，135 个套件的逐条说明
  *   挪到 docs/TEST-INVENTORY.md。本文件的门禁**一条没松**，只是换了出处：
@@ -320,8 +334,13 @@ function countPass(out) {
         ? { DESKPET_URL: url } : null);
       out = r.out;
       if (r.code !== 0) {
+        const cls = classifyNonZeroSuite(r.code, out);
+        if (cls.action === 'skip') {
+          skip(c.file, cls.reason);
+          continue;
+        }
         // 子进程真的跑完了但非零退出 —— 这是真失败，交给下面的项数/FAIL 判定
-        runError = new Error('子进程非零退出: ' + r.code);
+        runError = cls.error;
       }
     } catch (e) {
       runError = e;
@@ -332,7 +351,7 @@ function countPass(out) {
         continue;
       }
       // 依赖缺失（典型是 ui_test.py 缺 playwright）也是环境问题，不是测试失败
-      if (/ModuleNotFoundError|No module named/i.test(out)) {
+      if (isMissingPythonModule(out)) {
         skip(c.file, '缺少 Python 依赖（' + (out.match(/No module named ['"]?[\w.]+/i) || ['?'])[0] + '），无法在本环境验证');
         continue;
       }
@@ -411,3 +430,7 @@ function countPass(out) {
     + (innerSkipped ? '（其中 ' + innerSkipped + ' 项因环境不适用跳过，未验证）' : ''));
   process.exit(failures ? 1 : 0);
 })();
+}
+
+module.exports = { isMissingPythonModule, classifyNonZeroSuite, runDocsChecks };
+if (require.main === module) runDocsChecks();

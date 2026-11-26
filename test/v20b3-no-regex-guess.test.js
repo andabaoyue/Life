@@ -158,7 +158,8 @@ function buildIpcTestHarness() {
   /* ============ 1. 静态门禁与判别力自检 ============ */
   const lifecycleSrc = fs.readFileSync(path.join(ROOT, 'src', 'agent-lifecycle.js'), 'utf8');
   const routerSrc = fs.readFileSync(path.join(ROOT, 'src', 'agent-router.js'), 'utf8');
-  const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-agent-ipc.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, 'main.js').replace('main.js', f), 'utf8')).join('\n');
 
   const vLifecycle = scanNoRegexGuess(lifecycleSrc);
   const vRouter = scanNoRegexGuess(routerSrc);
@@ -240,64 +241,65 @@ function buildIpcTestHarness() {
   const emptyDrain = h.agentIpc.drainExpiredPendingWriteProposals(baseNow);
 
   // 4.2 放入 6 种提案（用测试注入的 createdAt 检查 TTL，其余全部走真实 proposeInternal / confirm / executeInternal）
-  const pExpiredPending = h.agentIpc.proposeInternal({
+  // 安全加固后 createActionProposal 不再从 raw.createdAt 取时间；测试通过可写 proposalStore 注入老化时间戳，其余全走真实链路
+  const backdate = (res, ts) => {
+    if (res && res.proposal && h.proposalStore.has(res.proposal.id)) {
+      const p = h.proposalStore.get(res.proposal.id);
+      h.proposalStore.set(p.id, Object.freeze({ ...p, createdAt: ts }));
+    }
+    return res;
+  };
+  const pExpiredPending = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.write',
     scope: path.join(h.sbDir, '待整理笔记.md'),
     reason: '按你的要求整理',
     content: '# 待整理笔记\n正文内容。',
-    createdAt: past20m,
-  }, 'main');
+  }, 'main'), past20m);
 
-  const pFreshPending = h.agentIpc.proposeInternal({
+  const pFreshPending = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.write',
     scope: path.join(h.sbDir, '刚拟好的草稿.md'),
     reason: '未超时',
     content: 'fresh content',
-    createdAt: past5m,
-  }, 'main');
+  }, 'main'), past5m);
 
-  const pExpiredSelfNote = h.agentIpc.proposeInternal({
+  const pExpiredSelfNote = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.write',
     scope: path.join(h.sbDir, 'note-self.txt'),
     reason: '自留',
-    createdAt: past20m,
-  }, 'main', 'selfNote', '自留内容');
+  }, 'main', 'selfNote', '自留内容'), past20m);
 
   fs.writeFileSync(path.join(h.sbDir, 'old-read.txt'), 'hello', 'utf8');
-  const pExpiredRead = h.agentIpc.proposeInternal({
+  const pExpiredRead = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.read',
     scope: path.join(h.sbDir, 'old-read.txt'),
     reason: '读取',
-    createdAt: past20m,
-  }, 'main', 'readOnly');
+  }, 'main', 'readOnly'), past20m);
 
-  const pExpiredDenied = h.agentIpc.proposeInternal({
+  const pExpiredDenied = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.write',
     scope: path.join(h.sbDir, '用户拒绝的.md'),
     reason: '测试拒绝',
     content: 'denied content',
-    createdAt: past20m,
-  }, 'main');
+  }, 'main'), past20m);
   const cDeny = h.confirmation.confirm(pExpiredDenied.proposal.id, 'rejected', { status: 'proposed' });
   if (!cDeny || !cDeny.ok) throw new Error('expected confirm rejected ok');
 
-  const pExpiredApproved = h.agentIpc.proposeInternal({
+  const pExpiredApproved = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.write',
     scope: path.join(h.sbDir, '用户批准但待执行.md'),
     reason: '测试批准',
     content: 'approved content',
-    createdAt: past20m,
-  }, 'main');
+  }, 'main'), past20m);
   const cApprove = h.confirmation.confirm(pExpiredApproved.proposal.id, 'approved', { status: 'proposed' });
   if (!cApprove || !cApprove.ok) throw new Error('expected confirm approved ok');
 
-  const pExpiredConsumed = h.agentIpc.proposeInternal({
+  const pExpiredConsumed = backdate(h.agentIpc.proposeInternal({
     capability: 'workspace.write',
     scope: path.join(h.sbDir, '已执行的.md'),
     reason: '测试已消费',
     content: 'consumed content',
-    createdAt: past20m,
-  }, 'main');
+  }, 'main'), past20m);
   // 直接标记为已消费，模拟 10 分钟内曾执行完毕但 proposal.status 仍冻结为 'proposed'
   h.executor.consumed.add(pExpiredConsumed.proposal.id);
 

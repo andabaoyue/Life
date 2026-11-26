@@ -143,12 +143,13 @@ class UserConfirmationGate {
    * @param {string} [reason]作废原因，仅供审计追溯
    * @returns {{ok:true, record:object}|{ok:false, code:string}}
    */
-  revoke(proposalId, reason = 'REVOKED') {
+  revoke(proposalId, reason = 'REVOKED', opts = {}) {
     const id = String(proposalId || '').trim();
     if (!id) return { ok: false, code: 'PROPOSAL_ID_REQUIRED' };
     const rec = this.records.get(id);
     if (!rec) return { ok: false, code: 'NOT_CONFIRMED' };
     if (rec.revoked) return { ok: false, code: 'ALREADY_REVOKED' };
+    const revokedAt = (opts && Number.isFinite(opts.at)) ? opts.at : nowMs();
     const next = Object.freeze({
       proposalId: rec.proposalId,
       decision: rec.decision,
@@ -156,6 +157,7 @@ class UserConfirmationGate {
       fingerprint: rec.fingerprint,
       revoked: true,
       revokeReason: String(reason || '').slice(0, 64),
+      revokedAt,
     });
     this.records.set(id, next);
     return { ok: true, record: next };
@@ -216,10 +218,31 @@ class UserConfirmationGate {
    *   但清掉后 isExecutionAllowed 返回 NOT_CONFIRMED —— **依然是拒绝**，
    *   不存在「清掉反而放行」的方向性风险。逐出事件本身另有审计日志留痕。
    */
-  prune(atMs) {
+  prune(atMs, opts = {}) {
     const now = Number.isFinite(atMs) ? atMs : nowMs();
+    const retainRevokedMs = (opts && Number.isFinite(opts.retainRevokedMs))
+      ? opts.retainRevokedMs
+      : (10 * 60 * 1000);
+    const activeIds = (opts && opts.activeProposalIds && typeof opts.activeProposalIds.has === 'function')
+      ? opts.activeProposalIds
+      : null;
     let removed = 0;
     for (const [id, rec] of this.records) {
+      if (rec.revoked === true) {
+        if (activeIds && activeIds.has(id)) continue;
+        const anchorAt = Math.max(Number(rec.at) || 0, Number(rec.revokedAt) || 0);
+        if ((now - anchorAt) <= retainRevokedMs) continue;
+        this.records.delete(id);
+        removed++;
+        continue;
+      }
+      if (rec.decision === 'rejected') {
+        if (activeIds && !activeIds.has(id) && (now - (Number(rec.at) || 0)) > retainRevokedMs) {
+          this.records.delete(id);
+          removed++;
+        }
+        continue;
+      }
       if (rec.decision === 'approved' && (now - rec.at) > this.ttlMs) {
         this.records.delete(id);
         removed++;

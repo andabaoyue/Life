@@ -119,7 +119,8 @@ try {
 
 /* 12. 生产源码静态审计：main.js 的 saveChatBounds 必须使用 writeJsonAtomic 写入 chat-window.json */
 {
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-window-ipc.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
 
   /**
    * ⚠️ 判据校正（2026-10-20）：
@@ -143,7 +144,7 @@ try {
     return src.slice(start);
   };
 
-  const chatSaveBody = fnBodyOf(mainSrc, 'saveChatBounds');
+  const chatSaveBody = fnBodyOf(mainSrc, 'saveChatBoundsImmediate') || fnBodyOf(mainSrc, 'saveChatBounds');
   const chatSaveUsesAtomic = chatSaveBody.length > 0 &&
     chatSaveBody.includes('writeJsonAtomic') &&
     !chatSaveBody.includes('fs.writeFileSync');

@@ -408,5 +408,57 @@ function tmpDir(prefix = 'archive-integrity-test-') {
     'modern_chain_integrity=' + forgedRes.modern_chain_integrity);
 }
 
+// -------------------------------------------------------------
+// CORE-P1-3: verifyIndependentEvidence 支持多血脉同号 messageId（memory.reset 后重逢 m-000001）
+// -------------------------------------------------------------
+{
+  const { SubjectState } = require('../src/subject-state');
+  const multiDir = tmpDir('archive-test-');
+  try {
+    const multiArchive = new ExperiencesArchive(multiDir);
+    const ss = new SubjectState(multiDir);
+    const msg1 = { messageId: 'm-000001', windowNo: 1, role: 'user', content: '第一世你好' };
+    const msg2 = { messageId: 'm-000001', windowNo: 1, role: 'user', content: '第二世重逢' };
+    ss.attestMessages([msg1]);
+    const ver1 = ss.verifyEvidence(
+      [{ trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-000001', quote: '第一世你好' }],
+      [msg1],
+      1
+    );
+    ss.attestMessages([msg2]);
+    const ver2 = ss.verifyEvidence(
+      [{ trait: 'quiet_preference', direction: 1, strength: 0.6, messageId: 'm-000001', quote: '第二世重逢' }],
+      [msg2],
+      1
+    );
+    multiArchive.appendRecord('window_summary', 1, {
+      windowNo: 1,
+      events: [{ eventId: 'evt-lineage-1', type: 'message', source: 'user', messageId: 'm-000001', timestamp: 1000, payload: { content: '第一世你好', roundNo: 1 } }],
+      observations: [],
+      interpretations: [],
+      verifiedEvidence: ver1.verified,
+      stateChanges: []
+    });
+    multiArchive.appendRecord('window_summary', 1, {
+      windowNo: 1,
+      events: [{ eventId: 'evt-lineage-2', type: 'message', source: 'user', messageId: 'm-000001', timestamp: 2000, payload: { content: '第二世重逢', roundNo: 1 } }],
+      observations: [],
+      interpretations: [],
+      verifiedEvidence: ver2.verified,
+      stateChanges: []
+    });
+    multiArchive.updateProvenanceAttestations(
+      ss.data.messageAttestations,
+      ss.data.evidenceAttestations
+    );
+    const multiReport = ArchiveIntegrityService.checkArchive(path.join(multiDir, 'experiences.jsonl'));
+    check('CORE-P1-3: reset 后同号 m-000001 不同内容跨血脉归档仍保持 CERTIFIED',
+      multiReport.integrity === 'certified' && multiReport.independent_evidence_integrity === 'verified',
+      JSON.stringify({ integrity: multiReport.integrity, indep: multiReport.independent_evidence_integrity, defects: multiReport.defects }));
+  } finally {
+    fs.rmSync(multiDir, { recursive: true, force: true });
+  }
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

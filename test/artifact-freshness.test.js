@@ -241,6 +241,23 @@ check('⑦ discoverAsar 返回 null 或真实存在的路径',
   const mt = af.getLatestRuntimeDirMtimeMs(dirSrc);
   check('P1-17b 改动 src 子目录源码被 compareArtifact 与 getLatestRuntimeDirMtimeMs 识别（不再假绿）',
     r.stale.includes('src/core.js') && mt.fileCount === 2 && mt.latestMtimeMs > 0);
+
+  // Batch 3.4: RUNTIME_DIRS 包含活跃 assets/ 且排除 legacy 档案资产
+  const dirAssets = fs.mkdtempSync(path.join(require('os').tmpdir(), 'artifact-fresh-'));
+  TMP_DIRS.push(dirAssets);
+  fs.mkdirSync(path.join(dirAssets, 'assets', 'character', 'base'), { recursive: true });
+  fs.mkdirSync(path.join(dirAssets, 'assets', 'character-archive-760x1000'), { recursive: true });
+  fs.writeFileSync(path.join(dirAssets, 'assets', 'pet.png'), 'PET-NEW');
+  fs.writeFileSync(path.join(dirAssets, 'assets', 'character', 'base', 'base_legacy_full.png'), 'LEGACY');
+  fs.writeFileSync(path.join(dirAssets, 'assets', 'character-archive-760x1000', 'arch.png'), 'ARCH');
+  const assetList = af.collectRuntimeDirFiles(dirAssets);
+  const rAsset = af.compareArtifact({ root: dirAssets, readPacked: () => Buffer.from('PET-OLD') });
+  check('Batch3.4: collectRuntimeDirFiles 覆盖活跃 assets/ 并排除 legacy 归档目录',
+    af.RUNTIME_DIRS.includes('assets')
+    && assetList.includes('assets/pet.png')
+    && !assetList.includes('assets/character/base/base_legacy_full.png')
+    && !assetList.some((p) => p.includes('character-archive-760x1000'))
+    && rAsset.stale.includes('assets/pet.png'));
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

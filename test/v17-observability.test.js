@@ -30,7 +30,8 @@ const {
 
 const ROOT = path.join(__dirname, '..');
 const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
-const petSrc = fs.readFileSync(path.join(ROOT, 'pet.js'), 'utf8');
+const petSrc = ['pet.js', 'ui-settings.js', 'ui-research.js']
+  .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const i18nSrc = fs.readFileSync(path.join(ROOT, 'ui-i18n.js'), 'utf8');
 
@@ -321,7 +322,7 @@ check('🔴 折叠走事件委托（不逐组绑，避免刷新时叠加监听�
  *   不剥注释会让警示语自己把断言弄红（这条判据首版就踩了这个坑）。 */
 {
   const segRaw = petSrc.slice(petSrc.indexOf('function renderObsGroups'),
-    petSrc.indexOf('function formatObsValue'));
+    petSrc.indexOf('async function refreshLifeMechanisms'));
   const segNoComment = segRaw
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
@@ -371,7 +372,7 @@ check('❌ 每个 labelKey 都有双语 i18n 条目', missingI18n.length === 0, 
 //   改为：从函数名切到下一个同名顶层函数（formatObsValue），并剥注释。
 const renderRaw = petSrc.slice(
   petSrc.indexOf('function renderObsGroups'),
-  petSrc.indexOf('function formatObsValue')
+  petSrc.indexOf('async function refreshLifeMechanisms')
 );
 const renderBody = renderRaw
   .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -380,7 +381,7 @@ check('🔴 renderObsGroups 内不使用 innerHTML',
   renderRaw.length > 0 && !renderBody.includes('innerHTML'),
   'len=' + renderRaw.length);
 
-const fmtFn = petSrc.match(/function formatObsValue\([\s\S]*?\n\}/);
+const fmtFn = petSrc.match(/function formatObsValue\([\s\S]*?\n\s{0,4}\}/);
 const fmtBody = fmtFn ? fmtFn[0] : '';
 check('🔴 formatObsValue 内不使用 innerHTML', fmtBody.length > 0 && !fmtBody.includes('innerHTML'));
 

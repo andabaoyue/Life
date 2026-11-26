@@ -142,7 +142,10 @@ check('14 moot 免引证（不硬造证据）',
   m.resolveExpectation(m.data.expectations[1].id, { status: 'moot' }).ok === true);
 
 // 15 防工具化红线：memory.js 零定时器（机械门）
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.js'), 'utf8');
+const src = [
+  'memory.js', 'memory-self-notes.js', 'memory-observe-epoch.js',
+  'memory-lexicon.js', 'memory-expectations.js'
+].map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8')).join('\n');
 check('15 防工具化红线：memory.js 零 setTimeout/setInterval（不是闹钟）',
   !/setTimeout|setInterval/.test(src));
 
@@ -159,7 +162,8 @@ check('18 快照引证：knownIds 白名单内的本窗 ID 不被裁头误判为
   && m.addLexicon({ word: '真伪造', kind: 'metaphor', messageId: 'm-snap-X' }, { knownIds: ['m-snap-01'] }).ok === false);
 
 // 19 提示词契约防漂移：三键在 SUMMARY_SYS 模板里（windowSynthesis 窗级产物）
-const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+const brainSrc = ['brain.js', 'brain-window-pipeline.js']
+  .map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8')).join('\n');
 check('19 提示词契约防漂移：模板含 coinages/expectations/expectationOutcomes',
   /coinages/.test(brainSrc) && /coinage\|metaphor\|nickname\|adopted/.test(brainSrc)
   && /addLexicon\(Object\.assign\(\{\},\s*c,\s*\{\s*windowNo:\s*snap\.windowNo\s*\}\)/.test(brainSrc)
@@ -188,7 +192,8 @@ check('22 空表守卫：两段皆不注入（不给模型幻觉素材）',
 
 // 23 看板护栏：守信率除零守卫文案在册（不许蹦 NaN%）
 const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-const petSrc23 = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+const petSrc23 = ['pet.js', 'ui-settings.js']
+  .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
 const obsSrc23 = fs.readFileSync(path.join(__dirname, '..', 'src', 'observability.js'), 'utf8');
 const i18nSrc23 = fs.readFileSync(path.join(__dirname, '..', 'ui-i18n.js'), 'utf8');
 /* 🔴 2026-10-27：本项判据随排版整改更新（**不是放宽，是承认渲染位置变了**）。

@@ -267,12 +267,13 @@ async function main() {
 
   /* ============ 3. main.js 接线与单一消费静态防回归 ============ */
   {
-    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+    const mainSrc = ['src/main-agent-ipc.js', 'main.js']
+      .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
     const mainCode = stripJsComments(mainSrc);
 
     const topDeclIdx = mainCode.indexOf('let agentSandboxUnavailable = null;');
     const whenReadyIdx = mainCode.indexOf('app.whenReady');
-    check('S-3 作用域：agentSandboxUnavailable 声明在模块顶层（早于 app.whenReady，防 TDZ）',
+    check('S-3 作用域：agentSandboxUnavailable 声明在模块顶层/控制器作用域（早于 app.whenReady，防 TDZ）',
       topDeclIdx !== -1 && whenReadyIdx !== -1 && topDeclIdx < whenReadyIdx
       && !/\n\s*let\s+agentSandboxUnavailable\s*=/.test(mainCode.slice(whenReadyIdx)));
 

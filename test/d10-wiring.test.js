@@ -141,7 +141,8 @@ console.log('--- D-10 建案路径门禁 ---');
 
 /* ============ 5. 防漂移：判据必须仍在 main.js 里 ============ */
 {
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-agent-ipc.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
   check('❌ main.js 仍有绝对路径判据（防止有人删了它而测试仍绿）',
     mainSrc.includes('path.isAbsolute(rawHint)'));
   // 🔵 D-12 修订：这三条判据**从 tryBuildProposalFromIntent 搬到了
@@ -199,7 +200,7 @@ console.log('--- D-10 建案路径门禁 ---');
   //   **约束本身没变**：它必须仍在模块顶层，放进 whenReady 里会 ReferenceError
   //   （chat-send 的 handler 在模块顶层注册，顶层闭包引用块级 const 会抛 TDZ）。
   check('❌ main.js 建案函数在模块顶层（放进 whenReady 会 ReferenceError）',
-    /^(?:async )?function tryBuildProposalFromIntent\(\)/m.test(mainSrc));
+    /^\s*(?:async )?function tryBuildProposalFromIntent\(\)/m.test(mainSrc));
 }
 
 console.log('');

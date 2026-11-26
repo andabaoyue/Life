@@ -39,8 +39,11 @@ const DEEPSEEK_COST_STRATEGY = Object.freeze({
     }
 
     const cache = getCacheStrategy('deepseek').interpret(usage); // 解释层，不改 FACT
+    const hasCacheSplit = cache.cacheHitTokens != null || cache.cacheMissTokens != null;
     const hit = cache.cacheHitTokens != null ? cache.cacheHitTokens : 0;
-    const miss = cache.cacheMissTokens != null ? cache.cacheMissTokens : 0;
+    const miss = cache.cacheMissTokens != null
+      ? cache.cacheMissTokens
+      : (!hasCacheSplit && Number.isFinite(usage.promptTokens) && usage.promptTokens > 0 ? usage.promptTokens : 0);
     const out = Number.isFinite(usage.completionTokens) ? usage.completionTokens : 0;
     const p = pricingContext || {};
     const hitPrice = p.hit || 0;

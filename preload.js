@@ -1,5 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+function sub(channel, wrap) {
+  const handler = (...args) => wrap(...args);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
 contextBridge.exposeInMainWorld('deskpet', {
   // Creative 创作空间已按路线图 §3/§4.6 拆除（2026-10）
   // 窗口
@@ -7,13 +13,13 @@ contextBridge.exposeInMainWorld('deskpet', {
   dragEnd: () => ipcRenderer.send('drag-end'),
   dragMove: (dx, dy) => ipcRenderer.send('drag-move', { dx, dy }),
   // 主进程发现窗口失焦时通知我们收尾拖拽（渲染进程的 blur 不一定触发）
-  onDragCancel: (cb) => ipcRenderer.on('drag-cancel', () => cb()),
+  onDragCancel: (cb) => sub('drag-cancel', () => cb()),
   togglePin: () => ipcRenderer.invoke('toggle-pin'),
   pinState: () => ipcRenderer.invoke('pin-state'),
   resize: (f) => ipcRenderer.send('resize-pet', f),
   motionUiState: (state) => ipcRenderer.send('motion-ui-state', state),
   motionStatus: () => ipcRenderer.invoke('motion-status'),
-  onMotionState: (cb) => ipcRenderer.on('motion-state', (e, s) => cb(s)),
+  onMotionState: (cb) => sub('motion-state', (e, s) => cb(s)),
   setIgnoreMouseEvents: (ignore) => ipcRenderer.send('set-ignore-mouse-events', !!ignore),
   quit: () => ipcRenderer.send('quit-app'),
 
@@ -21,14 +27,14 @@ contextBridge.exposeInMainWorld('deskpet', {
   // opts 只有主动搭话那一趟会带（{proactive, offer}）：主进程拿 offer 记账。
   // 老签名传两个参数会被 ipc 无声丢掉第二个，所以这里必须显式往下传。
   send: (text, opts) => ipcRenderer.invoke('chat-send', text, opts),
-  onDelta: (cb) => ipcRenderer.on('chat-delta', (e, d) => cb(d)),
+  onDelta: (cb) => sub('chat-delta', (e, d) => cb(d)),
   // 本地活动上报（'click' / 'drag'）：判据都在主进程的 tracker 里算，
   // 渲染端只报"发生了什么"，不带自己那份时间戳账本。
   activity: (type, details) => ipcRenderer.send('activity', type, details),
   // 问一声"该不该开口"：返回提案或 null，不花钱也不改状态（保留向后兼容）
   proactiveCheck: () => ipcRenderer.invoke('proactive-check'),
   // 主进程事件驱动主动搭话推送
-  onProactiveOffer: (cb) => ipcRenderer.on('proactive-offer', (e, o) => cb(o)),
+  onProactiveOffer: (cb) => sub('proactive-offer', (e, o) => cb(o)),
   proactiveDeclined: (offer) => ipcRenderer.send('proactive-declined', offer),
   proactiveCommit: (offer) => ipcRenderer.send('proactive-commit', offer),
   report: () => ipcRenderer.invoke('chat-report'),
@@ -41,25 +47,25 @@ contextBridge.exposeInMainWorld('deskpet', {
   //   退出重开才看得到（重开= 重新 load 一次）。
   //   ⚠️ 刻意不传文本：对话窗必须自己回查 memory.history（单一事实源），
   //   这里塞第二份真相将来必然对不上。
-  onChatHistoryChanged: (cb) => ipcRenderer.on('chat-history-changed', (e, p) => cb(p)),
+  onChatHistoryChanged: (cb) => sub('chat-history-changed', (e, p) => cb(p)),
   chatWindowOpen: () => ipcRenderer.invoke('chat-window-open'),
   chatWindowClose: () => ipcRenderer.invoke('chat-window-close'),
   chatWindowToggle: () => ipcRenderer.invoke('chat-window-toggle'),
   chatWindowHome: () => ipcRenderer.invoke('chat-window-home'),
   chatBusy: (busy, state) => ipcRenderer.invoke('chat-busy', { busy: !!busy, state: state || null }),
   panelViewport: (open, w, h) => ipcRenderer.invoke('panel-viewport', open === true, { w: w || 0, h: h || 0 }),
-  onChatBusy: (cb) => ipcRenderer.on('chat-busy', (e, p) => cb(p)),
-  onChatHidden: (cb) => ipcRenderer.on('chat-window-hidden', () => cb()),
+  onChatBusy: (cb) => sub('chat-busy', (e, p) => cb(p)),
+  onChatHidden: (cb) => sub('chat-window-hidden', () => cb()),
   // 🔴 2026-10-19：她主动开口但**失败**了，也要在对话窗留一行客观事实。
   //   为什么需要单独一条通道：头顶气泡 15 秒就收，而失败往往发生在用户不在电脑前时
   //   （凌晨那次 Key 失效就是这样被瞒了四小时）。对话窗的注记行是常驻的，
   //   用户回来打开就能看到「她试过，但没成功」。
   //   ⚠️ payload 只有错误类别，不带报错原文、不带她要说的话 —— 对话窗只需知道「怎么告诉她」。
-  onChatFailed: (cb) => ipcRenderer.on('chat-failed', (e, p) => cb(p)),
-  onSleepState: (cb) => ipcRenderer.on('sleep-state', (e, p) => cb(p)),
+  onChatFailed: (cb) => sub('chat-failed', (e, p) => cb(p)),
+  onSleepState: (cb) => sub('sleep-state', (e, p) => cb(p)),
   // v1.0 B 方案：她被唤醒且枕边有未接留言时的**客观提示**（只给条数，不带内容）。
   //   刻意不带正文：对话窗自己回查 history（单一事实源），payload 只当"该提示了"的信号。
-  onBedsideUnreadOnWake: (cb) => ipcRenderer.on('bedside-unread-on-wake', (e, p) => cb(p)),
+  onBedsideUnreadOnWake: (cb) => sub('bedside-unread-on-wake', (e, p) => cb(p)),
   listSelfLedger: () => ipcRenderer.invoke('self-ledger-list'),
   selfTimezone: (clientTz) => ipcRenderer.invoke('self-timezone', clientTz || ''),
   lifeMechanisms: () => ipcRenderer.invoke('life-mechanisms'),
@@ -67,17 +73,17 @@ contextBridge.exposeInMainWorld('deskpet', {
   resetSelfLedger: (confirm) => ipcRenderer.invoke('self-ledger-reset', { confirm: confirm === true }),
   // Phase 0.5: 内部调节状态查询与事件监听
   getInternalRegulation: () => ipcRenderer.invoke('internal-regulation-get'),
-  onInternalRegulation: (cb) => ipcRenderer.on('internal-regulation-updated', (e, s) => cb(s)),
+  onInternalRegulation: (cb) => sub('internal-regulation-updated', (e, s) => cb(s)),
 
   // 资源检查
-  onAssetWarning: (cb) => ipcRenderer.on('asset-warning', (e, report) => cb(report)),
+  onAssetWarning: (cb) => sub('asset-warning', (e, report) => cb(report)),
   assetCheck: () => ipcRenderer.invoke('asset-check'),
 
   // 换装
   wardrobeState: () => ipcRenderer.invoke('wardrobe-state'),
   wardrobeSet: (slot, itemId) => ipcRenderer.invoke('wardrobe-set', { slot, itemId }),
   wardrobePreset: (id) => ipcRenderer.invoke('wardrobe-preset', id),
-  onWardrobe: (cb) => ipcRenderer.on('wardrobe-changed', (e, l) => cb(l)),
+  onWardrobe: (cb) => sub('wardrobe-changed', (e, l) => cb(l)),
 
   // 配置
   getConfig: () => ipcRenderer.invoke('config-get'),
@@ -128,7 +134,7 @@ contextBridge.exposeInMainWorld('deskpet', {
   },
   // 框选窗关掉后，主窗用它说一句"看到了"
   visionNotify: (payload) => ipcRenderer.send('vision-notify', payload),
-  onVisionNotify: (cb) => ipcRenderer.on('vision-notify', (e, p) => cb(p)),
+  onVisionNotify: (cb) => sub('vision-notify', (e, p) => cb(p)),
   // 主窗位置（框选坐标换算用：视口坐标 + 窗口位置 = 屏幕坐标）
   windowPosition: () => ipcRenderer.invoke('window-position'),
 
@@ -166,11 +172,11 @@ contextBridge.exposeInMainWorld('deskpet', {
     // ⚠️ D-19：`agent-proposal-available` 保留监听但**主进程已不再发送** ——
     //   那个事件名在 D-19 被判定为语义歧义（「已执行完」与「待你决定」共用过它）。
     //   留着这行是为了兼容旧版本残留的渲染端调用点，新代码一律用下面的 pending。
-    onProposalAvailable: (cb) => ipcRenderer.on('agent-proposal-available', (e, p) => cb(p)),
+    onProposalAvailable: (cb) => sub('agent-proposal-available', (e, p) => cb(p)),
     // 🔴 D-27：**待决提案**的专用信号 —— 只表示「有一份提案等你决定」，
     //   与「已执行完」严格分开（D-19 的语义铁律）。
     //   ⚠️ 同样只带 proposalId：渲染端必须回查 get-pending-proposal 的冻结快照。
-    onProposalPending: (cb) => ipcRenderer.on('agent-proposal-pending', (e, p) => cb(p))
+    onProposalPending: (cb) => sub('agent-proposal-pending', (e, p) => cb(p))
   },
 
   // 实验观测与可复盘工具链 (v0.9.5)

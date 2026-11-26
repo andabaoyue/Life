@@ -204,6 +204,13 @@ const I18N = {
     // Agent 补充
     'agent.label.content': '内容',
     'agent.content.expand': '查看完整正文',
+    'agent.content.loading': '正在获取完整正文…',
+    'agent.content.fetch_error': '（无法加载完整正文，请谨慎授权）',
+    'agent.content.retry_fetch': '重新获取正文',
+    'agent.content.truncated': '（内容较长，已截断显示前 300 字符）',
+    'stt.starting': '准备录音…',
+    'chat.avatar.user': '你',
+    'chat.avatar.ai': '初',
     // 状态与回执
     'status.saved': '已保存',
     'status.savedCheck': '已保存 ✓',
@@ -793,6 +800,13 @@ const I18N = {
     // Agent additions
     'agent.label.content': 'Content',
     'agent.content.expand': 'View Full Content',
+    'agent.content.loading': 'Loading full content…',
+    'agent.content.fetch_error': '(Failed to load full content; approve with caution)',
+    'agent.content.retry_fetch': 'Retry loading content',
+    'agent.content.truncated': '(Truncated; showing first 300 characters)',
+    'stt.starting': 'Preparing microphone…',
+    'chat.avatar.user': 'You',
+    'chat.avatar.ai': 'Chu',
     // Status and callbacks
     'status.saved': 'Saved',
     'status.savedCheck': 'Saved ✓',

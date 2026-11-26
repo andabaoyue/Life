@@ -129,13 +129,15 @@ function decideBubble(m, mode) {
  */
 function bubbleView(m, mode) {
   const d = decideBubble(m, mode);
+  const userAvatar = typeof t === 'function' ? t('chat.avatar.user', '你') : '你';
+  const aiAvatar = typeof t === 'function' ? t('chat.avatar.ai', '初') : '初';
   return {
     kind: d.kind,
     text: d.text,
     bridge: d.bridge,
     bedside: d.bedside === true,
     cls: d.kind === 'user' ? 'b-user' : (d.kind === 'assistant' ? 'b-ai' : 'b-note'),
-    avatar: d.kind === 'user' ? '你' : (d.kind === 'assistant' ? '初' : null),
+    avatar: d.kind === 'user' ? userAvatar : (d.kind === 'assistant' ? aiAvatar : null),
     ts: d.at === undefined ? null : d.at
   };
 }

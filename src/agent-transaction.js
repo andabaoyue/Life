@@ -80,6 +80,17 @@ class WriteTransactionManager {
     this.persist = Boolean(this.dir) && opts.persist !== false;
     /** 单笔事务最大字节数，默认 5MB —— 防止 agent 往磁盘里灌超大文件。 */
     this.maxBytes = Number.isFinite(opts.maxBytes) ? Math.max(1, opts.maxBytes) : 5 * 1024 * 1024;
+    this.validateTarget = typeof opts.validateTarget === 'function' ? opts.validateTarget : null;
+  }
+
+  _assertValidTarget(targetPath, phase) {
+    if (!this.validateTarget) return;
+    const verdict = this.validateTarget(targetPath, phase);
+    if (verdict === false || (verdict && typeof verdict === 'object' && verdict.allowed === false)) {
+      throw Object.assign(new Error(`TXN_TARGET_OUT_OF_SCOPE: ${targetPath}`), {
+        code: 'TXN_TARGET_OUT_OF_SCOPE',
+      });
+    }
   }
 
   /** 记录一条 WAL（append-only）。写不进去就抛——审计/日志写不进去等于没日志。 */
@@ -177,7 +188,8 @@ class WriteTransactionManager {
     if (!target || typeof input.data !== 'string') {
       throw Object.assign(new Error('INVALID_TXN_INPUT'), { code: 'INVALID_TXN_INPUT' });
     }
-    if (input.data.length > this.maxBytes) {
+    this._assertValidTarget(target, 'begin');
+    if (Buffer.byteLength(input.data, 'utf8') > this.maxBytes) {
       throw Object.assign(new Error('PAYLOAD_TOO_LARGE'), { code: 'PAYLOAD_TOO_LARGE' });
     }
 
@@ -290,6 +302,7 @@ class WriteTransactionManager {
       throw Object.assign(new Error('TXN_ALREADY_COMMITTED'), { code: 'TXN_ALREADY_COMMITTED' });
     }
     if (tx.rolledBack) return true;
+    this._assertValidTarget(tx.target, 'rollback');
 
     if (tx.isNew) {
       // 不变式 1：新建的回滚是删除。
@@ -353,6 +366,7 @@ class WriteTransactionManager {
       const p = entry.pending;
       if (!p) continue;
       try {
+        this._assertValidTarget(p.target, 'recover');
         if (p.isNew) {
           // 新建文件被强杀：目标可能是半截内容，也可能是干净的。
           // 既然原意图是"新建"，回滚就是让目标不存在。

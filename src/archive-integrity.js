@@ -186,20 +186,20 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
   const messageAtts = normalizeExternalMessageAttestations(messageAttestations);
   const attestations = normalizeExternalEvidenceAttestations(evidenceAttestations);
   const byEvidenceId = new Map(attestations.map(a => [a.evidenceId, a]));
-  const byMessageId = new Map();
-  for (const a of attestations) {
-    if (!byMessageId.has(a.messageId)) byMessageId.set(a.messageId, []);
-    byMessageId.get(a.messageId).push(a);
-  }
 
   const defects = [];
-  const byMessageAttestedId = new Map(messageAtts.map(a => [a.messageId, a]));
+  // 同一 messageId 可能在 memory.reset() 后跨血脉重复出现，必须保留全部证明列表
+  const byMessageAttestedId = new Map();
+  for (const a of messageAtts) {
+    if (!byMessageAttestedId.has(a.messageId)) byMessageAttestedId.set(a.messageId, []);
+    byMessageAttestedId.get(a.messageId).push(a);
+  }
 
   // Event/message claims are checked against the write-time attestation of the
   // actual message source, not against the Archive's own event payload.
   for (const claim of claims.messageClaims) {
-    const att = byMessageAttestedId.get(claim.messageId);
-    if (!att) {
+    const atts = byMessageAttestedId.get(claim.messageId);
+    if (!atts || atts.length === 0) {
       defects.push({
         status: 'UNRESOLVED',
         relation: 'event->external-message',
@@ -209,14 +209,19 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
       });
       continue;
     }
-    if (claim.content !== null && att.sourceContentHash !== hashCanonicalText(claim.content)) {
-      defects.push({
-        status: 'UNRESOLVED',
-        relation: 'event->external-message',
-        recordRef: claim.recordRef,
-        reference: claim.messageId,
-        detail: 'INDEPENDENT_MESSAGE_CONTENT_MISMATCH'
-      });
+    if (claim.content !== null) {
+      const expectedHash = hashCanonicalText(claim.content);
+      const matched = atts.some((att) => att.sourceContentHash === expectedHash
+        && (!Number.isFinite(claim.windowNo) || !Number.isFinite(att.windowNo) || att.windowNo === claim.windowNo));
+      if (!matched) {
+        defects.push({
+          status: 'UNRESOLVED',
+          relation: 'event->external-message',
+          recordRef: claim.recordRef,
+          reference: claim.messageId,
+          detail: 'INDEPENDENT_MESSAGE_CONTENT_MISMATCH'
+        });
+      }
     }
   }
 
@@ -1006,7 +1011,16 @@ class ArchiveIntegrityService {
           });
           break;
         }
-        if (j > 0) {
+        if (j === 0) {
+          if (rec.archiveSeq === 1 && rec.prevHash !== 'GENESIS') {
+            hashOk = false;
+            diagnostics.push({
+              lineNumber: 1,
+              error: `GENESIS_HASH_MISMATCH: expected GENESIS, got ${rec.prevHash}`
+            });
+            break;
+          }
+        } else {
           const prevRec = hashed[j - 1];
           if (rec.prevHash !== prevRec.recordHash) {
             hashOk = false;

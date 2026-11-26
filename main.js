@@ -17,18 +17,18 @@ const { registerResearchIpc } = require('./src/research-ipc');
 // Creative Mode 旧实现已按路线图 §3/§4.6 裁定拆除（2026-10）：
 // 「v0.9.9 不再继续建设 Creative Mode 独立框架」，实现保留在 Git 历史中作为架构实验记录。
 // 0.9.8 Z3：Connection 管理（Provider Identity ≠ Protocol ≠ Connection ≠ Model）
-const connectionsMod = require('./src/connections');
-const secureCreds = require('./src/secure-credentials');
-const { activateConnection } = require('./src/connection-switch');
-const { runConnectionTest } = require('./src/connection-test');
-// 🔴 v1.7-a：isAppLocalUrl 与 ipcGuard 同源复用 —— 权限闸门与 IPC 闸门必须是
-//   同一个「什么算本地页」的定义，否则两处判据漂移就是一整类绕过。
-const { createIpcGuard, isAppLocalUrl, isChannelAllowedForPicker } = require('./src/ipc-guard');
+const { createIpcGuard, isAppLocalUrl } = require('./src/ipc-guard');
+const { buildReadSandboxScope, createMainAgentController } = require('./src/main-agent-ipc');
+const { createWindowManager } = require('./src/main-window-ipc');
+const { createConnectionsController } = require('./src/main-connections-ipc');
+const { registerSttIpc } = require('./src/main-stt-ipc');
+const { assertChannelAllowedForPicker, registerVisionIpc } = require('./src/main-vision-ipc');
 // v1.0 D-1：Agent 执行能力 IPC 治理通道（纯只读+ 提案受理，执行器仍为 Mock）
 const { registerAgentIpc } = require('./src/agent-ipc');
 const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = require('./src/agent-interfaces');
 // D-4：写事务管理器（D-2 实现，D-4 起才真正被Agent 执行器用到）。
 const { WriteTransactionManager } = require('./src/agent-transaction');
+const { resolveRealPath, isPathInsideRoot } = require('./src/agent-executor');
 // D-5：沙盒目录定位与确保（创建失败即拒，绝不静默降级）。
 const { sandboxPathFor, ensureSandboxDir, listSandboxTopLevel, runPreChatSandboxRead } = require('./src/agent-sandbox');
 const { evaluateTrigger } = require('./src/agent-trigger');
@@ -95,705 +95,17 @@ let motion = null;
 let assetReport = null;
 let proactiveTimer = null;
 let powerMonitorSource = null;
-// v2.0-a（S-3）：从 app.whenReady 块级作用域提升至模块顶层，供 Router L1 与 brain.ask 读取，避免 TDZ
-let agentSandboxUnavailable = null;
-
-function routeAgentEvent(event) {
-  const deps = agentBuildDeps || {};
-  return agentRouter.handleEvent(event, {
-    agentSandbox: deps.agentSandbox || null,
-    sandboxUnavailable: agentSandboxUnavailable || deps.sandboxUnavailable || null,
-    handlers: {
-      tryBuildProposalFromIntent,
-      maybeAskForSelfNote,
-      maybeAskForObserverJournal,
-    },
-  });
-}
-// 🔴 D-7：主动搭话的审计出口。
-//   必须在**模块顶层**声明，不能直接用 app.whenReady() 里的 agentAuditLog：
-//   那是个块级 const，而 proactive-declined 的处理器是模块顶层的闭包，
-//   引用它会在事件触发时抛 TDZ 错（不是风格问题，是运行时崩溃）。
-//   显式初始化为 null，不留 undefined —— 本仓踩过「字段在但从不赋值，
-//   下一个人读到 undefined 以为没有待办」的坑。
-/* ────────────────────────────────────────────────────────────────
- * 🔴 D-10：把「她的想法」变成提案 —— 十五轮以来第一次真的动手
- * ────────────────────────────────────────────────────────────────
- *
- * ## 三条硬约束（越界即打回）
- *
- *   1. **复用 evaluateProposal / proposeInternal，不许复刻。**
- *      registerAgentIpc 返回的是**已绑定本进程 policy/budget** 的实例。
- *      在这里重写「形态校验 → 授权 → 预算 → 建案 → 进注册表」= 两套判定。
- *      注册表登记、逐出、授权作废这些**必须单点**，漂移的那一侧就是漏洞。
- *
- *   2. **scope 只能在这里拼，渲染端不许参与。**
- *      意图只给出 `hint`（文件名），绝对路径由本函数拼。
- *      若让渲染端传路径，scope 白名单当场形同虚设（D-3 顶替攻击就是这一族）。
- *
- *   3. **失败静默降级，绝不砸掉她这一轮的回话。**
- *      这是第一次把 Agent 接进生产对话路径；任何异常都只能记日志，不能外抛。
- *
- * ## 用户拍板：沙盒内自由（方案 A'）
- *
- *   用户原话：「我想让她自由一点，毕竟，我们要赋予她生命。」
- *   经讨论，接受的是这个版本的「自由」——
- *     写什么内容 ✅ 完全自由 ｜ 什么时候提 ✅ 完全自由
- *     **文件名 ✅ 完全自由** ｜ 写到哪：沙盒内自由，外面不行
- *
- *   ⇒ **不对 hint 做任何白名单/重命名/净化**（除下面的安全边界）。
- *     她想叫「我的日记.md」还是「1234.txt」都随她。
- *
- *   🔵 D-27 澄清（**别把这段话套到通路 B 上**）：
- *     上面这条「取名完全自由」是**通路 A（selfNote / 自发留条）**的约定 ——
- *     她主动留下的东西，名字由她定，程序不插手。
- *     **通路 B（用户吩咐她落档）不同**：那是用户说出的目标名，
- *     由 `buildSandboxScope()` 做净化 + **扩展名收敛**（不可写的 csv 等 →
- *     `.md`，以对齐执行器的 `ALLOWED_WRITE_EXTENSIONS`）。
- *     两条路的自由度不同，因为**发起方不同**：她自己的东西她说了算，
- *     她替用户干的事按用户的说法来。
- *
- *    ⚠️ 若将来有人把这条自由约定推广到通路 B，会立刻踩两个坑：
- *      ① 用户说「整理.csv」→ 意图命中（agent-intent 的 FILENAME_RE 收 csv）、
- *         执行器不收 csv ⇒ 点授权后白点一次；
- *      ② 名字里的路径成分没人挡 ⇒ 沙盒边界靠下游兜。
- *
- * ⚠️ 为什么这个函数在**模块顶层**而不是 whenReady 里：
- *   调用它的是 chat-send 的 handler，那个 handler 在模块顶层注册（ipcGuard.handle）。
- *   若把本函数定义在 whenReady 块内，顶层闭包引用它会抛 ReferenceError ——
- *   实测踩过（"tryBuildProposalFromIntent is not defined"，4 项门禁红）。
- *   依赖通过模块级 agentBuildDeps 传入，理由见其声明处注释。
- */
-/* ────────────────────────────────────────────────────────────────
- * 🔴 D-27：通路 B —— 用户吩咐她落档（D-12 留下的 stub，本轮真正接通）
- * ────────────────────────────────────────────────────────────────
- *
- * ## 与 D-12 的关系：不是「恢复」，是**第一次真的写**
- *   原注释写着「原始实现见 D-10 提交的 git 历史」。**那句话是错的** ——
- *   逐个查过 ea25d4c / 141533b / a7a4976 / b3fc13e 四个版本，本函数体
- *   全是同一份 1107 字符的 stub，历史上从未存在过建案实现。
- *   所以本轮不是把某段代码找回来，而是补上从未写过的那一段。
- *
- * ## 内容从哪来：**独立一次调用**，绝不塞进聊天返回
- *   聊天那条提示词有自己的铁律（不含程序数字、不暴露时钟、过滤 synthetic）。
- *   让它顺带吐几百字 Markdown，语气必然撕裂；而标记体要从气泡里剥离，
- *   一旦被 max_tokens 截断或括号未闭合，半截文档就漏到用户眼前
- *   （`brain.js:153` 的 WEAR_RE 只匹配十几个字符的单词标记都还要靠句尾锚定兜底）。
- *   更关键的是**拒绝权**：聊完之后另起一次调用，她才能说「还没聊透」。
- *   合进同一次调用，那个「不」根本来不及出口 —— 而拒绝立项正是 D-27 要保住的东西。
- *   ⇒ 所以走 `brain.askForProposalContent()`，与 askForSelfNote 同形。
- *
- * ## 🔴 消费即清空（Consume-on-Read）
- *   `brain._pendingAgentIntent` 是「上一轮判定命中的意图」，唯一的清空点是
- *   brain.js 里那句「判定跑过但没中」。若本函数只在拒案时清空，会漏掉两条：
- *     · 她**同意**建案 → 意图残留 → 下一轮若触发器没跑（verdict.ran === false，
- *       比如配置被关掉或主动搭话被挡），同一意图会被**重复建案**；
- *     · 拟稿是 await 的异步调用 —— 若等它返回才清空，等待期间用户又说了新话
- *       写入了新意图，事后清空就会**误删新的那个**。
- *   ⇒ 所以：**读到并校验通过后，立刻同步置 null，再进 await。**
- *     宁可「消费了一次没建成」也不要「同一个意图被用两次」。
- *
- * ## 与通路 A 的分工（别混）
- *   通路 A（wantToLeaveSomething）走 maybeAskForSelfNote 的独立建案路径 ——
- *   它在建案前就用 askForSelfNote 拿到内容并**自动执行**（免确认、不弹卡）。
- *   通路 B 是**用户明确要求的**，所以保留第五道闸门：建案后广播
- *   `agent-proposal-pending`，用户点【授权】才落盘。
- *
- * ## 为什么建案后要广播（D-19 的教训不能只记住一半）
- *   D-19 删掉了「自发便签写成后」那条 `agent-proposal-available` 广播 —— 那是对的，
- *   因为「已执行完」和「待你决定」是两件事。但它之后**全仓再没有任何发送点**，
- *   于是 D-10 的建案路径建完案就躺在注册表里直到 10 分钟 TTL 过期。
- *   ⇒ 本轮新增语义明确的 `agent-proposal-pending`（只表示「有待决提案」），
- *     不复用 `-available`（那个名字在 D-19 已被钉死为歧义事件）。
- */
-/**
- * 🔴 D-27：拒案留痕 —— 把「她拒绝立项」如实写进 agent-audit.jsonl。
- *
- * ## 为什么拒案也要进审计
- *   本仓的审计口径一直是「**拒绝也要留痕**」（agent-ipc.js 里 10 处 auditLog.append
- *   有一半是拒绝分支）。拒案与拒绝执行同属主体决策，只打 console.log 等于：
- *   出了问题时，审计里看不到「她曾经拒绝过」——而那恰恰是最该被看见的一类事实。
- *
- * ## ⚠️ 三条边界
- *   1. **绝不记正文**。只记 reason / 目标名（basename 级别的 hint），
- *      与 AuditLog 的隐私铁律一致（它自己还会再过滤一遍 key/token 类字段）。
- *   2. **审计写不进去不能挡住对话链路** —— 与 auditProactiveDispatched 同款纪律。
- *   3. **不依赖 whenReady 的块级变量**：走模块顶层那个 proactiveAuditLog 引用
- *      （它是 agentAuditLog 的顶层句柄）。若为 null 就跳过，绝不抛。
- *
- * @param {object} intent agent-intent 的判定结果
- * @param {string} reason 拒绝/不可用的原因码
- * @param {object} [deps] 建案依赖（含 audit 注入口，单测用；缺省回落到 proactiveAuditLog）
- * @param {string} [outcome] 🔴 D-27 复核（D-4）新增：**两种状态必须用不同的 outcome**
- *   · `'refused_by_subject'` —— 她主体性地拒绝立项（聊得不够透、时机不对）
- *   · `'draft_unavailable'`  —— 拟稿故障/不可用（空、过短、关机、异常）
- *   ⚠️ 为什么必须分开：只按 outcome 汇总时，把「她拒绝了」与「模型没产出」
- *     统计成一类，会让人误判她的行为倾向（以为她总在拒绝），
- *     而实际上可能是调用一直失败。**故障与决策不能同桶。**
- */
-function auditProposalRefused(intent, reason, deps, outcome) {
-  // 优先用注入的审计器（门禁用替身，能验「真的写进去了」）；
-  // 生产环境 agentBuildDeps 不带 audit，回落到模块顶层的真实审计句柄。
-  const sink = (deps && deps.audit && typeof deps.audit.append === 'function')
-    ? deps.audit
-    : proactiveAuditLog;
-  if (!sink) return;
-  const oc = (outcome === 'draft_unavailable') ? 'draft_unavailable' : 'refused_by_subject';
-  try {
-    sink.append({
-      channel: 'agent:propose-action',
-      outcome: oc,
-      capability: 'workspace.write',
-      via: 'main',
-      // 只留目标名（basename 级），绝不记方案正文
-      hint: String((intent && intent.hint) || '').slice(0, 120) || null,
-      reason: String(reason || '').slice(0, 80) || null,
-    });
-  } catch { /* 审计写不进去也不能挡住建案路径 */ }
-}
-
-/**
- * 把 intent 给的 hint 净化成一个**沙盒内的安全文件名**。
- *
- * ⚠️ 规则与 `maybeAskForSelfNote` 里那几条**故意保持一致**（绝对路径 / 分隔符 /
- *   点段 / 超长 / Windows 保留名）。为什么不抽成一个共用函数：
- *   通路 A 那一段被 `test/d10-wiring.test.js` 按**字面量**钉着 5 条断言
- *   （`mainSrc.includes('if (/[\\/]/.test(rawHint)) return;')` 等），
- *   动它就要动门禁；AGENTS.md 也要求「不改无关函数实现」。
- *   所以此处**镜像**同一套规则，并另加一条门禁：两条路的拒绝行为必须一致。
- *
- * @param {string} rawHint 意图里给的文件名（来自用户原话）
- * @param {string} sandboxDir 沙盒绝对路径
- * @returns {?{scope:string, name:string}} null = 这个 hint 不能用于建案
- */
-function buildSandboxScope(rawHint, sandboxDir) {
-  if (typeof sandboxDir !== 'string' || !sandboxDir) return null;
-  const h = String(rawHint == null ? '' : rawHint).trim();
-  if (!h) return null;
-  if (path.isAbsolute(h)) return null;
-  if (/[\\/]/.test(h)) return null;
-  if (h === '.' || h === '..') return null;
-  if (/\.\./.test(h)) return null;
-  if (h.length > 200) return null;
-  if (h.includes(':') || h.endsWith('.') || h.endsWith(' ')) return null;
-  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(h.split('.')[0])) return null;
-
-  // 🔴 扩展名收敛到**执行器真正允许写的那几个**（'.txt' / '.md' / '.json' / '.log'）。
-  //   为什么必须在这里做：agent-intent 的白名单里还有 `csv`
-  //   （`src/agent-intent.js:120` 的 FILENAME_RE），而执行器的
-  //   ALLOWED_WRITE_EXTENSIONS 不收 csv（`src/agent-executor.js:51`）。
-  //   两处口径不一致 ⇒ 用户说「整理.csv」时意图命中、建案成功、点授权后
-  //   执行器回 DISALLOWED_EXTENSION —— 用户得到一张白点的卡片。
-  //   这里把它收敛成 `.md`（本通路产出的本来就是一份 Markdown 文档）。
-  const WRITABLE = ['.txt', '.md', '.json', '.log'];
-  let name = path.basename(h);
-  const ext = path.extname(name).toLowerCase();
-  if (!WRITABLE.includes(ext)) {
-    // 无扩展名 或 不可写扩展名 ⇒ 一律补成 .md
-    name = (ext ? name.slice(0, name.length - ext.length) : name) + '.md';
-  }
-  if (!name || name === '.md') return null;
-
-  return { scope: path.join(sandboxDir, name), name: name };
-}
-
-/**
- * v2.0-s1：构造只读提案的沙盒文件路径（独立于写路径，不做 `.md` 强改扩展名，保留原名供无扩展名文本探测与 .tsv 读取）。
- * @param {string} rawHint 从用户消息提取的文件名
- * @param {string} sandboxDir 沙盒绝对路径
- * @returns {?{scope:string, name:string}}
- */
-function buildReadSandboxScope(rawHint, sandboxDir) {
-  if (typeof sandboxDir !== 'string' || !sandboxDir) return null;
-  const h = String(rawHint == null ? '' : rawHint).trim();
-  if (!h) return null;
-  if (path.isAbsolute(h)) return null;
-  if (/[\\/]/.test(h)) return null;
-  if (h === '.' || h === '..') return null;
-  if (/\.\./.test(h)) return null;
-  if (h.length > 200) return null;
-  if (h.includes(':') || h.endsWith('.') || h.endsWith(' ')) return null;
-  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(h.split('.')[0])) return null;
-  const name = path.basename(h);
-  if (!name || name.charAt(0) === '.') return null;
-  return { scope: path.join(sandboxDir, name), name };
-}
-
-async function tryBuildProposalFromIntent() {
-  try {
-    const deps = agentBuildDeps;
-    if (!deps || !deps.agentIpc || !deps.agentSandbox) return null;
-    if (!brain || typeof brain.askForProposalContent !== 'function') return null;
-
-    // ── 读取即清空：这一步**必须同步**，且在下面任何 await 之前 ──
-    const intent = brain._pendingAgentIntent;
-    if (!intent || intent.shouldPropose !== true) return null;
-    brain._pendingAgentIntent = null;
-
-    // 只处理写意图。intent.capability 目前恒为 'workspace.write'
-    // （agent-intent.js 只产这一种），但**不假设**：能力名不符就静默退出，
-    // 免得将来 intent 多产一种能力时，这里悄悄按写路径处理。
-    if (intent.capability !== 'workspace.write') return null;
-
-    // ── 拟稿（独立一次调用；她可以在这里说「不」）──
-    const draft = await brain.askForProposalContent(intent);
-
-    // 🔴 D-27 复核修订：**三态分开处理**，不再一律当 null。
-    //   原实现把「她拒绝 / 正文过短 / 拟稿抛异常」三者汇成同一个 null，
-    //   后果有两个：① 主进程没法把拒案写进审计（复核要求）；
-    //             ② 分不清「她主体性地拒绝」与「这次输出不可用」——
-    //                前者是她行使权利，后者是故障，混在一起会让排障方向全错。
-    const draftStatus = draft && typeof draft.status === 'string' ? draft.status : 'unavailable';
-
-    // ① 她拒绝立项 —— **合法结果，不是错误**。留痕，但不建案、不广播。
-    if (draftStatus === 'refused') {
-      auditProposalRefused(intent, draft.reason, deps, 'refused_by_subject');
-      console.log('[Agent] 通路 B：她拒绝立项（' + String(draft.reason || '').slice(0, 40) + '），按主体性设计不建案');
-      return null;
-    }
-    // ② 不可用（空 / 过短 / 关机 / 异常）—— 也留痕，**但走独立 outcome**。
-    //   ⚠️ 不能与拒案共用 `refused_by_subject`：那是把「故障」记成「她的决策」。
-    if (draftStatus !== 'ok' || typeof draft.content !== 'string' || !draft.content.trim()) {
-      auditProposalRefused(intent, String((draft && draft.reason) || 'UNKNOWN').slice(0, 40), deps, 'draft_unavailable');
-      console.log('[Agent] 通路 B：拟稿不可用（' + String((draft && draft.reason) || 'unknown').slice(0, 40) + '），不建案');
-      return null;
-    }
-
-    // ── scope 只在这里拼，渲染端与 intent 都不许给绝对路径 ──
-    const built = buildSandboxScope(intent.hint, deps.agentSandbox);
-    if (!built) {
-      console.log('[Agent] 通路 B：文件名不合格，放弃建案:', String(intent.hint || '').slice(0, 60));
-      return null;
-    }
-
-    // ── 建案（复用 proposeInternal，绝不就地复刻三道闸门）──
-    //   ⚠️ 来源刻意**不传第三参数** ⇒ proposalSource = 'user' ⇒ **保留第五道闸门**。
-    //     这与通路 A 的 'selfNote'（免确认）是两件事：用户要的东西，
-    //     应该由用户自己点头，而不是程序替他点头。
-    //   ⚠️ content 走 raw.content：proposeInternal 对 proposalSource==='user'
-    //     只从 raw.content 取正文并当场算 SHA-256 绑进提案（SEC-01）。
-    //     raw 是**本函数构造**的，不经过渲染端，不存在「渲染端自造正文」的面。
-    const res = deps.agentIpc.proposeInternal({
-      capability: 'workspace.write',
-      scope: built.scope,
-      reason: intent.reason || '按你的要求整理成文',
-      content: draft.content,
-    }, 'main');
-
-    if (!res || !res.ok || !res.proposal) {
-      console.log('[Agent] 通路 B：建案被拒:', (res && (res.error || res.code)) || 'unknown');
-      return null;
-    }
-
-    // ── 亮卡：语义明确的新事件（绝不复用 -available，见上方 D-19 那段）──
-    //   只送 proposalId —— 渲染端必须回查主进程的冻结快照（D-5 安全基线）。
-    //   若这里把提案对象塞过去，D-3 顶替攻击那一族就重新打开了。
-    deps.broadcastToWindows('agent-proposal-pending', { proposalId: res.proposal.id });
-    console.log('[Agent] 通路 B：她拟好了一份东西，等你决定是否落盘:', String(built.name).slice(0, 60));
-
-    return res.proposal.id;
-  } catch (err) {
-    // 绝不外抛：它挂在 chat-send 的收尾上，崩了会砸掉她这一轮的回话。
-    return null;
-  }
-}
-
-
-
-
-
+const mainAgent = createMainAgentController({
+  getCfg: () => cfg,
+  getBrain: () => brain,
+  getCapabilityMode,
+  agentRouter,
+  ObservationLog,
+});
+const routeAgentEvent = (event) => mainAgent.routeAgentEvent(event);
+const takeStashedContent = (proposalId) => mainAgent.takeStashedContent(proposalId);
+const syncExpiredProposalsToTickets = (now) => mainAgent.syncExpiredProposalsToTickets(now);
 let proactiveAuditLog = null;
-// 🔴 D-10：主进程建案所需的两样东西，从 whenReady 的块级作用域提升到模块级。
-//   原因：调用点 `chat-send` 的 handler 在**模块顶层**注册（ipcGuard.handle），
-//   而 agentIpc / agentSandbox 是在 app.whenReady 里创建的块级 const ——
-//   顶层闭包直接引用它们会抛 TDZ（本仓已踩过同型坑：agentAuditLog → proactiveAuditLog）。
-//
-//   ⚠️ 两者在 whenReady 里赋值完成之后才会被 chat-send 用到
-//     （chat-send 只可能在窗口就绪、用户说话时触发），所以不存在"用了还没赋值"的窗口。
-//     若为 null 则建案路径整体跳过 —— 静默降级，绝不抛。
-let agentBuildDeps = null;
-
-/* ────────────────────────────────────────────────────────────────
- * 🔴 D-11：她想留下点什么 —— 那个文件的内容从哪来
- * ────────────────────────────────────────────────────────────────
- *
- * ## 为什么需要这个函数
- *
- *   D-10 接通了「建案 → 卡片 → 执行」，但 content 一直没有来源。
- *   本函数补上它：**她为自己组织一句话**，那句话就是写进沙盒的内容。
- *
- * ## 与 tryBuildProposalFromIntent 的分工
- *
- *   那个负责「用户让她做某事」（来源是用户的输入）；
- *   这个负责「她自己想留下什么」（来源是她自己的状态）。
- *   两者最终都走同一条建案路径（proposeInternal），**不各写一份**。
- *
- * ## 三条硬性边界
- *
- *   1. **她的意图必须是 wantToLeaveSomething。**
- *      不是「安静久了想说话」—— 那是 idleness 两档，阈值低得多（45/90 分钟），
- *      它们**不触发本函数**。这条防止「她每次安静久了都写文件」。
- *   2. **她说「不」就不建案。** askForSelfNote 已判定，这里拿到 null 直接返回。
- *   3. **全程静默。** 旁路异常一律吞掉，不影响任何别的东西。
- *
- * ⚠️ 本函数**不 await**（调用方 void 起 promise）：她已经说完了，
- *   留下东西不该让用户多等一次 LLM 往返。
- */
-function maybeAskForSelfNote(selfIntent) {
-  try {
-    const deps = agentBuildDeps;
-    if (!deps || !deps.agentSandbox) return;
-    // 🔴 D-15 修断点 3（反重力复核发现）：原来读 brain._pendingAgentIntent，
-    //   但 wantToLeaveSomething 存在 trigger.selfIntent 里，两者从未接线 ⇒ intent 恒 null。
-    //   v2.0-a：彻底取消回落读 brain._pendingAgentIntent，只接收调用方显式传入的 selfIntent，
-    //   使 _pendingAgentIntent 在全仓严格保持「单点读取+清空」（仅 tryBuildProposalFromIntent）。
-    const intent = selfIntent;
-    if (!intent || intent.kind !== 'wantToLeaveSomething') return;
-
-    /* 🔴 v1.9.0-dev（初澜 2.0 第 1 步）：观察档前置拦截。
-     *
-     * ## 为什么拦在这里（而不是拟稿之后再拦）
-     *   `off` 档的语义是「这件事根本不做」。放在 askForSelfNote 之前 return，
-     *   等于**零 LLM 开销**——不会为了一个注定不落盘的念头白烧一次 API。
-     *   若放到拟稿之后，off 和 observe 的行为会完全一样（都调了模型），
-     *   那 off 档就没有存在的意义了。
-     *
-     * ## observe 档为什么不能也在这里 return
-     *   它要**照常拟稿**——观察档的全部价值就是看她会写出什么。
-     *   所以 observe 的拦截点在 `proposeInternal` 之前（见下方）。
-     */
-    const mode = getCapabilityMode(cfg, 'selfNote');
-    if (mode === 'off') return;
-
-    /* 🔴 v1.9.0-dev（观察档缺口补齐）：档位变迁记账。
-     *
-     * ## 为什么需要它
-     *   程序**无法从配置推断档位变化**——`config.js` 没有文件监听、没有历史，
-     *   启动时只看到当前值。没有这个记账，「观察期满补注入」永远触发不了。
-     *
-     * ## 为什么在这里（而不是启动时一次性比对）
-     *   放在「她真的要写」这一刻：只有她运行到这条路径，才说明这个能力在场，
-     *   此时记账才有意义。启动时记会让 `off` 档（永不运行）也留下观察期痕迹。
-     */
-    try {
-      if (brain && brain.memory && typeof brain.memory.markObserveEpoch === 'function') {
-        if (mode === 'observe') brain.memory.markObserveEpoch('selfNote', 'in');
-        else if (mode === 'auto') brain.memory.markObserveEpoch('selfNote', 'out');
-      }
-    } catch { /* 记账失败不影响主流程 */ }
-
-    void (async () => {
-      try {
-        const note = await brain.askForSelfNote({ intentKind: intent.kind });
-        // 边界②：她说不留 → note 为 null → 不建案。这是合法结果，不是失败。
-        if (!note || !note.content) return;
-
-        // 🔴 D-15 修断点 4（反重力复核发现）：自发愿望没有用户给的文件名，
-        //   intent.hint 是 undefined ⇒ rawHint 为空 ⇒ 直接 return，永远不建案。
-        //   现在：无文件名时生成默认名（日期 + 随机后缀防撞）。
-        let rawHint = String(intent.hint == null ? '' : intent.hint).trim();
-        if (!rawHint) {
-          const d = new Date();
-          const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-          rawHint = 'note-' + ds + '-' + Math.random().toString(36).slice(2, 6) + '.txt';
-        }
-        if (path.isAbsolute(rawHint)) return;
-        if (/[\\/]/.test(rawHint)) return;
-        if (rawHint === '.' || rawHint === '..') return;
-        if (/\.\./.test(rawHint)) return;
-        if (rawHint.length > 200) return;
-        if (rawHint.includes(':') || rawHint.endsWith('.') || rawHint.endsWith(' ') || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(rawHint.split('.')[0])) return;
-
-        const scope = path.join(deps.agentSandbox, rawHint);
-
-        /* 🔴 v1.9.0-dev：observe 档分流 —— 拦截在 proposeInternal **之前**。
-         *
-         * ## 为什么必须在这个位置
-         *   再往后一步（proposeInternal 之后）就来不及了：那一步会建案、写审计、
-         *   占预算、进待决表。观察档不该产生任何这些副作用。
-         *   再往前一步（askForSelfNote 之前）也不行：那样她就没拟稿，无内容可观察。
-         *
-         * ## 记什么
-         *   **完整正文**，不截断。观察档唯一价值就是让人判断她写得对不对。
-         *   写进 `agent-observations.jsonl`（不是 agent-audit.jsonl）——
-         *   安全审计与行为数据必须分开，且审计有 500 字硬截断存不下正文。
-         *
-         * ## 不做什么（重要）
-         *   ✗ 不调 memory.addSelfNote —— 观察期不回流给她（防观察者效应）
-         *   ✗ 不铸自传 —— 没写成的东西不进 experiences.jsonl
-         *   ✗ 不广播任何事件 —— 免确认路径本来就没有待决状态
-         */
-        if (mode === 'observe') {
-          try {
-            if (deps.observationLog && typeof deps.observationLog.append === 'function') {
-              deps.observationLog.append({
-                capability: 'selfNote',
-                intentKind: intent.kind,
-                proposalSource: 'selfNote',
-                scopeName: rawHint,
-                content: note.content,
-              });
-            }
-            /* 🔴 v1.9.0-dev（观察档缺口补齐）：同时在**她的记忆**里记一笔。
-             *
-             *   为什么两处都要记：
-             *     · `agent-observations.jsonl` = 完整正文（给人看的，判断她写得对不对）
-             *     · `memory.data.observedNotes` = 只要 {at, capability} 的计数
-             *       （给「期满补注入」用的，也让她将来知道"那段时间我有过念头"）
-             *
-             *   ⚠️ **绝不把 note.content 传进去**：`noteObserved()` 只取两个字段，
-             *      多看的参数一律丢弃。正文已经在上面那份 jsonl 里了，
-             *      再存一份 = 同一数据两个副本，且 memory.json 会被一起备份。
-             */
-            if (brain && brain.memory && typeof brain.memory.noteObserved === 'function') {
-              brain.memory.noteObserved('selfNote');
-            }
-            console.log('[Agent] 观察档：她想留一张纸条（未落盘）:', String(rawHint).slice(0, 60));
-          } catch { /* 观察记录失败绝不能影响别的 */ }
-          return;
-        }
-
-        // 🔴 D-17（用户拍板 C1）：自发愿望**盖 selfNote 戳** ⇒ 执行器闸门 4 免逐次确认。
-        //   为什么：留便签的本质是「趁你不在时悄悄写下」；若要弹卡片等你回来才授权，
-        //   那就毁掉了自发留字本身。
-        //   ⚠️ 免确认 ≠ 无约束：沙盒范围/格式白名单/长度/预算/写事务**一个都没松**。
-        const res = typeof deps.agentIpc.proposeInternal === 'function'
-          ? deps.agentIpc.proposeInternal(
-            { capability: 'workspace.write', scope, reason: intent.reason },
-            'main',
-            'selfNote',
-            note.content
-          )
-          : null;
-        if (res && res.ok && res.proposal) {
-          // 内容暂存在提案旁，**随即自动执行**（没有卡片可点，主进程自己收尾）。
-          //   ⚠️ 不塞进提案对象（D-9 定的：动机独立第二参数，同理内容也不进 raw）。
-          pendingSelfNoteContent.set(res.proposal.id, note.content);
-
-          const exec = typeof deps.agentIpc.executeInternal === 'function'
-            ? deps.agentIpc.executeInternal({ proposalId: res.proposal.id })
-            : null;
-          if (exec && exec.ok) {
-            console.log('[Agent] 她自己留下了一张纸条:', String(rawHint).slice(0, 60));
-            // 🔴 D-19：**绝不广播 `agent-proposal-available`**。
-            //
-            //   实测事故：D-17 在这里广播了它，注释还写着「这不是确认卡片」。
-            //   **那句话是错的** —— 事件名本身就决定了它的语义是「有提案等你决定」，
-            //   渲染端 `pet.js` 的 onProposalAvailable 收到就无条件亮确认卡。
-            //   于是自发便签写成后，用户仍被弹了一张多余的授权卡；
-            //   用户点【授权】→ 执行器回 ALREADY_EXECUTED（白点）。
-            //
-            //   ⚠️ 语义铁律：**「已执行完」和「待你决定」是两件事，不能共用一个事件。**
-            //     免确认的路径本来就不该有任何待决状态可广播。
-            //   若将来确实要让 UI 知情（比如桌面上飘一句「我留了张纸条」），
-            //   必须另起一个语义明确的事件名（如 `agent-selfnote-written`），
-            //   绝不能复用 `-available`。
-          } else {
-            // 决策 4：写失败不告诉她，只记日志（审计里执行器已记了原因）。
-            console.log('[Agent] 自发留条未落盘（按设计不告诉她）:', exec && exec.error);
-          }
-        }
-      } catch (err) {
-        // 边界③：静默。
-      }
-    })();
-  } catch (err) {
-    // 连同步段都不许抛 —— 它挂在 chat-send 的收尾上。
-  }
-}
-
-/* ────────────────────────────────────────────────────────────────
- * 🔴 v1.4-b：生命观察日记（沙盒通路 B）—— 关窗时刻的自发生活沉淀
- * ────────────────────────────────────────────────────────────────
- *
- * ## 触发契机与四道防护
- *   1. 【单点触发】：严格仅在窗口轮转关窗时刻（res.windowClosed === true）触发，
- *      绝不在深睡苏醒（用户在场交互）时触发。
- *   2. 【配额探针】：检查 agentBudget 写配额与熔断状态，配额耗尽（remainingWrites <= 0 或 tripped）
- *      前置静默跳过，绝不建案触发报错或熔断。
- *   3. 【同日精准去重】：只检测沙盒内的 journal-YYYY-MM-DD*.md 文件，命中则跳过；
- *      绝不误伤或冲突 note-*.txt 自发便签。
- *   4. 【闸门 4 免确认】：proposalSource 为 'observerJournal'，自动执行落盘，绝不弹窗打扰用户。
- */
-function maybeAskForObserverJournal(windowCloseRes) {
-  try {
-    const deps = agentBuildDeps;
-    if (!deps || !deps.agentSandbox || !deps.agentIpc) return;
-    if (!brain || typeof brain.askForObserverJournal !== 'function') return;
-
-    // 防线 1：配额探针防御（writes 耗尽或已熔断时静默跳过）
-    const budget = deps.agentBudget;
-    if (budget && typeof budget.state === 'function') {
-      const bState = budget.state();
-      if (bState.tripped || (typeof bState.remainingWrites === 'number' && bState.remainingWrites <= 0)) {
-        return;
-      }
-    }
-
-    /* 🔴 v1.9.0-dev：观察档前置拦截（与 maybeAskForSelfNote 同款）。
-     *
-     *   `off` 档在这里直接 return ⇒ 零 LLM 开销。
-     *   位置在**配额探针与同日去重之后**：那两道是「这次本来就不该做」的既有判断，
-     *   先过它们能省掉一次无意义的档位读取，也不改变任何既有语义。
-     */
-    const mode = getCapabilityMode(cfg, 'observerJournal');
-    if (mode === 'off') return;
-
-    /* 🔴 档位变迁记账（2026-11-05 A-1a，与 maybeAskForSelfNote 同款，见 main.js:437-442）。
-     *
-     * ## 为什么必须有这一段
-     *   原来这条路径**从不**调 `markObserveEpoch`，于是：
-     *     进入 observe ⇒ observeEpoch.observerJournal 不存在
-     *     ⇒ 启动兜底 `if (!Number.isFinite(ep.enteredAt)) continue;` 永远跳过它
-     *     ⇒ `pendingEcho` 永远不产生
-     *     ⇒ 观察日记在 observe 档下写的东西，**永远进不了补注入**。
-     *   （审计报告 5.1 实测：observeEpoch={}、takeObserveEcho()=""，selfNote 对照正常）
-     *
-     * ## 为什么位置必须在这里，不能放进下面的 observe 分支
-     *   切回 auto 之后 observe 分支根本不执行，那 'out' 就永远写不进去，
-     *   补偿通道也就永远触发不了 —— 与 selfNote 犯过的错一模一样。
-     */
-    try {
-      if (brain && brain.memory && typeof brain.memory.markObserveEpoch === 'function') {
-        if (mode === 'observe') brain.memory.markObserveEpoch('observerJournal', 'in');
-        else if (mode === 'auto') brain.memory.markObserveEpoch('observerJournal', 'out');
-      }
-    } catch { /* 记账失败不影响主流程 */ }
-
-    // 防线 2：精准同日去重（仅 journal-YYYY-MM-DD*.md，不冲突 note-*.txt）
-    const d = new Date();
-    const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    try {
-      if (fs.existsSync(deps.agentSandbox)) {
-        const files = fs.readdirSync(deps.agentSandbox);
-        const hasJournalToday = files.some((f) => f.startsWith(`journal-${ds}`) && f.endsWith('.md'));
-        if (hasJournalToday) return;
-      }
-    } catch (_) {
-      return;
-    }
-
-    void (async () => {
-      try {
-        const journal = await brain.askForObserverJournal({
-          windowNo: (brain.memory && brain.memory.data && brain.memory.data.windowNo) || 1,
-          synthesis: windowCloseRes && windowCloseRes.summaryText
-        });
-        if (!journal || !journal.content) return;
-
-        const filename = 'journal-' + ds + '-' + Math.random().toString(36).slice(2, 6) + '.md';
-        const scope = path.join(deps.agentSandbox, filename);
-
-        /* 🔴 v1.9.0-dev：observe 档分流 —— 拦截在 proposeInternal 之前。
-         *   与 selfNote 同一条纪律：不建案、不写审计、不占预算、不铸自传、不回流。 */
-        if (mode === 'observe') {
-          try {
-            if (deps.observationLog && typeof deps.observationLog.append === 'function') {
-              deps.observationLog.append({
-                capability: 'observerJournal',
-                intentKind: 'observerJournal',
-                proposalSource: 'observerJournal',
-                scopeName: filename,
-                content: journal.content,
-              });
-            }
-            /* 🔴 与 agent-observations.jsonl 同步记一笔计数（2026-11-05 A-1b）。
-             *
-             * ## 为什么两处都要记
-             *   jsonl 存**完整正文**（给人看的，判断她写得对不对）；
-             *   observedNotes 只存 `{at, capability}`（给「期满补注入」用的计数）。
-             *   两者用途不同，缺一个补注入就不会来。
-             *
-             * ⚠️ **绝不传 journal.content** —— `noteObserved(capability)` 只取
-             *    at 和 capability，多传的一律丢弃。正文已经在 jsonl 里了，
-             *    再往 memory.json 存一份 = 同一数据两个副本，且会被一起备份。
-             */
-            if (brain && brain.memory && typeof brain.memory.noteObserved === 'function') {
-              brain.memory.noteObserved('observerJournal');
-            }
-            console.log('[Agent] 观察档：她想写一篇观察日记（未落盘）:', filename);
-          } catch { /* 观察记录失败绝不能影响别的 */ }
-          return;
-        }
-
-        const res = typeof deps.agentIpc.proposeInternal === 'function'
-          ? deps.agentIpc.proposeInternal(
-            { capability: 'workspace.write', scope, reason: '生活观察日记' },
-            'main',
-            'observerJournal',
-            journal.content
-          )
-          : null;
-
-        if (res && res.ok && res.proposal) {
-          pendingSelfNoteContent.set(res.proposal.id, journal.content);
-
-          const exec = typeof deps.agentIpc.executeInternal === 'function'
-            ? deps.agentIpc.executeInternal({ proposalId: res.proposal.id })
-            : null;
-
-          if (exec && exec.ok) {
-            console.log('[Agent] 初澜写下了一篇生活观察日记:', filename);
-          } else {
-            console.log('[Agent] 观察日记未落盘:', exec && exec.error);
-          }
-        }
-      } catch (err) {
-        // 静默
-      }
-    })();
-  } catch (err) {
-    // 静默
-  }
-}
-
-/** 提案 id → 她想留下的那句话。用户点授权后由 agent:execute 取用，**取完即删**。
- *
- *  ⚠️ 为什么取用即删：一条内容只应对应一次写入。
- *     留着重放时可能被反复写进文件 —— 内容是她的，不该被重复使用。 */
-const pendingSelfNoteContent = new Map();
-
-/** 供 agent-ipc 的 execute 通道取用（read-and-delete）。取不到返回 null。 */
-function takeStashedContent(proposalId) {
-  const id = String(proposalId || '');
-  if (!id || !pendingSelfNoteContent.has(id)) return null;
-  const v = pendingSelfNoteContent.get(id);
-  pendingSelfNoteContent.delete(id);
-  return v;
-}
-
-/**
- * v2.0-b3：唯一零猜测的 Ticket 自动生产者 —— 关窗时读取系统客观状态：
- * 将本会话内已超时（> SNAPSHOT_TTL_MS）且仍未被确认或消费的用户写入提案转为 Ticket。
- * 绝不读取任何自然语言文本；标题取自提案 scope 的 basename。
- */
-function syncExpiredProposalsToTickets(now = Date.now()) {
-  try {
-    const deps = agentBuildDeps;
-    if (!deps || !deps.agentIpc || typeof deps.agentIpc.drainExpiredPendingWriteProposals !== 'function') return [];
-    if (!brain || !brain.ticketStore || typeof brain.ticketStore.createTicket !== 'function') return [];
-    const expired = deps.agentIpc.drainExpiredPendingWriteProposals(now);
-    if (!Array.isArray(expired) || expired.length === 0) return [];
-    const winNo = (brain.memory && brain.memory.data && Number.isFinite(brain.memory.data.windowNo))
-      ? brain.memory.data.windowNo
-      : 1;
-    const created = [];
-    for (const item of expired) {
-      if (!item || !item.name) continue;
-      const res = brain.ticketStore.createTicket({
-        title: item.name,
-        state: 'paused',
-        capability: 'workspace.write',
-        note: '有一份没落的稿子，搁在那儿',
-        windowNo: winNo,
-      });
-      if (res && res.ok && res.ticket) created.push(res.ticket);
-    }
-    return created;
-  } catch {
-    return [];
-  }
-}
 
 const motionUi = { bubble: false, talking: false, chatBusy: false, hidden: false };
 let keyEncrypted = false;   // 面板要如实显示「已加密 / 明文降级」，不吹安全状态
@@ -806,20 +118,8 @@ let creativeSession = null;
 const ipcGuard = createIpcGuard({ ipcMain, getMainWindow: () => win, appDir: __dirname,
   // v1.0 方案二：独立对话窗与主窗同为应用自建受信窗（其余一律 UNTRUSTED_RENDERER）
   getTrustedWebContents: () => {
-    const list = [win, chatWin];
-    /* 🔴 v1.8-b（2026-10-21 修）：**框选窗也必须是受信窗口**。
-     *
-     *   第一版漏了它，后果是用户在框选窗里做的每一件事都被
-     *   assertTrustedRenderer 挡成 UNTRUSTED_RENDERER：
-     *     · 松手 → vision:capture 被拒 → 框一直留着、不提交
-     *     · ESC  → vision:close-picker 被拒 → 关不掉
-     *     · 右键 → 同一条通道，同样关不掉
-     *   实测症状：「勾选了之后框就一直在那，ESC 也按不了，进程无法结束」。
-     *
-     *   ⚠️ 但**不能无条件给它全部权限**：它是加载在透明全屏窗里的页面，
-     *   只该调 vision:capture / vision:stage / vision:close-picker / vision-notify 四条通道。
-     *   所以除了加进信任白名单，还由 ipcGuard 对每条 handle/on 做窗口通道收窄。
-     */
+    const cw = typeof windowMgr !== 'undefined' && windowMgr ? windowMgr.getChatWin() : null;
+    const list = [win, cw];
     try {
       const pickerMod = require('./src/vision-picker-window');
       const pw = pickerMod.getPickerWindow ? pickerMod.getPickerWindow() : null;
@@ -939,7 +239,11 @@ function createWindow() {
   // 拖到一半焦点丢了（在别的程序上松手），渲染进程收不到 mouseup ——
   // 主进程知道失焦，主动通知它收尾，否则桌宠会一直粘着鼠标。
   win.on('blur', () => {
-    if (dragging && win && !win.isDestroyed()) win.webContents.send('drag-cancel');
+    if (windowMgr.isDragging() && win && !win.isDestroyed()) win.webContents.send('drag-cancel');
+  });
+  win.on('closed', () => {
+    win = null;
+    if (!appQuitting) app.quit();
   });
   win.webContents.on('did-finish-load', () => {
     if (assetReport && (!assetReport.ok || assetReport.warnings.length > 0)) {
@@ -959,9 +263,9 @@ function syncMotionBlock(reason = 'user-priority') {
   // v2.0 睡相广播：睡眠态随既有闸门同步给各窗（零新定时器）
   broadcastToWindows('sleep-state', { sleeping: isSleeping });
   if (!motion) return;
-  const blocked = dragging || motionUi.bubble || motionUi.talking
+  const blocked = windowMgr.isDragging() || motionUi.bubble || motionUi.talking
     || motionUi.chatBusy || motionUi.hidden || isSleeping
-    || (chatWin && !chatWin.isDestroyed() && chatWin.isVisible());   // 对话窗在场 = 正在相处，闲逛退下
+    || windowMgr.isChatVisible();   // 对话窗在场 = 正在相处，闲逛退下
   motion.setBlocked(blocked, reason);
 }
 
@@ -990,7 +294,7 @@ function setupMotion() {
       if (win && !win.isDestroyed()) win.webContents.send('motion-state', s);
     },
     onMove: (p) => {
-      if (win && !win.isDestroyed() && !dragging) setPinnedBounds(p.x, p.y);
+      if (win && !win.isDestroyed() && !windowMgr.isDragging()) setPinnedBounds(p.x, p.y);
     }
   });
   motion.configure({ x: area.x, y: area.y, width: area.width, height: area.height },
@@ -1008,250 +312,26 @@ function reconfigureMotion() {
     { width, height }, { x, y });
 }
 
-/* ---------- 拖动 ---------- */
-let dragging = false;
-ipcGuard.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); });
-ipcGuard.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); });
-ipcGuard.on('drag-move', (e, { dx, dy }) => {
-  if (!dragging || !win) return;
-  const [x, y] = win.getPosition();
-  const tx = Math.round(x + dx), ty = Math.round(y + dy);
-  setPinnedBounds(tx, ty);
-  reconfigureMotion();
-});
-
-ipcGuard.on('motion-ui-state', (e, state = {}) => {
-  for (const k of Object.keys(motionUi)) {
-    if (typeof state[k] === 'boolean') motionUi[k] = state[k];
-  }
-  syncMotionBlock('ui-state');
-});
-
-ipcGuard.handle('motion-status', () => motion ? motion.snapshot() : null);
-
-// P1-D: 透明区点击穿透 (forward: true 允许在渲染层动态捕获鼠标交互区)
-ipcGuard.on('set-ignore-mouse-events', (e, ignore) => {
-  if (win && !win.isDestroyed() && typeof win.setIgnoreMouseEvents === 'function') {
-    win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
-  }
-});
-
-function togglePinState() {
-  if (!win) return false;
-  const on = !win.isAlwaysOnTop();
-  win.setAlwaysOnTop(on, 'screen-saver');
-  return on;   // 返回新状态，菜单文案才能区分「已置顶/已取消置顶」
-}
-ipcGuard.handle('toggle-pin', () => togglePinState());
-
-// v1.0 状态要准确：菜单文案跟随真实置顶态（不靠本地猜）
-ipcGuard.handle('pin-state', () => ({
-  ok: true,
-  pinned: !!(win && !win.isDestroyed() && win.isAlwaysOnTop())
-}));
-
-function setSafeWindowSize(targetWin, w, h) {
-  if (!targetWin || targetWin.isDestroyed()) return;
-  if (typeof targetWin.setResizable === 'function') targetWin.setResizable(true);
-  targetWin.setSize(w, h);
-  if (typeof targetWin.setResizable === 'function') targetWin.setResizable(false);
-  intendedSize = { w, h };   // 记住「本该的尺寸」，一切平移用它钉框
-}
-
-/* v1.0 漂移真凶处决（行车记录仪取证实锤）：Windows 125% DPI 下每次
-   win.setPosition 都会被 DWM 物理舍入偷涨 1px —— 拖拽几百次 mousemove
-   就把窗口撑大几百像素，她 left:50% 的中心点随之狂奔（「漂移」的真相）。
-   一切平移统一走 setBounds 显式扣死宽高（反重力隔离实验：膨胀率归零），
-   尺寸取「意图尺寸」而非硬编码，右键缩放级别原样保住。 */
-let intendedSize = { w: layout.BASE_W, h: layout.BASE_H };
-function setPinnedBounds(x, y) {
-  if (!win || win.isDestroyed()) return;
-  win.setBounds({ x: Math.round(x), y: Math.round(y), width: intendedSize.w, height: intendedSize.h });
-}
-
-function getWorkArea(x, y) {
-  try {
-    const display = (typeof screen.getDisplayNearestPoint === 'function')
-      ? screen.getDisplayNearestPoint({ x, y })
-      : screen.getPrimaryDisplay();
-    return display.workArea || { x: 0, y: 0, ...display.workAreaSize };
-  } catch {
-    return { x: 0, y: 0, width: 1920, height: 1080 };
-  }
-}
-
-// v1.0 像素换代：用户侧缩放已退役（渲染端零调用）；通道保留为窗体机械，
-// 日后像素「原生 × 整数倍」缩放复用；行为测试见 main.test 边界族
-ipcGuard.on('resize-pet', (e, factor) => {
-  if (!win) return;
-  const [w, h] = win.getSize();
-  const next = layout.nextSize(w, Number(factor) || 1);
-  if (next.w === w && next.h === h) return;   // 已经到边界，不用再动
-  const [x, y] = win.getPosition();
-  // 脚钉住：桌宠是 bottom 定位，只改尺寸会让她在放大时往屏幕底下陷。
-  let targetY = layout.anchorBottom(y, h, next.h);
-  // 屏幕工作区保护：防止窗口顶部顶出屏幕上沿，导致记录面板关闭按钮 (x) 被推出屏幕不可见
-  const area = getWorkArea(x, y);
-  if (targetY < area.y) targetY = area.y;
-  win.setPosition(x, targetY);
-  setSafeWindowSize(win, next.w, next.h);
-  reconfigureMotion();
-  syncMotionBlock('resize');
-});
-
-/* v1.0 方案二：chat-viewport 通道已退役 —— 对话迁独立窗（chat-window-*），
-   主窗回归 340×480 纯粹态，扩容/顶边钳位等配套随之收档。 */
-
-/* ---------- 独立对话窗（v1.0 方案二：真自由） ----------
-她的窗回归 340×480 纯粹态；对话窗是独立系统窗口：全屏自由拖拽、跨显示器、
-位置与大小记忆、hide() 只隐藏不销毁（重开秒回）。
-出生位智能邻居：默认她右侧 20px，放不下自动翻转到左侧，再钳进工作区。 */
-let tray = null;   // v1.0 系统托盘（模块级持有，防 GC 回收）
-let chatWin = null;
-let chatWinBounds = null;
+let tray = null;
 let appQuitting = false;
-const CHAT_WIN_W = 380, CHAT_WIN_H = 520;
+const windowMgr = createWindowManager({
+  app, BrowserWindow, screen, layout, ipcGuard, motionUi,
+  appDir: __dirname,
+  getWin: () => win,
+  getBrain: () => brain,
+  getMotion: () => motion,
+  isAppQuitting: () => appQuitting,
+  syncMotionBlock,
+  reconfigureMotion,
+});
+windowMgr.registerMainWindowIpc();
+const togglePinState = () => windowMgr.togglePinState();
+const setPinnedBounds = (x, y) => windowMgr.setPinnedBounds(x, y);
+const saveChatBoundsImmediate = () => windowMgr.saveChatBoundsImmediate();
+const showChatWindow = () => windowMgr.showChatWindow();
+const toggleChatWindow = () => windowMgr.toggleChatWindow();
+const broadcastToWindows = (channel, payload) => windowMgr.broadcastToWindows(channel, payload);
 
-function loadChatBounds() {
-  try {
-    const raw = require('fs').readFileSync(require('path').join(app.getPath('userData'), 'chat-window.json'), 'utf8');
-    const b = JSON.parse(raw);
-    if (b && Number.isFinite(b.width) && Number.isFinite(b.height)) return b;
-  } catch (e) { /* 无记忆 → 默认 */ }
-  return null;
-}
-function saveChatBounds() {
-  try {
-    if (chatWin && !chatWin.isDestroyed()) {
-      chatWinBounds = chatWin.getBounds();
-      const { writeJsonAtomic } = require('./src/atomic');
-      writeJsonAtomic(require('path').join(app.getPath('userData'), 'chat-window.json'), chatWinBounds);
-    }
-  } catch (e) { /* 记忆失败不致命 */ }
-}
-function chatBirthPosition() {
-  const cw = (chatWinBounds && chatWinBounds.width) || CHAT_WIN_W;
-  const ch = (chatWinBounds && chatWinBounds.height) || CHAT_WIN_H;
-  const [px, py] = win.getPosition();
-  const [pw, ph] = win.getSize();
-  const area = getWorkArea(px, py);
-  let x = px + pw + 20;
-  if (x + cw > area.x + area.width - 8) x = px - cw - 20;   // 右边放不下 → 翻转到她左侧
-  let y = py + Math.max(0, Math.round((ph - ch) / 2));
-  x = Math.max(area.x + 8, Math.min(x, area.x + area.width - cw - 8));
-  y = Math.max(area.y + 8, Math.min(y, area.y + area.height - ch - 8));
-  return { x: Math.round(x), y: Math.round(y), width: cw, height: ch };
-}
-function createChatWindow() {
-  if (chatWin && !chatWin.isDestroyed()) return chatWin;
-  chatWinBounds = loadChatBounds();
-  const b = chatBirthPosition();
-  chatWin = new BrowserWindow({
-    title: '对话',
-    x: b.x, y: b.y, width: b.width, height: b.height,
-    frame: false, transparent: false, backgroundColor: '#10121b',
-    alwaysOnTop: true, show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true
-    }
-  });
-  chatWin.loadFile('chat.html');
-  ipcGuard.attachNavigationGuard(chatWin.webContents);
-  chatWin.on('move', saveChatBounds);
-  chatWin.on('resize', saveChatBounds);
-  chatWin.on('close', (e) => {
-    saveChatBounds();
-    if (!appQuitting) {
-      e.preventDefault();
-      chatWin.hide();   // 只隐藏不销毁（重开秒回）
-      broadcastToWindows('chat-window-hidden', {});
-    }
-  });
-  return chatWin;
-}
-ipcGuard.handle('chat-window-open', () => {
-  const w = createChatWindow();
-  if (!w.isVisible()) w.show();
-  w.focus();
-  return { ok: true };
-});
-// v1.0 快捷呼出（中键双击 / Alt+Shift+C）：切换对话窗显示 —— 隐藏只收不销毁（安全退出链不受扰）
-function showChatWindow() {
-  const w = createChatWindow();
-  if (!w.isVisible()) w.show();
-  w.focus();
-}
-function toggleChatWindow() {
-  const w = createChatWindow();
-  if (w.isVisible()) {
-    w.hide();
-    broadcastToWindows('chat-window-hidden', {});
-    return { ok: true, visible: false };
-  }
-  w.show();
-  w.focus();
-  return { ok: true, visible: true };
-}
-ipcGuard.handle('chat-window-toggle', () => toggleChatWindow());
-function broadcastToWindows(channel, payload) {
-  for (const w of [win, chatWin]) {
-    if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
-  }
-}
-ipcGuard.handle('chat-busy', (e, p = {}) => {
-  // 双窗同步（方案二）：对话窗的对话生命周期广播给主窗 —— 她身边同步思考/表情/收气泡
-  broadcastToWindows('chat-busy', { busy: !!p.busy, state: p.state || null });
-  return { ok: true };
-});
-ipcGuard.handle('chat-window-home', () => {
-  if (chatWin && !chatWin.isDestroyed()) chatWin.setBounds(chatBirthPosition());
-  return { ok: true };
-});
-ipcGuard.handle('chat-window-close', () => {
-  if (chatWin && !chatWin.isDestroyed() && chatWin.isVisible()) chatWin.hide();
-  broadcastToWindows('chat-window-hidden', {});   // 主窗收口 talking 态
-  return { ok: true };
-});
-
-/* v1.0 设置面板扩容（用户拍板：面板太小、做大）：打开 440×680 / 关闭回 340×480。
-   复用 layout.anchorBottom 钉住下边缘（她脚不离地）；缩放已解耦，扩窗不放大她（DWM 战红利）。 */
-const PANEL_W = 440, PANEL_H = 680;   // 默认面板尺寸；可按面板类型传宽（记录 520）
-ipcGuard.handle('panel-viewport', (e, open, opt = {}) => {
-  if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
-  if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };
-  // 不信渲染端：尺寸钳进合法区间（宽 340..640 / 高 400..760）；tw/th 避让下方 [w,h] 解构
-  const tw = Math.min(640, Math.max(layout.BASE_W, Math.round(opt.w) || PANEL_W));
-  const th = Math.min(760, Math.max(400, Math.round(opt.h) || PANEL_H));
-  const target = open ? { w: tw, h: th } : { w: layout.BASE_W, h: layout.BASE_H };
-  const [w, h] = win.getSize();
-  if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };
-  const [x, y] = win.getPosition();
-  let targetY = layout.anchorBottom(y, h, target.h);
-  const area = getWorkArea(x, y);
-  if (targetY < area.y) targetY = area.y;
-  // v1.0 补 X 钳位：右缘扩宽不许溢出屏幕（用户实测：左半截被切走）
-  let targetX = x;
-  if (targetX + target.w > area.x + area.width - 8) targetX = area.x + area.width - target.w - 8;
-  if (targetX < area.x + 8) targetX = area.x + 8;
-  win.setPosition(targetX, targetY);
-  setSafeWindowSize(win, target.w, target.h);
-  reconfigureMotion();
-  syncMotionBlock('resize');
-  return { ok: true, w: target.w, h: target.h, changed: true };
-});
-
-
-ipcGuard.on('quit-app', () => {
-  if (brain && typeof brain.flushAll === 'function') brain.flushAll();
-  app.quit();
-});
-
-/* ---------- 本地活动（被戳 / 被拖） ----------
-   计数放在主进程：这里同时是 brain 和 tracker 的所在地，环境块要在发请求前
-   取快照。渲染端只知道"我这儿点了一下"，把它自己那套时间戳再算一遍就是
-   第二个事实来源 —— 于是又回到"一个改了一个没改"那个老形状。
-   用 .on 不用 .handle：这是纯上报，没有返回值，省一次 promise 往返。 */
 ipcGuard.on('activity', (e, type, details) => {
   if (tracker) tracker.record(type, undefined, details);
   // 🔴 v1.8-a：物理互动也算「见到你」（真实触碰）。
@@ -1265,7 +345,8 @@ ipcGuard.on('activity', (e, type, details) => {
 });
 
 /* ---------- 对话 ---------- */
-// 并发保护：上一条没回完就发新消息时，先掐断上一条
+// 并发保护：上一条没回完就发新消息时，先掐断上一条；用代际序号避免旧请求 finally 过早清零 chatBusy
+let chatSendSeq = 0;
 ipcGuard.handle('chat-send', async (e, text, opts) => {
   if (!brain || !brain.ready) {
     return { ok: false, needKey: true };
@@ -1290,6 +371,7 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
   const offer = (opts && opts.proactive && opts.offer) || null;
   const proactive = !!offer;
   if (proactive && !validOffer(offer)) return { ok: false, declined: true };
+  const mySeq = ++chatSendSeq;
   motionUi.chatBusy = true;
   syncMotionBlock('chat');
   brain.abort();
@@ -1300,8 +382,9 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     //     observe 只记账不读盘不塞正文，严禁在此写入 brain._pendingAgentIntent 或发起写入提案
     let sandboxList = undefined;
     if (typeof brain.setPendingSandboxRead === 'function') brain.setPendingSandboxRead(null);
-    const activeSandboxDir = agentBuildDeps && agentBuildDeps.agentSandbox;
-    if (!agentSandboxUnavailable && activeSandboxDir) {
+    const activeDeps = mainAgent.getAgentBuildDeps();
+    const activeSandboxDir = activeDeps && activeDeps.agentSandbox;
+    if (!mainAgent.getSandboxUnavailable() && activeSandboxDir) {
       if (typeof brain.refreshConfig === 'function') brain.refreshConfig();
       const activeCfg = (brain && brain.cfg) || load();
       const listMode = getCapabilityMode(activeCfg, 'workspace.list');
@@ -1318,8 +401,8 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
               mem.noteObserved('workspace.list');
             }
           }
-          if (agentBuildDeps.observationLog && typeof agentBuildDeps.observationLog.append === 'function') {
-            agentBuildDeps.observationLog.append({
+          if (activeDeps.observationLog && typeof activeDeps.observationLog.append === 'function') {
+            activeDeps.observationLog.append({
               capability: 'workspace.list',
               intentKind: 'workspace.list',
               proposalSource: 'readOnly',
@@ -1329,16 +412,16 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
         } catch { /* 观察记账异常绝不能阻断对话 */ }
       }
       const readMode = getCapabilityMode(activeCfg, 'workspace.read');
-      if (readMode !== 'off' && !proactive && agentBuildDeps.agentIpc && typeof brain.setPendingSandboxRead === 'function') {
+      if (readMode !== 'off' && !proactive && activeDeps.agentIpc && typeof brain.setPendingSandboxRead === 'function') {
         try {
           runPreChatSandboxRead({
             text,
             proactive: false,
             cfg: activeCfg,
             brain,
-            agentIpc: agentBuildDeps.agentIpc,
+            agentIpc: activeDeps.agentIpc,
             sandboxDir: activeSandboxDir,
-            observationLog: agentBuildDeps.observationLog,
+            observationLog: activeDeps.observationLog,
             evaluateTrigger,
             buildReadScope: buildReadSandboxScope,
             getCapabilityMode,
@@ -1359,7 +442,7 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
          // v2.0-s1：沙盒顶层清单直传（零执行预算消耗），unavailable 时略过
          sandboxList,
          // v2.0-a（S-3）：仅沙盒初始化失败时通过动态后缀告知她落盘已关闭，不碰 system 前缀缓存
-         sandboxUnavailable: Boolean(agentSandboxUnavailable) });
+         sandboxUnavailable: Boolean(mainAgent.getSandboxUnavailable()) });
     // 主动搭话真的说出口了才记账；被渲染端礼貌闸门拦下时压根不会走到这
     if (proactive && trigger) trigger.commit(offer);
     // 🔴 D-25：好奇问题真的问出口了才打 asked 标记（同 commit 语义：说了才算）。
@@ -1470,14 +553,16 @@ ipcGuard.handle('chat-send', async (e, text, opts) => {
     //   打成 'unknown_error'，渲染端那条 timeout 分支永远不会走到。
     return {
       ok: false,
-      error: err.message,
+      error: require('./src/redact').redactSecrets(String((err && err.message) || '')),
       errorType: err.errorType || (err.name === 'TimeoutError' ? 'timeout' : 'unknown_error'),
       status: typeof err.status === 'number' ? err.status : null,
     };
   } finally {
-    motionUi.chatBusy = false;
-    syncMotionBlock('chat-done');
-    scheduleProactiveCheck(proactiveBaseMs());
+    if (mySeq === chatSendSeq) {
+      motionUi.chatBusy = false;
+      syncMotionBlock('chat-done');
+      scheduleProactiveCheck(proactiveBaseMs());
+    }
   }
 });
 
@@ -1600,24 +685,6 @@ function auditProactiveDispatched(offer) {
   } catch { /* 审计写不进去也不能挡住派发 */ }
 }
 
-/** 对话失败留痕（2026-10-19）。
- *
- *  ## 为什么必须有这一条
- *
- *  实测事故：Key 在 10-18 深夜失效，之后 7 次主动搭话全部在 `brain.ask` 里被服务端
- *  401 拒掉。但从用户视角看只是「她一直不说话」—— 因为失败只落到一个 **6 秒就自动
- *  收起的气泡**上，人不在电脑前就等于没发生。
- *  而 `experiment-telemetry.jsonl` 又只在**成功**时才写 `llm_call`（见 brain.track），
- *  于是「失败」在磁盘上**没有任何痕迹**，只能靠 offer 有、llm_call 无来反推。
- *
- *  这条留痕的价值就在于把那个反推变成直读：
- *    offer 有 + chat-failed(auth_failed) ⇒ Key 失效，去换 Key；
- *    offer 有 + chat-failed(network_error) ⇒ 网络/端点问题，不是她的错；
- *    offer 有 + 什么都没有 ⇒ 回执丢了（见 OFFER_RETRY_MS 那条自愈重排）。
- *
- *  ⚠️ 只记元数据（错误类别 / HTTP 状态 / 是否主动搭话），**绝不记正文与凭据**。
- *     error message 本身可能带 provider 名与 URL，但不含 key（transport 层已 redact）。
- *  ⚠️ 审计失败绝不能把异常再抛回去 —— 它已经在 catch 里了。 */
 function auditChatFailure(err, info) {
   if (!proactiveAuditLog) return;
   try {
@@ -1932,7 +999,7 @@ ipcGuard.handle('life-mechanisms', () => {
         const { collectObservability } = require('./src/observability');
         return collectObservability({
           brain,
-          agentBudget: agentBuildDeps ? agentBuildDeps.agentBudget : null,
+          agentBudget: mainAgent.getAgentBuildDeps() ? mainAgent.getAgentBuildDeps().agentBudget : null,
           agentAuditLog: proactiveAuditLog
         });
       } catch (e) {
@@ -2002,8 +1069,9 @@ ipcGuard.handle('wardrobe-state', () =>
   wardrobe ? { catalog: wardrobe.catalog(), layers: wardrobe.layers() }
            : { catalog: null, layers: [] });
 
-ipcGuard.handle('wardrobe-set', (e, { slot, itemId }) => {
+ipcGuard.handle('wardrobe-set', (e, payload = {}) => {
   if (!wardrobe) return { ok: false, error: '换装系统未初始化' };
+  const { slot, itemId } = (payload && typeof payload === 'object') ? payload : {};
   const r = wardrobe.setEquip(String(slot || ''), itemId === undefined ? null : itemId);
   pushWardrobe(r);
   return r;
@@ -2127,693 +1195,26 @@ ipcGuard.handle('config-open', () => {
 
 ipcGuard.handle('asset-check', () => assetReport || checkAssets(__dirname, CATALOG));
 
-/* ---------- Connection 管理（0.9.8 Z3）----------
-   安全硬边界：credential 只进不出 —— list/get 只回 hasCredential/keyEncrypted，
-   绝不返回 API Key / 解密结果 / 密文内容 / 文件路径 / namespace 解析结果。
-   renderer 不得指定 credentialRef（服务端生成）；删除语义：exclusive 联动删凭据、
-   legacy-mapped 只删连接（connections.js 已强制）。全部经 ipcGuard（SEC-01）。 */
-function connectionDto(c) {
-  const desc = secureCreds.describeCredential(c.credentialRef, {
-    dir: app.getPath('userData'),
-    getSS,
-    // legacy 明文降级只对 legacy-mapped ref 生效（防 A 的 key 被误判为 B 的凭据）
-    fallbackSecret: c.credentialOwnership === 'legacy-mapped' ? (cfg && cfg.apiKey) || '' : ''
-  });
-  return {
-    connectionId: c.connectionId,
-    displayName: c.displayName,
-    providerId: c.providerId,
-    protocol: c.protocol,
-    baseURL: c.baseURL,
-    models: c.models,
-    activeModel: c.activeModel,
-    capabilitySnapshot: c.capabilitySnapshot,
-    testState: c.testState,
-    hasCredential: desc.present,
-    keyEncrypted: desc.encrypted
-  };
-}
+const connectionsCtrl = createConnectionsController({
+  app, getSS,
+  getCfg: () => cfg, setCfg: (v) => { cfg = v; },
+  getBrain: () => brain, setBrain: (v) => { brain = v; },
+  persistCfg, bindBrainDeps, clearAuthFailureBackoff, scheduleProactiveCheck, COOLDOWN_MS
+});
+const { ensureConnectionStore } = connectionsCtrl;
+connectionsCtrl.registerConnectionsIpc(ipcGuard);
 
-// Z1-E：store 不存在时用旧平铺 cfg 幂等迁移（启动期 eager + 懒入口兜底；失败仍以旧 flat 为真源）
-function ensureConnectionStore() {
-  try {
-    const dir = app.getPath('userData');
-    if (connectionsMod.loadStore(dir).status === 'absent') {
-      connectionsMod.migrateLegacyConfig(dir, cfg || {});
-    }
-  } catch { /* fail-closed：迁移失败不影响旧配置路径 */ }
-}
+registerSttIpc(ipcGuard, { app, getSS });
 
-ipcGuard.handle('connections:list', () => {
-  ensureConnectionStore();
-  const st = connectionsMod.loadStore(app.getPath('userData'));
-  if (!st.ok) return { ok: false, error: st.error };
-  if (!st.store) return { ok: true, activeConnectionId: null, items: [] };
-  return {
-    ok: true,
-    activeConnectionId: st.store.activeConnectionId,
-    items: st.store.connections.map(connectionDto)
-  };
+registerVisionIpc(ipcGuard, {
+  app, screen,
+  getCfg: () => cfg, getBrain: () => brain,
+  broadcastToWindows
 });
 
-ipcGuard.handle('connections:get', (e, opts) => {
-  ensureConnectionStore();
-  const st = connectionsMod.loadStore(app.getPath('userData'));
-  if (!st.ok) return { ok: false, error: st.error };
-  const c = st.store && st.store.connections.find((x) => x.connectionId === (opts && opts.connectionId));
-  return c ? { ok: true, connection: connectionDto(c) } : { ok: false, error: 'CONNECTION_NOT_FOUND' };
-});
-
-ipcGuard.handle('connections:create', (e, opts = {}) => {
-  ensureConnectionStore();
-  // 白名单字段：credentialRef/connectionId/credentialOwnership 不接受 renderer 输入（服务端生成）
-  const r = connectionsMod.createConnection(app.getPath('userData'), {
-    displayName: opts.displayName,
-    providerId: opts.providerId,
-    protocol: opts.protocol,
-    baseURL: opts.baseURL,
-    model: opts.model
-  });
-  if (!r.ok) return r;
-  if (typeof opts.credential === 'string' && opts.credential) {
-    const w = secureCreds.setCredential(r.connection.credentialRef, opts.credential, { dir: app.getPath('userData'), getSS });
-    if (!w.ok) {
-      connectionsMod.deleteConnection(app.getPath('userData'), r.connection.connectionId, { deleteCredential: true, getSS });
-      return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
-    }
-  }
-  return { ok: true, connectionId: r.connection.connectionId };
-});
-
-ipcGuard.handle('connections:update', (e, opts = {}) => {
-  const { connectionId, patch = {}, credential } = opts;
-  const hasNewCred = typeof credential === 'string' && credential.trim().length > 0;
-  // immutable 字段（credentialRef/connectionId/credentialOwnership）在模块层拒绝；变更 baseURL origin 未带新密钥同拒
-  const r = connectionsMod.updateConnection(app.getPath('userData'), connectionId, patch || {}, {
-    allowOriginChange: hasNewCred
-  });
-  if (!r.ok) return r;
-  if (hasNewCred) {
-    const w = secureCreds.setCredential(r.connection.credentialRef, credential.trim(), { dir: app.getPath('userData'), getSS });
-    if (!w.ok) return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
-  }
-  return { ok: true };
-});
-
-ipcGuard.handle('connections:delete', (e, opts = {}) => {
-  const r = connectionsMod.deleteConnection(app.getPath('userData'), opts.connectionId, {
-    deleteCredential: opts.deleteCredential !== false,
-    getSS
-  });
-  if (!r.ok) return r;
-  return { ok: true, credentialDeleted: r.credentialDeleted, credentialNote: r.credentialNote };
-});
-
-ipcGuard.handle('connections:test', async (e, opts = {}) => {
-  // 用户显式调用即代表点击 Test Connection：validateConfig -> healthCheck(若声明) -> authProbe(必要时)
-  const dir = app.getPath('userData');
-  const r = await runConnectionTest(dir, opts.connectionId, { getSS, fallbackSecret: (cfg && cfg.apiKey) || '' });
-  if (r.ok) {
-    try {
-      connectionsMod.updateConnection(dir, opts.connectionId, {
-        testState: { status: r.status, phase: r.phase, reason: r.reason || null, lastTestedAt: Date.now() }
-      });
-    } catch { /* 快照持久化失败不影响测试结果返回 */ }
-  }
-  return r;
-});
-
-ipcGuard.handle('connections:activate', (e, opts = {}) => {
-  const dir = app.getPath('userData');
-  const st = connectionsMod.loadStore(dir);
-  if (!st.ok) return { ok: false, swapped: false, error: st.error };
-  if (!st.store) return { ok: false, swapped: false, error: 'STORE_ABSENT' };
-  const targetId = opts && opts.connectionId;
-  if (st.store.activeConnectionId === targetId && brain) {
-    return { ok: true, activeConnectionId: targetId, swapped: false };
-  }
-  const r = activateConnection({
-    dir,
-    targetConnectionId: targetId,
-    oldBrain: brain,
-    oldCfg: cfg,
-    persistFlat: (c) => { persistCfg(c); },
-    createCandidate: (c) => new Brain(app.getPath('userData'), c, { getSS }),
-    bindCandidate: bindBrainDeps,
-    getSS,
-    fallbackSecret: (cfg && cfg.apiKey) || ''
-  });
-  if (!r.ok) {
-    return { ok: false, swapped: false, activeConnectionId: r.activeConnectionId, error: r.error };
-  }
-  cfg = r.cfg;
-  brain = r.brain;
-  // 🔴 2026-10-19：换连接同样是「换了一把 Key」，必须解除认证失败退避并叫醒调度。
-  //   漏了它的表现与换 Key 那条一模一样：用户明明切到了能用的连接，她却因为
-  //   上一把 Key 留下的 10 分钟退避继续沉默，而界面上没有任何提示。
-  clearAuthFailureBackoff();
-  scheduleProactiveCheck(COOLDOWN_MS);
-  return { ok: true, activeConnectionId: r.activeConnectionId, swapped: true };
-});
-
-/* ============================================================
- * 🔴 v1.7-a：STT 语音识别 IPC（4 个通道）
- *
- * ## 为什么 STT 配置独立于 connections
- *   实测（2026-10-19 审计）：**DeepSeek 官方没有 STT 端点**
- *   （`deepseek.js` / `deepseek-adapter.js` grep `audio|transcri` 零命中，
- *   官方仅 `/v1/chat/completions` + `/v1/models`）。
- *   所以 STT 用**独立的 credentialRef**（`cred:stt_api_key`），
- *   与任何 `cred:conn_*` 天然隔离：删连接不会误删 STT Key，反之亦然。
- *
- * ## 安全边界（每条都有门禁断言）
- *   1. **transcribe 的入参里没有 endpoint / apiKey** ——
- *      端点与密钥只从主进程存储读，渲染层无法指定任意端点（防 SSRF、防 Key 外送）；
- *   2. **getConfig 绝不返回 secret** —— 只回 present/encrypted 与端点、模型、语言；
- *   3. **失败只透 errorType** —— safeDetail 只进审计日志，不透给渲染层。
- * ============================================================ */
-
-/** STT 凭据的 credentialRef（独立 namespace，不与连接混用） */
-const STT_CREDENTIAL_REF = 'cred:stt_api_key';
-
-/**
- * STT 非机密配置的**独立文件名**。
- *
- * 🔴 为什么不用 `secure.saveConfig` / 主 `life-config.json`：
- *   那两个是**对话通道**的配置（含 provider/baseURL/apiKey 语义），
- *   把 STT 的 endpoint/model 塞进去会污染主配置的语义，甚至可能被
- *   `loadConfig` 当成对话凭据去解析。
- *   STT 是**完全独立的能力**，就配**完全独立的文件**：`stt-config.json`。
- *   它只含 endpoint / model / lang 三个非机密字段，**密钥永不进这个文件**。
- */
-const STT_CFG_FILE = 'stt-config.json';
-
-/** 读 STT 非机密配置。缺文件/坏 JSON 一律回落空值，**绝不抛**。 */
-function readSttConfig() {
-  const empty = { endpoint: '', model: '', lang: '' };
-  try {
-    const p = path.join(app.getPath('userData'), STT_CFG_FILE);
-    if (!fs.existsSync(p)) return empty;
-    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return {
-      endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : '',
-      model: typeof raw.model === 'string' ? raw.model : '',
-      lang: typeof raw.lang === 'string' ? raw.lang : ''
-    };
-  } catch (e) {
-    return empty;
-  }
-}
-
-/**
- * 写 STT 非机密配置（只写这三个字段，绝不碰密钥）。
- * 走 atomic 原子写：与仓库既有的“配置不静默半写”纪律一致。
- */
-function writeSttConfig(patch) {
-  const dir = app.getPath('userData');
-  const cur = readSttConfig();
-  const next = {
-    endpoint: typeof patch.endpoint === 'string' ? patch.endpoint.trim() : cur.endpoint,
-    model: typeof patch.model === 'string' ? patch.model.trim() : cur.model,
-    lang: typeof patch.lang === 'string' ? patch.lang.trim() : cur.lang
-  };
-  try {
-    const { writeFileAtomic } = require('./src/atomic');
-    writeFileAtomic(path.join(dir, STT_CFG_FILE), JSON.stringify(next, null, 2) + '\n');
-    return next;
-  } catch (e) {
-    return null;
-  }
-}
-
-/** 读 STT 密钥（**只在主进程内使用**，绝不返回给渲染层） */
-function readSttSecret() {
-  try {
-    return secureCreds.getCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS });
-  } catch (e) {
-    return null;
-  }
-}
-
-ipcGuard.handle('stt:get-config', () => {
-  const c = readSttConfig();
-  // 🔴 只回"有没有、加没加密"，绝不回 secret 本身
-  let desc = { present: false, encrypted: false };
-  try {
-    desc = secureCreds.describeCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS });
-  } catch (e) { /* 读不到就是没有，不抛 */ }
-  return {
-    ok: true,
-    endpoint: c.endpoint,
-    model: c.model,
-    lang: c.lang,
-    hasKey: desc.present === true,
-    encrypted: desc.encrypted === true
-  };
-});
-
-function getUrlOrigin(raw) {
-  try { return typeof raw === 'string' && raw.trim() ? new URL(raw.trim()).origin : ''; } catch { return ''; }
-}
-
-ipcGuard.handle('stt:set-config', (e, opts = {}) => {
-  const patch = {
-    endpoint: typeof opts.endpoint === 'string' ? opts.endpoint : '',
-    model: typeof opts.model === 'string' ? opts.model : '',
-    lang: typeof opts.lang === 'string' ? opts.lang : ''
-  };
-  if (patch.endpoint.trim()) {
-    const v = require('./src/stt-transport').validateConfig({
-      endpoint: patch.endpoint, apiKey: 'v', model: patch.model || 'v', lang: patch.lang
-    });
-    if (!v.ok) return { ok: false, errorType: v.errorType, error: v.detail || v.errorType };
-  }
-  const prevOrigin = getUrlOrigin(readSttConfig().endpoint);
-  const saved = writeSttConfig(patch);
-  if (!saved) return { ok: false, errorType: 'config_write_failed' };
-
-  const hasNewCred = typeof opts.credential === 'string' && opts.credential.trim().length > 0;
-  if (prevOrigin && prevOrigin !== getUrlOrigin(saved.endpoint) && !hasNewCred) {
-    try { secureCreds.deleteCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS }); } catch {}
-  }
-
-  // credential 为空 = 不改密钥（用户只改端点/模型时不必重填）
-  let encrypted = null;
-  if (hasNewCred) {
-    const w = secureCreds.setCredential(STT_CREDENTIAL_REF, opts.credential.trim(), {
-      dir: app.getPath('userData'), getSS
-    });
-    if (!w.ok) return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
-    encrypted = w.encrypted === true;
-  }
-  return { ok: true, config: saved, encrypted };
-});
-
-ipcGuard.handle('stt:clear-key', () => {
-  try {
-    const r = secureCreds.deleteCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS });
-    return { ok: true, deleted: r && r.deleted !== false };
-  } catch (e) {
-    return { ok: false, error: 'CREDENTIAL_DELETE_FAILED' };
-  }
-});
-
-ipcGuard.handle('stt:transcribe', async (e, opts = {}) => {
-  // 🔴 入参只有音频与语言：**没有 endpoint、没有 apiKey**。
-  //   端点与密钥一律从主进程存储读 —— 渲染层无权指定请求发去哪。
-  const c = readSttConfig();
-  const secret = readSttSecret();
-  if (!secret) return { ok: false, errorType: 'not_configured' };
-
-  const audio = opts && opts.audio;
-  // ArrayBuffer / Uint8Array / Buffer 都归一成 Buffer（IPC 传过来通常是 Uint8Array）
-  let buf = null;
-  try {
-    if (audio instanceof ArrayBuffer) buf = Buffer.from(new Uint8Array(audio));
-    else if (audio && typeof audio.length === 'number') buf = Buffer.from(audio);
-  } catch (err) {
-    buf = null;
-  }
-  if (!buf || !buf.length) return { ok: false, errorType: 'no_audio' };
-
-  let sttMod;
-  try {
-    sttMod = require('./src/stt-transport');
-  } catch (err) {
-    return { ok: false, errorType: 'transport_unavailable' };
-  }
-
-  const r = await sttMod.transcribe({
-    audio: buf,
-    mimeType: typeof opts.mimeType === 'string' ? opts.mimeType : 'audio/webm',
-    cfg: {
-      endpoint: c.endpoint,
-      apiKey: secret,
-      model: c.model,
-      lang: typeof opts.lang === 'string' && opts.lang ? opts.lang : c.lang
-    }
-  });
-
-  if (r.ok) {
-    // 只回文本与耗时；不回任何配置细节
-    return { ok: true, text: r.text, elapsedMs: r.elapsedMs };
-  }
-  // 🔴 失败只透 errorType；safeDetail 不出去（它可能含端点片段）
-  return { ok: false, errorType: r.errorType };
-});
-
-/**
- * 🔴 v1.7-a（2026-10-20）：STT 录音审计。
- *
- * 为什么加：真机反馈「说了话没识别」，但磁盘上**没有任何痕迹**，
- * 无法判断卡在采集、IPC、还是识别。这条通道只记元数据：
- * 阶段、录音时长、chunk 数、字节数、mime、错误类别。
- *
- * **绝不记**：音频内容、识别文本、密钥、完整端点。
- * 写入既有 agent 审计同目录的 stt-audit.jsonl（append-only）。
- */
-ipcGuard.on('stt-audit', (e, payload = {}) => {
-  try {
-    const dir = app.getPath('userData');
-    const line = {
-      at: new Date().toISOString(),
-      stage: typeof payload.stage === 'string' ? payload.stage.slice(0, 32) : null,
-      elapsedMs: Number.isFinite(payload.elapsedMs) ? payload.elapsedMs : null,
-      chunksCount: Number.isFinite(payload.chunksCount) ? payload.chunksCount : null,
-      bytes: Number.isFinite(payload.bytes) ? payload.bytes : null,
-      mime: typeof payload.mime === 'string' ? payload.mime.slice(0, 60) : null,
-      // 成功时只记文本长度，不记文本本身
-      textLen: Number.isFinite(payload.textLen) ? payload.textLen : null,
-      errorType: typeof payload.errorType === 'string' ? payload.errorType.slice(0, 40) : null,
-      error: typeof payload.error === 'string'
-        ? String(require('./src/redact').redactSecrets(payload.error)).slice(0, 120)
-        : null
-    };
-    fs.appendFileSync(path.join(dir, 'stt-audit.jsonl'), JSON.stringify(line) + '\n', 'utf8');
-  } catch (err) {
-    // 审计写失败绝不外抛：它挂在录音收尾上
-  }
-});
-
-/* ============================================================
- * 🔴 v1.8-b：屏幕视觉探针（框选）
- *
- * ## 隐私铁律（先于一切实现，见 docs/v1.8-b-IMPLEMENTATION-ORDER.md §1）
- *   1. 只做**用户框选**，绝不做全屏 / 活动窗口
- *   2. 只在**用户显式唤起**时截，绝不后台定时截屏
- *      ⇒ 本段代码里**没有、也永远不许有** setInterval / setTimeout 驱动的截图
- *   3. 图**不落盘**：capturePage → data URL → 立刻返回，本段无任何 fs.write
- *   4. 审计只记尺寸/耗时/成败，**不记像素、不记 OCR 文本**
- * ============================================================ */
-
-/** 视觉能力是否可用（按**当前模型名**判定，不按 provider 标称） */
-ipcGuard.handle('vision:capability', () => {
-  try {
-    const model = (cfg && cfg.model) || '';
-    const { modelSupportsVision } = require('./src/vision');
-    return { ok: true, model, supported: modelSupportsVision(model) };
-  } catch (e) {
-    return { ok: false, supported: false, error: 'CAPABILITY_CHECK_FAILED' };
-  }
-});
-
-/**
- * 截取主屏的指定区域（**只存在内存，绝不落盘**）。
- *
- * ## 2026-10-20 重做
- *   第一版用主窗的 capturePage + 窗口偏移换算，实测两个硬伤：
- *     ① 主窗只有 256×320，`inset:0` 的遮罩只能覆盖窗口，框不到屏幕别处；
- *     ② 主窗的 setIgnoreMouseEvents 把遮罩视为非交互区，鼠标直接穿透 ⇒ 拖不动。
- *   现改为：**框选在独立全屏窗里做**（src/vision-picker-window.js），
- *   它发来的矩形就是屏幕坐标，这里直接按屏幕坐标截主显示器。
- *
- * 入参只有矩形 { x, y, width, height }，**不接受任何路径 / URL**。
- * 这是隐私面：能传路径就能读任意文件，能传 URL 就能 SSRF。
- */
-ipcGuard.handle('vision:capture', async (e, opts = {}) => {
-  const started = Date.now();
-
-  /* 🔴 2026-10-27：失败分支也必须留痕。
-   *
-   *   此前只有成功那条写 appendVisionAudit({ stage:'captured' })，
-   *   而 bad_rect / no_screen_source / capture_failed / capture_threw
-   *   四个失败分支全部直接 return —— 出问题时审计答不了"为什么失败"，
-   *   只能看到"用户点了、没成功、没有下文"。
-   *
-   *   审计口径不变：只记 errorType 与耗时，**不记像素、不记矩形坐标**
-   *   （坐标本身是屏幕内容线索，记下来等于记了一部分屏幕）。
-   */
-  const fail = (errorType) => {
-    appendVisionAudit({
-      at: new Date().toISOString(),
-      stage: 'failed',
-      elapsedMs: Date.now() - started,
-      errorType
-    });
-    return { ok: false, errorType };
-  };
-
-  const visionMod = require('./src/vision');
-  const visionPicker = require('./src/vision-picker-window');
-  const pw = typeof visionPicker.getPickerWindow === 'function' ? visionPicker.getPickerWindow() : null;
-  if (!pw || (typeof pw.isDestroyed === 'function' && pw.isDestroyed()) || !e || e.sender !== pw.webContents) {
-    return fail('picker_not_active');
-  }
-  const rawOpts = (opts && typeof opts === 'object') ? opts : {};
-  const displayId = (rawOpts.displayId !== undefined && rawOpts.displayId !== null)
-    ? rawOpts.displayId
-    : (typeof visionPicker.getPickerDisplayId === 'function' ? visionPicker.getPickerDisplayId() : null);
-  const allDisplays = typeof screen.getAllDisplays === 'function' ? screen.getAllDisplays() : [];
-  const display = visionMod.resolveCaptureDisplay(allDisplays, screen.getPrimaryDisplay(), displayId);
-  if (!display || !display.size) return fail('no_screen_source');
-  const rect = visionMod.normalizeRect(rawOpts.rect, {
-    maxW: display.size.width,
-    maxH: display.size.height
-  });
-  if (!rect) return fail('bad_rect');
-
-  let dataUrl = null;
-  let outW = rect.width;
-  let outH = rect.height;
-  try {
-    /* 🔴 为什么用 desktopCapturer 而不是 webContents.capturePage：
-     *
-     *   `capturePage` 只能截**该窗口自己的内容**——
-     *   框选窗虽然全屏，但它自己是透明的，截出来只有遮罩，看不到底下的屏幕。
-     *   而且主窗只有 256×320，更不可能截到屏幕别处。
-     *
-     *   `desktopCapturer.getSources({ types:['screen'] })` 拿到的是**整块屏幕的像素**，
-     *   再按用户框的矩形裁剪，这才是"看她选的那块屏幕"的正确实现。
-     *
-     * ⚠️ 隐私纪律不变：**只裁用户框的那一块**，全屏图用完立即丢弃，
-     *   绝不落盘、绝不外传未裁剪的整屏。
-     */
-    const { desktopCapturer } = require('electron');
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: display.size.width, height: display.size.height }
-    });
-    if (!sources || !sources.length) return fail('no_screen_source');
-
-    // 选与框选窗同一块显示器（多屏时不至于截错）
-    const target = visionMod.pickCaptureSource(sources, display);
-    if (!target) return fail('display_mismatch');
-    const full = target.thumbnail;
-    if (!full || (typeof full.isEmpty === 'function' && full.isEmpty())) {
-      return fail('capture_failed');
-    }
-
-    const fullSize = full.getSize();
-    // 缩略图尺寸 == 屏幕逻辑尺寸时，矩形可直接用；否则按比例换算并严格钳位到物理边界内
-    const sx = fullSize.width / display.size.width;
-    const sy = fullSize.height / display.size.height;
-    const rawX = Math.max(0, Math.round(rect.x * sx));
-    const rawY = Math.max(0, Math.round(rect.y * sy));
-    const clampedX = fullSize.width > 0 ? Math.min(rawX, fullSize.width - 1) : 0;
-    const clampedY = fullSize.height > 0 ? Math.min(rawY, fullSize.height - 1) : 0;
-    const cropRect = {
-      x: clampedX,
-      y: clampedY,
-      width: Math.max(1, Math.min(Math.round(rect.width * sx), Math.max(1, fullSize.width - clampedX))),
-      height: Math.max(1, Math.min(Math.round(rect.height * sy), Math.max(1, fullSize.height - clampedY)))
-    };
-
-    // 🔴 只裁框选那一块 —— 整屏像素在本函数结束时即弃
-    const cropped = full.crop(cropRect);
-    const croppedSize = cropped.getSize();
-
-    const fitted = visionMod.fitCaptureSize(croppedSize.width, croppedSize.height);
-    const finalImg = fitted.scaled
-      ? cropped.resize({ width: fitted.width, height: fitted.height, quality: 'good' })
-      : cropped;
-    outW = fitted.width;
-    outH = fitted.height;
-
-    const png = finalImg.toPNG();
-    dataUrl = 'data:image/png;base64,' + png.toString('base64');
-  } catch (err) {
-    return fail('capture_threw');
-  }
-
-  // 审计：只记尺寸与耗时，不记内容
-  try {
-    appendVisionAudit({
-      at: new Date().toISOString(),
-      stage: 'captured',
-      width: outW,
-      height: outH,
-      elapsedMs: Date.now() - started
-    });
-  } catch (err) { /* 审计失败不影响主流程 */ }
-
-  return { ok: true, dataUrl, width: outW, height: outH, elapsedMs: Date.now() - started };
-});
-
-/** 打开全屏框选窗（菜单点「看看这个…」时调用） */
-/**
- * 🔴 通道级收窄：框选窗只该调实际使用的四条视觉通道。
- *
- * 为什么需要这一层：框选窗已加入 IPC 信任白名单（否则它连自己的截图都调不通），
- * 但它是**加载在透明全屏窗里的页面**，不该拿到主窗的全部能力
- * （比如它不该能 chat-send / connections:create / agent:execute）。
- *
- * 判据：调用者若是框选窗，只放行 capture / stage / close-picker / notify。
- * 本函数由 src/ipc-guard.js 的 handle 与 on 包装统一调用，不依赖单个 handler 自查。
- * @param {object} event IPC 事件
- * @param {string} channel
- * @returns {boolean} 是否放行
- */
-const VISION_ONLY_CHANNELS = new Set([
-  'vision:capture',
-  'vision:stage',
-  'vision:close-picker',
-  'vision-notify'
-]);
-function assertChannelAllowedForPicker(event, channel) {
-  let pw = null;
-  try {
-    const mod = require('./src/vision-picker-window');
-    pw = mod.getPickerWindow ? mod.getPickerWindow() : null;
-  } catch (e) { return true; }
-  const pickerContents = pw && !pw.isDestroyed() ? pw.webContents : null;
-  return isChannelAllowedForPicker(event, channel, pickerContents, VISION_ONLY_CHANNELS);
-}
-
-ipcGuard.handle('vision:open-picker', (e) => {
-  // 🔴 框选窗自己不许再开一个框选窗（由统一通道守卫在进入 handler 前拒绝）
-  try {
-    const mod = require('./src/vision-picker-window');
-    const r = mod.openVisionPicker({ ipcGuard });
-    return { ok: true, reused: !!r.reused };
-  } catch (err) {
-    return { ok: false, errorType: 'picker_open_failed' };
-  }
-});
-
-/** 关闭框选窗（用户点 ESC / 右键 / 完成时由渲染层调） */
-ipcGuard.handle('vision:close-picker', () => {
-  try {
-    require('./src/vision-picker-window').closeVisionPicker();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false };
-  }
-});
-
-/**
- * 框选结果的轻量通知（框选窗关掉后，主窗要能说一句"看到了"）。
- * 用单向广播，不阻塞框选窗的关闭流程。
- */
-ipcGuard.on('vision-notify', (e, payload = {}) => {
-  broadcastToWindows('vision-notify', {
-    ok: payload.ok === true,
-    errorType: typeof payload.errorType === 'string' ? payload.errorType.slice(0, 40) : null
-  });
-});
-
-/**
- * 🔴 v1.8-b：把刚截的图**暂存**到 brain，等用户下一条消息时送出。
- *
- * 为什么要分开两步（截图 / 暂存）：
- *   用户框选完不会立刻说话（可能先看一眼确认），所以图先存着，
- *   等他真正发消息时再随那一轮送出去 —— 这才是"我看到你指的这块"的语义。
- *
- * 🔴 只存一张，后到覆盖先到；取过即清（brain.takeVisionPick）。
- */
-ipcGuard.handle('vision:stage', (e, opts = {}) => {
-  if (!brain) return { ok: false, errorType: 'no_brain' };
-  const visionMod = require('./src/vision');
-  if (typeof opts.dataUrl !== 'string' || !visionMod.validateStageDataUrl(opts.dataUrl)) {
-    const overSize = typeof opts.dataUrl === 'string' && opts.dataUrl.length > visionMod.MAX_STAGE_DATA_URL_CHARS;
-    return { ok: false, errorType: overSize ? 'payload_too_large' : 'bad_image' };
-  }
-  const MAX_STAGE_DIM = 16384;
-  if (!Number.isInteger(opts.width) || opts.width <= 0 || opts.width > MAX_STAGE_DIM
-      || !Number.isInteger(opts.height) || opts.height <= 0 || opts.height > MAX_STAGE_DIM) {
-    return { ok: false, errorType: 'bad_dimensions' };
-  }
-  const ok = brain.stageVisionPick({
-    dataUrl: opts.dataUrl,
-    width: opts.width,
-    height: opts.height
-  });
-  return ok ? { ok: true } : { ok: false, errorType: 'stage_failed' };
-});
-
-/** 是否已暂存一张图（UI 用来显示"待发送"标记） */
-ipcGuard.handle('vision:pending', () => {
-  if (!brain) return { ok: false, pending: false };
-  return { ok: true, pending: brain.hasVisionPick() };
-});
-
-/**
- * 🔴 v1.8-b（2026-10-21）：给对话窗的「待发送截图」预览数据。
- *
- * ## 为什么需要这个通道
- *   用户实测反馈：「截出来的图在对话框里找不到，也不会出现在输入框里，
- *   具有迷惑性」。截图存进 brain 后**界面零反馈** —— 他无法确认截到没有。
- *
- * ## 返回什么
- *   缩略图（data URL 缩小版）+ 尺寸。**只给预览用**，
- *   真正送模型的是 brain 里存的那张原图，两者互不影响。
- *
- * ## 隐私口径
- *   图本来就只存在内存；这里只是把它**回传给本应用自己的对话窗**做缩略预览，
- *   不落盘、不外传。用户点 × 时通过 vision:drop 彻底清掉。
- */
-ipcGuard.handle('vision:peek', () => {
-  if (!brain) return { ok: false, pending: false };
-  const pick = typeof brain.peekVisionPick === 'function' ? brain.peekVisionPick() : null;
-  if (!pick || !pick.dataUrl) return { ok: true, pending: false };
-  return {
-    ok: true,
-    pending: true,
-    // 缩略图与尺寸都给：尺寸是客观事实，缩略图让用户确认"就是这块"
-    dataUrl: pick.dataUrl,
-    width: pick.width,
-    height: pick.height
-  };
-});
-
-/**
- * 🔴 v1.8-b：丢弃待发送的截图（用户点 × 时调）。
- * 与「一次性消费」互补：takeVisionPick 是发出去后自动清，这个是用户主动放弃。
- */
-ipcGuard.handle('vision:drop', () => {
-  if (!brain) return { ok: false };
-  brain.takeVisionPick();   // 取出即清（返回值丢弃）
-  return { ok: true };
-});
-
-/**
- * 主窗当前位置（框选坐标换算用）。
- * 渲染层的框选拿到的是**视口坐标**，主进程截图要的是**屏幕坐标**，
- * 两者相差一个窗口位置。把这个值暴露出去让渲染层自己加，比在主进程猜更可靠。
- */
-ipcGuard.handle('window-position', () => {
-  if (!win || win.isDestroyed()) return { x: 0, y: 0 };
-  const pos = win.getPosition ? win.getPosition() : [0, 0];
-  return { x: pos[0] || 0, y: pos[1] || 0 };
-});
-
-/** 视觉审计（只记元数据；绝不记像素与 OCR 文本） */
-function appendVisionAudit(entry) {
-  try {
-    const dir = app.getPath('userData');
-    const line = {
-      at: entry.at || new Date().toISOString(),
-      stage: typeof entry.stage === 'string' ? entry.stage.slice(0, 32) : null,
-      width: Number.isFinite(entry.width) ? entry.width : null,
-      height: Number.isFinite(entry.height) ? entry.height : null,
-      elapsedMs: Number.isFinite(entry.elapsedMs) ? entry.elapsedMs : null,
-      visionTokens: Number.isFinite(entry.visionTokens) ? entry.visionTokens : null,
-      errorType: typeof entry.errorType === 'string' ? entry.errorType.slice(0, 40) : null
-    };
-    fs.appendFileSync(path.join(dir, 'vision-audit.jsonl'), JSON.stringify(line) + '\n', 'utf8');
-  } catch (err) { /* 审计写失败绝不外抛 */ }
-}
-
+if (singleInstance) {
 app.whenReady().then(() => {
+  if (!singleInstance) return;
   console.log([
     '',
     '        . ~ ~ ~ ~ ~ .',
@@ -2957,12 +1358,13 @@ app.whenReady().then(() => {
    *     供 UI/诊断读取（本单只落变量，不接 UI）。
    */
   let agentSandbox = null;
-  agentSandboxUnavailable = null;
+  mainAgent.setSandboxUnavailable(null);
   try {
     agentSandbox = ensureSandboxDir(sandboxPathFor(app.getPath('desktop')));
   } catch (err) {
-    agentSandboxUnavailable = String((err && err.code) || (err && err.message) || 'UNKNOWN');
-    console.error('[Agent] 沙盒不可用，Agent 写能力已降级关闭:', agentSandboxUnavailable);
+    const unavailCode = String((err && err.code) || (err && err.message) || 'UNKNOWN');
+    mainAgent.setSandboxUnavailable(unavailCode);
+    console.error('[Agent] 沙盒不可用，Agent 写能力已降级关闭:', unavailCode);
     // 🔴 注意：此时 persona.js:32 的沙盒描述暂时不成立
     //   （原文「你可以在那里留下文字，程序会替你把字写进去」——她以为写得了，实际已降级关闭）。
     // ✅ v2.0-a 已补上运行时告知通道（本段原写「下次开工需要」，现已落地）：
@@ -2992,11 +1394,20 @@ app.whenReady().then(() => {
   // 🔴 D-7：把审计出口交给模块顶层那个引用 —— 主动搭话的处理器是顶层闭包，
   //   拿不到 whenReady 的块级变量（引用会抛 TDZ）。详见 proactiveAuditLog 的声明处注释。
   proactiveAuditLog = agentAuditLog;
+  mainAgent.setProactiveAuditLog(agentAuditLog);
   const agentConfirmation = new UserConfirmationGate();
   // D-2 的写事务管理器在此创建：WAL 与备份都落在 userData，不与用户文件混同。
   //   D-4 起执行器写盘走它，故崩溃恢复自愈从此刻起才真正有意义。
   const agentTxnDir = app.getPath('userData');
-  const agentTxn = new WriteTransactionManager({ dir: agentTxnDir });
+  const agentRealSandbox = agentSandbox ? (resolveRealPath(agentSandbox) || path.resolve(agentSandbox)) : null;
+  const agentTxn = new WriteTransactionManager({
+    dir: agentTxnDir,
+    validateTarget: (target) => {
+      if (!agentRealSandbox || typeof target !== 'string' || !target) return false;
+      const real = resolveRealPath(target);
+      return Boolean(real && isPathInsideRoot(real, agentRealSandbox));
+    },
+  });
   try {
     const healed = agentTxn.recoverPendingTransactions();
     if (healed.recovered > 0) {
@@ -3091,6 +1502,23 @@ app.whenReady().then(() => {
     ticketStore: brain && brain.ticketStore ? brain.ticketStore : null,
     getWindowNo: () => (brain && brain.memory && brain.memory.data
       && Number.isFinite(brain.memory.data.windowNo)) ? brain.memory.data.windowNo : 1,
+    allowTicketWriteIpc: false,
+    confirmHighRiskAction: (proposal) => {
+      if (!dialog || typeof dialog.showMessageBoxSync !== 'function') return false;
+      const cap = proposal && proposal.capability ? proposal.capability : 'unknown';
+      const scope = proposal && proposal.scope ? proposal.scope : '';
+      const targetWin = (win && !win.isDestroyed()) ? win : undefined;
+      const idx = dialog.showMessageBoxSync(targetWin, {
+        type: 'warning',
+        buttons: ['取消', '确认执行'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '高风险沙盒操作二次确认',
+        message: `即将执行高风险操作：${cap}`,
+        detail: `目标范围：${String(scope).slice(0, 200)}\n该操作不可自动撤销，请确认是否继续。`,
+      });
+      return idx === 1;
+    },
   });
 
   /* ────────────────────────────────────────────────────────────────
@@ -3129,11 +1557,11 @@ app.whenReady().then(() => {
   // 🔴 v1.9.0-dev：观察档（observe）的观察记录器一并注入。
   //   为什么放在 deps 里而不是模块顶层 new：它需要 app.getPath('userData')，
   //   那个在 whenReady 之前不可靠（实测无头环境会抛）。
-  agentBuildDeps = {
-    agentIpc, agentSandbox, sandboxUnavailable: agentSandboxUnavailable,
+  mainAgent.setAgentBuildDeps({
+    agentIpc, agentSandbox, sandboxUnavailable: mainAgent.getSandboxUnavailable(),
     broadcastToWindows, agentBudget, takeStashedContent,
     observationLog: new ObservationLog({ dir: app.getPath('userData') }),
-  };
+  });
 
   // 🔴 v1.7-a：权限闸门必须在**任何 BrowserWindow 创建之前**装好。
   //   装晚了的话，窗口已经发出的权限请求走的是默认行为 —— 那正是本闸门要消除的赌。
@@ -3199,8 +1627,17 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  if (!singleInstance) return;
   appQuitting = true;   // 对话窗 close 拦截放行，允许真销毁
+  if (motion && typeof motion.stop === 'function') motion.stop('before-quit');
+  if (proactiveTimer) { clearTimeout(proactiveTimer); proactiveTimer = null; }
+  try { require('./src/vision-picker-window').destroyVisionPicker(); } catch {}
+  if (tray) {
+    try { if (typeof tray.destroy === 'function') tray.destroy(); } catch {}
+    tray = null;
+  }
   if (powerMonitorSource && typeof powerMonitorSource.stop === 'function') powerMonitorSource.stop();
+  saveChatBoundsImmediate();
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
 });
 
@@ -3212,3 +1649,15 @@ app.on('window-all-closed', () => {
   if (brain && typeof brain.flushAll === 'function') brain.flushAll();
   app.quit();
 });
+
+let signalShuttingDown = false;
+const handleShutdownSignal = () => {
+  if (signalShuttingDown) return;
+  signalShuttingDown = true;
+  appQuitting = true;
+  try { if (brain && typeof brain.flushAll === 'function') brain.flushAll(); } catch {}
+  try { app.quit(); } catch {}
+};
+process.on('SIGINT', handleShutdownSignal);
+process.on('SIGTERM', handleShutdownSignal);
+}

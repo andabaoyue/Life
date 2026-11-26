@@ -14,7 +14,8 @@ const ALLOWED = new Set([
   'vision:close-picker',
   'vision-notify'
 ]);
-const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const mainSrc = ['main.js', 'src/main-vision-ipc.js']
+  .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 let failures = 0;
 let assertions = 0;
 

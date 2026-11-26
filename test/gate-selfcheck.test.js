@@ -80,6 +80,12 @@ check('探测 playwright 可用性（缺依赖报 SKIP 而非假 FAIL）',
 /* 5. 依赖缺失要走 SKIP，不能报 FAIL —— 这正是 ui_test.py 假失败的根因 */
 check('ModuleNotFoundError 判定为环境限制（SKIP）',
   /ModuleNotFoundError/.test(src));
+const docsMod = require(TARGET);
+const pyMissingOutcome = docsMod.classifyNonZeroSuite(1, "Traceback...\nModuleNotFoundError: No module named 'playwright'");
+const realFailOutcome = docsMod.classifyNonZeroSuite(1, 'FAIL some assertion');
+check('OPS-P1-2: 异步 spawn 非零退出带 ModuleNotFoundError 时确实走 SKIP 而非 FAIL',
+  pyMissingOutcome && pyMissingOutcome.action === 'skip'
+  && realFailOutcome && realFailOutcome.action === 'fail');
 
 /* 5b. 同源病根的第二处：test/deepseek.test.js 自己内部也曾用 execFileSync 设 TZ 跑子进程，
    撞上同一个EBUSY —— README 写 32 项，实际只跑出 15 项。必须一起锁住，否则只修门禁不够。 */

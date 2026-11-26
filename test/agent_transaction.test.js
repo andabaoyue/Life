@@ -452,6 +452,28 @@ console.log('--- D-2 单文件写事务 + WAL 门禁 ---');
     caught && caught.code === 'WAL_APPEND_FAILED' && !fs.existsSync(walPath) && !fs.existsSync(f),
     'code=' + (caught && caught.code) + ' walExists=' + fs.existsSync(walPath));
 }
+{
+  // Batch 3.2: WriteTransactionManager validateTarget 拦截 begin/rollback/recoverPendingTransactions 越界路径
+  const { workDir, mgr } = scenario();
+  const allowedRoot = path.resolve(workDir);
+  const scopedMgr = new WriteTransactionManager({
+    dir: mgr.dir,
+    validateTarget: (t) => path.resolve(String(t)).toLowerCase().startsWith(allowedRoot.toLowerCase()),
+  });
+  const outside = path.join(path.dirname(workDir), 'outside-scope.txt');
+  let beginErr = null;
+  try { scopedMgr.begin({ target: outside, data: 'x' }); } catch (e) { beginErr = e; }
+  // 写入一条伪造越界 pending WAL 记录测试 recoverPendingTransactions fail-closed
+  fs.mkdirSync(mgr.dir, { recursive: true });
+  fs.appendFileSync(mgr.walPath, JSON.stringify({
+    txId: 'txn-evil', status: 'pending', target: outside, isNew: true, backupPath: null, at: Date.now()
+  }) + '\n', 'utf8');
+  const healed = scopedMgr.recoverPendingTransactions();
+  check('Batch3.2: WriteTransactionManager.validateTarget 拦截 begin 与崩溃恢复越界路径',
+    beginErr && beginErr.code === 'TXN_TARGET_OUT_OF_SCOPE'
+    && healed.recovered === 0
+    && healed.failed.some((x) => x.txId === 'txn-evil' && String(x.error).includes('TXN_TARGET_OUT_OF_SCOPE')));
+}
 
 console.log(failures === 0 ? '\nall agent_transaction tests passed' : `\n${failures} FAILED`);
 assert.strictEqual(failures, 0, `${failures} 项写事务门禁失败`);

@@ -45,6 +45,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { redactSecrets } = require('./redact');
 const { WriteTransactionManager } = require('./agent-transaction');
 const { listSandboxTopLevel, isValidStructureScope } = require('./agent-sandbox');
 
@@ -81,6 +82,10 @@ const DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024;
 
 /** 默认单次写最大字节，与 WriteTransactionManager 的5MB 对齐（这里取更严的一侧）。 */
 const DEFAULT_MAX_WRITE_BYTES = 5 * 1024 * 1024;
+
+/** 沙盒总条目数与总字节配额上限（防止高频写/建目录撑爆桌面沙盒）。 */
+const DEFAULT_MAX_SANDBOX_FILES = 500;
+const DEFAULT_MAX_SANDBOX_BYTES = 50 * 1024 * 1024;
 
 /** 🔴 SEC-03：Windows 保留设备名正则（不区分大小写，支持 CON/PRN/AUX/NUL/COM1-9/LPT1-9）。 */
 const WINDOWS_RESERVED_NAMES = Object.freeze(/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i);
@@ -268,10 +273,23 @@ class ControlledAgentExecutor {
     this.auditLog = deps.auditLog || null;
     this.proposalStore = deps.proposalStore || new Map();
     this.fs = deps.fs || fs;
-    this.txn = deps.transactionManager || new WriteTransactionManager({ dir: deps.txnDir || null });
+    this.resolveRealPath = deps.resolveRealPath || resolveRealPath;
+    this.txn = deps.transactionManager || new WriteTransactionManager({
+      dir: deps.txnDir || null,
+      validateTarget: this.policy ? (targetPath) => {
+        const real = this.resolveRealPath(targetPath, this.fs);
+        if (!real) return false;
+        const roots = (this.policy.scopeRoots && typeof this.policy.scopeRoots.get === 'function')
+          ? (this.policy.scopeRoots.get('workspace.write') || [])
+          : [];
+        if (!roots.length) return true;
+        return roots.some((r) => isPathInsideRoot(real, this.resolveRealPath(r, this.fs) || path.resolve(r)));
+      } : null,
+    });
     this.maxReadBytes = Number.isFinite(deps.maxReadBytes) ? deps.maxReadBytes : DEFAULT_MAX_READ_BYTES;
     this.maxWriteBytes = Number.isFinite(deps.maxWriteBytes) ? deps.maxWriteBytes : DEFAULT_MAX_WRITE_BYTES;
-    this.resolveRealPath = deps.resolveRealPath || resolveRealPath;
+    this.maxSandboxFiles = Number.isFinite(deps.maxSandboxFiles) ? deps.maxSandboxFiles : DEFAULT_MAX_SANDBOX_FILES;
+    this.maxSandboxBytes = Number.isFinite(deps.maxSandboxBytes) ? deps.maxSandboxBytes : DEFAULT_MAX_SANDBOX_BYTES;
     this.maxWallClockMs = Number.isFinite(deps.maxWallClockMs)
       ? deps.maxWallClockMs
       : ((this.budget && this.budget.limits && Number.isFinite(this.budget.limits.maxWallClockMs))
@@ -281,6 +299,8 @@ class ControlledAgentExecutor {
     //已消费提案的终态集合。执行成功后写入，重放时查。
     //用 Set 而非改proposal.status：提案对象是 Object.freeze 的，改不动。
     this.consumed = new Set();
+    // 因安全异常或回滚失败被作废的提案集合（纵深防线：即便确认记录后续被外部 prune，也永不复活）
+    this.revoked = new Map();
   }
 
   /** 恢复上次进程的已消费提案（进程重启后重放防线不能归零）。 */
@@ -330,7 +350,7 @@ class ControlledAgentExecutor {
     } catch (err) {
       // 执行期异常一律转信封，绝不让堆栈穿透 IPC 边界。
       return fail('EXECUTOR_INTERNAL_ERROR', {
-        detail: String((err && err.message) || '').slice(0, 200),
+        detail: redactSecrets(String((err && err.message) || '')).slice(0, 200),
       });
     }
   }
@@ -603,6 +623,7 @@ class ControlledAgentExecutor {
     }
 
     if (symlinkEscape) {
+      this.revoked.set(proposalId, 'SYMLINK_ESCAPE');
       if (this.confirmation && typeof this.confirmation.revoke === 'function') {
         this.confirmation.revoke(proposalId, 'SYMLINK_ESCAPE');
       }
@@ -684,13 +705,16 @@ class ControlledAgentExecutor {
       && (READ_ONLY_EXEMPT_CAPABILITIES.has(proposal.capability)
         || REVERSIBLE_EXEMPT_CAPABILITIES.has(proposal.capability))
     );
-    const gate = isSelfNote
+    let gate = isSelfNote
       ? { allowed: true, reason: 'SELF_NOTE_EXEMPT' }
       : (isObserverJournal
         ? { allowed: true, reason: 'OBSERVER_JOURNAL_EXEMPT' }
         : (isReadOnlyExempt
           ? { allowed: true, reason: 'READ_ONLY_EXEMPT' }
           : this.confirmation.isExecutionAllowed(proposalId)));
+    if (gate && gate.allowed === true && this.revoked.has(proposalId)) {
+      gate = { allowed: false, reason: this.revoked.get(proposalId) || 'AUTHORIZATION_REVOKED' };
+    }
     if (!gate || gate.allowed !== true) {
       const reason = (gate && gate.reason) || 'NOT_CONFIRMED';
       this._audit({
@@ -709,6 +733,11 @@ class ControlledAgentExecutor {
       let writeSpec = null;
       if (isWrite) {
         writeSpec = this._validateWriteFile(proposal, input.content, real);
+        this._checkSandboxQuota(proposal.capability, 1, writeSpec.byteLength, writeSpec.target);
+      } else if (proposal.capability === 'workspace.mkdir') {
+        this._checkSandboxQuota(proposal.capability, resolvedStructure ? resolvedStructure.length : 0, 0);
+      } else if (isMove) {
+        this._checkSandboxQuota(proposal.capability, 0, 0);
       }
       if (typeof this.budget.canConsume === 'function') {
         if (!this.budget.consume(isWrite, Date.now(), { free: isReadOnlyOp })) {
@@ -734,6 +763,9 @@ class ControlledAgentExecutor {
       } else {
         result = this._readFile(proposal, real);
       }
+      if (this.budget && typeof this.budget.recordSuccess === 'function') {
+        this.budget.recordSuccess();
+      }
     } catch (err) {
       // 执行失败要记连续错误（防「一直失败一直重试」），并把授权作废：
       // 失败的提案不该能被原样再执行一次。
@@ -747,12 +779,14 @@ class ControlledAgentExecutor {
         || err.code === 'SYMLINK_ESCAPE'
         || err.code === 'TOO_MANY_TARGETS'
         || err.code === 'DISALLOWED_FILENAME'
+        || err.code === 'TXN_TARGET_OUT_OF_SCOPE'
       );
       const isStructureValidationErr = err && (
         err.code === 'DST_ALREADY_EXISTS'
         || err.code === 'ALREADY_EXISTS_NOT_DIR'
         || err.code === 'NOT_FOUND'
         || err.code === 'INVALID_MOVE_SELF'
+        || err.code === 'SANDBOX_QUOTA_EXCEEDED'
       );
       const isRollbackFailure = err && (err.code === 'ROLLBACK_HASH_MISMATCH' || err.code === 'BACKUP_MISSING' || /ROLLBACK/i.test(err.code || ''));
       const code = isSecurityViolation
@@ -762,11 +796,14 @@ class ControlledAgentExecutor {
         outcome: 'failed',
         code,
         capability: proposal.capability,
-        detail: String((err && err.message) || '').slice(0, 200),
+        detail: redactSecrets(String((err && err.message) || '')).slice(0, 200),
         proposalId: proposalId.slice(0, 120),
       }, proposal);
-      if ((isSecurityViolation || isRollbackFailure) && this.confirmation && typeof this.confirmation.revoke === 'function') {
-        this.confirmation.revoke(proposalId, code);
+      if (isSecurityViolation || isRollbackFailure) {
+        this.revoked.set(proposalId, code);
+        if (this.confirmation && typeof this.confirmation.revoke === 'function') {
+          this.confirmation.revoke(proposalId, code);
+        }
       }
       return fail(code, {
         detail: String((err && err.message) || '').slice(0, 200),
@@ -848,6 +885,50 @@ class ControlledAgentExecutor {
     }
     if (targetExt && !ALLOWED_READ_EXTENSIONS.has(targetExt)) {
       throw Object.assign(new Error(`DISALLOWED_EXTENSION: ${targetExt}`), { code: 'DISALLOWED_EXTENSION' });
+    }
+    const hasFdApi = typeof this.fs.openSync === 'function'
+      && typeof this.fs.fstatSync === 'function'
+      && typeof this.fs.readSync === 'function'
+      && typeof this.fs.closeSync === 'function';
+    if (hasFdApi) {
+      const nofollowFlag = (fs.constants && typeof fs.constants.O_NOFOLLOW === 'number') ? fs.constants.O_NOFOLLOW : 0;
+      const rdonlyFlag = (fs.constants && typeof fs.constants.O_RDONLY === 'number') ? fs.constants.O_RDONLY : 0;
+      let fd;
+      try {
+        fd = this.fs.openSync(target, rdonlyFlag | nofollowFlag);
+      } catch (openErr) {
+        if (openErr && openErr.code === 'ELOOP') {
+          throw Object.assign(new Error('SYMLINK_ESCAPE'), { code: 'SYMLINK_ESCAPE' });
+        }
+        throw openErr;
+      }
+      try {
+        const stat = this.fs.fstatSync(fd);
+        if (!stat.isFile()) throw new Error('NOT_A_FILE');
+        // 🔴 SEC-02 延伸防御（N3）：拦截多重硬链接文件读取（防硬链接穿透与跨边界泄漏）
+        if (typeof stat.nlink === 'number' && stat.nlink > 1) {
+          throw Object.assign(new Error('HARDLINK_DETECTED'), { code: 'HARDLINK_DETECTED' });
+        }
+        if (stat.size > this.maxReadBytes) {
+          throw Object.assign(new Error('READ_TOO_LARGE'), { code: 'READ_TOO_LARGE' });
+        }
+        const raw = Buffer.allocUnsafe(stat.size);
+        let totalRead = 0;
+        while (totalRead < stat.size) {
+          const n = this.fs.readSync(fd, raw, totalRead, stat.size - totalRead, totalRead);
+          if (!n || n <= 0) break;
+          totalRead += n;
+        }
+        const buf = totalRead === stat.size ? raw : raw.subarray(0, totalRead);
+        if (!targetExt) {
+          return { bytes: buf.length, content: this._probeAndDecodeExtensionlessText(buf) };
+        }
+        // 只返回内容与元数据，**不回传绝对路径**——渲染端不需要知道沙盒绝对位置，
+        // 少一个信息泄露面。真要给也应该只给 basename。
+        return { bytes: buf.length, content: buf.toString('utf8') };
+      } finally {
+        try { this.fs.closeSync(fd); } catch {}
+      }
     }
     const stat = this.fs.statSync(target);
     if (!stat.isFile()) throw new Error('NOT_A_FILE');
@@ -1005,8 +1086,68 @@ class ControlledAgentExecutor {
     return { createdCount: created.length, targets: created };
   }
 
+  _checkSandboxQuota(capability, addedFiles = 0, addedBytes = 0, existingWriteTarget = null) {
+    if (typeof this.fs.readdirSync !== 'function' || typeof this.fs.lstatSync !== 'function') return;
+    const roots = (this.policy && this.policy.scopeRoots instanceof Map)
+      ? (this.policy.scopeRoots.get(capability) || [])
+      : [];
+    const root = roots[0];
+    if (!root) return;
+    let totalFiles = 0;
+    let totalBytes = 0;
+    let existingSize = 0;
+    let existingCounted = 0;
+    const normExisting = existingWriteTarget
+      ? (process.platform === 'win32' ? existingWriteTarget.toLowerCase() : existingWriteTarget)
+      : null;
+    if (normExisting) {
+      try {
+        const ex = this.fs.lstatSync(existingWriteTarget);
+        if (ex && typeof ex.isFile === 'function' && ex.isFile()) {
+          existingCounted = 1;
+          existingSize = Number.isFinite(ex.size) ? ex.size : 0;
+        }
+      } catch {}
+    }
+    const queue = [{ dir: root, depth: 0 }];
+    while (queue.length > 0) {
+      const { dir, depth } = queue.shift();
+      if (depth > 32) continue;
+      let entries;
+      try {
+        entries = this.fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const name of entries) {
+        const full = path.join(dir, name);
+        let st;
+        try {
+          st = this.fs.lstatSync(full);
+        } catch {
+          continue;
+        }
+        if (!st || (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink())) continue;
+        if (typeof st.isDirectory === 'function' && st.isDirectory()) {
+          totalFiles += 1;
+          queue.push({ dir: full, depth: depth + 1 });
+        } else if (typeof st.isFile === 'function' && st.isFile()) {
+          totalFiles += 1;
+          totalBytes += Number.isFinite(st.size) ? st.size : 0;
+        }
+      }
+    }
+    const projectedFiles = Math.max(0, totalFiles - existingCounted) + Math.max(0, addedFiles);
+    const projectedBytes = Math.max(0, totalBytes - existingSize) + Math.max(0, addedBytes);
+    if (projectedFiles > this.maxSandboxFiles || projectedBytes > this.maxSandboxBytes) {
+      throw Object.assign(new Error('SANDBOX_QUOTA_EXCEEDED'), { code: 'SANDBOX_QUOTA_EXCEEDED' });
+    }
+  }
+
   _moveEntries(resolvedItems) {
-    const moved = [];
+    // Phase 1：全部校验通过前不碰任何磁盘条目（防批处理半途失败留下脏重命名）
+    const seenDst = new Set();
+    const seenSrc = new Set();
     for (const item of resolvedItems || []) {
       let srcStat;
       try {
@@ -1024,6 +1165,22 @@ class ControlledAgentExecutor {
           && typeof srcStat.nlink === 'number' && srcStat.nlink > 1) {
         throw Object.assign(new Error('HARDLINK_DETECTED'), { code: 'HARDLINK_DETECTED' });
       }
+      if (typeof srcStat.isFile === 'function' && srcStat.isFile()) {
+        const dstExt = path.extname(String(item.dst || '')).toLowerCase();
+        if (!ALLOWED_WRITE_EXTENSIONS.has(dstExt)) {
+          throw Object.assign(new Error('DISALLOWED_EXTENSION'), { code: 'DISALLOWED_EXTENSION' });
+        }
+      }
+      const normSrc = process.platform === 'win32' ? item.src.toLowerCase() : item.src;
+      const normDst = process.platform === 'win32' ? item.dst.toLowerCase() : item.dst;
+      if (seenSrc.has(normSrc)) {
+        throw Object.assign(new Error('NOT_FOUND'), { code: 'NOT_FOUND' });
+      }
+      seenSrc.add(normSrc);
+      if (seenDst.has(normDst)) {
+        throw Object.assign(new Error('DST_ALREADY_EXISTS'), { code: 'DST_ALREADY_EXISTS' });
+      }
+      seenDst.add(normDst);
       let dstExists = false;
       try {
         this._lstatBest(item.dst);
@@ -1034,16 +1191,33 @@ class ControlledAgentExecutor {
       if (dstExists) {
         throw Object.assign(new Error('DST_ALREADY_EXISTS'), { code: 'DST_ALREADY_EXISTS' });
       }
-      const normSrc = process.platform === 'win32' ? item.src.toLowerCase() : item.src;
-      const normDst = process.platform === 'win32' ? item.dst.toLowerCase() : item.dst;
       const srcPrefix = normSrc.endsWith(path.sep) ? normSrc : normSrc + path.sep;
       if (normDst === normSrc || normDst.startsWith(srcPrefix)) {
         throw Object.assign(new Error('INVALID_MOVE_SELF'), { code: 'INVALID_MOVE_SELF' });
       }
-      const parentDir = path.dirname(item.dst);
-      this.fs.mkdirSync(parentDir, { recursive: true });
-      this.fs.renameSync(item.src, item.dst);
-      moved.push({ src: item.srcRel, dst: item.dstRel });
+    }
+
+    // Phase 2：顺序执行重命名；若中途失败则逆序回滚已完成条目
+    const moved = [];
+    const completedPairs = [];
+    try {
+      for (const item of resolvedItems || []) {
+        const parentDir = path.dirname(item.dst);
+        this.fs.mkdirSync(parentDir, { recursive: true });
+        this.fs.renameSync(item.src, item.dst);
+        completedPairs.push({ src: item.src, dst: item.dst });
+        moved.push({ src: item.srcRel, dst: item.dstRel });
+      }
+    } catch (moveErr) {
+      for (let i = completedPairs.length - 1; i >= 0; i--) {
+        const pair = completedPairs[i];
+        try {
+          this.fs.renameSync(pair.dst, pair.src);
+        } catch (rbErr) {
+          throw Object.assign(new Error(`ROLLBACK_FAILED: ${rbErr && rbErr.message}`), { code: 'ROLLBACK_FAILED' });
+        }
+      }
+      throw moveErr;
     }
     return { movedCount: moved.length, items: moved };
   }
@@ -1113,7 +1287,10 @@ module.exports = {
   MAX_STRUCTURE_TARGETS,
   isMalformedWindowsPath,
   resolveRealPath,
+  isPathInsideRoot,
   // 🔵 2026-11-05 C-4：realpathBestEffort 已删除（死导出，见上方注释）。
   DEFAULT_MAX_READ_BYTES,
   DEFAULT_MAX_WRITE_BYTES,
+  DEFAULT_MAX_SANDBOX_FILES,
+  DEFAULT_MAX_SANDBOX_BYTES,
 };

@@ -1011,8 +1011,9 @@ console.log('--- D-1 Agent IPC 治理通道门禁 ---');
 
   // N1-1 主进程 selfNote 路径彻底消除双扣（Q2 修复）：
   // ① 源码级门禁：main.js 的 maybeAskForSelfNote 内不得调用 evaluateProposal（彻底消除预检+建案双扣）
-  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  const selfNoteFnMatch = mainSrc.match(/function maybeAskForSelfNote\([\s\S]*?\n\}/);
+  const mainSrc = ['main.js', 'src/main-agent-ipc.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
+  const selfNoteFnMatch = mainSrc.match(/function maybeAskForSelfNote\([\s\S]*?\n\s{0,2}\}/);
   const selfNoteFnBody = selfNoteFnMatch ? selfNoteFnMatch[0] : '';
   const noRedundantEvaluate = selfNoteFnBody.length > 0 && !selfNoteFnBody.includes('evaluateProposal');
 
@@ -1228,6 +1229,57 @@ console.log('\n--- A 批门禁：快照生命周期与两条无测试钉住的�
     e && e.detail === 'DELETED_OR_LOST',
     'detail=' + JSON.stringify(e && e.detail));
   check('A-3c 且仍然不落盘', !fs.existsSync(target));
+}
+
+/* ---------- SEC-P1-3：渲染端伪造 createdAt 与 status 一律被主进程忽略 ---------- */
+{
+  const h = harness();
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  const target = path.join(h.appDir, 'sec-p1-3.txt');
+  const futureAt = Date.now() + 365 * 86400_000;
+  const before = Date.now();
+  const p = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write',
+    scope: target,
+    content: 'sec-p1-3',
+    createdAt: futureAt,
+    status: 'executed',
+  });
+  const after = Date.now();
+  check('SEC-P1-3 渲染端传入未来 createdAt 与 status=executed 时，主进程强制签发当前时间与 status=proposed',
+    p && p.ok === true && p.proposal
+    && p.proposal.status === 'proposed'
+    && p.proposal.createdAt >= before - 10 && p.proposal.createdAt <= after + 10
+    && p.proposal.createdAt < futureAt - 1000);
+}
+
+/* ---------- Batch3.2: snapshot 仅在 confirm('rejected') 成功后删除 + ticket 写禁用 + confirmHighRiskAction ---------- */
+{
+  const snaps = new Map();
+  const h = harness({
+    policy: new PermissionPolicy({ killSwitch: false, allowed: ['workspace.read', 'workspace.write', 'workspace.remove'] }),
+    options: { contentSnapshotStore: snaps, allowTicketWriteIpc: false, confirmHighRiskAction: () => false },
+  });
+  h.policy.setScopeRoots('workspace.write', [h.appDir]);
+  h.policy.setScopeRoots('workspace.remove', [h.appDir]);
+  const p = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.write', scope: path.join(h.appDir, 'keep-snap.txt'), content: 'keep snap',
+  });
+  h.call('agent:confirm-action', h.trustedEvent, { proposalId: p.proposal.id, decision: 'approved' });
+  const badRej = h.call('agent:confirm-action', h.trustedEvent, { proposalId: p.proposal.id, decision: 'rejected' });
+  const snapStillThere = snaps.has(p.proposal.id);
+  const tktDenied = h.call('agent:ticket-create', h.trustedEvent, { title: 'blocked' });
+  const remTarget = path.join(h.appDir, 'rm-target.txt');
+  fs.writeFileSync(remTarget, 'preserve me', 'utf8');
+  const pRem = h.call('agent:propose-action', h.trustedEvent, {
+    capability: 'workspace.remove', scope: remTarget, reason: 'test confirmHighRiskAction',
+  });
+  h.call('agent:confirm-action', h.trustedEvent, { proposalId: pRem.proposal.id, decision: 'approved' });
+  const remExec = h.call('agent:execute', h.trustedEvent, { proposalId: pRem.proposal.id });
+  check('Batch3.2: confirm 失败不提前删快照、allowTicketWriteIpc=false 禁写、confirmHighRiskAction 拒绝高危删除',
+    badRej.ok === false && snapStillThere
+    && tktDenied.ok === false && tktDenied.error === 'TICKET_WRITE_IPC_DISABLED'
+    && remExec.ok === false && remExec.reason === 'SECONDARY_CONFIRM_DECLINED' && fs.existsSync(remTarget));
 }
 
 console.log(failures === 0 ? '\nall agent_ipc tests passed' : `\n${failures} FAILED`);

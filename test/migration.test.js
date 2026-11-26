@@ -224,5 +224,10 @@ check('迁移函数就地修改原对象时正常保留并更新版本号', () =
   assert.strictEqual(res.data.schemaVersion, 1);
 });
 
+check('Batch3.3: 负数或小数有限 schemaVersion 抛出异常', () => {
+  assert.throws(() => migrate({ schemaVersion: -1 }, 1, { 1: (d) => d }), /INVALID_SCHEMA_VERSION|非法/);
+  assert.throws(() => migrate({ schemaVersion: 1.5 }, 2, { 2: (d) => d }), /INVALID_SCHEMA_VERSION|非法/);
+});
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

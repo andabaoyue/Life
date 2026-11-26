@@ -397,9 +397,12 @@ class ExecutionBudget {
     }
     if (!isFree) this.actions += 1;
     if (isWrite) this.writes += 1;
-    // 成功动作重置连续错误计数
-    this.consecutiveErrors = 0;
     return true;
+  }
+
+  /** 真实执行成功时显式清零连续错误计数，防止提案/确认动作掩盖执行期连续失败。 */
+  recordSuccess() {
+    this.consecutiveErrors = 0;
   }
 
   /** 记录一次失败。连续失败达上限即熔断（防「一直失败一直重试」的死循环）。 */
@@ -436,12 +439,12 @@ class ExecutionBudget {
  * 泛化前缀 = 任何新加的状态字段都能自动获得「有动机」的标签，
  * 等于给「凭空造动机」开了后门。
  */
-const INTENT_ORIGIN_BY_SOURCE_PREFIX = Object.freeze({
+const INTENT_ORIGIN_BY_SOURCE_PREFIX = Object.freeze(Object.assign(Object.create(null), {
   // 她自己的特质（依恋渴望 / 好奇 / 活力…）
   traits: 'self_trait',
   // 用户行为派生（静默了多久、上次互动在什么时候）
   tracker: 'user_action',
-});
+}));
 
 /** 合法的动机来源类别。null 表示「不知道」——不是 'unknown'。 */
 const INTENT_ORIGINS = Object.freeze(['self_trait', 'user_action']);
@@ -549,12 +552,18 @@ const PROPOSAL_SOURCES = Object.freeze(['user', 'selfNote', 'observerJournal', '
  *   渲染端在 payload 里塞 proposalSource 一律无效 —— 否则自报来源即可免确认，
  *   那是 D-3 顶替攻击那一族。
  */
-function createActionProposal(input = {}, intentMotive = null, proposalSourceArg = 'user', contentMeta = null) {
-  const status = String(input.status || 'proposed');
+function createActionProposal(input = {}, intentMotive = null, proposalSourceArg = 'user', contentMeta = null, trustedOpts = null) {
+  const safeInput = (input && typeof input === 'object') ? input : {};
+  const status = (trustedOpts && typeof trustedOpts === 'object' && trustedOpts.status !== undefined)
+    ? String(trustedOpts.status)
+    : 'proposed';
   if (!PROPOSAL_STATES.includes(status)) {
     throw new Error(`非法提案状态: ${status}（合法值见 PROPOSAL_STATES）`);
   }
   const motive = normalizeIntentMotive(intentMotive);
+  const createdAt = (trustedOpts && typeof trustedOpts === 'object' && Number.isFinite(trustedOpts.createdAt))
+    ? trustedOpts.createdAt
+    : Date.now();
   return Object.freeze({
     //🔴 id 必须**由本函数生成，绝不接受调用方指定**（2026-10-06 实测漏洞）。
     //   原实现是 `String(input.id || 'proposal-' + Date.now())`，两个后果：
@@ -563,12 +572,12 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
     //② 同一毫秒建案id 天然相同 —— 见 newProposalId() 注释里的顶替攻击。
     //   id 是「用户所见」与「实际放行」的绑定键，自选等于让调用方自己指定绑谁。
     id: newProposalId(),
-    capability: String(input.capability || ''),
-    scope: String(input.scope || ''),
+    capability: String(safeInput.capability || ''),
+    scope: String(safeInput.scope || ''),
     // v2.0-s2：结构操作辅助字段（move 目标路径 & 批量上限核验 targets），均冻结不可篡改
-    dst: input.dst != null ? String(input.dst) : (input.destination != null ? String(input.destination) : null),
-    targets: Array.isArray(input.targets)
-      ? Object.freeze(input.targets.map((t) => (
+    dst: safeInput.dst != null ? String(safeInput.dst) : (safeInput.destination != null ? String(safeInput.destination) : null),
+    targets: Array.isArray(safeInput.targets)
+      ? Object.freeze(safeInput.targets.map((t) => (
         t && typeof t === 'object'
           ? Object.freeze({
             src: String(t.src != null ? t.src : (t.scope || '')),
@@ -577,8 +586,8 @@ function createActionProposal(input = {}, intentMotive = null, proposalSourceArg
           : String(t == null ? '' : t)
       )))
       : null,
-    reason: String(input.reason || '').slice(0, 500),
-    createdAt: Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
+    reason: String(safeInput.reason || '').slice(0, 500),
+    createdAt,
     // 🔴 D-17：origin 是**主进程盖的来源戳**（三态），执行器据此决定要不要第五道闸门。
     //
     //   ## 为什么必须新加一个字段，而不是复用 requiresUserConfirmation
@@ -698,6 +707,34 @@ class AuditLog {
   }
 
   list() { return this.events.slice(); }
+
+  /** 返回当前审计总条数（持久化模式下直接统计非空行数，避免全量 JSON.parse）。 */
+  count() {
+    if (this.persist && this.file) {
+      try {
+        const fs = require('fs');
+        if (!fs.existsSync(this.file)) return this.events.length;
+        const raw = fs.readFileSync(this.file, 'utf8');
+        if (!raw) return 0;
+        let lines = 0;
+        let idx = 0;
+        while (idx < raw.length) {
+          const nl = raw.indexOf('\n', idx);
+          const end = nl === -1 ? raw.length : nl;
+          if (end > idx) {
+            const slice = raw.slice(idx, end).trim();
+            if (slice) lines++;
+          }
+          if (nl === -1) break;
+          idx = nl + 1;
+        }
+        return lines;
+      } catch {
+        return this.events.length;
+      }
+    }
+    return this.events.length;
+  }
 
   /** 从磁盘回读（append-only 语义：只追加不回改）。 */
   readAll() {

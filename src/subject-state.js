@@ -67,7 +67,8 @@ const DEFAULT_TRAITS = {
   self_clarity: 0
 };
 
-let evidenceGlobalSeq = 0;
+// 证据自增序号改为挂在 SubjectState 实例上（this._evidenceSeq），避免多实例互相串号；
+// load/rebuild/recover 从 committedEvidenceIds 续号，兼容跨重启续号不变式。
 
 /**
  * 辅助数值限制函数
@@ -110,6 +111,9 @@ class SubjectState {
     this.recoveryStatus = 'NORMAL';
     this.committedFingerprints = new Set();
     this.committedEvidenceIds = new Set();
+    this._evidenceSeq = 0;
+    this._messageAttestationKeys = new Set();
+    this._evidenceAttestationKeys = new Set();
     this.data = {
       schemaVersion: SCHEMA_VERSION,
       updatedAt: Date.now(),
@@ -166,6 +170,7 @@ class SubjectState {
           }
           this.committedFingerprints = new Set(this.data.seenFingerprints);
           this.committedEvidenceIds = new Set(this.data.seenEvidenceIds);
+          this._syncAttestationIndexes();
           // v0.9.9 P0-1: evidenceGlobalSeq 是进程级计数器（subject-state.js 顶部 let），进程重启归零。
           // 不从盘上已接受的号段续号，重启后第一轮签发的 ev-000001 必然撞上
           // 上一会话的同号证据 —— 于是从第 K 次启动起，头 K-1 个窗口的状态证据
@@ -176,7 +181,7 @@ class SubjectState {
             const seqMatch = /(\d+)\s*$/.exec(String(existingId));
             if (seqMatch) {
               const seq = Number(seqMatch[1]);
-              if (Number.isFinite(seq) && seq > evidenceGlobalSeq) evidenceGlobalSeq = seq;
+              if (Number.isFinite(seq) && seq > this._evidenceSeq) this._evidenceSeq = seq;
             }
           }
           this.recoveryStatus = this.data.recoveryStatus || 'NORMAL';
@@ -289,6 +294,9 @@ class SubjectState {
     };
     this.committedFingerprints = new Set();
     this.committedEvidenceIds = new Set();
+    this._evidenceSeq = 0;
+    this._messageAttestationKeys = new Set();
+    this._evidenceAttestationKeys = new Set();
     this.updateSnapshot();
     this.save(true);
     try {
@@ -423,6 +431,46 @@ class SubjectState {
     };
   }
 
+  _messageAttestationKey(a) {
+    return `${a.messageId}|${a.sourceContentHash}|${a.windowNo}`;
+  }
+
+  _evidenceAttestationKey(a) {
+    return `${a.evidenceId}|${a.fingerprint}`;
+  }
+
+  _syncAttestationIndexes() {
+    this._messageAttestationKeys = new Set();
+    for (const a of (Array.isArray(this.data.messageAttestations) ? this.data.messageAttestations : [])) {
+      if (a && typeof a === 'object') this._messageAttestationKeys.add(this._messageAttestationKey(a));
+    }
+    this._evidenceAttestationKeys = new Set();
+    for (const a of (Array.isArray(this.data.evidenceAttestations) ? this.data.evidenceAttestations : [])) {
+      if (a && typeof a === 'object') this._evidenceAttestationKeys.add(this._evidenceAttestationKey(a));
+    }
+  }
+
+  /** 将已安全落盘至 provenance sidecar 的历史证明从 subject-state.json 中裁剪，防止无限膨胀。 */
+  prunePersistedAttestations(persistedMessageAtts = [], persistedEvidenceAtts = []) {
+    if (Array.isArray(persistedMessageAtts) && persistedMessageAtts.length > 0 && Array.isArray(this.data.messageAttestations)) {
+      const dropMsgKeys = new Set(
+        persistedMessageAtts.filter(a => a && typeof a === 'object').map(a => this._messageAttestationKey(a))
+      );
+      this.data.messageAttestations = this.data.messageAttestations.filter(
+        a => a && !dropMsgKeys.has(this._messageAttestationKey(a))
+      );
+    }
+    if (Array.isArray(persistedEvidenceAtts) && persistedEvidenceAtts.length > 0 && Array.isArray(this.data.evidenceAttestations)) {
+      const dropEvKeys = new Set(
+        persistedEvidenceAtts.filter(a => a && typeof a === 'object').map(a => this._evidenceAttestationKey(a))
+      );
+      this.data.evidenceAttestations = this.data.evidenceAttestations.filter(
+        a => a && !dropEvKeys.has(this._evidenceAttestationKey(a))
+      );
+    }
+    this._syncAttestationIndexes();
+  }
+
   /**
    * 回滚暂存状态（若 Archive 写入失败时调用）
    */
@@ -437,6 +485,7 @@ class SubjectState {
         this.committedFingerprints = new Set(this.data.seenFingerprints || []);
         this.committedEvidenceIds = new Set(this.data.seenEvidenceIds || []);
       }
+      this._syncAttestationIndexes();
       this.updateSnapshot();
     }
   }
@@ -446,18 +495,23 @@ class SubjectState {
    */
   commit() {
     this.updateSnapshot();
+    const prevPending = this.recoveryPending;
+    const prevReason = this.recoveryPendingReason;
+    const prevStatus = this.recoveryStatus;
+    const prevDataStatus = this.data.recoveryStatus;
+    this.recoveryPending = false;
+    this.recoveryPendingReason = null;
+    this.recoveryStatus = 'NORMAL';
+    this.data.recoveryStatus = 'NORMAL';
     try {
       this.save(true);
-      this.recoveryPending = false;
-      this.recoveryPendingReason = null;
-      this.recoveryStatus = 'NORMAL';
-      this.data.recoveryStatus = 'NORMAL';
       return true;
     } catch (err) {
       this.recoveryPending = true;
       this.recoveryPendingReason = 'state_commit_failed';
       this.recoveryStatus = 'RECOVERY_PENDING';
       this.data.recoveryStatus = 'RECOVERY_PENDING';
+      void prevPending; void prevReason; void prevStatus; void prevDataStatus;
       console.error('[SubjectState] commit 写入磁盘失败，进入 recovery_pending 状态:', err.message);
       return false;
     }
@@ -667,6 +721,9 @@ class SubjectState {
     else if (messages && typeof messages === 'object') items = Object.values(messages);
 
     if (!Array.isArray(this.data.messageAttestations)) this.data.messageAttestations = [];
+    if (this._messageAttestationKeys.size !== this.data.messageAttestations.length) {
+      this._syncAttestationIndexes();
+    }
     for (const message of items) {
       if (!message || typeof message !== 'object') continue;
       const messageId = typeof message.messageId === 'string' ? message.messageId.trim() : '';
@@ -680,12 +737,11 @@ class SubjectState {
         sourceRole: message.role || 'unknown',
         attestedAt: Date.now()
       };
-      const exists = this.data.messageAttestations.some(a =>
-        a && a.messageId === attestation.messageId &&
-        a.sourceContentHash === attestation.sourceContentHash &&
-        a.windowNo === attestation.windowNo
-      );
-      if (!exists) this.data.messageAttestations.push(attestation);
+      const key = this._messageAttestationKey(attestation);
+      if (!this._messageAttestationKeys.has(key)) {
+        this._messageAttestationKeys.add(key);
+        this.data.messageAttestations.push(attestation);
+      }
     }
     return this.data.messageAttestations.length;
   }
@@ -729,13 +785,13 @@ class SubjectState {
     const seenFingerprints = new Set();
 
     for (const item of evidenceList) {
-      evidenceGlobalSeq++;
+      this._evidenceSeq++;
       // v0.9.9 P0-1: 区分「调用方显式指定的 ID」与「我方计数器自动发的号」。
       // 只有后者可能是号段撞车，前者是身份冲突，语义完全不同（见下方第 2 步）。
       const callerSuppliedId = Boolean(item && item.evidenceId);
       // 自动发号用 let：撞车时必须能换号，不能因为号撞了就把证据判成重复丢掉。
       let evidenceId = callerSuppliedId ? item.evidenceId
-        : ('ev-' + String(evidenceGlobalSeq).padStart(6, '0'));
+        : ('ev-' + String(this._evidenceSeq).padStart(6, '0'));
 
       if (!item || typeof item !== 'object') {
         rejected.push({
@@ -801,13 +857,13 @@ class SubjectState {
           });
           continue;
         }
-        let bumped = evidenceGlobalSeq;
+        let bumped = this._evidenceSeq;
         let candidate = evidenceId;
         while (seenEvidenceIds.has(candidate) || this.committedEvidenceIds.has(candidate)) {
           bumped++;
           candidate = 'ev-' + String(bumped).padStart(6, '0');
         }
-        evidenceGlobalSeq = bumped;
+        this._evidenceSeq = bumped;
         evidenceId = candidate;
       }
 
@@ -927,8 +983,6 @@ class SubjectState {
       seenFingerprints.add(fingerprint);
       this.committedEvidenceIds.add(evidenceId);
       this.committedFingerprints.add(fingerprint);
-      this.data.seenEvidenceIds = Array.from(this.committedEvidenceIds);
-      this.data.seenFingerprints = Array.from(this.committedFingerprints);
 
       // v0.9.7.1: write-time independent attestation. This is generated from
       // the message that the verifier actually matched, not from the archive
@@ -949,10 +1003,14 @@ class SubjectState {
         attestedAt: Date.now()
       };
       if (!Array.isArray(this.data.evidenceAttestations)) this.data.evidenceAttestations = [];
-      const existingAttestation = this.data.evidenceAttestations.some(a =>
-        a && a.evidenceId === evidenceId && a.fingerprint === fingerprint
-      );
-      if (!existingAttestation) this.data.evidenceAttestations.push(attestation);
+      if (this._evidenceAttestationKeys.size !== this.data.evidenceAttestations.length) {
+        this._syncAttestationIndexes();
+      }
+      const evKey = this._evidenceAttestationKey(attestation);
+      if (!this._evidenceAttestationKeys.has(evKey)) {
+        this._evidenceAttestationKeys.add(evKey);
+        this.data.evidenceAttestations.push(attestation);
+      }
 
       verified.push({
         evidenceId,
@@ -969,6 +1027,10 @@ class SubjectState {
       });
     }
 
+    if (verified.length > 0) {
+      this.data.seenEvidenceIds = Array.from(this.committedEvidenceIds);
+      this.data.seenFingerprints = Array.from(this.committedFingerprints);
+    }
     if (!opts.stageOnly && verified.length > 0) {
       this.save(true);
     }

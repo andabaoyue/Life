@@ -148,13 +148,14 @@ console.log('--- D-26 深睡突触巩固门禁 ---');
 
 /* ============ 6. brain 挂点静态锁（同 D1-11b 风格） ============ */
 {
-  const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+  const brainSrc = ['brain.js', 'brain-window-pipeline.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8')).join('\n');
   check('🔴 巩固只在 dreamRecord 真实产出分支内（合成失败零巩固）',
     /if \(dreamRecord\) \{[\s\S]{0,1600}?consolidateByDream/.test(brainSrc));
   check('🔴 consolidatedTraceIds 随梦境记录入档（加固全程可审计）',
     brainSrc.includes('consolidatedTraceIds'));
   check('归档在巩固之后（哈希链覆盖加固清单）',
-    brainSrc.indexOf('consolidateByDream') < brainSrc.indexOf('this.experiencesArchive.append(dreamRecord)'));
+    brainSrc.indexOf('consolidateByDream') < brainSrc.indexOf('.experiencesArchive.append(dreamRecord)'));
   check('巩固失败不掀桌（fail-safe 同款：try/catch 旁路）',
     /engramManager\.consolidateByDream[\s\S]{0,600}catch \(e\)/.test(brainSrc));
 }

@@ -35,6 +35,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { redactSecrets } = require('./redact');
 const {
   CapabilityRegistry, PermissionPolicy, ExecutionBudget,
   createActionProposal, AuditLog, CAPABILITIES, CAPABILITY_META,
@@ -199,6 +200,10 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   const getWindowNo = (typeof options.getWindowNo === 'function')
     ? options.getWindowNo
     : (typeof ctx.getWindowNo === 'function' ? ctx.getWindowNo : () => 1);
+  const allowTicketWriteIpc = options.allowTicketWriteIpc !== false && ctx.allowTicketWriteIpc !== false;
+  const confirmHighRiskAction = typeof options.confirmHighRiskAction === 'function'
+    ? options.confirmHighRiskAction
+    : (typeof ctx.confirmHighRiskAction === 'function' ? ctx.confirmHighRiskAction : null);
 
   /**
    * 在建案瞬间求一次动机。**只此一处调用**，求值结果随即冻结进提案。
@@ -260,6 +265,25 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         return { ok: true, verdict: v };
       };
 
+      const checkMoveDestinationExt = (srcPath, dstPath) => {
+        const dstExt = path.extname(String(dstPath || '')).toLowerCase();
+        let srcExists = false;
+        let srcIsDir = false;
+        try {
+          const st = fs.lstatSync(srcPath);
+          srcExists = true;
+          srcIsDir = Boolean(st && typeof st.isDirectory === 'function' && st.isDirectory());
+        } catch {
+          srcExists = false;
+        }
+        // 仅允许目录重命名无扩展名；文件或目标带扩展名时强制校验写白名单
+        if ((srcExists && !srcIsDir && !ALLOWED_WRITE_EXTENSIONS.has(dstExt))
+            || (!srcExists && dstExt && !ALLOWED_WRITE_EXTENSIONS.has(dstExt))) {
+          return { code: 'DISALLOWED_EXTENSION', ok: false, ext: dstExt || 'none' };
+        }
+        return { ok: true };
+      };
+
       if (Array.isArray(raw.targets)) {
         if (raw.targets.length === 0) {
           return { code: 'INVALID_PROPOSAL', ok: false, reason: 'EMPTY_TARGETS' };
@@ -284,6 +308,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
             if (!srcCheck.ok) return srcCheck;
             const dstCheck = checkStructurePath(itemDst, 'INVALID_STRUCTURE_DST');
             if (!dstCheck.ok) return dstCheck;
+            const extCheck = checkMoveDestinationExt(itemSrc, itemDst);
+            if (!extCheck.ok) return extCheck;
             if (!verdict) verdict = srcCheck.verdict;
           } else {
             const itemSrc = item && typeof item === 'object' ? (item.src || item.scope || '') : item;
@@ -306,6 +332,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
           }
           const dstCheck = checkStructurePath(dstPath, 'INVALID_STRUCTURE_DST');
           if (!dstCheck.ok) return dstCheck;
+          const extCheck = checkMoveDestinationExt(raw.scope, dstPath);
+          if (!extCheck.ok) return extCheck;
         }
       }
     } else {
@@ -377,7 +405,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         return fn(event, ...args);
       } catch (err) {
         // 内部异常一律转信封，绝不让堆栈穿透 IPC 边界（会泄漏内部结构）。
-        return fail('HANDLER_ERROR', { detail: String((err && err.message) || '').slice(0, 200) });
+        return fail('HANDLER_ERROR', { detail: redactSecrets(String((err && err.message) || '')).slice(0, 200) });
       }
     };
   }
@@ -679,7 +707,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         capability: evaluated.capability,
         via: src,
       });
-      return fail('INVALID_PROPOSAL', { detail: String(err && err.message || '').slice(0, 200) });
+      return fail('INVALID_PROPOSAL', { detail: redactSecrets(String(err && err.message || '')).slice(0, 200) });
     }
 
     auditLog.append({
@@ -802,12 +830,8 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
     // 顺带回收过期授权 —— prune 原为**零调用点**的死代码，
     //   records 只增不减（实测 502 条常驻）。挂在 confirm 上是自然触发点：
     //   用户产生确认动作时顺手清理，不需要额外定时器（D-001 禁轮询）。
-    confirmation.prune();
+    confirmation.prune(undefined, { activeProposalIds: proposalStore });
     pruneSnapshots();
-
-    if (decision === 'rejected') {
-      contentSnapshotStore.delete(proposalId);
-    }
 
     const result = confirmation.confirm(proposalId, decision, { status: tracked.status });
     if (!result.ok) {
@@ -820,6 +844,10 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
         via: 'ipc',
       });
       return fail(result.code, result.status ? { status: result.status } : {});
+    }
+
+    if (decision === 'rejected') {
+      contentSnapshotStore.delete(proposalId);
     }
 
     auditLog.append({
@@ -971,6 +999,28 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
       ? (snap ? snap.content : undefined)
       : (isWrite ? (snap ? snap.content : undefined) : undefined);
 
+    if (confirmHighRiskAction && trackedProposal
+        && (trackedProposal.capability === 'workspace.move' || trackedProposal.capability === 'workspace.remove')) {
+      const gate = confirmation && typeof confirmation.isExecutionAllowed === 'function'
+        ? confirmation.isExecutionAllowed(proposalId)
+        : null;
+      if (gate && gate.allowed === true) {
+        let confirmed = false;
+        try {
+          const r = confirmHighRiskAction(trackedProposal);
+          confirmed = r === true || (r && typeof r === 'object' && r.allowed === true);
+        } catch {
+          confirmed = false;
+        }
+        if (!confirmed) {
+          if (confirmation && typeof confirmation.revoke === 'function') {
+            confirmation.revoke(proposalId, 'SECONDARY_CONFIRM_DECLINED');
+          }
+          return fail('EXECUTION_NOT_ALLOWED', { reason: 'SECONDARY_CONFIRM_DECLINED' });
+        }
+      }
+    }
+
     const result = executor.execute({
       proposalId: raw.proposalId,
       content: effectiveContent,
@@ -1110,6 +1160,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 边界说明（D-005）：preload.js 仅暴露只读 agent:ticket-list，下列 3 条写通道从不向前端渲染层开放，保留以兼容 v2.0-b2 12 通道契约与门禁测试。
   ipcGuard.handle('agent:ticket-create', guard((event, raw = {}) => {
     assertByHandler(event);
+    if (!allowTicketWriteIpc) return fail('TICKET_WRITE_IPC_DISABLED');
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     const r = ticketStore.createTicket({
       title: raw && raw.title,
@@ -1124,6 +1175,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 11. 改状态
   ipcGuard.handle('agent:ticket-transition', guard((event, raw = {}) => {
     assertByHandler(event);
+    if (!allowTicketWriteIpc) return fail('TICKET_WRITE_IPC_DISABLED');
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     const r = ticketStore.transition(raw && raw.id, raw && raw.state, {
       note: raw && raw.note,
@@ -1135,6 +1187,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 12. 改备注
   ipcGuard.handle('agent:ticket-note', guard((event, raw = {}) => {
     assertByHandler(event);
+    if (!allowTicketWriteIpc) return fail('TICKET_WRITE_IPC_DISABLED');
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     const r = ticketStore.updateNote(raw && raw.id, raw && raw.note, {
       windowNo: getWindowNo(),

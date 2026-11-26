@@ -576,6 +576,69 @@ console.log('--- v1.5-a Provider 容灾自动回落门禁 ---');
       recovered && recovered.text === 'probe ok' && breaker.getState().state === 'closed');
   }
 
+  /* ============ 15. UI-P1-2: 非用户取消的 TimeoutError 放行回落与熔断计数 ============ */
+  {
+    let primaryCalls = 0;
+    let secondaryCalls = 0;
+    const primary = makeMockAdapter({
+      providerId: 'p-timeout',
+      onComplete: async () => {
+        primaryCalls++;
+        const e = new Error('request timeout');
+        e.name = 'TimeoutError';
+        throw e;
+      },
+      onStream: async (_msgs, onDelta) => {
+        onDelta('已吐字');
+        const e = new Error('stream idle timeout');
+        e.name = 'TimeoutError';
+        throw e;
+      }
+    });
+    const secondary = makeMockAdapter({
+      providerId: 's-timeout',
+      onComplete: async () => {
+        secondaryCalls++;
+        return { text: 'secondary ok', usage: { prompt_tokens: 1, completion_tokens: 1 } };
+      },
+      onStream: async (_msgs, onDelta) => {
+        secondaryCalls++;
+        onDelta('sec');
+        return { text: 'sec', usage: { prompt_tokens: 1, completion_tokens: 1 } };
+      }
+    });
+    const breaker = createCircuitBreaker({ failureThreshold: 3, cooldownMs: 60000 });
+    const fbEvents = [];
+    const adapter = createFallbackAdapter({
+      primary, secondary, breaker,
+      onFallback: (ev) => fbEvents.push(ev)
+    });
+
+    const resTimeout = await adapter.complete([{ role: 'user', content: 'hi' }]);
+    check('15a. 主端点 TimeoutError（非用户取消）触发 recordFailure 并成功回落备用',
+      resTimeout && resTimeout.text === 'secondary ok'
+      && primaryCalls === 1 && secondaryCalls === 1
+      && breaker.getState().consecutiveFailures === 1
+      && fbEvents[0] && fbEvents[0].reason === 'timeout');
+
+    const ac = new AbortController();
+    ac.abort();
+    let userAbortErr = null;
+    try {
+      await adapter.complete([{ role: 'user', content: 'hi' }], { signal: ac.signal });
+    } catch (e) { userAbortErr = e; }
+    check('15b. 用户主动取消（signal.aborted）即使 TimeoutError 也不计错不回落',
+      userAbortErr && userAbortErr.name === 'TimeoutError'
+      && secondaryCalls === 1 && breaker.getState().consecutiveFailures === 1);
+
+    let postEmitErr = null;
+    try {
+      await adapter.stream([{ role: 'user', content: 'hi' }], () => {});
+    } catch (e) { postEmitErr = e; }
+    check('15c. 流式已吐字后 TimeoutError 仍阻断回落防重播',
+      postEmitErr && postEmitErr.name === 'TimeoutError' && secondaryCalls === 1);
+  }
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();

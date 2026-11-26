@@ -214,4 +214,19 @@ function getPickerDisplayId() {
   return pickerDisplayId;
 }
 
-module.exports = { openVisionPicker, closeVisionPicker, isVisionPickerOpen, getPickerWindow, getPickerDisplayId };
+/** 退出前统一销毁交互窗口与复用隐藏窗，避免残留进程句柄。 */
+function destroyVisionPicker() {
+  const targets = [];
+  if (pickerWin) targets.push(pickerWin);
+  if (hiddenPicker && hiddenPicker !== pickerWin) targets.push(hiddenPicker);
+  pickerWin = null;
+  hiddenPicker = null;
+  pickerDisplayId = null;
+  for (const w of targets) {
+    try {
+      if (w && !w.isDestroyed()) w.destroy();
+    } catch { /* 退出回收阶段忽略已关闭窗口 */ }
+  }
+}
+
+module.exports = { openVisionPicker, closeVisionPicker, destroyVisionPicker, isVisionPickerOpen, getPickerWindow, getPickerDisplayId };

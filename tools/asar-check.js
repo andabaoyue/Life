@@ -48,6 +48,10 @@ const REQUIRED_FILES = [
   'ui-provider-presets.js',
   'ui-outfit-complete.js',
   'ui-agent-confirm.js',
+  'ui-pet-stage.js',
+  'ui-wardrobe.js',
+  'ui-settings.js',
+  'ui-research.js',
   'package.json'
 ];
 /* 开源合规文件：electron-builder 的 extraFiles 会将其放进安装根目录并自动从 app.asar 剔除，

@@ -224,6 +224,59 @@ check('append 传入非法参数不崩溃', !archive.append(null) && !archive.ap
   const records = m9Archive.readAll();
   check('M9: closeReason 缺失时如实为 null（不伪造 turn_limit）',
     ok === true && records.length === 1 && records[0].payload && records[0].payload.closeReason === null);
+
+  // CORE-P1-2: 归档侧车走 atomic.js 重试写入，模拟 Windows renameSync EPERM 前 2 次失败第 3 次成功
+  const epermDir = tmpDir();
+  const epermArchive = new ExperiencesArchive(epermDir);
+  const origRename = fs.renameSync;
+  let renameAttempts = 0;
+  let appendOk1 = false;
+  let provOk = false;
+  let appendOk2 = false;
+  try {
+    fs.renameSync = function (src, dst) {
+      renameAttempts++;
+      if (renameAttempts <= 2) {
+        const err = new Error('EPERM: operation not permitted');
+        err.code = 'EPERM';
+        throw err;
+      }
+      return origRename.call(fs, src, dst);
+    };
+    appendOk1 = epermArchive.appendRecord('window_summary', 1, { rawSummaryText: '重试测试1' });
+    renameAttempts = 0;
+    provOk = epermArchive.updateProvenanceAttestations(
+      [{ messageId: 'm-1', windowNo: 1, sourceContentHash: 'h1' }],
+      []
+    );
+  } finally {
+    fs.renameSync = origRename;
+  }
+  appendOk2 = epermArchive.appendRecord('window_summary', 2, { rawSummaryText: '重试测试2' });
+  const provDisk = JSON.parse(fs.readFileSync(epermArchive.path + '.provenance.json', 'utf8'));
+  check('CORE-P1-2: tail anchor 与 provenance sidecar 遇 EPERM 重试成功且后续 append 不触发 ARCHIVE_ANCHOR_MISMATCH',
+    appendOk1 === true && provOk === true && appendOk2 === true && epermArchive.count() === 2
+    && Array.isArray(provDisk.messageAttestations) && provDisk.messageAttestations.length === 1);
+
+  // Batch 3.1: O(1) 追加缓存递增、clear() 失效与 recovery-audit 单行损坏容错
+  const cacheDir = tmpDir();
+  const cacheArch = new ExperiencesArchive(cacheDir);
+  cacheArch.appendRecord('window_summary', 1, { rawSummaryText: 'b3-1' });
+  cacheArch.appendRecord('window_summary', 2, { rawSummaryText: 'b3-2' });
+  const c1 = cacheArch.count();
+  cacheArch.clear();
+  const c2 = cacheArch.count();
+  const auditDir = tmpDir();
+  const auditArch = new ExperiencesArchive(auditDir);
+  auditArch.appendRecord('window_summary', 1, { rawSummaryText: 'main-line' });
+  fs.writeFileSync(
+    path.join(auditDir, 'experiences.jsonl.recovery-audit.jsonl'),
+    '{broken-json\n' + JSON.stringify({ recordType: 'recovery_event', windowNo: 2, payload: { action: 'ok' } }) + '\n',
+    'utf8'
+  );
+  const auditMerged = auditArch.readAll();
+  check('Batch3.1: O(1) 计数缓存与 clear() 失效、recovery-audit 损坏行跳过不吞后续记录',
+    c1 === 2 && c2 === 0 && auditMerged.length === 2 && auditMerged[1].windowNo === 2);
 }
 
 console.log(`ASSERT total=${total} passed=${passed} failed=${failures}`);

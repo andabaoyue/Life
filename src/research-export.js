@@ -92,9 +92,9 @@ function exportStateTrajectory(trajectoryItems, format = 'json') {
         //   实测 `newValue: '=1+1'` 原样落盘 —— 上游若把字符串塞进来，
         //   就绕过了全部转义。CSV 的输入不可信假设必须覆盖每一个格子，
         //   不能因为"它本应是数字"就免责。
-        escapeCsvCell(row.previousValue ?? row.previous ?? 0),
-        escapeCsvCell(row.delta ?? 0),
-        escapeCsvCell(row.newValue ?? 0)
+        escapeCsvCell(row.previousValue ?? row.previous ?? ''),
+        escapeCsvCell(row.delta ?? ''),
+        escapeCsvCell(row.newValue ?? '')
       ].join(','));
     }
     return lines.join('\n');
@@ -116,9 +116,9 @@ function exportStateChanges(stateChanges, format = 'json') {
         escapeCsvCell(id),
         escapeCsvCell(sc.windowNo ?? ''),
         escapeCsvCell(sc.trait),
-        escapeCsvCell(sc.previousValue ?? 0),
-        escapeCsvCell(sc.delta ?? 0),
-        escapeCsvCell(sc.newValue ?? 0),
+        escapeCsvCell(sc.previousValue ?? ''),
+        escapeCsvCell(sc.delta ?? ''),
+        escapeCsvCell(sc.newValue ?? ''),
         escapeCsvCell(evIds),
         escapeCsvCell(sc.createdAt || sc.timestamp || '')
       ].join(','));
@@ -141,8 +141,8 @@ function exportEvidence(evidenceList, format = 'json') {
         escapeCsvCell(ev.messageId || ''),
         escapeCsvCell(ev.quote || ''),
         escapeCsvCell(ev.trait || ''),
-        escapeCsvCell(ev.direction ?? 0),
-        escapeCsvCell(ev.strength ?? 0),
+        escapeCsvCell(ev.direction ?? ''),
+        escapeCsvCell(ev.strength ?? ''),
         escapeCsvCell(ev.status || 'unknown'),
         escapeCsvCell(ev.reason || ''),
         escapeCsvCell(ev.fingerprint || '')
@@ -204,13 +204,18 @@ function summarizePaginatedExport(res) {
 function exportFullResearchBundle(researchQuery, options = {}) {
   const { targetDir = null } = options;
 
+  const sharedRecords = typeof researchQuery._readArchiveRecords === 'function'
+    ? researchQuery._readArchiveRecords()
+    : null;
+  const sharedOpts = sharedRecords ? { _preloadedRecords: sharedRecords } : {};
+
   const subjectState = researchQuery.getSubjectState();
-  const stateTrajectory = researchQuery.getStateTrajectory();
-  const evBucket = summarizePaginatedExport(researchQuery.getEvents({ limit: 10000 }));
-  const obsBucket = summarizePaginatedExport(researchQuery.getObservations({ limit: 10000 }));
-  const interpBucket = summarizePaginatedExport(researchQuery.getInterpretations({ limit: 10000 }));
-  const evidenceBucket = summarizePaginatedExport(researchQuery.getEvidence({ limit: 10000 }));
-  const scBucket = summarizePaginatedExport(researchQuery.getStateChanges({ limit: 10000 }));
+  const stateTrajectory = researchQuery.getStateTrajectory(sharedOpts);
+  const evBucket = summarizePaginatedExport(researchQuery.getEvents({ limit: 10000, ...sharedOpts }));
+  const obsBucket = summarizePaginatedExport(researchQuery.getObservations({ limit: 10000, ...sharedOpts }));
+  const interpBucket = summarizePaginatedExport(researchQuery.getInterpretations({ limit: 10000, ...sharedOpts }));
+  const evidenceBucket = summarizePaginatedExport(researchQuery.getEvidence({ limit: 10000, ...sharedOpts }));
+  const scBucket = summarizePaginatedExport(researchQuery.getStateChanges({ limit: 10000, ...sharedOpts }));
 
   const counts = {
     events: evBucket.meta,

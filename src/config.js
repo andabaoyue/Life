@@ -385,15 +385,19 @@ function tryLoad(userDataDir) {
     const raw = JSON.parse(fs.readFileSync(target, 'utf8'));
     const { data } = migrateConfig(raw);
     const cfg = sanitize(data);
-    // Legacy 兼容自动迁移：检测到 gpt-girl-config.json 时自动落地写入 life-config.json
+    // Legacy 兼容自动迁移：检测到 gpt-girl-config.json 时自动落地写入 life-config.json（剥离明文凭据与淘汰字段）
     if (fromLegacy && !fs.existsSync(primary)) {
       try {
-        writeJsonAtomic(primary, data);
+        const { apiKey: _legacyKey, writingMode: _legacyMode, ...diskSafe } = data;
+        writeJsonAtomic(primary, diskSafe, { mode: 0o600 });
       } catch {}
     }
     lastGood.set(rk, cfg);
     return cfg;
   } catch (e) {
+    if (e && (e.code === 'SCHEMA_VERSION_TOO_HIGH' || e.code === 'INVALID_SCHEMA_VERSION')) {
+      throw e;
+    }
     // 占用/权限类：内容没坏，别丢掉已知好的那份
     if (e && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY')) {
       const prev = lastGood.get(rk);
@@ -427,7 +431,7 @@ function save(userDataDir, cfg, diskOverride) {
   const { apiKey, ...rest } = cfg;
   const disk = diskOverride === undefined ? rest : diskOverride;
   delete disk.writingMode; // v0.9.9: 旧字段静默淘汰 —— 旧配置读取兼容，保存永不写回
-  writeJsonAtomic(primaryFile(userDataDir), disk);
+  writeJsonAtomic(primaryFile(userDataDir), disk, { mode: 0o600 });
   const written = sanitize(disk);
   lastGood.set(realKey(userDataDir), written);
   return written;

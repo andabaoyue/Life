@@ -265,14 +265,16 @@ const invoke = async (ch, arg) => handlers.get(ch)(trustedEvent(), arg);
   }
   check('14 IPC guard：untrusted sender / remote frame 均被拒（UNTRUSTED_RENDERER）', guardHit === 2);
 
-  const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-connections-ipc.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   check('19 SEC-01 回归：connections:* 全经 ipcGuard（main.js 无裸 ipcMain.handle/on）',
     !mainSrc.includes('ipcMain.handle(') && !mainSrc.includes('ipcMain.on(') &&
     (mainSrc.match(/ipcGuard\.handle\('connections:/g) || []).length === 7);
 
   /* ---- 15/16：UI 接线（源码级） ---- */
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  const pet = fs.readFileSync(path.join(ROOT, 'pet.js'), 'utf8');
+  const pet = ['pet.js', 'ui-settings.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   check('15 UI：Provider Identity 与 Protocol 为两个独立字段（不合并为自动识别）',
     html.includes('Provider Identity') && html.includes('<label>Protocol</label>') &&
     html.indexOf('Provider Identity') !== html.indexOf('<label>Protocol</label>'));
@@ -295,10 +297,10 @@ const invoke = async (ch, arg) => handlers.get(ch)(trustedEvent(), arg);
 
   const vm = require('vm');
   const presetsSrc = fs.readFileSync(path.join(ROOT, 'ui-provider-presets.js'), 'utf8');
-  const applyPresetSrc = (pet.match(/function applyPreset\(id\)\s*\{[\s\S]*?\n\}/) || [])[0];
-  const fillEditorSrc = (pet.match(/function fillConnEditor\(connectionId\)\s*\{[\s\S]*?\n\}/) || [])[0];
-  const fieldsSrc = (pet.match(/function connEditorFields\(\)\s*\{[\s\S]*?\n\}/) || [])[0];
-  const connTestSrc = (pet.match(/document\.getElementById\('connTest'\)\.addEventListener\('click',\s*async\s*\(\)\s*=>\s*\{[\s\S]*?\n\}\);/) || [])[0];
+  const applyPresetSrc = (pet.match(/function applyPreset\(id\)\s*\{[\s\S]*?\n\s{0,4}\}/) || [])[0];
+  const fillEditorSrc = (pet.match(/function fillConnEditor\(connectionId\)\s*\{[\s\S]*?\n\s{0,4}\}/) || [])[0];
+  const fieldsSrc = (pet.match(/function connEditorFields\(\)\s*\{[\s\S]*?\n\s{0,4}\}/) || [])[0];
+  const connTestSrc = (pet.match(/document\.getElementById\('connTest'\)\.addEventListener\('click',\s*async\s*\(\)\s*=>\s*\{[\s\S]*?\n\s{0,4}\}\);/) || [])[0];
 
   const uiFields = {
     connName: { value: 'old' },

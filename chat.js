@@ -100,7 +100,7 @@ function buildBubble(v, extraCls) {
 function renderChat() {
   if (!chatList) return;
   const stick = shouldStickToBottom(chatList.scrollTop, chatList.scrollHeight, chatList.clientHeight);
-  chatList.innerHTML = '';
+  chatList.textContent = '';
   let prev = null;
   for (const m of ChatStore.messages) {
     const v = bubbleView(m, SYNTHETIC_RENDER);
@@ -242,9 +242,11 @@ async function submit() {
   input.style.height = '';   // v1.0 发送后复位输入框高度
   chatError = null;
   chatNotice = null;
-  const pend = buildBubble({ kind: 'user', text, bridge: false, cls: 'b-user', avatar: '你', ts: null }, 'b-pending');
+  const userAvatar = typeof t === 'function' ? t('chat.avatar.user', '你') : '你';
+  const aiAvatar = typeof t === 'function' ? t('chat.avatar.ai', '初') : '初';
+  const pend = buildBubble({ kind: 'user', text, bridge: false, cls: 'b-user', avatar: userAvatar, ts: null }, 'b-pending');
   chatList.appendChild(pend);
-  streamNode = buildBubble({ kind: 'assistant', text: '', bridge: false, cls: 'b-ai', avatar: '初', ts: null }, 'b-streaming');
+  streamNode = buildBubble({ kind: 'assistant', text: '', bridge: false, cls: 'b-ai', avatar: aiAvatar, ts: null }, 'b-streaming');
   chatList.appendChild(streamNode);
   streamText = '';
   chatList.scrollTop = chatList.scrollHeight;

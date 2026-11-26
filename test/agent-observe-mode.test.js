@@ -224,7 +224,8 @@ console.log('--- C. 隔离 ---');
 console.log('--- D. 接线 ---');
 
 {
-  const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const mainSrc = ['main.js', 'src/main-agent-ipc.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 
   check('D1 main.js 引入了 getCapabilityMode', /getCapabilityMode/.test(mainSrc));
   check('D2 main.js 引入了 ObservationLog', /ObservationLog/.test(mainSrc));
@@ -500,11 +501,12 @@ console.log('--- D. 接线 ---');
 
   /* E22 接线断言：main.js 的 observe 分支真的调了 noteObserved（替身计数，不搜字符串） */
   {
-    const mainSrc2 = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const mainSrc2 = ['main.js', 'src/main-agent-ipc.js']
+      .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
     const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
     const code = strip(mainSrc2);
     const fnStart = code.indexOf('function maybeAskForSelfNote');
-    const fnEnd = code.indexOf('\nfunction ', fnStart + 10);
+    const fnEnd = code.indexOf('function maybeAskForObserverJournal', fnStart + 10);
     const body = fnStart >= 0 ? code.slice(fnStart, fnEnd > 0 ? fnEnd : fnStart + 6000) : '';
     check('E22 observe 分支真的调了 memory.noteObserved（剥注释后匹配）',
       /noteObserved\(/.test(body), 'bodyLen=' + body.length);
@@ -809,11 +811,12 @@ console.log('--- D. 接线 ---');
      *   ⚠️ 只断言「全文件里出现过」不够——selfNote 那两处也在同一个文件里。
      */
     {
-      const mainSrc4 = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+      const mainSrc4 = ['main.js', 'src/main-agent-ipc.js']
+        .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
       const strip3 = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
       const code4 = strip3(mainSrc4);
       const s = code4.indexOf('function maybeAskForObserverJournal');
-      const e = code4.indexOf('\nfunction ', s + 10);
+      const e = code4.indexOf('function routeAgentEvent', s + 10);
       const body = s >= 0 ? code4.slice(s, e > 0 ? e : s + 8000) : '';
       check('G4 maybeAskForObserverJournal 体内真的调了 markObserveEpoch(observerJournal)',
         /markObserveEpoch\(\s*'observerJournal'/.test(body), 'bodyLen=' + body.length);

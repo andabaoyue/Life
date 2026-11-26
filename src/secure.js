@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeFileAtomic, writeJsonAtomic, renameWithRetry, tmpNameFor } = require('./atomic');
+const { redactSecrets } = require('./redact');
 
 /**
  * API Key 的加密存储 —— 边界层。
@@ -123,7 +124,7 @@ function encryptKey(getSS, dir, apiKey, providerId) {
     writeFileAtomic(primaryKeyPath(dir, providerId), ss.encryptString(apiKey), { mode: SENSITIVE_FILE_MODE });
     return true;
   } catch (e) {
-    console.error('key encrypt failed:', e.message);
+    console.error('key encrypt failed:', redactSecrets(String((e && e.message) || '')));
     return false;
   }
 }
@@ -275,7 +276,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks, opts = {}) {
         encrypted = true;
       }
     } catch (e) {
-      console.error('key encrypt failed:', e.message);
+      console.error('key encrypt failed:', redactSecrets(String((e && e.message) || '')));
       encrypted = false;
       cipherBuf = null;
     }
@@ -343,7 +344,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks, opts = {}) {
         dropKeyFile(dir, providerId);
       }
     } catch (rbErr) {
-      console.error('[Rollback] 恢复旧 Key 文件失败:', rbErr.message);
+      console.error('[Rollback] 恢复旧 Key 文件失败:', redactSecrets(String((rbErr && rbErr.message) || '')));
     }
 
     // 回滚 Config 文件
@@ -354,7 +355,7 @@ function saveConfig(getSS, dir, cfg, writeDisk, _hooks, opts = {}) {
         try { fs.unlinkSync(cp); } catch {}
       }
     } catch (rbErr) {
-      console.error('[Rollback] 恢复旧 Config 文件失败:', rbErr.message);
+      console.error('[Rollback] 恢复旧 Config 文件失败:', redactSecrets(String((rbErr && rbErr.message) || '')));
     }
 
     throw err;

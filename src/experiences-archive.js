@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('./atomic');
 const { wrapArchiveRecord, normalizeArchiveRecord } = require('./experience-schema');
 const { validateArchiveRecord, computeCanonicalRecordHash, isLegacyAdaptedRecord, findModernChainFieldDefects } = require('./archive-integrity');
 
@@ -20,10 +21,66 @@ class ExperiencesArchive {
     this.dir = userDataDir;
     this.path = path.join(userDataDir, 'experiences.jsonl');
     this.opts = opts;
+    this._appendCache = null;
+    this._countCache = null;
+  }
+
+  _statStamp(filePath) {
+    try {
+      const st = fs.statSync(filePath);
+      return { size: st.size, mtimeMs: st.mtimeMs, ino: st.ino || 0 };
+    } catch {
+      return null;
+    }
+  }
+
+  _stampsMatch(a, b) {
+    if (a === null && b === null) return true;
+    if (!a || !b) return false;
+    return a.size === b.size && a.mtimeMs === b.mtimeMs && a.ino === b.ino;
+  }
+
+  _verifyCachedTailBytes(cache) {
+    if (!cache || !cache.lastLineBuf || !cache.archiveStat) return false;
+    const tailLen = cache.lastLineBuf.length;
+    if (tailLen === 0) return cache.archiveStat.size === 0;
+    if (cache.archiveStat.size < tailLen) return false;
+    let fd = null;
+    try {
+      fd = fs.openSync(this.path, 'r');
+      const buf = Buffer.alloc(tailLen);
+      const n = fs.readSync(fd, buf, 0, tailLen, cache.archiveStat.size - tailLen);
+      return n === tailLen && Buffer.compare(buf, cache.lastLineBuf) === 0;
+    } catch {
+      return false;
+    } finally {
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch {}
+      }
+    }
+  }
+
+  _invalidateCaches() {
+    this._appendCache = null;
+    this._countCache = null;
   }
 
   /** 校验整个物理链尾；坏尾不能被跳过后继续追加。 */
   _getValidatedAppendState() {
+    const archiveStat = this._statStamp(this.path);
+    const anchorStat = this._statStamp(this.path + '.anchor.json');
+    if (this._appendCache
+        && this._stampsMatch(this._appendCache.archiveStat, archiveStat)
+        && this._stampsMatch(this._appendCache.anchorStat, anchorStat)
+        && this._verifyCachedTailBytes(this._appendCache)) {
+      return {
+        valid: true,
+        last: this._appendCache.last,
+        legacyPrefix: this._appendCache.legacyPrefix,
+        legacyPrefixCount: this._appendCache.legacyPrefixCount,
+      };
+    }
+
     const { records, diagnostics } = this.readAllWithDiagnostics();
     if (diagnostics.skippedCount > 0) {
       return { valid: false, reason: 'ARCHIVE_TAIL_SYNTAX_CORRUPTED' };
@@ -128,7 +185,32 @@ class ExperiencesArchive {
         return { valid: false, reason: 'ARCHIVE_GENESIS_ANCHOR_MISMATCH' };
       }
     }
-    return { valid: true, last: previous, legacyPrefix: firstModernIdx > 0, legacyPrefixCount: firstModernIdx };
+    const resState = { valid: true, last: previous, legacyPrefix: firstModernIdx > 0, legacyPrefixCount: firstModernIdx };
+    if (previous) {
+      let lastLineBuf = null;
+      try {
+        if (archiveStat && archiveStat.size > 0) {
+          const content = fs.readFileSync(this.path, 'utf8');
+          const trimmed = content.trimEnd();
+          const lastNl = trimmed.lastIndexOf('\n');
+          const tailStr = lastNl >= 0 ? content.slice(lastNl + 1) : content;
+          lastLineBuf = Buffer.from(tailStr, 'utf8');
+        }
+      } catch {
+        lastLineBuf = null;
+      }
+      if (lastLineBuf) {
+        this._appendCache = {
+          archiveStat,
+          anchorStat,
+          last: previous,
+          legacyPrefix: resState.legacyPrefix,
+          legacyPrefixCount: resState.legacyPrefixCount,
+          lastLineBuf,
+        };
+      }
+    }
+    return resState;
   }
 
   /** P0-02: 读取链外尾部锚点 (experiences.jsonl.anchor.json) */
@@ -193,15 +275,7 @@ class ExperiencesArchive {
     }
 
     try {
-      const tmpPath = anchorPath + '.tmp';
-      const fd = fs.openSync(tmpPath, 'w');
-      try {
-        fs.writeSync(fd, JSON.stringify(anchor), null, 'utf8');
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      fs.renameSync(tmpPath, anchorPath);
+      writeJsonAtomic(anchorPath, anchor);
       return true;
     } catch (e) {
       console.error('[ExperiencesArchive] tail anchor 更新失败:', e.message);
@@ -222,11 +296,14 @@ class ExperiencesArchive {
    * 3. 显式传入 recordHash 若与 Canonical 计算哈希不一致直接拒绝；
    * 4. 必须先通过 validateArchiveRecord() 校验，绝不向磁盘写入坏记录。
    */
-  append(record) {
+  append(record, opts = {}) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
 
-    const appendState = this._getValidatedAppendState();
+    const appendState = (opts && opts._validatedState && opts._validatedState.valid)
+      ? opts._validatedState
+      : this._getValidatedAppendState();
     if (!appendState.valid) {
+      this._invalidateCaches();
       console.error(`[ExperiencesArchive] append rejected: existing archive tail is not trustworthy (${appendState.reason})`);
       return false;
     }
@@ -304,11 +381,28 @@ class ExperiencesArchive {
       // anchor 更新失败绝不伪装成完整成功：不反向覆盖 archive，
       // 由 checkArchive 判定 ANCHOR_STALE/UNCOMMITTED_TAIL 进入 UNCERTIFIED/recovery 状态。
       if (!this._updateTailAnchor(entry, { legacyPrefixCount: appendState.legacyPrefixCount || 0 })) {
+        this._invalidateCaches();
         console.error('[ExperiencesArchive] append: archive 已落盘但 tail anchor 更新失败，进入 UNCERTIFIED/recovery 状态（绝不伪装成功）');
         return false;
       }
+      const nextArchiveStat = this._statStamp(this.path);
+      const nextAnchorStat = this._statStamp(this.path + '.anchor.json');
+      if (nextArchiveStat && nextAnchorStat) {
+        this._appendCache = {
+          archiveStat: nextArchiveStat,
+          anchorStat: nextAnchorStat,
+          last: entry,
+          legacyPrefix: appendState.legacyPrefix || false,
+          legacyPrefixCount: appendState.legacyPrefixCount || 0,
+          lastLineBuf: Buffer.from(line, 'utf8'),
+        };
+      } else {
+        this._appendCache = null;
+      }
+      this._countCache = null;
       return true;
     } catch (e) {
+      this._invalidateCaches();
       console.error('[ExperiencesArchive] append failed:', e.message);
       return false;
     }
@@ -318,7 +412,8 @@ class ExperiencesArchive {
    * 追加标准封装记录 (v0.9.6 Canonical 规范)
    */
   appendRecord(recordType, windowNo, payload = {}, extra = {}) {
-    const last = this.getLastSequencedRecord();
+    const state = this._getValidatedAppendState();
+    const last = state.valid ? (state.last || null) : null;
     const archiveSeq = typeof extra.archiveSeq === 'number' ? extra.archiveSeq : (last ? last.archiveSeq + 1 : 1);
     const recordId = extra.recordId || `rec-${String(archiveSeq).padStart(6, '0')}`;
     const prevHash = extra.prevHash || (last ? last.recordHash : 'GENESIS');
@@ -334,7 +429,7 @@ class ExperiencesArchive {
     if (recordType === 'window_summary' || recordType === 'window_archive') {
       wrapped.type = 'window_archive';
     }
-    const written = this.append(wrapped);
+    const written = this.append(wrapped, state.valid ? { _validatedState: state } : {});
     if (!written && recordType === 'recovery_event') {
       // 主链损坏时禁止续写；恢复事实仍需可审计，因此写入隔离侧车。
       return this.appendRecoveryAudit(wrapped);
@@ -431,18 +526,9 @@ class ExperiencesArchive {
 
     try {
       if (!fs.existsSync(this.dir)) fs.mkdirSync(this.dir, { recursive: true });
-      const tmpPath = provenancePath + '.tmp';
-      const fd = fs.openSync(tmpPath, 'w');
-      try {
-        fs.writeSync(fd, JSON.stringify(next), null, 'utf8');
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      fs.renameSync(tmpPath, provenancePath);
+      writeJsonAtomic(provenancePath, next);
       return true;
     } catch (e) {
-      try { fs.unlinkSync(provenancePath + '.tmp'); } catch {}
       console.error('[ExperiencesArchive] provenance sidecar update failed:', e.message);
       return false;
     }
@@ -576,8 +662,15 @@ class ExperiencesArchive {
     const auditPath = this.path + '.recovery-audit.jsonl';
     if (fs.existsSync(auditPath)) {
       try {
-        for (const line of fs.readFileSync(auditPath, 'utf8').split('\n')) {
-          if (line.trim()) res.records.push(JSON.parse(line));
+        const lines = fs.readFileSync(auditPath, 'utf8').split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const trimmed = lines[i].trim();
+          if (!trimmed) continue;
+          try {
+            res.records.push(JSON.parse(trimmed));
+          } catch (err) {
+            console.warn(`[ExperiencesArchive] recovery-audit 第 ${i + 1} 行解析失败，已跳过:`, err.message);
+          }
         }
       } catch {}
     }
@@ -655,13 +748,23 @@ class ExperiencesArchive {
    * 归档记录总行数
    */
   count() {
-    return this.readAll().length;
+    const archiveStat = this._statStamp(this.path);
+    const auditStat = this._statStamp(this.path + '.recovery-audit.jsonl');
+    if (this._countCache
+        && this._stampsMatch(this._countCache.archiveStat, archiveStat)
+        && this._stampsMatch(this._countCache.auditStat, auditStat)) {
+      return this._countCache.total;
+    }
+    const total = this.readAll().length;
+    this._countCache = { archiveStat, auditStat, total };
+    return total;
   }
 
   /**
    * 清空（仅用于隔离测试或极端调试）
    */
   clear() {
+    this._invalidateCaches();
     try {
       if (fs.existsSync(this.path)) {
         fs.unlinkSync(this.path);

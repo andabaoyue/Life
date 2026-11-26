@@ -24,7 +24,9 @@ function shouldFallback(err, signal) {
   // ① 用户主动取消：绝不回落（防取消按钮演变成切端点重发）
   if (err.name === 'AbortError') return false;
   if (signal && signal.aborted) return false;
-  // ② 复用 transport 层的归一化分类，不维护第二套状态码白名单
+  // ② 主端点超时（非用户主动取消）放行回落并由熔断器计错
+  if (err.name === 'TimeoutError') return true;
+  // ③ 复用 transport 层的归一化分类，不维护第二套状态码白名单
   return err.retryable === true;
 }
 
@@ -59,7 +61,7 @@ function createFallbackAdapter({
       if (r && r.usage) lastUsage = r.usage;
       if (typeof onFallback === 'function') {
         onFallback({
-          reason: cause ? (cause.errorType || 'server_error') : 'breaker_open',
+          reason: cause ? (cause.errorType || (cause.name === 'TimeoutError' ? 'timeout' : 'server_error')) : 'breaker_open',
           primaryFailed: Boolean(cause),
           at: Date.now()
         });
@@ -80,7 +82,7 @@ function createFallbackAdapter({
       if (r && r.usage) lastUsage = r.usage;
       if (typeof onFallback === 'function') {
         onFallback({
-          reason: cause ? (cause.errorType || 'server_error') : 'breaker_open',
+          reason: cause ? (cause.errorType || (cause.name === 'TimeoutError' ? 'timeout' : 'server_error')) : 'breaker_open',
           primaryFailed: Boolean(cause),
           at: Date.now()
         });

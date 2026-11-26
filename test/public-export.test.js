@@ -155,5 +155,37 @@ check('P0-9 防误伤: 短测试夹具 sk-proj-abc123 与 sk-ant-abc123 零误�
   fixtureHits.length === 0,
   'fixtureHits=' + fixtureHits.length);
 
+/* ---------- 八、OPS-P1-1：--out 与 --sync --yes 强制前置门禁（脏报告绝不写盘） ---------- */
+{
+  const os = require('os');
+  const tmpDest = fs.mkdtempSync(path.join(os.tmpdir(), 'life-test-export-sec-'));
+  try {
+    const dirtyReport = {
+      included: ['README.md'],
+      excluded: [],
+      unclassified: [],
+      deadRules: [],
+      leaks: [{ file: 'fake.js', line: 1, kind: 'secret', text: 'sk-leak' }],
+      brokenLinks: [{ file: 'README.md', line: 1, target: 'missing.md', reason: 'NOT_FOUND' }],
+    };
+    let outExitCode = null;
+    let syncExitCode = null;
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      pe.main(['--out', tmpDest], { reportFn: () => dirtyReport, exit: (c) => { outExitCode = c; } });
+      pe.main(['--sync', tmpDest, '--yes'], { reportFn: () => dirtyReport, exit: (c) => { syncExitCode = c; } });
+    } finally {
+      console.log = origLog;
+    }
+    check('OPS-P1-1: 含泄露或断链时 --out 前置门禁拦截且零落盘',
+      outExitCode === 1 && fs.readdirSync(tmpDest).length === 0);
+    check('OPS-P1-1: 含泄露或断链时 --sync --yes 前置门禁拦截且零变更',
+      syncExitCode === 1 && fs.readdirSync(tmpDest).length === 0);
+  } finally {
+    fs.rmSync(tmpDest, { recursive: true, force: true });
+  }
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

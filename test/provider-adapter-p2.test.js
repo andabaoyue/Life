@@ -374,6 +374,28 @@ const baseCfg = () => ({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model
     sseP.flush();
     check('P2-6 createSSEParser 跨 Uint8Array chunk 流式解码多字节 UTF-8 不乱码',
       seenTexts.length === 1 && seenTexts[0] === '星辰🌸海');
+
+    // UI-P1-1: openai-transport 强制 redirect:'error' 且遇到重定向拒绝绝不重试
+    let redirectCalls = 0;
+    let capturedRedirectInit = null;
+    globalThis.fetch = async (_url, init) => {
+      redirectCalls++;
+      capturedRedirectInit = init;
+      const cause = new Error('unexpected redirect');
+      const err = new TypeError('fetch failed');
+      err.cause = cause;
+      throw err;
+    };
+    let redirectErr = null;
+    try {
+      await createOpenAICompatibleAdapter({
+        baseURL: 'https://llm.example.com/v1', apiKey: 'sk-test-1234', model: 'gpt-4o-mini', maxRetries: 2
+      }).complete([{ role: 'user', content: 'hi' }]);
+    } catch (e) { redirectErr = e; }
+    check('UI-P1-1 openai-transport fetch 必传 redirect: error',
+      capturedRedirectInit && capturedRedirectInit.redirect === 'error');
+    check('UI-P1-1 遇 HTTP 重定向拒绝时立即抛出 redirect_blocked 且零重试',
+      redirectCalls === 1 && redirectErr && redirectErr.errorType === 'redirect_blocked' && redirectErr.retryable === false);
   }
 
   globalThis.fetch = realFetch;

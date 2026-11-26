@@ -351,6 +351,7 @@ const RUNTIME_ENTRIES = [
   'pet.js', 'chat.js',
   'ui-i18n.js', 'ui-chat-store.js', 'ui-chat-render.js',
   'ui-provider-presets.js', 'ui-outfit-complete.js', 'ui-agent-confirm.js',
+  'ui-pet-stage.js', 'ui-wardrobe.js', 'ui-settings.js', 'ui-research.js',
   'src/**', 'assets/**', 'package.json'
 ];
 function checkBuilderClosure() {
@@ -363,9 +364,9 @@ function checkBuilderClosure() {
   if (start < 0) { report('FAIL', '发布白名单', 'electron-builder.yml 未声明 files 段'); return; }
   const entries = [];
   for (let i = start + 1; i < lines.length; i++) {
-    const m = lines[i].match(/^\s+-\s+"([^"]+)"\s*$/);
+    const m = lines[i].match(/^\s+-\s+(?:"([^"]+)"|'([^']+)'|([^\s#]+))\s*(?:#.*)?$/);
     if (!m) { if (/^\S/.test(lines[i])) break; continue; }
-    entries.push(m[1]);
+    entries.push(m[1] || m[2] || m[3]);
   }
   const has = (p) => entries.includes(p);
   const missing = RUNTIME_ENTRIES.filter((e) => !has(e));
@@ -408,7 +409,8 @@ function checkDocsAndTestSuites() {
   const testDirFiles = fs.readdirSync(path.join(ROOT, 'test'))
     .filter(f => /\.(js|py)$/.test(f) && f !== 'docs.test.js');
 
-  const unmentioned = testDirFiles.filter(f => !inventory.includes(f));
+  const blockText = block[1];
+  const unmentioned = testDirFiles.filter(f => !blockText.includes(f));
   if (unmentioned.length > 0) {
     report('FAIL', '测试目录文档覆盖', `test/ 下存在未在测试清单中被点名的测试: ${unmentioned.join(', ')}`);
   } else {

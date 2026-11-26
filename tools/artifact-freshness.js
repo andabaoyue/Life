@@ -52,14 +52,30 @@ const RUNTIME_SOURCES = Object.freeze([
   'ui-provider-presets.js',
   'ui-outfit-complete.js',
   'ui-agent-confirm.js',
+  'ui-pet-stage.js',
+  'ui-wardrobe.js',
+  'ui-settings.js',
+  'ui-research.js',
   'vision-picker-preload.js',
   'vision-picker.html',
   'vision-picker.js'
 ]);
 
-const RUNTIME_DIRS = Object.freeze(['src']);
+const RUNTIME_DIRS = Object.freeze(['src', 'assets']);
 
-/** 递归收集运行目录（如 src/）下的 .js 相对 POSIX 路径，用于补充 RUNTIME_SOURCES 新鲜度比对。 */
+const EXCLUDED_ASSET_PREFIXES = ['assets/character-archive-760x1000/'];
+const EXCLUDED_ASSET_FILES = new Set(['assets/character/base/base_legacy_full.png']);
+
+function isIncludedRuntimeFile(rel, dirRel) {
+  if (dirRel === 'src') return rel.endsWith('.js');
+  if (dirRel === 'assets') {
+    if (EXCLUDED_ASSET_FILES.has(rel)) return false;
+    return !EXCLUDED_ASSET_PREFIXES.some((prefix) => rel.startsWith(prefix));
+  }
+  return rel.endsWith('.js');
+}
+
+/** 递归收集运行目录（如 src/ 下的 .js 与活跃 assets/）的相对 POSIX 路径，用于补充 RUNTIME_SOURCES 新鲜度比对。 */
 function collectRuntimeDirFiles(root, dirs = RUNTIME_DIRS) {
   const collected = [];
   for (const dirRel of (Array.isArray(dirs) ? dirs : [])) {
@@ -72,10 +88,14 @@ function collectRuntimeDirFiles(root, dirs = RUNTIME_DIRS) {
       try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
       for (const ent of entries) {
         const full = path.join(cur, ent.name);
+        const rel = path.relative(root, full).replace(/\\/g, '/');
         if (ent.isDirectory()) {
+          if (dirRel === 'assets' && EXCLUDED_ASSET_PREFIXES.some((p) => (rel + '/') === p || rel.startsWith(p))) {
+            continue;
+          }
           stack.push(full);
-        } else if (ent.isFile() && ent.name.endsWith('.js')) {
-          collected.push(path.relative(root, full).replace(/\\/g, '/'));
+        } else if (ent.isFile() && isIncludedRuntimeFile(rel, dirRel)) {
+          collected.push(rel);
         }
       }
     }
@@ -129,16 +149,27 @@ function sha256(buf) {
  * @param {string} name 根级文件名（如 'main.js'）
  * @returns {?Buffer} 取不到返回 null（不存在 / 解析失败都算取不到）
  */
+function readExactSync(fd, buf, len, pos) {
+  let got = 0;
+  while (got < len) {
+    const n = fs.readSync(fd, buf, got, len - got, pos + got);
+    if (!Number.isFinite(n) || n <= 0) return false;
+    got += n;
+  }
+  return true;
+}
+
 function readAsarEntry(asarPath, name) {
   let fd = null;
   try {
     fd = fs.openSync(asarPath, 'r');
     const sizeBuf = Buffer.alloc(16);
-    fs.readSync(fd, sizeBuf, 0, 16, 0);
+    if (!readExactSync(fd, sizeBuf, 16, 0)) return null;
     const pickleLen = sizeBuf.readUInt32LE(4);       // 头部 pickle payload 长度（含 padding）
     const headerJsonLen = sizeBuf.readUInt32LE(12);  // 纯 JSON 的长度
+    if (!Number.isFinite(headerJsonLen) || headerJsonLen <= 0 || headerJsonLen > 64 * 1024 * 1024) return null;
     const headerBuf = Buffer.alloc(headerJsonLen);
-    fs.readSync(fd, headerBuf, 0, headerJsonLen, 16);
+    if (!readExactSync(fd, headerBuf, headerJsonLen, 16)) return null;
     const header = JSON.parse(headerBuf.toString('utf8'));
 
     // P1-17：支持嵌套路径（如 'src/brain.js'）逐级在 ASAR header.files 中寻址
@@ -151,11 +182,11 @@ function readAsarEntry(asarPath, name) {
     if (!node || node.files || node.link) return null;   // 目录 / 符号链接都不算
     const offset = Number(node.offset);
     const size = Number(node.size);
-    if (!Number.isFinite(offset) || !Number.isFinite(size)) return null;
+    if (!Number.isFinite(offset) || !Number.isFinite(size) || size < 0) return null;
 
     const payloadBase = 8 + pickleLen;
     const buf = Buffer.alloc(size);
-    fs.readSync(fd, buf, 0, size, payloadBase + offset);
+    if (size > 0 && !readExactSync(fd, buf, size, payloadBase + offset)) return null;
     return buf;
   } catch {
     return null;

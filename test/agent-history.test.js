@@ -377,8 +377,9 @@ console.log('--- D. 接线 ---');
   check('D9 memory.build() 不含 d6 的文件名', !builtText.includes('note-d6.txt'));
 
   // D10 两个 askForSelf* 都挂了投影（源码级：两处调用，且都不在 build 链上）
-  const brainSrc = fs.readFileSync(path.join(ROOT, 'src', 'brain.js'), 'utf8');
-  const callCount = (brainSrc.match(/this\._buildActionHistoryText\(\)/g) || []).length;
+  const brainSrc = ['brain.js', 'brain-autonomous-draft.js']
+    .map((f) => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8')).join('\n');
+  const callCount = (brainSrc.match(/(?:this|b)\._buildActionHistoryText\(\)/g) || []).length;
   check('D10 两处 askForSelf* 都调了投影', callCount >= 2, 'count=' + callCount);
 
   // D11 memory.js 里零引用动作史（防有人日后顺手塞进 build）

@@ -805,6 +805,8 @@ async function main() {
     const { ActivityTracker } = require('../src/tracker');
     const prodCfg = {
       ...DEFAULTS,
+      provider: 'local',
+      credentialType: 'apiKey',
       apiKey: 'test',
       baseURL: base,
       price: { peak: {}, valley: {} }

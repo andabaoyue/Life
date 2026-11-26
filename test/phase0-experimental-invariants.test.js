@@ -573,6 +573,93 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
   );
 }
 
+// ---------------------------------------------------------------------
+// CORE-P1-1: 跨窗热切 memoryDynamicsEnabled 全链路门控（双向热切）
+// ---------------------------------------------------------------------
+{
+  const os = require('os');
+  const { Brain } = require('../src/brain');
+  const { DEFAULTS, save: saveConfig } = require('../src/config');
+  const hotDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-test-'));
+  try {
+    const expBrain = new Brain(hotDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-test-hot',
+      experimentMode: 'experimental',
+      experimentModules: { ...DEFAULTS.experimentModules, memoryDynamics: true }
+    });
+    expBrain.memory.data.windows = [
+      { no: 1, text: '很久以前在窗边看过一场雪，银白色的风从阳台吹进来，持续了整整一个下午。' },
+      { no: 2, text: '昨天一起听过的那首安静钢琴曲，旋律一直在房间里回荡。' },
+    ];
+    expBrain.memory.data.windowNo = 8;
+    expBrain.memory.engramManager.registerTrace({ sourceWindowNo: 1, createdWindow: 1, contentRef: '窗边看雪' });
+    expBrain.memory.engramManager.decayAll(8);
+    expBrain.memory.refreshDeepHorizon();
+
+    const sysExpBefore = expBrain.memory.systemText();
+    const recallExp = expBrain.memory.triggerInvoluntaryRecall(8, Date.now());
+    expBrain.memory.save(true);
+
+    // ① experimental -> baseline 跨窗热切：关闭动力学，保留磁盘痕迹但退出梯度与非自愿回忆
+    saveConfig(hotDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-test-hot',
+      experimentMode: 'baseline'
+    });
+    expBrain.memory.data.windowNo = 9;
+    expBrain._syncWindowExperimentSnapshot();
+    const sysBaseAfter = expBrain.memory.systemText();
+    const recallBase = expBrain.memory.triggerInvoluntaryRecall(9, Date.now() + 20 * 3600 * 1000);
+    check('CORE-P1-1: experimental -> baseline 跨窗热切后停用记忆梯度与非自愿回忆且保留 engrams 痕迹',
+      expBrain.memory.memoryDynamicsEnabled === false
+      && expBrain.memory.isMemoryDynamicsActive === false
+      && !sysExpBefore.includes('【第1段】')
+      && sysBaseAfter.includes('【第1段】')
+      && !sysBaseAfter.includes('【底座深处沉淀】')
+      && recallExp !== null
+      && recallBase === null
+      && expBrain.memory.data.engrams !== null);
+
+    // ② baseline -> experimental 跨窗热切：从基线冷启后热切回实验态，立即实例化并恢复动力学
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-test-'));
+    try {
+      const baseBrain = new Brain(baseDir, {
+        ...DEFAULTS,
+        apiKey: 'sk-test-hot2',
+        experimentMode: 'baseline'
+      });
+      baseBrain.memory.data.windows = [
+        { no: 1, text: '基线窗期沉淀下来的第一段记忆。' },
+      ];
+      baseBrain.memory.data.windowNo = 8;
+      saveConfig(baseDir, {
+        ...DEFAULTS,
+        apiKey: 'sk-test-hot2',
+        experimentMode: 'experimental',
+        experimentModules: { ...DEFAULTS.experimentModules, memoryDynamics: true }
+      });
+      baseBrain.memory.closeWindow(
+        '第 8 窗总结内容',
+        { items: [{ role: 'user', content: 'hi' }], drop: 1, len: 1, epoch: baseBrain.memory.data.epoch, lastSnapshotMsgId: null }
+      );
+      baseBrain._syncWindowExperimentSnapshot();
+      const hadManagerNow = Boolean(baseBrain.memory.engramManager);
+      baseBrain.memory.engramManager.registerTrace({ sourceWindowNo: 1, createdWindow: 1, contentRef: '第一段' });
+      baseBrain.memory.engramManager.decayAll(10);
+      baseBrain.memory.refreshDeepHorizon();
+      check('CORE-P1-1: baseline -> experimental 跨窗热切后立即实例化 engramManager 并激活动力学衰减',
+        hadManagerNow === true
+        && baseBrain.memory.isMemoryDynamicsActive === true
+        && !baseBrain.memory.systemText().includes('【第1段】'));
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(hotDir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\nPhase 0 测试运行完成，失败项数: ${failures}`);
 if (failures > 0) {
   process.exit(1);

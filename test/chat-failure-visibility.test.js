@@ -107,8 +107,9 @@ check('⑤ 认证失败写入退避（否则每 90 秒打一次注定 401 的请
   /err\.errorType === 'auth_failed'[\s\S]{0,120}?authFailureUntil = Date\.now\(\) \+ AUTH_FAILURE_BACKOFF_MS/.test(mainSrc));
 check('⑤b 填/换 Key 成功后解除退避并重排',
   /ipcGuard\.handle\('config-set-key'[\s\S]{0,2000}?clearAuthFailureBackoff\(\);[\s\S]{0,80}?scheduleProactiveCheck\(COOLDOWN_MS\)/.test(mainSrc));
+const mainConnSrc = fs.readFileSync(path.join(ROOT, 'src', 'main-connections-ipc.js'), 'utf8');
 check('⑤c 切换连接成功后同样解除退避并重排（漏了它同样会继续沉默）',
-  /ipcGuard\.handle\('connections:activate'[\s\S]{0,2000}?clearAuthFailureBackoff\(\);[\s\S]{0,80}?scheduleProactiveCheck\(COOLDOWN_MS\)/.test(mainSrc));
+  /ipcGuard\.handle\('connections:activate'[\s\S]{0,2000}?clearAuthFailureBackoff\(\);[\s\S]{0,80}?scheduleProactiveCheck\(COOLDOWN_MS\)/.test(mainConnSrc));
 
 /* ⑥ 退避期不是停摆：仍要重排，只是间隔拉长。 */
 check('⑥ 退避期内仍然重排（把节奏放慢，不是把调度停掉）',

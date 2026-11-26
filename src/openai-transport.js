@@ -214,13 +214,20 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
     let res;
     // 如果上层未传递 signal，内部兜底建立超时保护控制器
     const fallbackCtrl = signal ? null : new AbortController();
-    const timer = fallbackCtrl
+    let timer = fallbackCtrl
       ? setTimeout(() => {
           const err = new Error('request timeout');
           err.name = 'TimeoutError';
           fallbackCtrl.abort(err);
         }, requestTimeoutMs)
       : null;
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    const clearFallbackTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
 
     try {
       res = await fetch(url, {
@@ -230,13 +237,30 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
           Authorization: 'Bearer ' + cfg.apiKey
         },
         body: JSON.stringify(body),
+        redirect: 'error',
         signal: signal || fallbackCtrl.signal
       });
     } catch (netErr) {
-      // Abort/Timeout 保持原语义上抛（non-retryable）；其余网络错误按明确暂态处理
+      clearFallbackTimer();
+      // Abort/Timeout 保持原语义上抛（non-retryable）；重定向拒绝立即阻断（绝不重试或降级）；其余网络错误按明确暂态处理
       if (netErr && (netErr.name === 'AbortError' || netErr.name === 'TimeoutError')) {
         netErr.retryState = { attempts: attempt + 1, maxRetries };
         throw netErr;
+      }
+      const errMsg = String((netErr && netErr.message) || '');
+      const causeMsg = String((netErr && netErr.cause && netErr.cause.message) || '');
+      const errCode = String((netErr && (netErr.code || (netErr.cause && netErr.cause.code))) || '');
+      if (/redirect/i.test(errMsg) || /redirect/i.test(causeMsg) || /redirect/i.test(errCode)) {
+        throw makeProviderError({
+          status: null,
+          provider: providerId,
+          requestStage: 'request',
+          errorType: 'redirect_blocked',
+          retryable: false,
+          safeDetail: 'HTTP redirect blocked',
+          retryState: { attempts: attempt + 1, maxRetries },
+          cause: netErr
+        });
       }
       const canRetry = attempt < maxRetries && !(signal && signal.aborted);
       if (!canRetry) {
@@ -255,12 +279,15 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
       attempt++;
       await sleepMaybeAbort(delayMs, signal);
       continue;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
 
     if (!res.ok) {
-      const text = await readBodyCapped(res, MAX_ERROR_BODY_BYTES, { truncate: true }).catch(() => '');
+      let text = '';
+      try {
+        text = await readBodyCapped(res, MAX_ERROR_BODY_BYTES, { truncate: true }).catch(() => '');
+      } finally {
+        clearFallbackTimer();
+      }
       const cls = classifyProviderHttpError(res.status);
       const retryAfterMs = parseRetryAfter(res.headers && typeof res.headers.get === 'function' ? res.headers.get('retry-after') : null);
       const safeDetail = extractSafeDetail(text);

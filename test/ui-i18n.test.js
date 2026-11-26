@@ -86,8 +86,9 @@ check('12 全量防漂移门禁：全量 en 字典零中文残留、t() 插值�
   const interpZh = t('research.prov.scTitle', { id: 'sc-1', win: 2, trait: 'vitality', prev: 10, newVal: 20, delta: 10 });
   const interpOk = interpEn.includes('12:00:00') && interpEn.includes('Snapshot:') && interpZh.includes('Window #2') && interpZh.includes('sc-1');
 
-  // 3. 静态源码全量 DOM 审计：pet.js 中直接把中文赋给 DOM 文本属性且无 t() 保护的语句严格为 0
-  const petCode = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  // 3. 静态源码全量 DOM 审计：pet.js 及拆分后的 ui-*.js 中直接把中文赋给 DOM 文本属性且无 t() 保护的语句严格为 0
+  const petCode = ['pet.js', 'ui-pet-stage.js', 'ui-wardrobe.js', 'ui-settings.js', 'ui-research.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
   const hardcodedDom = petCode.split('\n').filter(l =>
     /\.(textContent|innerHTML|placeholder|title)\s*=/.test(l) &&
     /[\u4e00-\u9fa5]/.test(l) && !/\bt\(/.test(l)

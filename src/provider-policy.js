@@ -8,6 +8,15 @@ function isLocalHost(hostname) {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
 }
 
+function isLinkLocalHost(hostname) {
+  const h = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!h) return false;
+  if (/^169\.254\.\d+\.\d+$/.test(h) || h.startsWith('169.254.')) return true;
+  if (h.startsWith('::ffff:169.254.')) return true;
+  if (/^fe[89ab][0-9a-f]:/.test(h) || h.startsWith('fe80::')) return true;
+  return false;
+}
+
 function providerFor(baseURL) {
   try {
     const u = new URL(baseURL);
@@ -23,6 +32,14 @@ function validateCredentialTarget({ provider, baseURL, credentialType = 'apiKey'
     u = new URL(baseURL);
   } catch {
     return { ok: false, error: 'Endpoint URL 无效' };
+  }
+
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    return { ok: false, error: 'Endpoint 仅支持 HTTPS 或 HTTP 协议' };
+  }
+
+  if (isLinkLocalHost(u.hostname)) {
+    return { ok: false, error: '禁止访问链路本地地址 (169.254.0.0/16 / fe80::)' };
   }
 
   const isLocal = isLocalHost(u.hostname);
@@ -42,9 +59,9 @@ function validateCredentialTarget({ provider, baseURL, credentialType = 'apiKey'
     return { ok: false, error: 'DeepSeek endpoint 必须使用独立的 deepseek-api-key 凭据类型' };
   }
 
-  // 2. 公网非 DeepSeek 自定义 Provider 严禁携带 DeepSeek 官方专属 Key（防凭据向第三方泄露）
-  if (!isDeepSeekOfficial && !isLocal && credentialType === 'deepseek-api-key') {
-    return { ok: false, error: '自定义 Provider 不得复用 DeepSeek Key' };
+  // 2. 非 DeepSeek 官方域名（含自定义 Provider 与 localhost）严禁携带 DeepSeek 官方专属 Key
+  if (!isDeepSeekOfficial && credentialType === 'deepseek-api-key') {
+    return { ok: false, error: '非 DeepSeek 官方 Endpoint 不得使用 DeepSeek 专属 Key' };
   }
 
   // B-02: effectiveProvider 必须以实际 baseURL 解析结果为准 ——

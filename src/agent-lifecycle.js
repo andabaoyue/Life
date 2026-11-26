@@ -249,6 +249,10 @@ class TicketStore {
       capability: normalizeCapability(input.capability),
       note: noteText || null,
     };
+    const maxTickets = Number.isFinite(this.maxTickets) ? this.maxTickets : 200;
+    if (this.tickets.length >= maxTickets) {
+      return { ok: false, code: 'TICKET_LIMIT_REACHED', limit: maxTickets };
+    }
     this.tickets.push(ticket);
     this._persist();
     return { ok: true, ticket: cloneTicket(ticket) };

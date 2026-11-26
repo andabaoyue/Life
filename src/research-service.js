@@ -71,6 +71,10 @@ class ResearchService {
     this.completedTaskMetadata = new Map();
     this.taskRetentionMs = Number.isFinite(options.taskRetentionMs)
       ? Math.max(0, options.taskRetentionMs) : 5 * 60 * 1000;
+    this.maxConcurrentReplays = Number.isFinite(options.maxConcurrentReplays)
+      ? Math.max(1, Math.floor(options.maxConcurrentReplays)) : 2;
+    this.maxCompletedMetadata = Number.isFinite(options.maxCompletedMetadata)
+      ? Math.max(1, Math.floor(options.maxCompletedMetadata)) : 200;
     this.refreshSnapshot();
   }
 
@@ -88,10 +92,10 @@ class ResearchService {
   verifyIntegrity(beforeHashes) {
     if (!beforeHashes) return true;
     const current = this.computeIntegrityHashes();
-    if (beforeHashes.archiveSha256 && current.archiveSha256 !== beforeHashes.archiveSha256) {
+    if (typeof beforeHashes.archiveSha256 === 'string' && current.archiveSha256 !== beforeHashes.archiveSha256) {
       throw new Error('RESEARCH_WRITE_VIOLATION: experiences.jsonl checksum changed during research session');
     }
-    if (beforeHashes.stateSha256 && current.stateSha256 !== beforeHashes.stateSha256) {
+    if (typeof beforeHashes.stateSha256 === 'string' && current.stateSha256 !== beforeHashes.stateSha256) {
       throw new Error('RESEARCH_WRITE_VIOLATION: subject-state.json checksum changed during research session');
     }
     return true;
@@ -124,6 +128,13 @@ class ResearchService {
   // 异步 Replay 实验室任务 (P1-04)
   // ---------------------------------------------------------------------------
   startReplayTask(options = {}) {
+    let runningCount = 0;
+    for (const t of this.activeTasks.values()) {
+      if (t && t.status === 'running') runningCount++;
+    }
+    if (runningCount >= this.maxConcurrentReplays) {
+      return { ok: false, error: 'REPLAY_CONCURRENCY_LIMIT', limit: this.maxConcurrentReplays };
+    }
     const taskId = 'replay-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const task = {
       taskId,
@@ -193,6 +204,11 @@ class ResearchService {
         // SEC-04: 到期释放大型 result（windowStates/trajectory/stateChanges/result 不在 metadata 滞留）
         resultReleased: true
       });
+      while (this.completedTaskMetadata.size > this.maxCompletedMetadata) {
+        const oldestKey = this.completedTaskMetadata.keys().next().value;
+        if (oldestKey === undefined) break;
+        this.completedTaskMetadata.delete(oldestKey);
+      }
       this.activeTasks.delete(taskId);
       removed++;
     }
@@ -268,35 +284,42 @@ class ResearchService {
       task.stage = 'indexing';
       task.percent = 15;
 
-      // 提取行与结构
+      // 提取行与结构（单次 JSON.parse，供窗口统计与后续 replay 循环复用）
       const lineEntries = [];
       for (let i = 0; i < lines.length; i++) {
         const raw = lines[i].trim();
         if (!raw) continue;
-        lineEntries.push({ lineNum: i + 1, text: raw });
+        let parsed = null;
+        let parseError = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (err) {
+          parseError = err;
+        }
+        lineEntries.push({ lineNum: i + 1, text: raw, parsed, parseError });
       }
 
       // P1-5: 统计唯一逻辑窗口数，严格排除非状态审计/诊断记录，绝非原始 JSONL 行数
       const logicalWindows = new Set();
       for (const entry of lineEntries) {
-        try {
-          const parsed = JSON.parse(entry.text);
-          const recType = parsed.recordType || parsed.type || (parsed.payload && parsed.payload.type) || '';
-          if (NON_STATE_RECORD_TYPES.has(recType)) {
-            continue;
-          }
-          const wNo = (typeof parsed.windowNo === 'number' && !isNaN(parsed.windowNo))
-            ? parsed.windowNo
-            : ((parsed.payload && typeof parsed.payload.windowNo === 'number' && !isNaN(parsed.payload.windowNo))
-              ? parsed.payload.windowNo
-              : (typeof parsed.window === 'number' && !isNaN(parsed.window) ? parsed.window : null));
-          if (wNo !== null) {
-            logicalWindows.add(wNo);
-          } else {
-            logicalWindows.add('unresolved');
-          }
-        } catch {
+        if (entry.parseError || !entry.parsed) {
           // 语法损坏在下文 replay 循环中按 Fail-Stop 规则触发熔断
+          continue;
+        }
+        const parsed = entry.parsed;
+        const recType = parsed.recordType || parsed.type || (parsed.payload && parsed.payload.type) || '';
+        if (NON_STATE_RECORD_TYPES.has(recType)) {
+          continue;
+        }
+        const wNo = (typeof parsed.windowNo === 'number' && !isNaN(parsed.windowNo))
+          ? parsed.windowNo
+          : ((parsed.payload && typeof parsed.payload.windowNo === 'number' && !isNaN(parsed.payload.windowNo))
+            ? parsed.payload.windowNo
+            : (typeof parsed.window === 'number' && !isNaN(parsed.window) ? parsed.window : null));
+        if (wNo !== null) {
+          logicalWindows.add(wNo);
+        } else {
+          logicalWindows.add('unresolved');
         }
       }
 
@@ -327,22 +350,19 @@ class ResearchService {
         }
 
         const entry = lineEntries[i];
-        let parsed = null;
-
         // P1-04 Fail-Stop: 若遇到损坏行，立即停止，冻结在最后有效记录，绝不跳过计算后续行
-        try {
-          parsed = JSON.parse(entry.text);
-        } catch (err) {
+        if (entry.parseError || !entry.parsed) {
           corruptDetected = true;
           failureInfo = {
             line: entry.lineNum,
             reason: 'MALFORMED_JSON',
-            error: err.message,
+            error: entry.parseError ? entry.parseError.message : 'Empty parsed record',
             snippet: entry.text.slice(0, 100)
           };
           console.warn(`[ResearchService] Fail-Stop 触发：第 ${entry.lineNum} 行 JSON 损坏，立即中止推演`);
           break;
         }
+        const parsed = entry.parsed;
 
         const normalized = normalizeArchiveRecord(parsed);
         if (!normalized || typeof normalized !== 'object') {

@@ -227,7 +227,11 @@ const OBSERVABILITY_SPECS = Object.freeze([
       const ms = TRAITS.map((t) => { try { return ledger.getEntryMetrics(t); } catch (e) { return null; } })
         .filter(Boolean);
       if (!ms.length) return null;
-      const avg = (k) => ms.reduce((a, x) => a + (Number(x[k]) || 0), 0) / ms.length;
+      const avg = (k) => {
+        const nums = ms.map((x) => Number(x[k])).filter((n) => Number.isFinite(n));
+        if (!nums.length) return null;
+        return nums.reduce((a, n) => a + n, 0) / nums.length;
+      };
       return { confidence: avg('confidence'), revisionPressure: avg('revisionPressure'), dims: ms.length };
     })
   },
@@ -456,8 +460,13 @@ const OBSERVABILITY_SPECS = Object.freeze([
     range: null,
     read: safeRead((ctx) => {
       const log = ctx && ctx.agentAuditLog;
-      if (!log || typeof log.list !== 'function') return null;
+      if (!log) return null;
       // 只报条数，不报事件内容（事件里可能有路径）
+      if (typeof log.count === 'function') {
+        const n = log.count();
+        return { count: Number.isFinite(n) ? n : null };
+      }
+      if (typeof log.list !== 'function') return null;
       const ev = log.list();
       return { count: Array.isArray(ev) ? ev.length : null };
     })

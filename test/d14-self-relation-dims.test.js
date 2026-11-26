@@ -165,7 +165,8 @@ console.log('');
 // 中文定名的**单一事实源**是 subject-state.js 的 TRAIT_NAMES（她认知层在用的正典名），
 // pet.js 只是展示镜像 —— 逐键断言防「两处各改各的」漂移。
 {
-  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const petSrc = ['pet.js', 'ui-research.js']
+    .map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const ssSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'subject-state.js'), 'utf8');
   const all8 = Object.keys(DEFAULT_TRAITS);

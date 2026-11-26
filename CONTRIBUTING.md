@@ -48,7 +48,7 @@ Life 平台的 64×80 Q 版点阵精灵正进入公开源码后的社区协同�
    # 4. 改了 electron-builder.yml / 打包相关内容时，追加产物闭包实测：
    npm run build:dir
    node tools/asar-check.js
-   #    （断言 app.asar 里 14 个运行入口齐全、源码专用目录与已淘汰资产未进包；
+   #    （断言 app.asar 里 21 个运行入口齐全、源码专用目录与已淘汰资产未进包；
    #      npm test 只验工作树，验不到最终产物，这一步才是产物级防线）
    
    ```

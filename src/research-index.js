@@ -158,8 +158,7 @@ class ResearchIndex {
             byteOffset: lineOffset,
             byteLength: effectiveLen,
             recordType: recType,
-            windowNo,
-            payload: parsed.payload || parsed
+            windowNo
           };
 
           // 记录至 window 映射：严格区分 knownWindowIndex 与 unknownWindowDescriptors (绝不把 null 映射为 1)
@@ -247,9 +246,12 @@ class ResearchIndex {
     // 2.1 Events
     const events = Array.isArray(payload.events) ? payload.events : (Array.isArray(record.events) ? record.events : []);
     for (const evt of events) {
-      if (evt && evt.eventId) {
+      if (!evt) continue;
+      if (evt.eventId) {
         registerId(evt.eventId, this.eventIndex, { type: 'event', eventType: evt.type, source: evt.source });
-        if (evt.messageId) registerMessage(evt.messageId, { eventId: evt.eventId });
+      }
+      if (evt.messageId) {
+        registerMessage(evt.messageId, evt.eventId ? { eventId: evt.eventId } : {});
       }
     }
 

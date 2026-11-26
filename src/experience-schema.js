@@ -9,12 +9,12 @@
  */
 
 const SCHEMA_VERSION = 1;
+const SCHEMA_RUN_ID = Date.now().toString(36) + '-' + require('crypto').randomBytes(2).toString('hex');
 
 let eventSeq = 0;
 let obsSeq = 0;
 let intSeq = 0;
 let expSeq = 0;
-let evSeq = 0;
 
 // P0-03: 严格定义 Event 真实来源边界
 const ALLOWED_EVENT_TYPES = new Set([
@@ -77,7 +77,7 @@ function isEligibleSubjectEvent(item) {
  */
 function createEvent(opts = {}) {
   eventSeq++;
-  const eventId = opts.eventId || ('evt-' + String(eventSeq).padStart(6, '0'));
+  const eventId = opts.eventId || (`evt-${SCHEMA_RUN_ID}-` + String(eventSeq).padStart(6, '0'));
   return {
     eventId,
     type: opts.type || 'message',
@@ -133,7 +133,7 @@ function validateEvent(evt) {
  */
 function createObservation(opts = {}) {
   obsSeq++;
-  const observationId = opts.observationId || ('obs-' + String(obsSeq).padStart(6, '0'));
+  const observationId = opts.observationId || (`obs-${SCHEMA_RUN_ID}-` + String(obsSeq).padStart(6, '0'));
   const eventIds = Array.isArray(opts.eventIds) ? [...opts.eventIds] : [];
   const confidence = typeof opts.confidence === 'number'
     ? Math.max(0, Math.min(1, opts.confidence))
@@ -178,7 +178,7 @@ function validateObservation(obs, availableEventIds = null) {
  */
 function createInterpretation(opts = {}) {
   intSeq++;
-  const interpretationId = opts.interpretationId || ('int-' + String(intSeq).padStart(6, '0'));
+  const interpretationId = opts.interpretationId || (`int-${SCHEMA_RUN_ID}-` + String(intSeq).padStart(6, '0'));
   const observationIds = Array.isArray(opts.observationIds) ? [...opts.observationIds] : [];
   const confidence = typeof opts.confidence === 'number'
     ? Math.max(0, Math.min(1, opts.confidence))
@@ -223,7 +223,7 @@ function validateInterpretation(interp, availableObservationIds = null) {
  */
 function createExperience(opts = {}) {
   expSeq++;
-  const experienceId = opts.experienceId || ('exp-' + String(expSeq).padStart(6, '0'));
+  const experienceId = opts.experienceId || (`exp-${SCHEMA_RUN_ID}-` + String(expSeq).padStart(6, '0'));
   return {
     experienceId,
     windowNo: (typeof opts.windowNo === 'number' && !Number.isNaN(opts.windowNo)) ? opts.windowNo : (opts.windowNo === null ? null : 1),

@@ -176,6 +176,9 @@ class InternalRegulationManager {
     this.consumedAttentionEvents = new Set();
     this.persistedConsumedAttentionEvents = new Set();
     this.maxConsumedAttentionEvents = 256;
+    this.maxPersistedConsumedAttentionEvents = Number.isFinite(opts.maxPersistedConsumedAttentionEvents)
+      ? Math.max(100, Math.floor(opts.maxPersistedConsumedAttentionEvents))
+      : 2000;
     this.persistenceHealthy = true;
     this.persistenceError = null;
 
@@ -1007,6 +1010,10 @@ class InternalRegulationManager {
         return this._emitChange(this.getState());
       }
       this.persistedConsumedAttentionEvents.add(eventId);
+      while (this.persistedConsumedAttentionEvents.size > this.maxPersistedConsumedAttentionEvents) {
+        const oldest = this.persistedConsumedAttentionEvents.values().next().value;
+        this.persistedConsumedAttentionEvents.delete(oldest);
+      }
       this.consumedAttentionEvents.add(eventId);
       if (this.consumedAttentionEvents.size > this.maxConsumedAttentionEvents) {
         const first = this.consumedAttentionEvents.values().next().value;
@@ -1180,6 +1187,9 @@ class InternalRegulationManager {
       recentTransitionsCount: this.history.length,
       sleepStartTime: this.isSleeping && Number.isFinite(this.sleepStartTime) ? this.sleepStartTime : null,
       allostasis: this.allostasisEnabled ? this.allostasisPrior.getSummary() : null,
+      allostasisState: (extra && extra.allostasis && !extra.allostasisState)
+        ? null
+        : (this.allostasisEnabled ? this.allostasisPrior.toJSON() : null),
       timestamp: Date.now(),
       ...extra
     };
@@ -1276,12 +1286,16 @@ class InternalRegulationManager {
           if (Array.isArray(raw.history)) this.history = raw.history.slice(-50);
           if (Array.isArray(raw.persistedConsumedAttentionEvents)) {
             this.persistedConsumedAttentionEvents = new Set(
-              raw.persistedConsumedAttentionEvents.filter(v => typeof v === 'string' && v.trim())
+              raw.persistedConsumedAttentionEvents
+                .filter(v => typeof v === 'string' && v.trim())
+                .slice(-this.maxPersistedConsumedAttentionEvents)
             );
           } else if (Array.isArray(raw.consumedAttentionEvents)) {
             // v0.9.8 migration: older bounded ledgers seed the new global ledger.
             this.persistedConsumedAttentionEvents = new Set(
-              raw.consumedAttentionEvents.filter(v => typeof v === 'string' && v.trim())
+              raw.consumedAttentionEvents
+                .filter(v => typeof v === 'string' && v.trim())
+                .slice(-this.maxPersistedConsumedAttentionEvents)
             );
           }
           this.consumedAttentionEvents = new Set(
@@ -1343,7 +1357,7 @@ class InternalRegulationManager {
           updatedAt: this.moodUpdatedAt,
           moodState: { ...this._moodState }
         },
-        persistedConsumedAttentionEvents: Array.from(this.persistedConsumedAttentionEvents),
+        persistedConsumedAttentionEvents: Array.from(this.persistedConsumedAttentionEvents).slice(-this.maxPersistedConsumedAttentionEvents),
         consumedAttentionEvents: Array.from(this.consumedAttentionEvents).slice(-this.maxConsumedAttentionEvents),
         allostasis: this.allostasisEnabled ? this.allostasisPrior.toJSON() : (this._preservedAllostasis || undefined),
         lastWindowTension: Number.isFinite(this.lastWindowTension) ? this.lastWindowTension : 0,

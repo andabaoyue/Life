@@ -16,7 +16,8 @@ function check(name, cond, extra) {
 }
 
 const { PERSONA } = require('../src/persona');
-const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
+const brainSrc = ['brain.js', 'brain-autonomous-draft.js', 'brain-window-pipeline.js']
+  .map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8')).join('\n');
 
 /* ---------- 方向②：可及性距离（增补而非替换） ---------- */
 check('② persona 保留反编造原句（认知基石不许换掉）',
@@ -106,7 +107,7 @@ check('B1 中等分歧映射定性档「有所动摇」', txtMid.includes('（�
 
 /* ---------- Batch 2: 底座深处经历地平线与反幻觉闩 ---------- */
 const mkMem = () => {
-  const mm = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-mem2-')), { windowTurns: 999 });
+  const mm = new Memory(fs.mkdtempSync(path.join(os.tmpdir(), 'nf-mem2-')), { windowTurns: 999, memoryDynamics: true });
   mm.persona = '人格文本';
   mm.wardrobe = '【当前穿着】\n- 外套：落肩白色外套';
   return mm;

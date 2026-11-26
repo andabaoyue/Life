@@ -154,6 +154,70 @@ async function runTests() {
     check('文件变更后重新触发了 checkArchive 扫描', checkArchiveCallCount > countBefore);
     check('缓存失效后准确反映最新完整性状态 (PARTIAL 或 UNCERTIFIED)', corruptRes.items[0].archiveIntegrity === 'PARTIAL' || corruptRes.items[0].archiveIntegrity === 'UNCERTIFIED');
 
+    // OPS-P1-3: ResearchIndex 描述符不常驻 payload；exportFullResearchBundle 仅单次读取归档
+    const { ResearchIndex } = require('../src/research-index');
+    const { exportFullResearchBundle } = require('../src/research-export');
+    const idxDir = path.join(os.tmpdir(), 'life-test-integrity-efficiency-' + Date.now() + '-idx');
+    fs.mkdirSync(idxDir, { recursive: true });
+    try {
+      const idxArchivePath = path.join(idxDir, 'experiences.jsonl');
+      const idxStatePath = path.join(idxDir, 'subject-state.json');
+      const wRec = wrapArchiveRecord('window_archive', 1, {
+        windowNo: 1,
+        events: [{ eventId: 'evt-1', messageId: 'm-1', type: 'chat_turn', source: 'user', payload: { content: 'hi' } }],
+        observations: [{ observationId: 'obs-1', eventIds: ['evt-1'], source: 'observer', content: 'o' }],
+        interpretations: [{ interpretationId: 'int-1', observationIds: ['obs-1'], perspective: 'p', content: 'i' }],
+        verifiedEvidence: [{ evidenceId: 'ev-1', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-1', quote: 'hi' }],
+        stateChanges: [{ stateChangeId: 'sc-1', windowNo: 1, trait: 'quiet_preference', previousValue: 0, delta: 1, newValue: 1, evidenceIds: ['ev-1'] }]
+      });
+      fs.writeFileSync(idxArchivePath, JSON.stringify(wRec) + '\n', 'utf8');
+      fs.writeFileSync(idxStatePath, JSON.stringify({ values: {}, stateChanges: [] }), 'utf8');
+
+      const rIndex = new ResearchIndex(idxArchivePath);
+      rIndex.ensureIndex();
+      const winDescs = rIndex.getWindowDescriptors(1);
+      check('OPS-P1-3: ResearchIndex 窗口描述符不常驻 payload 字段',
+        Array.isArray(winDescs) && winDescs.length === 1 && !('payload' in winDescs[0]));
+
+      const qIndexed = new ResearchQuery(idxDir, { index: rIndex });
+      let archiveOpenCount = 0;
+      const origOpenSync = fs.openSync;
+      fs.openSync = function (p, ...rest) {
+        if (typeof p === 'string' && path.resolve(p) === path.resolve(idxArchivePath)) {
+          archiveOpenCount++;
+        }
+        return origOpenSync.call(fs, p, ...rest);
+      };
+      try {
+        exportFullResearchBundle(qIndexed);
+      } finally {
+        fs.openSync = origOpenSync;
+      }
+      check('OPS-P1-3: exportFullResearchBundle 对 experiences.jsonl 仅执行 1 次打开读取',
+        archiveOpenCount === 1, 'archiveOpenCount=' + archiveOpenCount);
+
+      // Batch 3.4: verifyIntegrity 对空字符串基线 sha256('') 变化同样敏感；并发 Replay 上限拦截
+      const svcCheck = new (require('../src/research-service').ResearchService)(idxDir, { maxConcurrentReplays: 1 });
+      const before = svcCheck.computeIntegrityHashes();
+      let violCaught = false;
+      const tmpArchPath = path.join(idxDir, 'subject-state.json');
+      try {
+        // state 不存在时 stateSha256 为 ''；写入后应检测到校验变更
+        fs.writeFileSync(tmpArchPath, '{"windowNo":1}', 'utf8');
+        try { svcCheck.verifyIntegrity(before); } catch (ve) {
+          if (String(ve.message).includes('RESEARCH_WRITE_VIOLATION')) violCaught = true;
+        }
+      } finally {
+        try { fs.rmSync(tmpArchPath, { force: true }); } catch {}
+      }
+      const rTask1 = svcCheck.startReplayTask({});
+      const rTask2 = svcCheck.startReplayTask({});
+      check('Batch3.4: verifyIntegrity 捕获空基线篡改且 Replay 并发受 maxConcurrentReplays 限制',
+        violCaught === true && rTask1.status === 'running' && rTask2.ok === false && rTask2.error === 'REPLAY_CONCURRENCY_LIMIT');
+    } finally {
+      fs.rmSync(idxDir, { recursive: true, force: true });
+    }
+
   } finally {
     // 恢复原始方法
     ArchiveIntegrityService.checkArchive = originalCheckArchive;

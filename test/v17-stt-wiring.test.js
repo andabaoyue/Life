@@ -29,9 +29,11 @@ const ROOT = path.join(__dirname, '..');
 const chatSrc = fs.readFileSync(path.join(ROOT, 'chat.js'), 'utf8');
 const chatHtml = fs.readFileSync(path.join(ROOT, 'chat.html'), 'utf8');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const mainSrc = ['main.js', 'src/main-stt-ipc.js']
+  .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 const preloadSrc = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
-const petSrc = fs.readFileSync(path.join(ROOT, 'pet.js'), 'utf8');
+const petSrc = ['pet.js', 'ui-settings.js']
+  .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
 const uiI18nSrc = fs.readFileSync(path.join(ROOT, 'ui-i18n.js'), 'utf8');
 
 let failures = 0;
@@ -163,7 +165,8 @@ check('🔴 transcribe 失败只透 errorType（不透 safeDetail）',
 // get-config 绝不回 secret
 const getCfgHandler = (() => {
   const i = mainSrc.indexOf("ipcGuard.handle('stt:get-config'");
-  return i < 0 ? '' : mainSrc.slice(i, i + 900);
+  const end = i >= 0 ? mainSrc.indexOf('\n  });', i) : -1;
+  return i < 0 ? '' : mainSrc.slice(i, end > i ? end + 5 : i + 500);
 })();
 check('🔴 stt:get-config 不回 apiKey / secret 字段',
   !/apiKey\s*:/.test(getCfgHandler) && !/secret\s*:/.test(getCfgHandler));

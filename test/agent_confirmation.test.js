@@ -813,5 +813,32 @@ check('🔴 反例23b 指纹必须覆盖撤销态，否则容器失去冻结后�
   return after.reason === 'DECISION_TAMPERED';
 })());
 
+check('SEC-P1-4 已撤销（SYMLINK_ESCAPE）授权在 prune 3 分钟后仍保留终态，不可重新确认或执行', (() => {
+  const g = new UserConfirmationGate({ ttlMs: 60000 });
+  const T = 1757000000000;
+  g.confirm('p-revoked', 'approved', { at: T });
+  g.revoke('p-revoked', 'SYMLINK_ESCAPE', { at: T });
+  const removed = g.prune(T + 3 * 60 * 1000);
+  const reconfirm = g.confirm('p-revoked', 'approved', { at: T + 3 * 60 * 1000 + 1, status: 'proposed' });
+  const allow = g.isExecutionAllowed('p-revoked', T + 3 * 60 * 1000 + 2);
+  return removed === 0 && g.lookup('p-revoked') !== null
+    && reconfirm.ok === false && reconfirm.code === 'ALREADY_CONFIRMED'
+    && allow.allowed === false && allow.reason === 'SYMLINK_ESCAPE';
+})());
+
+check('SEC-P1-4 已撤销授权在 activeProposalIds 移出且超 10 分钟端到端上限后方可清理', (() => {
+  const g = new UserConfirmationGate({ ttlMs: 60000 });
+  const T = 1757000000000;
+  g.confirm('p-old-rev', 'approved', { at: T });
+  g.revoke('p-old-rev', 'SYMLINK_ESCAPE', { at: T });
+  const active = new Set(['p-old-rev']);
+  const keptWhileActive = g.prune(T + 20 * 60 * 1000, { activeProposalIds: active });
+  const keptLookup = g.lookup('p-old-rev');
+  active.delete('p-old-rev');
+  const removedAfterInactive = g.prune(T + 20 * 60 * 1000, { activeProposalIds: active });
+  return keptWhileActive === 0 && keptLookup !== null
+    && removedAfterInactive === 1 && g.lookup('p-old-rev') === null;
+})());
+
 console.log(failures === 0 ? '\nall agent_confirmation tests passed' : `\n${failures} FAILED`);
 assert.strictEqual(failures, 0, `${failures} 项用户确认门禁失败`);

@@ -13,7 +13,7 @@
 const { redactSecrets } = require('./redact');
 
 function numOrNull(v) {
-  return Number.isFinite(v) ? v : null;
+  return Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /**

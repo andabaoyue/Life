@@ -430,6 +430,67 @@ function check(name, cond, extra) {
       reunion.REUNION_MIN_MS === 6 * H && reunion.formatReunionLine(12 * H) === '【你离开了 12 小时】');
   }
 
+  // ---- 6b. CORE-P1-4: allostasisPrior 冷启动归档恢复与损坏文件自愈 ----
+  {
+    const { save: saveConfig } = require(path.join(ROOT, 'src', 'config'));
+    const recDir = makeTempDir();
+    saveConfig(recDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-mock-v21a-rec',
+      experimentMode: 'experimental',
+      experimentModules: { ...DEFAULTS.experimentModules, internalRegulation: true, allostasisPrior: true, sleepConsolidation: false }
+    });
+    const seedBrain = new Brain(recDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-mock-v21a-rec',
+      experimentMode: 'experimental',
+      experimentModules: { ...DEFAULTS.experimentModules, internalRegulation: true, allostasisPrior: true, sleepConsolidation: false }
+    });
+    seedBrain.api.complete = async () => ({
+      text: JSON.stringify({
+        windowSynthesis: { stableUserFacts: [], subjectExperiences: [], stateChangesSuggested: [], unresolved: [], coinages: [], expectations: [], expectationOutcomes: [] },
+        segments: [{ range: '1-2', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] }]
+      }),
+      observedModel: 'deepseek-flash',
+      usage: { prompt_tokens: 20, completion_tokens: 10 }
+    });
+    seedBrain.internalRegulation.allostasisPrior.lastUserTurnAt = T0 + 6 * H;
+    seedBrain.internalRegulation.allostasisPrior.recentGapsMs = [2 * H, 3 * H, 4 * H];
+    seedBrain.memory.append('user', '归档恢复测试消息');
+    seedBrain.memory.append('assistant', '收到');
+    await seedBrain.closeWindow('turn_limit');
+
+    // 场景 A：删除 internal-regulation.json 后重启 new Brain() 完整恢复 priorReady 与 recentGapsMs
+    fs.rmSync(seedBrain.internalRegulation.path, { force: true });
+    const recoveredFromMissing = new Brain(recDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-mock-v21a-rec',
+      experimentMode: 'experimental',
+      experimentModules: { ...DEFAULTS.experimentModules, internalRegulation: true, allostasisPrior: true, sleepConsolidation: false }
+    });
+    const missingSummary = recoveredFromMissing.internalRegulation.getAllostasisSummary();
+    check('6.6 CORE-P1-4: 删除 internal-regulation.json 后重启从归档完整恢复 recentGapsMs 与 priorReady',
+      missingSummary.priorReady === true
+      && recoveredFromMissing.internalRegulation.allostasisPrior.recentGapsMs.length === 3
+      && recoveredFromMissing.internalRegulation.allostasisPrior.lastUserTurnAt === T0 + 6 * H);
+
+    // 场景 B：破坏 internal-regulation.json 后重启自动备份 .corrupt.* 并从归档自愈恢复
+    fs.writeFileSync(seedBrain.internalRegulation.path, '{corrupt-json', 'utf8');
+    const recoveredFromCorrupt = new Brain(recDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-mock-v21a-rec',
+      experimentMode: 'experimental',
+      experimentModules: { ...DEFAULTS.experimentModules, internalRegulation: true, allostasisPrior: true, sleepConsolidation: false }
+    });
+    const corruptBackups = fs.readdirSync(recDir).filter(f => f.startsWith('internal-regulation.json.corrupt.'));
+    const corruptSummary = recoveredFromCorrupt.internalRegulation.getAllostasisSummary();
+    check('6.7 CORE-P1-4: 损坏 internal-regulation.json 时备份 .corrupt.* 并自愈恢复 persistenceHealthy 与先验',
+      corruptBackups.length === 1
+      && recoveredFromCorrupt.internalRegulation.persistenceHealthy === true
+      && corruptSummary.priorReady === true
+      && recoveredFromCorrupt.internalRegulation.allostasisPrior.recentGapsMs.length === 3);
+  }
+
   // ---- 7. D-001 静态零轮询扫描 ----
   {
     const stripComments = (s) => s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');

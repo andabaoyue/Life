@@ -76,16 +76,37 @@ def unmix(rgb, B, alpha):
 
 
 def main():
+    if len(sys.argv) < 3 or any(a.startswith('-') for a in sys.argv[1:3]):
+        print('Usage: python tools/chroma.py <src> <dst> [--trim] [--crop-bottom <0.0..0.95>]', file=sys.stderr)
+        sys.exit(2)
     src, dst = sys.argv[1], sys.argv[2]
     args = sys.argv[3:]
     trim = '--trim' in args
     cb = 0.05
     if '--crop-bottom' in args:
-        cb = float(args[args.index('--crop-bottom') + 1])
+        idx = args.index('--crop-bottom')
+        if idx + 1 >= len(args):
+            print('Error: --crop-bottom requires a float argument', file=sys.stderr)
+            sys.exit(2)
+        try:
+            cb = float(args[idx + 1])
+        except ValueError:
+            print(f'Error: invalid --crop-bottom value: {args[idx + 1]}', file=sys.stderr)
+            sys.exit(2)
+        if not (0.0 <= cb < 0.95):
+            print(f'Error: --crop-bottom out of range [0.0, 0.95): {cb}', file=sys.stderr)
+            sys.exit(2)
 
     rgb = np.array(Image.open(src).convert('RGB')).astype(np.float32)
+    if rgb.size == 0 or rgb.shape[0] == 0 or rgb.shape[1] == 0:
+        print('Error: empty image', file=sys.stderr)
+        sys.exit(2)
     if cb > 0:
-        rgb = rgb[:int(rgb.shape[0] * (1 - cb))]
+        crop_h = int(rgb.shape[0] * (1 - cb))
+        if crop_h <= 0:
+            print('Error: cropped image height is zero', file=sys.stderr)
+            sys.exit(2)
+        rgb = rgb[:crop_h]
     h, w = rgb.shape[:2]
 
     B = border_bg(rgb)

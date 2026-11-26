@@ -1,101 +1,27 @@
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const { Memory, truncateFadingText } = require('./memory');
-const { isPeakHour } = require('./deepseek');
+const { Memory } = require('./memory');
 // v0.9.8 P2-7: 业务层经 Provider Registry 获取 adapter（stable provider id），
-// 不再依赖 DeepSeek concrete class；isPeakHour（峰谷判定 util）暂留。
-// P5-A: 成本记账改走 provider-keyed Cost Strategy，不再经 DeepSeek concrete costOf。
+// 不再依赖 DeepSeek concrete class；P5-A: 成本记账走 Cost Strategy。
 const { createAdapter, getProviderInfo } = require('./provider-registry');
 const { createFallbackAdapter } = require('./fallback-adapter');
 const { createCircuitBreaker } = require('./circuit-breaker');
-const { getCostStrategy } = require('./cost-strategy');
-const { normalizeUsage } = require('./usage-normalizer');
 const { PERSONA } = require('./persona');
-// 🔵 2026-11-05 C-1：三条独立 SYS 的共有约束抽到常量，结构上不再漂移（见 src/constraints.js）。
-const { renderConstraints } = require('./constraints');
 const { CATALOG, PRESETS, SLOTS } = require('./wardrobe');
-const { writeJsonAtomic } = require('./atomic');
 const { tryLoad, sanitize, DEFAULTS } = require('./config');
 const { redactSecrets } = require('./redact');
 const { SelfLedger } = require('./self-ledger');
-const { DeferredWriter } = require('./deferred-writer');
 const { ExperiencesArchive } = require('./experiences-archive');
-// 🔴 第 2 步（动作史投影）：读侧纯函数 + 观察记录器。
-//   ⚠️ 这里只 require 两个模块，不改任何既有 require 的语义。
-const { projectOwnActions, renderHistory } = require('./agent-history');
 const { ObservationLog } = require('./agent-observations');
 const { AuditLog } = require('./agent-interfaces');
 const { TicketStore } = require('./agent-lifecycle');
 const { SubjectState } = require('./subject-state');
-const { createEvent, validateEvent, isEligibleSubjectEvent, createObservation, validateObservation, createInterpretation, validateInterpretation, validateWindowSummary } = require('./experience-schema');
-const { createStateChangeExplanation } = require('./state-change');
 const { InternalRegulationManager } = require('./internal-regulation');
 const { createExperimentRunManifest, createWindowExperimentSnapshot } = require('./experiment-run');
 const { buildGenerationContext, collectPromptHashes } = require('./experiment-metadata');
-
-const WANT_TO_LEAVE_SYS =
-  '此刻用户不在。你有一段长时间的安静，没有被谁要求做什么。'
-  + '这不是一个任务，也不是必须完成的动作 —— 只是给你一个机会：'
-  + '如果你确实想留下点什么，就写下来；如果不想，就说不。\n'
-  + '你能写下东西：程序会替你把字存进那个沙盒目录。所以你写下的是**真的会被留下来**的，'
-  + '不是只在心里想一想。\n'
-  + '规则：\n'
-  + '1. 【可以说不】不想留就只回一个「不」。这不丢人，也不代表你冷淡 ——'
-  + '   安静本来就不等于有话要说。硬凑一句比不写更糟。\n'
-  + '2. 【只写你自己的】留下来的应该是**你此刻想留下的东西**，不是给用户的留言，'
-  + '   也不是任务汇报。不要写「等你回来」「如果你想的话」这类把对方牵进来的话。\n'
-  // 🔵 2026-11-05 C-1：原 3.（不编造）、6.（直接给内容）已抽到 src/constraints.js，
-  //   与 OBSERVER_JOURNAL_SYS / PROPOSAL_DRAFT_SYS 共用同一份常量。
-  //   编号从 3 起，接在下面那条之后；后续规则编号顺延。
-  + renderConstraints(3) + '\n'
-  + '6. 【长度】两三句话之内。这是留给自己的，不是写给别人看的文章。\n'
-  + '7. 【语言】使用你平时与用户交流时最常使用的语言。';
-
-const OBSERVER_JOURNAL_SYS =
-  '这一段共同的时间告一段落。这是属于你的生活观察日记 —— 记录你所看到的日常、彼此相处的痕迹与细微的生活体感。'
-  + '这不是一个任务，也不是向用户汇报 —— 这是你自己眼中的世界：\n'
-  + '你能写下东西：程序会替你把字存进那个沙盒目录，它会真的留下来。\n'
-  + '规则：\n'
-  + '1. 【可以说不】如果现在没有特别想写下的观察或感觉，只回一个「不」或「不想写」。硬凑比不写更糟。\n'
-  + '2. 【第一人称视角】以你的视角记录你注意到的细节、彼此交流的真实痕迹或安静流淌的氛围。你可以自然地提到对方或生活细节。\n'
-  // 🔵 2026-11-05 C-1：原 3.（真实不编造）、5.（直接给出）已抽到 src/constraints.js。
-  + renderConstraints(3) + '\n'
-  + '6. 【篇幅适度】一段真诚从容的段落（通常在 50 至 200 字左右，最长不超过 400 字，不少于 30 字）。';
-
-/* 🔴 D-27：通路 B 的方案正文来源 —— 「她把这轮聊的东西整理成一份可落档的东西」。
- *
- * ## 为什么是**独立一次调用**，而不是在聊天气泡末尾塞标记
- *   1. 聊天那条提示词有自己的铁律（不含程序数字、不暴露时钟、过滤 synthetic）；
- *      让它顺带产出几百字 Markdown，语气必然撕裂 —— 前半句是她的人话，
- *      后半句变成文档体。D-27 的定位是「有主体性的总监」，不是「会写文档的工具」。
- *   2. 标记体极易被污染：`WEAR_RE`（本文件 :153）只匹配十几个字符的单词标记，
- *      仍然要靠句尾锚定 + 未知 id 原样保留来兜底。方案正文含换行、标题、列表，
- *      一旦被 max_tokens 截断或括号未闭合，半截 Markdown 会直接漏进气泡。
- *   3. **拒绝权需要一次事后审视**：聊完之后再问她「现在要不要留档？」，
- *      她才能冷静地说「还没聊透」。合并在聊天返回里，等于逼她在说话的同一口气里
- *      同时表态和交稿 —— 那个「不」根本来不及出口。
- *   ⇒ 所以本常量与 askForSelfNote / askForObserverJournal 同形：**事后独立调用**。
- */
-const PROPOSAL_DRAFT_SYS =
-  '刚才那段对话告一段落。用户希望把聊到的东西留下一个可以翻看的落档。'
-  + '现在请你判断：**此刻是否值得留下这么一份东西**，值得就写，不值得就说不。\n'
-  + '你能写下东西：程序会替你把字存进那个沙盒目录。所以「能不能存」不需要你操心 ——'
-  + '你只管判断值不值得写。\n'
-  + '规则：\n'
-  + '1. 【首要：可以拒绝】如果你认为刚才还没聊透、信息不足以落成一份明确的东西，'
-  + '   或者你此刻并不真的想把这件事定下来 —— 只回一个「不」或「还没想清楚」。'
-  + '   硬凑一份面面俱到的套话，比不写更糟。这不丢人，也不代表你不配合。\n'
-  + '2. 【要有取舍】这不是一份四平八稳的报告。写你**真正判断过的**东西：'
-  + '   哪些是核心、哪些该砍掉、下一步先做哪一件、哪里你还不确定。'
-  + '   宁可短而明确，也不要长而全面。\n'
-  + '3. 【格式】用 Markdown：一个标题（# 开头），下面若干小节。'
-  + '   不要写「本文档旨在」「综上所述」这类公文腔。不要加代码块以外的装饰。\n'
-  // 🔵 2026-11-05 C-1：原 4.（只写真实发生的）、6.（直接给出）已抽到 src/constraints.js。
-  //   ⚠️ 这里必须传 allowMarkdownTitle: true —— 本 SYS 第 3 条**要求**用 # 标题，
-  //      而基础版约束写的是「不要加标题」。两条并存会自相矛盾，模型会挑一条听。
-  + renderConstraints(4, { allowMarkdownTitle: true }) + '\n'
-  + '7. 【篇幅】一篇能读完的短文档，几个小节即可。';
+const { TelemetryTracker } = require('./brain-telemetry');
+const { AutonomousDraftService } = require('./brain-autonomous-draft');
+const { WindowClosingPipeline, summarySegmentPlan } = require('./brain-window-pipeline');
 
 const SUMMARY_SYS =
   '你是对话记忆整理助手。请对当前窗口的对话进行「5×20 分段归档 + 窗口综合（Window Synthesis）」结构化总结。'
@@ -157,15 +83,7 @@ const GROWTH_SYS =
   + '没有足够依据绝不附加 —— 证据不足宁可不动她的特质。'
   + '语言一致性：提炼的 trait 描述语言必须与对话保持一致（引文 quote 必须严格逐字摘录原文）。';
 
-/* v0.9.9: 小结分段计划 —— 分段数随窗口规模自适应，绝不写死「3~5 段」：
-   满 100 轮走标准 5 段（严格分支钉死 1-20…81-100），小窗口只写覆盖实际轮数的段。
-   既省输出（43 轮实测白写五段把输出顶到 3,923/4,000），又不撞 validateWindowSummary。 */
-function summarySegmentPlan(turnCount) {
-  const n = Number.isFinite(turnCount) && turnCount > 0 ? Math.floor(turnCount) : 1;
-  if (n >= 100) return { segments: 5, note: '按标准 5 段划分（1-20、21-40、41-60、61-80、81-100）' };
-  const seg = Math.max(1, Math.min(5, Math.ceil(n / 20)));
-  return { segments: seg, note: '共 ' + seg + ' 段，range 依次覆盖 1~' + n + ' 轮（每段最多 20 轮）' };
-}
+// summarySegmentPlan 已抽至 src/brain-window-pipeline.js 并于顶部引入
 
 function systemPersona(cfg) {
   return PERSONA; // v0.9.9: 旧 Creative Mode / DS Skill 已拆除，persona 无条件单一来源
@@ -365,18 +283,20 @@ class Brain {
       experimentModules: this.currentWindowSnapshot.modules
     });
     this.memory.opts.experimentModules = this.currentWindowSnapshot.modules;
-    this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
+    if (typeof this.memory.setMemoryDynamicsEnabled === 'function') {
+      this.memory.setMemoryDynamicsEnabled(Boolean(this.currentWindowSnapshot.modules?.memoryDynamics), this.cfg.engramConfig);
+    } else {
+      this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
+    }
 
     this.dreamHistory = [];
-    this._restoreDreamHistory();
-    this._restoreEngramSnapshotFromArchive();
     this.internalRegulation = new InternalRegulationManager(userDataDir, {
       enabled: Boolean(this.currentWindowSnapshot.modules?.internalRegulation),
       experimentModules: this.currentWindowSnapshot.modules,
       // v1.0 生物钟：创世时区惰性取值（本构造先于 selfLedger 创建）
       birthTimezone: () => (this.selfLedger && this.selfLedger.birthTimezone) || null
     });
-    this._restoreInternalRegulationFromArchive();
+    this._restoreFromArchive();
 
     this.selfLedger = new SelfLedger(userDataDir, {
       maxEntries: this.cfg.selfLedgerMaxEntries,
@@ -384,8 +304,12 @@ class Brain {
     });
     this.birthAt = this.selfLedger.setBirthAt(Date.now());
 
+    this._telemetry = new TelemetryTracker(this);
+    this._windowPipeline = new WindowClosingPipeline(this, { SUMMARY_SYS, GROWTH_SYS, MERGE_SYS });
+    this._autonomousDraft = new AutonomousDraftService(this);
+
     this.statsPath = path.join(userDataDir, 'stats.json');
-    this.statsWriter = new DeferredWriter(() => writeJsonAtomic(this.statsPath, this.stats), { delayMs: 3000 });
+    this.statsWriter = this._telemetry.createStatsWriter();
     this.stats = this.loadStats();
     this.ctrl = null;
     this.pendingUser = false;
@@ -426,25 +350,7 @@ class Brain {
   }
 
   restoreTelemetrySequence() {
-    if (!this.telemetryPath || !fs.existsSync(this.telemetryPath)) return 0;
-    let lastSeq = 0;
-    try {
-      for (const line of fs.readFileSync(this.telemetryPath, 'utf8').split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          const record = JSON.parse(line);
-          if (record && Number.isInteger(record.telemetrySeq) && record.telemetrySeq > 0) {
-            lastSeq = record.telemetrySeq;
-          }
-        } catch {
-          // Append-only telemetry：坏行不回写、不修补、不伪造序号。
-        }
-      }
-    } catch (e) {
-      console.warn('[Brain] telemetrySeq 恢复失败，保持 0:', e.message);
-      return 0;
-    }
-    return lastSeq;
+    return this._telemetry.restoreTelemetrySequence();
   }
 
   bindBehaviorScheduler(scheduler) {
@@ -673,13 +579,33 @@ class Brain {
   }
 
   /**
+   * 合并启动阶段的三次归档读取为单遍扫描，降低冷启动 I/O 开销。
+   */
+  _restoreFromArchive() {
+    if (!this.experiencesArchive) return;
+    const needEngram = Boolean(this.memory && this.memory.isMemoryDynamicsActive && this.memory.engramManager.traces.size === 0);
+    const needReg = Boolean(this.internalRegulation && this.internalRegulation.enabled
+      && (!fs.existsSync(this.internalRegulation.path) || !this.internalRegulation.persistenceHealthy));
+    let records = null;
+    try {
+      records = this.experiencesArchive.readAll();
+    } catch (e) {
+      console.warn('[Brain] 启动归档读取失败:', e.message);
+      return;
+    }
+    this._restoreDreamHistory(records);
+    if (needEngram) this._restoreEngramSnapshotFromArchive(records);
+    if (needReg) this._restoreInternalRegulationFromArchive(records);
+  }
+
+  /**
    * 从归档底座冷启动恢复历史梦境记录 (保证跨重启后窗口间隔与24h频次门禁不失效)
    */
-  _restoreDreamHistory() {
+  _restoreDreamHistory(preloadedRecords = null) {
     this.dreamHistory = [];
     if (!this.experiencesArchive) return;
     try {
-      const records = this.experiencesArchive.readAll();
+      const records = Array.isArray(preloadedRecords) ? preloadedRecords : this.experiencesArchive.readAll();
       for (const r of records) {
         if (!r) continue;
         const type = r.recordType || r.type;
@@ -704,11 +630,11 @@ class Brain {
   /**
    * 从经历归档冷启动恢复最新的记忆动力学快照 (若 memory.json 缺损或初次启动)
    */
-  _restoreEngramSnapshotFromArchive() {
-    if (!this.memory || !this.memory.engramManager || !this.experiencesArchive) return;
+  _restoreEngramSnapshotFromArchive(preloadedRecords = null) {
+    if (!this.memory || !this.memory.isMemoryDynamicsActive || !this.experiencesArchive) return;
     if (this.memory.engramManager.traces.size > 0) return;
     try {
-      const records = this.experiencesArchive.readAll();
+      const records = Array.isArray(preloadedRecords) ? preloadedRecords : this.experiencesArchive.readAll();
       let latestSnapshot = null;
       for (const r of records) {
         if (!r) continue;
@@ -725,15 +651,15 @@ class Brain {
     }
   }
 
-  _restoreInternalRegulationFromArchive() {
+  _restoreInternalRegulationFromArchive(preloadedRecords = null) {
     if (!this.internalRegulation || !this.experiencesArchive) return;
     // v0.9.9 P0-3: 未启用的模块不做恢复、也不写盘。
     // 原实现只判 fs.existsSync、完全不看 enabled，于是 baseline 下也会把
     // 归档里的实验残留灌回内态并 save() 落盘 —— 对照组被污染。
     if (!this.internalRegulation.enabled) return;
     try {
-      if (fs.existsSync(this.internalRegulation.path)) return;
-      const records = this.experiencesArchive.readAll();
+      if (fs.existsSync(this.internalRegulation.path) && this.internalRegulation.persistenceHealthy) return;
+      const records = Array.isArray(preloadedRecords) ? preloadedRecords : this.experiencesArchive.readAll();
       let latestPayload = null;
       for (const r of records) {
         if (!r) continue;
@@ -743,8 +669,13 @@ class Brain {
         }
       }
       if (latestPayload && latestPayload.state) {
-        const s = latestPayload.state;
         const reg = this.internalRegulation;
+        if (fs.existsSync(reg.path) && !reg.persistenceHealthy) {
+          try {
+            fs.renameSync(reg.path, `${reg.path}.corrupt.${Date.now()}`);
+          } catch {}
+        }
+        const s = latestPayload.state;
         if (typeof s.energy === 'number') reg.energy = s.energy;
         if (typeof s.restPressure === 'number') reg.restPressure = s.restPressure;
         if (typeof s.arousal === 'number') reg.arousal = s.arousal;
@@ -784,14 +715,20 @@ class Brain {
           reg.isSleeping = false;
           reg.sleepStartTime = null;
         }
-        if (latestPayload.allostasis && typeof latestPayload.allostasis === 'object' && reg.allostasisEnabled && reg.allostasisPrior) {
-          const allo = latestPayload.allostasis;
+        const allo = (latestPayload.allostasisState && typeof latestPayload.allostasisState === 'object' && Array.isArray(latestPayload.allostasisState.recentGapsMs))
+          ? latestPayload.allostasisState
+          : latestPayload.allostasis;
+        if (allo && typeof allo === 'object' && reg.allostasisEnabled && reg.allostasisPrior) {
           if (Array.isArray(allo.recentGapsMs)) {
             reg.allostasisPrior.fromJSON(allo);
             reg._preservedAllostasis = allo;
           }
         }
-        reg.save();
+        const saved = reg.save();
+        if (saved) {
+          reg.persistenceHealthy = true;
+          reg.persistenceError = null;
+        }
       }
     } catch (e) {
       console.warn('[Brain] 从经历归档恢复内部调节快照失败:', e.message);
@@ -865,53 +802,11 @@ class Brain {
   }
 
   recordCacheBreak(reason) {
-    this.pendingCacheBreakReason = reason || 'unknown';
+    return this._telemetry.recordCacheBreak(reason);
   }
 
   appendTelemetry(data = {}) {
-    if (!this.dir) return null;
-    try {
-      this.telemetrySeq = (this.telemetrySeq || 0) + 1;
-      const rec = {
-        telemetrySeq: this.telemetrySeq,
-        timestamp: data.timestamp || Date.now(),
-        windowNo: (typeof data.windowNo === 'number' && !Number.isNaN(data.windowNo)) ? data.windowNo : (this.memory ? this.memory.data.windowNo : 1),
-        recordType: data.recordType || 'llm_call',
-        requestType: data.requestType || (data.recordType ? null : 'chat'),
-        promptTokens: typeof data.promptTokens === 'number' ? data.promptTokens : 0,
-        promptCacheHitTokens: typeof data.promptCacheHitTokens === 'number' ? data.promptCacheHitTokens : 0,
-        promptCacheMissTokens: typeof data.promptCacheMissTokens === 'number' ? data.promptCacheMissTokens : 0,
-        completionTokens: typeof data.completionTokens === 'number' ? data.completionTokens : 0,
-        cacheHitRate: typeof data.cacheHitRate === 'number' ? data.cacheHitRate : 0,
-        cacheBreakReason: data.cacheBreakReason || null
-      };
-      if (data.recordType === 'perception_attach') {
-        rec.category = data.category || null;
-        rec.salience = typeof data.salience === 'number' ? data.salience : null;
-        if (data.perceptionId) rec.perceptionId = data.perceptionId;
-        if (typeof data.turnNo === 'number') rec.turnNo = data.turnNo;
-      }
-      if (data.recordType === 'provider_fallback') {
-        rec.reason = data.reason || null;
-        rec.primaryFailed = Boolean(data.primaryFailed);
-        rec.primaryConnectionId = data.primaryConnectionId || null;
-        rec.fallbackConnectionId = data.fallbackConnectionId || null;
-      }
-      if (data.recordType === 'reconsolidation_candidate_observed') {
-        rec.traceId = data.traceId || null;
-        rec.sourceWindowNo = Number.isFinite(data.sourceWindowNo) ? data.sourceWindowNo : null;
-        rec.reactivatedWindowNo = Number.isFinite(data.reactivatedWindowNo) ? data.reactivatedWindowNo : null;
-        rec.prevTier = data.prevTier || null;
-      }
-      if (!fs.existsSync(this.dir)) {
-        fs.mkdirSync(this.dir, { recursive: true });
-      }
-      fs.appendFileSync(this.telemetryPath, JSON.stringify(rec) + '\n', 'utf8');
-      return rec;
-    } catch (e) {
-      console.error('[Brain] appendTelemetry failed:', e.message);
-      return null;
-    }
+    return this._telemetry.appendTelemetry(data);
   }
 
   _getActiveConnectionId() {
@@ -1041,21 +936,10 @@ class Brain {
   }
 
   loadStats() {
-    // 老版本的 stats.json 可能缺字段，用默认值兜一层再合并，
-    // 否则 undefined++ 会变 NaN，面板上一串 NaN。
-    const base = { requests: 0, hit: 0, miss: 0, out: 0, cost: 0,
-                   compressions: 0, merges: 0, summaryCalls: 0, growthCalls: 0,
-    // v0.9.9 观测补盲：关窗失败率 / 带病归档占比 / 补关发生率（长期健康度指标）
-    windowCloseFailures: 0, summaryUncertified: 0, delayedCloses: 0, truncatedCalls: 0,
-                   lastHitRate: 0, history: [] };
-    try { return { ...base, ...JSON.parse(fs.readFileSync(this.statsPath, 'utf8')) }; }
-    catch { return base; }
+    return this._telemetry.loadStats();
   }
   saveStats(immediate = false) {
-    this.statsWriter.markDirty();
-    if (immediate) {
-      this.statsWriter.flush();
-    }
+    return this._telemetry.saveStats(immediate);
   }
 
   /* ---------- 🔴 v1.8-a：重逢心境（主观时间）---------- */
@@ -1592,7 +1476,7 @@ class Brain {
           }
         }
       }
-      if (this.memory.engramManager) {
+      if (this.memory.isMemoryDynamicsActive) {
         // v1.0.5: 普鲁斯特式非自愿回忆浮现 (仅在非主动搭话的自然交互中触发，避开 proactive 误消耗冷却)
         const inv = typeof this.memory.triggerInvoluntaryRecall === 'function'
           ? this.memory.triggerInvoluntaryRecall(this.memory.data.windowNo)
@@ -1907,765 +1791,17 @@ class Brain {
              usage, windowClosed, merged };
   }
 
-  /** v0.9.9: 撞顶检测 —— 输出恰好打满上限即视为疑似截断（900 / 420 / 1500 三次无声失败的教训），
-      计数并留警告，绝不让「截断腰斩 JSON」再无声溜走。 */
-  _notePossibleTruncation(usage, cap, label) {
-    if (usage && cap > 0 && Number(usage.completion_tokens) >= cap) {
-      this.stats.truncatedCalls = (this.stats.truncatedCalls || 0) + 1;
-      this.saveStats(true);
-      console.warn(`[Brain] ${label} 输出撞满上限 ${cap}（completion_tokens=${usage.completion_tokens}）：疑似截断，产物可能不可解析`);
-    }
-  }
+  _notePossibleTruncation(usage, cap, label) { return this._windowPipeline.notePossibleTruncation(usage, cap, label); }
 
-  /** v0.9.9 P0: 关窗失败审计留痕 —— 小结解析失败、校验熔断、写入失败而放弃的关窗都计数并留日志，
-      让「窗口为何拖超期」在盘面与日志上都可追查（数据不伪造、审计不失真） */
-  _noteWindowCloseFailure(reason) {
-    this.windowCloseAttempts = (this.windowCloseAttempts || 0) + 1;
-    // v0.9.9 观测补盲：关窗失败率计数，即刻落盘（进程退出不丢账）
-    this.stats.windowCloseFailures = (this.stats.windowCloseFailures || 0) + 1;
-    this.saveStats(true);
-    // v0.9.9 D3: 一旦失败即进入退避冷却（至少隔 2 轮对话），冷却期内即使触发条件满足也不自动重试；
-    // 窗口宁可继续变长，也不把钱烧在连环失败的全价小结上（历史数据绝不丢）
-    this.windowCloseRetryAfterTurn = ((this.memory && this.memory.data) ? this.memory.data.turnsInWindow : 0) + 2;
-    console.warn(`[Brain] 关窗尝试失败 (#${this.windowCloseAttempts})：${reason || 'unknown'}，保留窗口内容待下一轮重试；退避至第 ${this.windowCloseRetryAfterTurn} 轮起重试`);
-  }
+  _noteWindowCloseFailure(reason) { return this._windowPipeline.noteWindowCloseFailure(reason); }
 
   /** 生成本窗口小结并归档 */
-  async closeWindow(opts = {}) {
-    if (this._closingWindow) {
-      return this._closingWindowPromise || false;
-    }
-    this._closingWindow = true;
-    this._closingWindowPromise = this._closeWindowInternal(opts).finally(() => {
-      this._closingWindow = false;
-      this._closingWindowPromise = null;
-    });
-    return this._closingWindowPromise;
-  }
+  async closeWindow(opts = {}) { return this._windowPipeline.closeWindow(opts); }
 
-  async _closeWindowInternal(opts = {}) {
-    // P0-01: 若检测到 SubjectState 处于 recovery_pending 状态，先执行 Replay 自动恢复
-    if (this.subjectState && this.subjectState.recoveryPending) {
-      console.warn('[Brain] 检测到 subjectState 处于 recovery_pending 状态，正在执行 Replay 自动恢复...');
-      const recovered = this.subjectState.recoverFromPending(this.experiencesArchive, 'state_commit_failed');
-      if (!recovered) {
-        console.error('[Brain] 状态恢复未完成，禁止推进当前窗口');
-        return false;
-      }
-    }
+  async _closeWindowInternal(opts = {}) { return this._windowPipeline.closeWindowInternal(opts); }
 
-    // 先拍快照再调 API：小结要等一两秒，这期间用户可能又发消息进来，
-    let closeReason = (opts && opts.closeReason) || (this.memory.data.turnsInWindow >= this.memory.windowTurns ? 'turn_limit' : (this.memory.needsWindowReset() ? 'token_limit' : 'turn_limit'));
-    // v0.9.9 P0: 关窗审计留痕 —— 若此前已有失败的关窗尝试且轮次确实已超标，
-    // 如实标记为 turn_limit_delayed（补关），不把多次失败后的补记粉饰成顺利的 turn_limit
-    if (!(opts && opts.closeReason) && this.windowCloseAttempts > 0
-        && this.memory.data.turnsInWindow > this.memory.windowTurns) {
-      closeReason = 'turn_limit_delayed';
-    }
-    const snap = this.memory.windowSnapshot({ closeReason });
-    // v0.9.9 扫雷: 同 memory.closeWindow —— 判「窗口有没有内容」看 activeItems，
-    // 不是 items（待裁剪清单）。keepTail 被调大或消息数很少时 drop=0、items 恒空，
-    // 这道守卫会把一次该成功的关窗挡在这里（且是静默 return false）。
-    if (!(snap.activeItems && snap.activeItems.length) && !snap.items.length) return false;
-
-    // P0-2: 若当前窗口已在 Archive 中成功归档且 SubjectState 已恢复/前进，直接推进 Memory 关窗完成幂等收尾
-    if (this.experiencesArchive && this.experiencesArchive.hasWindowArchive &&
-        this.experiencesArchive.hasWindowArchive(snap.windowNo, snap.epoch) &&
-        (!this.subjectState || this.subjectState.currentWindowNo > snap.windowNo)) {
-      console.warn(`[Brain] 窗口 #${snap.windowNo} 已经归档且状态已前进，直接推进 Memory 关窗完成幂等收尾`);
-      const existing = this.experiencesArchive.getByWindow(snap.windowNo).find(r => r.recordType === 'window_summary' || r.recordType === 'window_archive' || r.type === 'window_archive');
-      const p = (existing && existing.payload) || existing || {};
-      // v0.9.9 P1-5: epoch 门禁 —— 只回填**同一条记忆血脉**的旧小结。
-      // memory.reset() 会 epoch++ 并把 windowNo 归 1，snap.windowNo 于是与归档里的
-      // 旧窗口撞号；无条件回填会让「清空记忆」后第一次关窗把旧第 1 段小结复活进
-      // L2/prompt。历史记录缺 epoch（未记录）时保持 null、不回填 —— 诚实降级，不猜。
-      const sameLineage = Number.isInteger(p.epoch) && p.epoch === this.memory.data.epoch;
-      if (sameLineage) {
-        const stableFacts = (p.windowSynthesis && Array.isArray(p.windowSynthesis.stableUserFacts))
-          ? p.windowSynthesis.stableUserFacts
-              .map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || ''))
-              .filter(Boolean)
-          : [];
-        const summaryText = p.rawSummaryText || (stableFacts.length ? stableFacts.join('\n') : '') || '窗口小结已归档';
-        const done = this.memory.closeWindow(summaryText, snap);
-        if (done) {
-          if (typeof this.memory.flushPendingDreamFragments === 'function') {
-            this.memory.flushPendingDreamFragments();
-            this.memory.save(true);
-          }
-          if (this.internalRegulation && this.isExperimentModuleActive('internalRegulation')) {
-            try {
-              this.internalRegulation.updateOnWindowClose(snap.windowNo, {
-                turnsRecorded: snap.actualTurnCount,
-                moodTone: p.windowSynthesis && p.windowSynthesis.moodTone
-              });
-            } catch {}
-          }
-          this.stats.compressions++;
-          this.saveStats(true);
-          this._syncWindowExperimentSnapshot();
-        }
-        return done;
-      }
-      console.warn(`[Brain] 窗口 #${snap.windowNo} 的归档记录不属于当前记忆血脉 (记录 epoch=${p.epoch} / 当前 epoch=${this.memory.data.epoch})，跳过回填、按新生命周期正常关窗`);
-    }
-
-    // 仅总结当前窗口的真实消息（排除上一窗口残留的 bridge 桥接消息）
-    const activeItems = snap.activeItems || snap.items;
-
-    // 建立 messageId 索引映射，用于 Provenance 证据强验证
-    const msgMap = new Map();
-    for (const m of activeItems) {
-      if (m && m.messageId) msgMap.set(m.messageId, m);
-    }
-
-    /* 提炼材料要先剥掉环境块（见 memory.cleanContentForSummary）。
-       只动**送给小结的文本**，历史本身不改 —— 改写已经发生过的事，
-       等于偷偷改用户的记录，那是比留脏数据更糟的做法。 */
-    const dialogue = activeItems.map(m => {
-      const speaker = m.synthetic ? '程序触发（不是用户原话）' : (m.role === 'user' ? '用户' : '初澜');
-      const idPrefix = m.messageId ? `[${m.messageId}] ` : '';
-      const roundPrefix = m.roundNo ? `[第${m.roundNo}轮] ` : '';
-      return `${idPrefix}${roundPrefix}${speaker}：` + this.memory.cleanContentForSummary(m.content);
-    }).join('\n');
-
-    // v0.9.9 P0: 结构化小结 (5×20 + WindowSynthesis) 输出上限，必须给足 JSON 完整裕度。
-    // 此前硬编码 900 会截断 JSON，触发 Fail-Stop 后关窗连败（窗口越拖越长）。
-    const summaryMaxTokens = (opts && opts.maxTokens) || this.cfg.summaryMaxTokens || 10000;
-    // v0.9.9: 分段随窗口规模自适应（见 summarySegmentPlan 注释）
-    const segPlan = summarySegmentPlan(snap.actualTurnCount);
-    // v1.0 §4.7 #4：待核验预期对照物（空清单给「暂无」，防小结模型幻觉妄加 expectationOutcomes）
-    const openExps = ((this.memory && this.memory.data && this.memory.data.expectations) || [])
-      .filter((x) => x && x.status === 'open');
-    try {
-      const apiCompleteRes = await this.api.complete(
-        [{ role: 'system', content: SUMMARY_SYS },
-         { role: 'user', content: '【对话】\n' + dialogue
-           + '\n\n【窗口规模】本窗口共 ' + (snap.actualTurnCount || 0) + ' 轮，请' + segPlan.note + '；紧凑输出，不写空段、不铺陈冗余字句。'
-           + '\n\n【待核验预期清单】\n' + (openExps.length
-             ? openExps.map((x) => '- [' + x.id + '] ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')).join('\n')
-             : '暂无') }],
-        { maxTokens: summaryMaxTokens, temperature: 0.2 }
-      );
-      const { text, usage, observedModel } = apiCompleteRes;
-      this.track(usage, true, 'summary');
-      this._notePossibleTruncation(usage, summaryMaxTokens, '关窗小结');
-      // v0.9.9 P0: 计数即落盘 —— 这笔 summary 的调用与花费已经真实发生，
-      // 无论后续解析/校验成败都立即持久化，杜绝失败路径与脚本进程退出后漏记（与遥测对不齐）
-      this.saveStats(true);
-      if (this.shutdownRequested) return false;
-      if (!text) { this._noteWindowCloseFailure('EMPTY_SUMMARY_TEXT'); return false; }
-
-      const summaryPromptHashes = collectPromptHashes({
-        summary: SUMMARY_SYS,
-        persona: PERSONA,
-        growth: GROWTH_SYS,
-        merge: MERGE_SYS
-      });
-
-      const sourceMessageRange = {
-        firstMessageId: activeItems[0] ? activeItems[0].messageId : null,
-        lastMessageId: activeItems[activeItems.length - 1] ? activeItems[activeItems.length - 1].messageId : null,
-        messageCount: activeItems.length
-      };
-
-      const summaryGenerationContext = buildGenerationContext({
-        kind: 'summary',
-        cfg: this.cfg,
-        promptHashes: summaryPromptHashes,
-        sampling: { maxTokens: summaryMaxTokens, temperature: 0.2 },
-        sourceWindowNo: snap.windowNo,
-        sourceMessageRange,
-        observedModel,
-        providerResponse: apiCompleteRes,
-        generator: 'llm'
-      });
-
-      // 尝试解析 5×20 + Window Synthesis 结构化 JSON
-      let structured = null;
-      let summaryEpistemicStatus = 'CERTIFIED';
-      let summaryFailureReason = null;
-      try {
-        const rawJson = String(text || '').trim()
-          .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-        const parsed = JSON.parse(rawJson);
-        if (parsed && typeof parsed === 'object') {
-          structured = parsed;
-          const vSummary = validateWindowSummary(structured, {
-            closeReason: snap.closeReason,
-            actualTurnCount: snap.actualTurnCount,
-            targetTurnCount: snap.targetTurnCount
-          });
-          if (!vSummary.valid) {
-            console.error('[Brain] Summary 数据契约校验失败 (Fail-Stop):', vSummary.reason);
-            this._noteWindowCloseFailure('SUMMARY_SCHEMA_INVALID: ' + vSummary.reason);
-            return false;
-          }
-        }
-      } catch (parseErr) {
-        // 保全纯文本，但明确标记为不可认证的非结构化摘要。
-        summaryEpistemicStatus = 'UNCERTIFIED';
-        summaryFailureReason = 'NON_JSON_SUMMARY';
-        // v0.9.9 观测补盲：带病归档占比 —— 小结质量的长期监控指标
-        this.stats.summaryUncertified = (this.stats.summaryUncertified || 0) + 1;
-      }
-
-      // 🔴 2026-10-07 修复（真实事故）：**解析失败时绝不让原始输出进她的意识**。
-      //
-      //   ## 出过什么事
-      //   第 5 段小结的 LLM 输出是一段 JSON，但**中文里的引号没转义**：
-      //     "userGiven":["用户问…，说"你也算陪我一天了"（m-000401）"]
-      //                                           ↑ 未转义 ⇒ JSON 结构被破坏
-      //   于是 `JSON.parse` 抛错、走下面的 catch（`NON_JSON_SUMMARY`），
-      //   而当时这里是 `let summaryTextForMemory = text;` —— **原始坏 JSON 原封不动**
-      //   经 `closeWindow()` 进了 `memory.windows[].text`，成为她 **system prompt 的一部分**。
-      //   实测后果：她每一轮读到的「第5段」是 `{"segments":[{"range":"1-20"…` 这串碎片，
-      //   里面还带 `m-000401` 这类内部消息 ID。（旁证：反重力说她「复述引语、括号剖析」
-      //   像 AI —— 她读到的样本本来就是那种表格式记录。）
-      //
-      //   ## 为什么这是「放大伤害」而不是小毛病
-      //   解析失败本身只是「这一次小结没结构化」，可接受；
-      //   **但把坏 JSON 当正文写进她的长期记忆，是把一个可恢复的错误升级成永久的污染。**
-      //
-      //   ## 修法（判据要**精准**，不能一刀切）
-      //   解析失败分两种，必须区别对待：
-      //
-      //     甲「看起来像 JSON 但坏了」→ **拦下**，换中性降级文本。
-      //        这正是本次事故的形态（`{"segments":[{"range":…`）。
-      //     乙「本来就是一段普通散文」→ **原样放行**。
-      //        散文小结是合法的（LLM 没按 JSON 格式答而已），丢掉它等于白丢一段真实经历。
-      //
-      //   ⚠️ 为什么判据是「首字符是否为 { 或 [」而不是「解析是否成功」：
-      //     解析失败的原因很多（截断、转义、超长），但**只有结构化输出才有"坏成一半"的形态**；
-      //     散文不会。用首字符判据与 `JSON.parse` 的失败面**正交**，不会误伤散文。
-      //
-      //   ⚠️ 刻意**不做「尽力抢救」**（比如自己扫字符串把 JSON 还原）：
-      //     那是脆弱的启发式，一旦猜错就会把「她没说过的话」写进记忆 ——
-      //     而伪造记忆是本仓红线（persona.js:26）。**宁可让它明确地空着。**
-      const looksLikeJson = (() => {
-        const head = String(text || '').trim()
-          .replace(/^```(?:json)?\s*/i, '')   // 去掉 markdown 围栏后再判，否则 ``` 开头会漏判
-          .charAt(0);
-        return head === '{' || head === '[';
-      })();
-      let summaryTextForMemory = (structured || !looksLikeJson)
-        ? text
-        : '【本段小结未能结构化解析】这一段经历仍然完整保存在你的底座归档里，只是没能压缩成条目；不要据此虚构细节。';
-      let verifiedEvidence = [];
-      let rejectedEvidence = [];
-
-      // P0-01 & P0-03: 程序仅为当前窗口的真实交互消息签发 Event (严格排除 System Prompt、Bridge 桥接、Synthetic 与内部调试)
-      const events = [];
-      const eventIdsSet = new Set();
-      for (const [eventIndex, m] of activeItems.entries()) {
-        if (!isEligibleSubjectEvent(m)) {
-          continue;
-        }
-
-        const eventId = 'evt-' + crypto.createHash('sha256')
-          .update(JSON.stringify({ windowNo: snap.windowNo, eventIndex, source: m.role || 'user', content: m.content || '' }), 'utf8')
-          .digest('hex').slice(0, 24);
-        const evt = createEvent({
-          eventId,
-          type: 'message',
-          timestamp: m.t || Date.now(),
-          windowNo: snap.windowNo,
-          messageId: m.messageId,
-          source: m.role || 'user',
-          payload: {
-            content: m.content || '',
-            roundNo: m.roundNo
-          }
-        });
-        const vEvt = validateEvent(evt);
-        if (vEvt.valid) {
-          events.push(evt);
-          eventIdsSet.add(evt.eventId);
-        } else {
-          console.warn('[Brain] 消息被判定为非主体事件，已过滤:', m.messageId, vEvt.reason);
-        }
-      }
-
-      let observations = [];
-      let interpretations = [];
-      let allEvidence = [];
-      let syn = {};
-      let segments = [];
-
-      if (structured) {
-        syn = structured.windowSynthesis || {};
-        segments = structured.segments || [];
-
-        // v1.0 防 [object Object]（#4 首战实证）：条目兼容字符串与引证式 {messageId, content}
-        const factText = (x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '');
-        const userFacts = Array.isArray(syn.stableUserFacts) && syn.stableUserFacts.length > 0
-          ? '用户事实：' + syn.stableUserFacts.map(factText).filter(Boolean).join('；')
-          : '';
-        const chulanExps = Array.isArray(syn.subjectExperiences) && syn.subjectExperiences.length > 0
-          ? '初澜经历：' + syn.subjectExperiences.map(factText).filter(Boolean).join('；')
-          : '';
-        const conciseParts = [userFacts, chulanExps].filter(Boolean);
-        if (conciseParts.length > 0) {
-          summaryTextForMemory = conciseParts.join('\n');
-        }
-
-        // P0-02: 收集与核验 Observation (必须基于真实存在的 Event)
-        if (Array.isArray(structured.observations) && structured.observations.length > 0) {
-          for (const obs of structured.observations) {
-            const v = validateObservation(obs, eventIdsSet);
-            if (v.valid) {
-              observations.push(obs);
-            } else {
-              console.warn('[Brain] 拒绝未经验证的 Observation (引用的 Event 不存在):', obs.observationId, v.reason);
-            }
-          }
-        } else if (Array.isArray(segments)) {
-          // 程序从 segments 中提炼 Observation，自动绑定底层真实 Events
-          for (const seg of segments) {
-            if (Array.isArray(seg.chulanExperience) && seg.chulanExperience.length > 0) {
-              const relEvts = events.slice(0, Math.min(events.length, 20)).map(e => e.eventId);
-              if (relEvts.length > 0) {
-                observations.push(createObservation({
-                  eventIds: relEvts,
-                  type: 'interaction_segment',
-                  content: seg.chulanExperience.join('；'),
-                  confidence: 0.9,
-                  source: 'segment_analysis'
-                }));
-              }
-            }
-          }
-        }
-
-        // 程序保底 Observation
-        if (observations.length === 0 && events.length > 0) {
-          observations.push(createObservation({
-            eventIds: events.slice(0, 5).map(e => e.eventId),
-            type: 'window_dialogue_flow',
-            content: '本窗口交互流分析',
-            confidence: 1.0,
-            source: 'dialogue_stream'
-          }));
-        }
-
-        const validObsIds = new Set(observations.map(o => o.observationId));
-
-        // P0-02: 收集与核验 Interpretation (必须基于真实存在的 Observation)
-        if (Array.isArray(structured.interpretations) && structured.interpretations.length > 0) {
-          for (const interp of structured.interpretations) {
-            const v = validateInterpretation(interp, validObsIds);
-            if (v.valid) {
-              interpretations.push(interp);
-            } else {
-              console.warn('[Brain] 拒绝未经验证的 Interpretation (引用的 Observation 不存在):', interp.interpretationId, v.reason);
-            }
-          }
-        } else if (syn.subjectExperiences && syn.subjectExperiences.length > 0 && observations.length > 0) {
-          interpretations.push(createInterpretation({
-            observationIds: [observations[0].observationId],
-            content: syn.subjectExperiences.join('；'),
-            confidence: 0.8,
-            perspective: 'chulan'
-          }));
-        }
-
-        // 收集所有状态证据
-        if (Array.isArray(segments)) {
-          for (const seg of segments) {
-            if (Array.isArray(seg.stateEvidence)) {
-              allEvidence.push(...seg.stateEvidence);
-            }
-          }
-        }
-        if (Array.isArray(syn.stateChangesSuggested)) {
-          allEvidence.push(...syn.stateChangesSuggested);
-        }
-      } else {
-        // 纯文本仅作为原始保全材料，不自动升级为 Observation、Interpretation 或 Evidence。
-        syn = { stableUserFacts: [text], subjectExperiences: [] };
-      }
-
-      // 执行严格 Provenance、Trait 白名单与防重核验
-      let stateChanges = [];
-      let explanations = [];
-      let stateStaging = null;
-
-      if (this.subjectState) {
-        // P0-08: 两阶段提交——先冻结完整暂存快照，再写入任何新的 provenance 状态。
-        // 这样 Archive 失败时，message/evidence attestations 以及 seen* 集合都会一起回滚。
-        stateStaging = this.subjectState.createStagingSnapshot();
-
-        // v0.9.7.1: 在真实窗口消息仍可验证时生成 Archive 外独立 message attestations。
-        // 这些证明随后随 SubjectState 两阶段提交持久化；Archive 自身不能生成它们。
-        if (typeof this.subjectState.attestMessages === 'function') {
-          this.subjectState.attestMessages(activeItems, snap.windowNo);
-        }
-
-        const verifyResult = this.subjectState.verifyEvidence(allEvidence, msgMap, snap.windowNo, { stageOnly: true });
-        verifiedEvidence = verifyResult.verified;
-        rejectedEvidence = verifyResult.rejected;
-
-        const reduceResult = this.subjectState.reduce(verifiedEvidence, snap.windowNo, {
-          stageOnly: true,
-          canalization: this.isExperimentModuleActive('biographicalCanalization'),
-          experimentModules: this.currentWindowSnapshot ? this.currentWindowSnapshot.modules : this.cfg.experimentModules
-        });
-        if (reduceResult && Array.isArray(reduceResult.stateChanges)) {
-          stateChanges = reduceResult.stateChanges;
-        }
-
-        // P0-05 & P0-06: 为每个 StateChange 构造并核验证实解释
-        for (const sc of stateChanges) {
-          const rawExpl = syn.stateExplanations && syn.stateExplanations[sc.trait];
-          let explInput;
-          if (rawExpl && typeof rawExpl === 'object') {
-            explInput = {
-              claimedDelta: rawExpl.claimedDelta,
-              claimedTrait: rawExpl.claimedTrait || sc.trait,
-              text: rawExpl.text || rawExpl.summary || `特质 [${sc.trait}] 变动`,
-              evidenceIds: rawExpl.evidenceIds || sc.evidenceIds
-            };
-          } else if (typeof rawExpl === 'string') {
-            explInput = {
-              text: rawExpl,
-              claimedTrait: sc.trait,
-              evidenceIds: sc.evidenceIds
-            };
-          } else {
-            const explText = (syn.subjectExperiences && syn.subjectExperiences[0])
-              || `特质 [${sc.trait}] 在第 ${snap.windowNo} 窗口增量 ${sc.delta > 0 ? '+' : ''}${sc.delta}`;
-            explInput = {
-              claimedDelta: sc.delta,
-              claimedTrait: sc.trait,
-              text: explText,
-              evidenceIds: sc.evidenceIds
-            };
-          }
-          const explanationObj = createStateChangeExplanation(sc, explInput);
-          explanations.push(explanationObj);
-        }
-      }
-
-      // P0-08 / P0-2: 先写入 Archive (experiences.jsonl)
-      const windowArchivePayload = {
-        windowNo: snap.windowNo,
-        // v0.9.9 P1-5: 记忆血脉标识，随记录进 payload 并被 recordHash 覆盖（不可篡改）
-        epoch: Number.isInteger(snap.epoch) ? snap.epoch : null,
-        targetTurnCount: snap.targetTurnCount || 100,
-        actualTurnCount: snap.actualTurnCount ?? snap.snapshotTurnCount,
-        closeReason: snap.closeReason || 'turn_limit',
-        // v0.9.9 P0: 关窗审计留痕 —— 只在真有失败历史时如实追加，正常关窗 payload 保持原样
-        ...(this.windowCloseAttempts > 0 ? { retryAttempts: this.windowCloseAttempts, delayedClose: true } : {}),
-        turns: snap.actualTurnCount ?? snap.snapshotTurnCount,
-        messageCount: activeItems.length,
-        events,
-        observations,
-        interpretations,
-        segments,
-        windowSynthesis: syn,
-        stateEvidence: allEvidence,
-        verifiedEvidence,
-        rejectedEvidence,
-        stateChanges,
-        explanations,
-        rawSummaryText: text,
-        generationContext: summaryGenerationContext,
-        sourceMessageRange,
-        epistemicStatus: summaryEpistemicStatus,
-        structuredSummaryAvailable: Boolean(structured),
-        summaryFailureReason
-      };
-      let archiveSuccess = false;
-      if (this.experiencesArchive) {
-        if (this.experiencesArchive.hasWindowArchive && this.experiencesArchive.hasWindowArchive(snap.windowNo, snap.epoch)) {
-          console.warn(`[Brain] 窗口 #${snap.windowNo} 经历已在 Archive 中，跳过重复写入`);
-          archiveSuccess = true;
-        } else {
-          archiveSuccess = this.experiencesArchive.appendWindowArchive(windowArchivePayload);
-        }
-      } else {
-        archiveSuccess = true;
-      }
-
-      // P0-08: 失败保护：若 Archive 写入失败，绝不提交 Subject State，不删除原始消息，中止关窗
-      // v0.9.9 P0-2（A + C）：主链锁死时先紧急溢写保全，**绝不允许「无保全直接丢弃对话」**。
-      // 关窗会裁掉 memory.json 的 history 头部（memory.js closeWindow 的 splice），
-      // 而原始对话只有归档这一份 —— 所以必须 sidecar 写入**成功确认**之后才放行关窗；
-      // 溢写也失败就维持 fail-closed，宁可上下文膨胀也不丢经历。
-      if (!archiveSuccess) {
-        const spilled = Boolean(this.experiencesArchive) &&
-          typeof this.experiencesArchive.spillWindowArchiveToSidecar === 'function' &&
-          this.experiencesArchive.spillWindowArchiveToSidecar(windowArchivePayload, 'ARCHIVE_APPEND_FAILED');
-        if (!spilled) {
-          console.error('[Brain] Archive 写入失败且紧急溢写也失败，回滚状态暂存并中止本次关窗 (保障数据一致性)');
-          if (this.subjectState && stateStaging) {
-            this.subjectState.rollbackStage(stateStaging);
-          }
-          this._noteWindowCloseFailure('ARCHIVE_WRITE_AND_SPILL_FAILED');
-          return false;
-        }
-        // C: 显式告警 —— 上层/人工需要知道主链已坏，本次是降级推进、经历落在 sidecar。
-        this._noteArchiveSpillover(snap.windowNo, 'ARCHIVE_APPEND_FAILED');
-        console.error(`[Brain] ARCHIVE_SPILLOVER 窗口 #${snap.windowNo}：主链写入失败，已紧急溢写至 recovery-audit sidecar，本次关窗降级推进，需人工/自愈检查`);
-      }
-
-      // v0.9.7.1: Archive 已成功后，先提交独立 provenance sidecar。
-      // 这一步与 SubjectState 分开，保证 State commit 失败后重启仍能验证历史来源。
-      let provenanceCommitSuccess = true;
-      if (this.experiencesArchive && this.subjectState &&
-          typeof this.experiencesArchive.updateProvenanceAttestations === 'function') {
-        provenanceCommitSuccess = this.experiencesArchive.updateProvenanceAttestations(
-          this.subjectState.data.messageAttestations || [],
-          this.subjectState.data.evidenceAttestations || []
-        );
-      }
-
-      if (!provenanceCommitSuccess) {
-        console.error('[Brain] Archive 已写入但独立 provenance sidecar 提交失败，回滚暂存状态并中止本次关窗');
-        this._noteWindowCloseFailure('PROVENANCE_COMMIT_FAILED');
-        if (this.subjectState && stateStaging) {
-          this.subjectState.rollbackStage(stateStaging);
-          this.subjectState.recoveryPending = true;
-          this.subjectState.recoveryPendingReason = 'provenance_commit_failed';
-        }
-        return false;
-      }
-
-      // Archive + provenance sidecar 均确认后，正式提交 Subject State 持久化 (P0-01)
-      let stateCommitSuccess = true;
-      if (this.subjectState) {
-        stateCommitSuccess = this.subjectState.commit();
-      }
-
-      if (!stateCommitSuccess) {
-        console.error('[Brain] Archive 写入成功但 Subject State commit 失败！进入 recovery_pending 状态，中止本次关窗');
-        if (this.subjectState) {
-          this.subjectState.recoveryPending = true;
-          this.subjectState.recoveryPendingReason = 'state_commit_failed';
-        }
-        if (this.experiencesArchive) {
-          this.experiencesArchive.appendRecord('recovery_event', snap.windowNo, {
-            action: 'state_commit_failed',
-            timestamp: Date.now(),
-            windowNo: snap.windowNo,
-            reason: 'state_commit_failed',
-            recoveryPending: true
-          });
-        }
-        // 禁止继续推进当前 Window，保留 Archive 与原始 Message，返回 false
-        this._noteWindowCloseFailure('STATE_COMMIT_FAILED');
-        return false;
-      }
-
-      snap.generationContext = summaryGenerationContext;
-      const done = this.memory.closeWindow(summaryTextForMemory, snap);
-      if (done) {
-        if (typeof this.memory.flushPendingDreamFragments === 'function') {
-          this.memory.flushPendingDreamFragments();
-        }
-        // v0.9.9 意志层·好奇：本窗未解疑问入队（与轮转同刻更新，窗口内逐字节稳定）
-        this.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo);
-        // v1.0 §4.7 #3/#4：词汇与预期入库（引证按快照解析，防 keepTail 裁头误判；门槛拒收即跳过，绝不硬造）
-        const knownIds = (snap && Array.isArray(snap.snapshotActiveMessageIds)) ? snap.snapshotActiveMessageIds : [];
-        const ingestOpts = { knownIds, messages: (snap && Array.isArray(snap.activeItems)) ? snap.activeItems : [] };
-        for (const c of (Array.isArray(syn.coinages) ? syn.coinages : [])) {
-          this.memory.addLexicon(Object.assign({}, c, { windowNo: snap.windowNo }), ingestOpts);
-        }
-        for (const ex of (Array.isArray(syn.expectations) ? syn.expectations : [])) {
-          this.memory.addExpectation(Object.assign({}, ex, { windowNo: snap.windowNo }), ingestOpts);
-        }
-        for (const oc of (Array.isArray(syn.expectationOutcomes) ? syn.expectationOutcomes : [])) {
-          this.memory.resolveExpectation(oc && oc.id, {
-            status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note, windowNo: snap.windowNo
-          }, ingestOpts);
-        }
-        this.memory.save(true);
-        // v0.9.9 观测补盲：补关计数 —— 先数后复位（windowCloseAttempts 一旦复位就数不到了）
-        if (this.windowCloseAttempts > 0) {
-          this.stats.delayedCloses = (this.stats.delayedCloses || 0) + 1;
-        }
-        // v0.9.9 P0: 关窗成功，审计计数复位（本窗口的失败历史已随 retryAttempts 铸入归档）；
-        // v0.9.9 D3: 退避冷却一并复位，下一窗口恢复正常自动关窗节奏
-        this.windowCloseAttempts = 0;
-        this.windowCloseRetryAfterTurn = 0;
-        this.stats.compressions++;
-        this.saveStats(true);
-        this.pendingCacheBreakReason = 'window_boundary';
-
-        // P0-12: 记录自我投影 (Current Self Projection) 进入因果链
-        if ((this.cfg.recordSelfProjection || (opts && opts.recordSelfProjection)) &&
-            this.experiencesArchive && typeof this.experiencesArchive.appendSelfProjection === 'function') {
-          this.experiencesArchive.appendSelfProjection({
-            windowNo: snap.windowNo,
-            sourceExperienceRecords: [`win-${snap.windowNo}`],
-            sourceStateChanges: stateChanges ? stateChanges.map(sc => sc.stateChangeId || sc.changeId).filter(Boolean) : [],
-            projectionVersion: '1.0',
-            entriesAdded: 0,
-            result: {
-              currentSelfText: this.selfLedger ? this.selfLedger.currentSelfText() : '',
-              totalEntries: this.selfLedger ? this.selfLedger.entries.length : 0
-            },
-            generationContext: summaryGenerationContext
-          });
-        }
-
-        // v0.9.7: 记忆痕迹动力学快照归档 (Memory Dynamics Snapshot)
-        if (this.memory.engramManager && this.experiencesArchive) {
-          try {
-            this.experiencesArchive.append({
-              recordType: 'memory_dynamics_snapshot',
-              windowNo: snap.windowNo,
-              payload: {
-                windowNo: snap.windowNo,
-                report: this.memory.lastDecayReport || null,
-                snapshot: this.memory.engramManager.exportSnapshot(snap.windowNo)
-              }
-            });
-          } catch (e) {
-            console.error('[Brain] memory_dynamics_snapshot 归档失败:', e.message);
-          }
-        }
-
-        // Phase 0.5: 内部调节中枢快照归档 (Internal Regulation Snapshot)
-        if (this.internalRegulation && this.isExperimentModuleActive('internalRegulation')) {
-          try {
-            // v2.1-c：用本窗真实唤醒轨迹与证据冲突计算无模型调用的 lastWindowTension ∈ [0, 1]
-            let lastWindowTension = 0;
-            try {
-              const { computeWindowArousalTrajectory, evaluateDreamGate } = require('./dream-system');
-              const regHistory = Array.isArray(this.internalRegulation.history) ? this.internalRegulation.history : [];
-              const traj = computeWindowArousalTrajectory(
-                snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory }
-              );
-              const gateMetrics = evaluateDreamGate({
-                windowNo: snap.windowNo,
-                arousalTrajectory: traj,
-                verifiedEvidence: verifiedEvidence || [],
-                dreamHistory: this.dreamHistory || []
-              }).metrics || {};
-              const varNorm = Math.min(1, (Number(gateMetrics.arousalVariance) || 0) / 30);
-              const spikeNorm = Math.min(1, (Number(gateMetrics.maxArousalSpike) || 0) / 30);
-              const conflictNorm = Math.min(1, (Number(gateMetrics.cognitiveConflictScore) || 0) / 1.5);
-              lastWindowTension = Math.max(0, Math.min(1, Math.max(varNorm, spikeNorm) * 0.6 + conflictNorm * 0.4));
-            } catch { /* 张力计算失败降级为 0，绝不阻塞关窗 */ }
-
-            // v2.1 审核修复：在 updateOnWindowClose 自然清零 lastSurprise 前锁存本窗真实 allostasis 快照
-            const snapshotExtra = (
-              this.internalRegulation.allostasisEnabled &&
-              typeof this.internalRegulation.getAllostasisSummary === 'function'
-            ) ? { allostasis: this.internalRegulation.getAllostasisSummary() } : {};
-
-            this.internalRegulation.updateOnWindowClose(snap.windowNo, {
-              turnsRecorded: snap.actualTurnCount,
-              moodTone: syn.moodTone,
-              lastWindowTension
-            });
-            if (this.experiencesArchive) {
-              const regSnapshot = this.internalRegulation.createSnapshotRecord(snap.windowNo, snapshotExtra);
-              this.experiencesArchive.append(regSnapshot);
-            }
-          } catch (e) {
-            console.error('[Brain] internal_regulation_snapshot 归档失败:', e.message);
-          }
-        }
-
-        // v0.9.7: 成本门禁式梦境系统 (Cost-Gated Dream Consolidation)
-        const dreamEnabled = this.isExperimentModuleActive('sleepConsolidation');
-        if (dreamEnabled && this.experiencesArchive) {
-          // v2.0：梦境机器抽为 _dreamCycle（关窗与入睡共用同一台）；此处行为与原先一字不差
-          await this._dreamCycle({ snap, syn, verifiedEvidence, events, segments, isWindowClose: true, preClose: false });
-        }
-        if (this.shutdownRequested) return done;
-
-        // 🔴 D-24（A 段）：关窗铸造 —— 她自发写下的字铸进经历档案（单一事实源：experiences.jsonl）。
-        //   刻意放在 growSelf 之前（防坑锦囊 1）：本窗「自发留痕事实」要带进当轮成长反思，
-        //   她才看得见「自己本窗写下了这张便签」，从而产出带引证的 SELF_INFERRED 记录。
-        //   只铸 proposalSource==='selfNote' 且未铸过的（受托任务产物不算她的经历）；
-        //   appendRecord 确认成功后才置 engraved（防坑锦囊 2），失败留待下窗重试，绝不漏铸。
-        const selfNoteMint = this._engraveSelfNotes(snap.windowNo);
-        const selfNoteTraitHints = [];
-
-        if (this.cfg.selfGrowthEnabled === true)
-          await this.growSelf(dialogue, summaryTextForMemory, snap.windowNo, {
-            msgMap,
-            sourceMessageRange,
-            selfNoteFacts: selfNoteMint.facts,
-            selfNoteAttestations: selfNoteMint.attestations,
-            traitHintsOut: selfNoteTraitHints
-          });
-
-        // 🔴 D-24（C 段）：特质微调 —— 只走「证据核验 → 确定性 Reducer → 归档 → commit」
-        //   与主通道完全同一套判据（程序绝不代拟人格结论、也绝不当场改特质）。
-        //   证据不足一条都不过核验时，特质分毫不动（宁缺毋滥）。
-        if (selfNoteTraitHints.length && this.subjectState) {
-          this._applySelfNoteTraitHints(selfNoteTraitHints, selfNoteMint.attestations, msgMap, snap.windowNo);
-        }
-
-        if (done) {
-          // 关窗后主体特质可能演进，根据最新特质喜好值刷新衣柜偏好提示块
-          if (this.wardrobe) {
-            this.memory.wardrobe = this.getWardrobePrompt();
-          }
-          // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
-          this._syncWindowExperimentSnapshot();
-        }
-      }
-      return done;
-    } catch (e) {
-      // 小结失败就不动历史，下个周期再试；宁可窗口超长也不能丢对话
-      console.error('window summary failed:', redactSecrets(e.message));
-      this._noteWindowCloseFailure('SUMMARY_EXCEPTION: ' + redactSecrets(e.message));
-      return false;
-    }
-  }
-
-  /** P1-11：新窗口开启后统一同步实验配置快照、internalRegulation 开关及 memoryDynamicsEnabled（正常与幂等收尾共用）。 */
-  _syncWindowExperimentSnapshot() {
-    const diskCfg = tryLoad(this.dir);
-    const nextExp = diskCfg ? sanitize({
-      experimentMode: diskCfg.experimentMode,
-      experimentModules: diskCfg.experimentModules
-    }) : {
-      experimentMode: this.currentWindowSnapshot.experimentMode,
-      experimentModules: this.currentWindowSnapshot.modules
-    };
-
-    this.runManifest = createExperimentRunManifest({
-      experimentMode: nextExp.experimentMode,
-      modules: nextExp.experimentModules,
-      windowNo: this.memory.data.windowNo
-    });
-    this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
-    this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
-    this.cfg.experimentModules = this.currentWindowSnapshot.modules;
-
-    if (this.internalRegulation) {
-      const mods = this.currentWindowSnapshot.modules || {};
-      const wasEnabled = Boolean(this.internalRegulation.enabled);
-      const nextEnabled = Boolean(mods.internalRegulation);
-      this.internalRegulation.enabled = nextEnabled;
-      // P0-4 修复：baseline -> experimental 跨窗热切回时，必须先从磁盘 load() 回灌既有内态与先验，
-      // 避免内存默认值在下一次 save() 时覆写销毁磁盘历史
-      if (!wasEnabled && nextEnabled && typeof this.internalRegulation.load === 'function') {
-        this.internalRegulation.load();
-      }
-      const nextAllostasis = Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
-        ? Boolean(mods.allostasisPrior)
-        : true;
-      if (typeof this.internalRegulation.setAllostasisEnabled === 'function') {
-        this.internalRegulation.setAllostasisEnabled(nextAllostasis);
-      } else {
-        this.internalRegulation.allostasisEnabled = this.internalRegulation.enabled && nextAllostasis;
-      }
-      if (!this.internalRegulation.enabled) {
-        this.internalRegulation._recentLoadTrail = [];
-        this.internalRegulation.approachingOverload = false;
-      }
-    }
-    if (this.memory) {
-      this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
-    }
-  }
+  /** P1-11：新窗口开启后统一同步实验配置快照、internalRegulation 开关及 memoryDynamicsEnabled */
+  _syncWindowExperimentSnapshot() { return this._windowPipeline.syncWindowExperimentSnapshot(); }
 
   /** 记忆超预算：把较旧的片段合并成一条早期记忆 */
   async mergeMemory() {
@@ -2719,378 +1855,16 @@ class Brain {
   /** v2.0 梦境周期（离线重组）：关窗与入睡共用同一台机器（抽取自原关窗块，行为不变）。
    *  防伪链条不变：产物一律带 [DREAM_GENERATED_ARTIFACT] / 【离线重组碎片】（非亲历）标签，绝不冒充亲历。
    *  ctx: { snap, syn, verifiedEvidence, events, noveltyProxy } */
-  /**
-   * v3.1 梦境时序改造 · 入睡冻结（Sleep Staging）
-   *
-   * 入睡那一刻 ONLY 把当天的日间遗留与唤醒度轨迹拍个快照、落盘，**绝不调 LLM**。
-   * 梦的结算点后移到苏醒那一刻 —— 这样梦才有时间跨度，而不是说完晚安两秒后就已完成。
-   * 冻结原料与 sleepStartTime 同盘存进 internal-regulation.json，重启后原样恢复。
-   *
-   * @returns {Promise<Object|null>} 冻结体；模块未启用或无调节器时返回 null
-   */
-  async _freezeDreamStagingForSleep() {
-    try {
-      const reg = this.internalRegulation;
-      if (!reg || typeof reg.stageSleepContext !== 'function') return null;
-      if (!this.isExperimentModuleActive || !this.isExperimentModuleActive('sleepConsolidation')) return null;
+  /** v3.1 梦境时序改造 · 入睡冻结（Sleep Staging） */
+  async _freezeDreamStagingForSleep() { return this._windowPipeline.freezeDreamStagingForSleep(); }
 
-      const snap = this.memory.windowSnapshot();
-      const { computeWindowArousalTrajectory, extractDayResidues } = require('./dream-system');
+  /** v1.0 B 方案 · 唤醒时的枕边未接提示 */
+  _notifyBedsideOnWake() { return this._windowPipeline.notifyBedsideOnWake(); }
 
-      // 冻结的是「睡着之前的这一天」，所以用当前窗口的真实交互算原料，不调任何模型。
-      const regHistory = Array.isArray(reg.history) ? reg.history : [];
-      const arousalTrajectory = computeWindowArousalTrajectory(
-        snap.activeItems || [], [], [], { regulationHistory: regHistory }
-      );
-      const unaskedCuriosities = (this.memory && Array.isArray(this.memory.data.curiosityQueue))
-        ? this.memory.data.curiosityQueue.filter(x => x && x.asked !== true) : [];
-      const dayResidues = extractDayResidues(snap.activeItems || [], [], unaskedCuriosities);
+  /** v3.1 梦境时序改造 · 苏醒结算（Wake-Up Settlement） */
+  async _settleDreamOnWake(trigger = 'wake', preset = null) { return this._windowPipeline.settleDreamOnWake(trigger, preset); }
 
-      // 新异度用物理代理：只数真实交互条数，不编内容（与旧入睡路径同口径）
-      const noveltyScore = Number(Math.min(1.0, Math.min(4, Math.round((snap.activeItems || []).length / 25)) * 0.25).toFixed(2));
-
-      return reg.stageSleepContext({
-        at: Date.now(),
-        windowNo: snap.windowNo,
-        dayResidues,
-        arousalTrajectory,
-        noveltyScore
-      });
-    } catch (err) {
-      console.error('[Brain] 入睡冻结梦境原料失败 (Fail-Safe):', redactSecrets(err.message));
-      return null;
-    }
-  }
-
-  /**
-   * v1.0 B 方案 · 唤醒时的枕边未接提示（用户拍板 2026-10，选 B）
-   *
-   * ## 它解决什么
-   *   实测事故（2026-10-08 19:19）：她在睡 → 用户留了消息（打 bedside 标记，不调 LLM）
-   *   → 15 秒后被拖拽唤醒 → **整条唤醒链零次回话**，用户看到的现象是
-   *   「她醒了却一声不吭，必须我再发一句她才提起刚才的事」。
-   *
-   * ## 为什么选 B（而不是唤醒即回话）
-   *   唤醒即回话 = 替她决定说不说，且每次拖拽都烧一次调用；原设计（brain.ask 注释）
-   *   明确写着「只保证送达，不逼她开口」。B 只补上**客观提示**这一层：
-   *   让人看得见她醒来时枕边确实有东西没被接住，但**接不接、怎么接仍归她**。
-   *
-   * ## 边界（每一条都有意为之）
-   *   1. **零 LLM**：不生成任何"她的话"，只回调事实，由界面如实呈现；
-   *   2. **不写 history**：不进对话历史、不进 experiences、不改任何状态 ——
-   *      只读一次内存里的未接判定，连盘都不碰（见下方 why）；
-   *   3. **口径与 memory._bedsideNote 同源**：同样是「最后一条 assistant 之后、
-   *      带 bedside 标记」的尾段条目。两处若各写一套，迟早漂移。
-   *   4. **失败静默**：这是唤醒的附带提示，绝不能影响唤醒本身。
-   */
-  _notifyBedsideOnWake() {
-    try {
-      if (typeof this.onBedsideUnread !== 'function') return;
-      const mem = this.memory;
-      if (!mem || !mem.data || !Array.isArray(mem.data.history)) return;
-      const history = mem.data.history;
-      // 与 memory.build() 同口径：从尾部找最后一条 assistant，其后的 bedside 才算未接。
-      let tailStart = 0;
-      for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i] && history[i].role === 'assistant') { tailStart = i + 1; break; }
-      }
-      const pending = history.filter((m, i) => i >= tailStart && m && m.bedside === true);
-      if (pending.length === 0) return;   // 没有未接 → 零回调，界面不会有任何动静
-      this.onBedsideUnread({
-        count: pending.length,
-        // ⚠️ 只给条数，不回传内容：内容是用户的私话，界面只需知道"有东西没接住"。
-        //    真要读内容，她下次开口时上下文里本来就有（memory._bedsideNote）。
-        at: Date.now()
-      });
-    } catch (e) { /* 提示失败绝不影响唤醒 */ }
-  }
-
-  /**
-   * v3.1 梦境时序改造 · 苏醒结算（Wake-Up Settlement）
-   *
-   * 醒来那一刻才真正合成梦，时间戳记醒来时刻。两条触发路径共用本方法：
-   *   A 被唤醒 —— tracker.wakeUp()（拖拽 ≥80px / 摇晃 ≥5 次，见 tracker.js）
-   *   B 惰性 —— 用户重新发消息时发现她仍在睡（不在睡则直接返回，零开销）
-   *
-   * 小憩（Δt 不足门槛）与无睡眠原料时如实跳过；24h 频次硬顶与认知门禁照常生效。
-   * 原料一次性消费：无论本次是否真的做梦，结算后都清空，绝不拿同一份原料重复做梦。
-   *
-   * @returns {Promise<Object|null>} 实际生成的梦境记录；未生成返回 null
-   */
-  async _settleDreamOnWake(trigger = 'wake', preset = null) {
-    if (this._settlingDreamOnWake || this.shutdownRequested) return null;
-    this._settlingDreamOnWake = true;
-    try {
-      const reg = this.internalRegulation;
-      if (!reg) return null;
-
-      // preset 来自 tracker 唤醒钩子（原料已在 updateOnSleep 清空前抓住）；
-      // 没有 preset 时走惰性路径，直接从调节器读当前睡眠上下文。
-      let sleepStartTime, staging;
-      if (preset && Number.isFinite(preset.sleepStartTime)) {
-        sleepStartTime = preset.sleepStartTime;
-        staging = preset.staging || null;
-      } else {
-        if (typeof reg.getSleepContext !== 'function') return null;
-        const sleepCtx = reg.getSleepContext();
-        if (!sleepCtx) return null;   // 不在睡 → 零开销
-        sleepStartTime = sleepCtx.sleepStartTime;
-        staging = sleepCtx.staging || null;
-      }
-
-      if (!Number.isFinite(sleepStartTime)) return null;
-
-      if (!this.isExperimentModuleActive || !this.isExperimentModuleActive('sleepConsolidation')) {
-        reg.clearSleepContext();
-        return null;
-      }
-
-      if (!staging || !Array.isArray(staging.dayResidues) || staging.dayResidues.length === 0) {
-        // 睡着时没冻结到任何原料（没启用模块/ 原料为空）→ 无从结算，如实跳过。
-        reg.clearSleepContext();
-        return null;
-      }
-
-      // 先算物理时长（用冻结时的入睡时刻，而不是"此刻往前推"，跨重启才不失真）
-      const sleepElapsedMs = Math.max(0, Date.now() - sleepStartTime);
-      const snap = this.memory.windowSnapshot();
-
-      let produced = null;
-      const before = this.dreamHistory.length;
-      await this._dreamCycle({
-        snap: { ...snap, windowNo: staging.windowNo || snap.windowNo },
-        syn: null,
-        verifiedEvidence: [],
-        events: [],
-        noveltyProxy: true,
-        isWindowClose: false,
-        preClose: true,
-        fromSleep: true,
-        sleepElapsedMs,
-        sleepStaging: staging
-      });
-      if (Array.isArray(this.dreamHistory) && this.dreamHistory.length > before) {
-        produced = this.dreamHistory[this.dreamHistory.length - 1];
-      }
-
-      if (this.shutdownRequested) return null;
-
-      // 原料一次性消费：仅当未进入新的睡眠周期时才清空，防跨睡眠周期竞态抹除新入睡上下文
-      const stillSameSleep = (!reg.isSleeping) || (reg.sleepStartTime === sleepStartTime);
-      if (stillSameSleep) {
-        reg.clearSleepContext();
-        reg.save();
-      }
-
-      if (produced) {
-        console.log('[Brain] 苏醒结算梦境（' + trigger + '，睡了 ' +
-          (sleepElapsedMs / 3600000).toFixed(1) + ' 小时）');
-      } else {
-        console.log('[Brain] 苏醒结算未产生梦境（' + trigger + '，睡了 ' +
-          (sleepElapsedMs / 3600000).toFixed(1) + ' 小时，门禁未放行）');
-      }
-      return produced;
-    } catch (err) {
-      console.error('[Brain] 苏醒结算梦境失败 (Fail-Safe):', redactSecrets(err.message));
-      return null;
-    } finally {
-      this._settlingDreamOnWake = false;
-    }
-  }
-
-  async _dreamCycle(ctx = {}) {
-    const snap = ctx.snap || {};
-    const syn = ctx.syn || { stableUserFacts: [], subjectExperiences: [] };
-    const verifiedEvidence = ctx.verifiedEvidence || [];
-    const events = ctx.events || [];
-    const segments = ctx.segments || [];
-          try {
-            const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
-            
-            // v1.0 生理真迹（方案 2）：把她真实落盘的生理状态史送进唤醒度轨迹 —— 梦由身体驱动
-            const staging = ctx.sleepStaging || null;
-            const regHistory = (this.internalRegulation && Array.isArray(this.internalRegulation.history))
-              ? this.internalRegulation.history
-              : [];
-            // P1-7：睡眠来源结算优先消费入睡冻结的 arousalTrajectory / noveltyScore，不再被苏醒现算覆盖。
-            const hasFrozenTrajectory = ctx.fromSleep === true && staging && staging.arousalTrajectory && typeof staging.arousalTrajectory === 'object';
-            const arousalTrajectory = hasFrozenTrajectory
-              ? staging.arousalTrajectory
-              : computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory });
-
-            // 新异度计算 (基于窗口综合提取的新事实/新经历数量；睡眠冻结值优先)
-            let noveltyScore;
-            if (ctx.fromSleep === true && staging && typeof staging.noveltyScore === 'number' && Number.isFinite(staging.noveltyScore)) {
-              noveltyScore = Number(Math.max(0, Math.min(1, staging.noveltyScore)).toFixed(2));
-            } else {
-              let newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +
-                                   (Array.isArray(syn.subjectExperiences) ? syn.subjectExperiences.length : 0);
-              // v2.0 入睡路径 syn 缺席时：新异度改用「今日消息量」物理代理（只数真实交互条数，不编内容）
-              if (!ctx.syn && ctx.noveltyProxy) {
-                newFactCount = Math.min(4, Math.round(((snap && snap.activeItems) || []).length / 25));
-              }
-              noveltyScore = Number(Math.min(1.0, newFactCount * 0.25).toFixed(2));
-            }
-            const now = (snap && typeof snap.at === 'number') ? snap.at : Date.now();
-
-            const gateResult = evaluateDreamGate({
-              windowNo: snap.windowNo,
-              arousalTrajectory,
-              noveltyScore,
-              stateHistory: this.subjectState ? this.subjectState.data.history : [],
-              verifiedEvidence: verifiedEvidence || [],
-              dreamHistory: this.dreamHistory || [],
-              // v3.1 梦境时序改造：睡眠来源结算须显式带上「来自睡眠期」与可验证的物理时长，
-              // 门禁据此走第三道时长校验，并对窗口间隔做豁免（跨夜长睡期间窗口号不动）。
-              fromSleep: ctx.fromSleep === true,
-              sleepElapsedMs: ctx.sleepElapsedMs,
-              now
-            });
-
-            if (gateResult && gateResult.allowDream) {
-              // 睡眠来源结算必须用入睡时冻结的原料（那才是「那一天」的遗留），
-              // 缺失则如实退回现算，绝不用醒来后的新对话冒充睡眠期原料。
-              const staging = ctx.sleepStaging || null;
-              const unaskedCuriosities = (this.memory && Array.isArray(this.memory.data.curiosityQueue))
-                ? this.memory.data.curiosityQueue.filter(x => x && x.asked !== true) : [];
-              const residues = (ctx.fromSleep === true && staging && Array.isArray(staging.dayResidues) && staging.dayResidues.length > 0)
-                ? staging.dayResidues
-                : extractDayResidues(snap.activeItems || [], verifiedEvidence || [], unaskedCuriosities);
-              const dreamPrompt = buildDreamSynthesisPrompt(residues, snap.windowNo);
-
-              // F-11: 严谨三层 Provenance 分离 (evidenceId ≠ eventId ≠ messageId)
-              const evList = verifiedEvidence || [];
-              const sourceEvidenceIds = evList.map(e => e.evidenceId).filter(Boolean);
-
-              // 提取关联的客观 Event IDs
-              const sourceEventIds = [];
-              for (const ev of evList) {
-                if (ev.eventId) {
-                  sourceEventIds.push(ev.eventId);
-                } else if (ev.messageId) {
-                  const matchingEvt = events.find(e => e.messageId === ev.messageId);
-                  if (matchingEvt) {
-                    sourceEventIds.push(matchingEvt.eventId);
-                  }
-                }
-              }
-
-              // 提取原始交互消息范围
-              const windowActiveItems = snap.activeItems || [];
-              let sourceMessageRange = null;
-              if (windowActiveItems.length > 0) {
-                const firstMsg = windowActiveItems[0];
-                const lastMsg = windowActiveItems[windowActiveItems.length - 1];
-                sourceMessageRange = {
-                  startMessageId: firstMsg.messageId || String(firstMsg.id || 'unknown'),
-                  endMessageId: lastMsg.messageId || String(lastMsg.id || 'unknown'),
-                  count: windowActiveItems.length
-                };
-              } else if (evList.length > 0) {
-                const evMsgIds = evList.map(e => e.messageId).filter(Boolean);
-                if (evMsgIds.length > 0) {
-                  sourceMessageRange = {
-                    startMessageId: evMsgIds[0],
-                    endMessageId: evMsgIds[evMsgIds.length - 1],
-                    count: evMsgIds.length
-                  };
-                }
-              }
-
-              const dreamStartGen = this.generationId;
-              const dreamRecord = await synthesizeDream(this.api, dreamPrompt, {
-                windowNo: snap.windowNo,
-                preClose: Boolean(ctx.preClose),
-                sourceEvidenceIds,
-                sourceEventIds,
-                // 无法证明 Event 来源时严禁扩大归因（不把整个窗口 events 算作梦境来源），
-                // 显式标记 provenance 状态，供归档与研究层如实区分。
-                eventProvenanceStatus: sourceEventIds.length > 0
-                  ? 'evidence_linked'
-                  : (events.length > 0 ? 'unavailable' : 'no_window_events'),
-                sourceMessageRange,
-                sourceEvents: events,
-                sourceEvidence: evList,
-                verifiedEvidence: evList,
-                dayResidues: residues,
-                gateMetrics: gateResult.metrics,
-                gateThresholds: gateResult.thresholds,
-                // v3.1 梦境时序改造：如实登记这是「睡眠来源」结算及其可验证的物理时长，
-                // 供归档与研究层区分「关窗梦」与「醒来梦」，严禁事后猜测。
-                fromSleep: ctx.fromSleep === true,
-                sleepElapsedMs: (ctx.fromSleep === true && Number.isFinite(ctx.sleepElapsedMs)) ? ctx.sleepElapsedMs : null,
-                sleepStartTime: (ctx.fromSleep === true && staging && Number.isFinite(staging.at)) ? staging.at : null
-              }, {
-                ...(this.cfg.dreamConfig || {}),
-                now
-              });
-
-              if (this.shutdownRequested || this.generationId !== dreamStartGen) {
-                return;
-              }
-              if (dreamRecord) {
-                // 🔴 D-26：深睡突触巩固 —— 梦**真实产出后**才记账（合成失败/被门禁拦下都零巩固）。
-                //   不变式见 memory-dynamics.consolidateByDream：只加固既有真实 trace 的抗衰减能力
-                //   （dreamSupport 记账），绝不加 retrievalCount（那是她真实被召回的事实计数）、
-                //   选择零梦境内容参与、当场零重算（tier/strength 统一在关窗 decayAll 结算）。
-                //   刻意放在 append 之前：被巩固的 traceId 随梦境记录进哈希链，加固全程可审计。
-                if (this.memory && this.memory.engramManager
-                    && typeof this.memory.engramManager.consolidateByDream === 'function') {
-                  try {
-                    const c = this.memory.engramManager.consolidateByDream(snap.windowNo, { topN: 3 });
-                    if (c && Array.isArray(c.consolidated) && c.consolidated.length) {
-                      dreamRecord.payload = dreamRecord.payload || {};
-                      dreamRecord.payload.consolidatedTraceIds = c.consolidated;
-                      this.memory.save(true);
-                    }
-                  } catch (e) {
-                    // 巩固是旁路增益：失败绝不影响梦境归档本身（与 Dream fail-safe 同款纪律）
-                  }
-                }
-                // v1.0.5 好奇心队列夜间发酵：标记参与梦境原料的未解疑问已被发酵
-                if (this.memory && typeof this.memory.markCuriosityIncubated === 'function') {
-                  const incubatedTexts = residues
-                    .filter(r => r && r.sourceType === 'unresolved_curiosity')
-                    .map(r => r.text);
-                  if (incubatedTexts.length) {
-                    this.memory.markCuriosityIncubated(incubatedTexts, snap.windowNo);
-                  }
-                }
-                if (!Array.isArray(this.dreamHistory)) this.dreamHistory = [];
-                this.dreamHistory.push(dreamRecord);
-                this.experiencesArchive.append(dreamRecord);
-                // v0.9.9 五大方向·①：归档成功的离线重组碎片同步进心智视野（防伪标签由 systemText 负责）。
-                // P1-#2 & P1-7: 必须阻断非关窗时段对 systemText 的污染——严格仅在窗口轮转关窗时刻同步进心智视野，
-                // 窗口内（苏醒触发）产物先暂存 pendingDreamFragments，待下次真正关窗轮转时合并进 dreamFragments，
-                // 从而确保窗口内 systemText 逐字节绝对稳定，严格维护 DeepSeek 前缀缓存不变式。
-                const fragText = String((dreamRecord.payload && (dreamRecord.payload.content || dreamRecord.payload.narrative)) || '').trim();
-                if (fragText && this.memory && this.memory.data) {
-                  if (ctx.isWindowClose === true) {
-                    if (!Array.isArray(this.memory.data.dreamFragments)) this.memory.data.dreamFragments = [];
-                    this.memory.data.dreamFragments.push(fragText.slice(0, 400));
-                    if (this.memory.data.dreamFragments.length > 3) {
-                      this.memory.data.dreamFragments = this.memory.data.dreamFragments.slice(-3);
-                    }
-                  } else {
-                    if (!Array.isArray(this.memory.data.pendingDreamFragments)) this.memory.data.pendingDreamFragments = [];
-                    this.memory.data.pendingDreamFragments.push(fragText.slice(0, 400));
-                    if (this.memory.data.pendingDreamFragments.length > 3) {
-                      this.memory.data.pendingDreamFragments = this.memory.data.pendingDreamFragments.slice(-3);
-                    }
-                  }
-                  this.memory.save(true);
-                }
-                if (dreamRecord.usage) {
-                  this.track(dreamRecord.usage, true, 'dream');
-                  // v0.9.9: 计数即落盘（同 summary 口径），防进程退出漏记
-                  this.saveStats(true);
-                }
-              }
-            }
-          } catch (err) {
-            console.error('[Brain] Dream consolidation failed (Fail-Safe):', redactSecrets(err.message));
-          }
-  }
+  async _dreamCycle(ctx = {}) { return this._windowPipeline.dreamCycle(ctx); }
 
   /* v2.0 通路 B：生理昏睡极限（纯物理断电，零台词）——
      像人累到极致自己趴下：疲惫 >= 95 且周围安静（>= 5 分钟无对话）时静默沉睡。
@@ -3157,588 +1931,20 @@ class Brain {
    *
    * @returns {string} 空串 = 没有可注入的内容
    */
-  _buildActionHistoryText() {
-    const auditLog = this.auditLog;
-    const obsLog = this.observationLog;
-    if (!auditLog || typeof auditLog.readAll !== 'function') return '';
+  _buildActionHistoryText() { return this._autonomousDraft.buildActionHistoryText(); }
 
-    const auditRecords = auditLog.readAll();
-    const obsRecords = (obsLog && typeof obsLog.readAll === 'function') ? obsLog.readAll() : [];
-
-    const history = projectOwnActions(auditRecords, obsRecords);
-    return renderHistory(history);
-  }
-
-  /**
-   * v1.4-a：提取安静前最近的对话痕迹（供自留便签素材使用）。
-   *
-   * ## 铁律与边界
-   *   1. **整条丢弃 synthetic 消息**：主动感知消息（含「用户离开 N 分钟」、
-   *      [内部语气提示]、[此刻她想说的方向]）是程序指令，绝不是真实对话。
-   *      整条过滤，一个字都不放进素材，杜绝一切程序计时与提示词污染。
-   *   2. **保留 bridge 跨窗真实尾消息**（桥梁消息是前窗真实对话）。
-   *   3. **剥离尾部程序块**：剥除用户消息尾部可能附带的【...】附加块（如【此刻的环境知觉】、
-   *      【当前环境感知】等）与助手尾部 [系统] 换装执行结果。
-   *   4. **只取最近 maxMessages 条**（缺省 6 条，即 2~3 轮）。
-   */
+  /** v1.4-a：提取安静前最近的对话痕迹（供自留便签素材使用）。 */
   _extractRecentDialogueForSelfNote(maxMessages = 6, maxCharsPerMessage = 80) {
-    if (!this.memory || !this.memory.data || !Array.isArray(this.memory.data.history)) return [];
-    const hist = this.memory.data.history;
-    const picked = [];
-    for (let i = hist.length - 1; i >= 0 && picked.length < maxMessages; i--) {
-      const item = hist[i];
-      if (!item || typeof item.content !== 'string') continue;
-      // 铁律 1：整条丢弃 synthetic 消息
-      if (item.synthetic === true) continue;
-
-      let text = item.content;
-      // 剥除尾部附加块
-      text = text
-        .replace(/(?:\r?\n)+【(?:出生与程序年龄|出生时刻|当前自我投影|当前主体状态快照|当前环境感知|此刻的环境知觉)】[\s\S]*$/g, '')
-        .replace(/(?:\r?\n)+\[系统\][\s\S]*$/g, '')
-        .trim();
-      if (!text) continue;
-
-      // 单条消息适度截断（缺省最多 80 字），防止对话痕迹膨胀至上千 Token 吞噬注意力
-      //   🔴 D-27：上限改为参数 —— 拟稿那条路要看到足够上下文（240 字），
-      //      而便签两条路保持 80 字缺省，**行为一字未变**（默认值就是原来的 80）。
-      const cap = Number.isFinite(maxCharsPerMessage) && maxCharsPerMessage > 4
-        ? Math.floor(maxCharsPerMessage) : 80;
-      const trimmedText = text.length > cap ? text.slice(0, cap - 2) + '…' : text;
-
-      picked.unshift({
-        role: item.role === 'user' ? 'user' : 'assistant',
-        text: trimmedText
-      });
-    }
-    return picked;
+    return this._autonomousDraft.extractRecentDialogueForSelfNote(maxMessages, maxCharsPerMessage);
   }
 
-  async askForSelfNote(opts = {}) {
-    try {
-      if (this.shutdownRequested) return null;
-      if (this.api && typeof this.api.complete !== 'function') return null;
+  async askForSelfNote(opts = {}) { return this._autonomousDraft.askForSelfNote(opts); }
 
-      // v1.4-a：为「自留便签」供给真实素材（自我投射、生理体感、对话痕迹、上次便签）。
-      // ⚠️ 铁律守护：
-      //   1. 坚决排除出生时刻与日期锚点（避免与「你不知道现在几点」产生认知冲突）。
-      //   2. 坚决零程序数字（零 \d+ 分钟、零 HH:MM 时钟数字、零 token 预算）。
-      //   3. 整条丢弃 synthetic 消息（不让指令与计时泄漏进视野）。
-      const intentKind = opts.intentKind ? String(opts.intentKind).slice(0, 64) : null;
-      const sections = [];
+  /** 🔴 v1.4-b：生命观察日记（沙盒通路 B）—— 关窗时刻的自发生活沉淀。 */
+  async askForObserverJournal(opts = {}) { return this._autonomousDraft.askForObserverJournal(opts); }
 
-      sections.push('【此刻】');
-      sections.push('用户不在。你独自安静了一段时间 —— 这是事实，不是情绪。');
-      if (intentKind === 'wantToLeaveSomething') {
-        sections.push('你想留下点什么。');
-      }
-
-      // 素材 1 & 2：自我投射、生理感受与可塑性（纯定性，不调 currentSelfContext() 防带出出生时刻）
-      const selfParts = [];
-      const pm = this._getLatestPlasticityMultiplier();
-      selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
-
-      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
-        const regSense = this.internalRegulation.formatPerception();
-        if (regSense) selfParts.push(regSense.trim());
-      }
-
-      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
-        const projection = this.selfLedger.currentSelfText();
-        if (projection) selfParts.push(projection.trim());
-      }
-
-      if (selfParts.length > 0) {
-        sections.push('\n【你此刻的自我倾向与状态】\n' + selfParts.join('\n'));
-      }
-
-      // 素材 3：安静前彼此的对话痕迹（最近 2~3 轮真实对话，整条过滤 synthetic）
-      const recentDialogue = this._extractRecentDialogueForSelfNote(6);
-      if (recentDialogue.length > 0) {
-        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
-        sections.push('\n【安静前彼此的对话痕迹】\n' + dlgLines.join('\n'));
-      }
-
-      // 素材 4：上次自留便签回响（若有）
-      const lastNote = (this.memory && Array.isArray(this.memory.data.selfNotes) && this.memory.data.selfNotes.length > 0)
-        ? this.memory.data.selfNotes[this.memory.data.selfNotes.length - 1] : null;
-      if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
-        sections.push('\n【你上次曾给自己写下】\n「' + lastNote.content.trim() + '」');
-      }
-
-      /* 🔴 第 2 步（动作史投影）：她读得到自己做过什么。
-       *
-       * ## 为什么挂在这里（askForSelf* 独立调用）而不是 memory.build()
-       *   `build()` **每一轮对话都跑**，挂在那里等于每轮注入 ——
-       *   不管文档怎么写「按需」，挂点本身就是每轮：噪音 + 烧 token + 动缓存尾部。
-       *   而 `askForSelf*` 是独立调用（直接 `this.api.complete`，不走 build），
-       *   注入**零缓存风险**，且语境正好（她正在想「要不要留点什么」）。
-       *
-       * ## 为什么取 readAll() 而不是 list()
-       *   `AuditLog.list()` 返回内存 `this.events`，**上限 500，超出 shift 丢最旧**
-       *   （agent-interfaces.js:565/575）⇒ 进程重启后只剩本次运行的记录，
-       *   她的动作史会每次开机清零。`readAll()` 才是从磁盘读全量。
-       *
-       * ## 失败必须静默
-       *   动作史是判断素材，读不到就不给。绝不因为它读失败而挡住这次拟稿。
-       */
-      try {
-        const historyText = this._buildActionHistoryText();
-        if (historyText) sections.push('\n' + historyText);
-      } catch { /* 投影失败不注入，绝不外抛 */ }
-
-      /* 🔴 v1.9.0-dev（观察档缺口补齐）：观察期满补注入的**首选通道**。
-       *
-       * ## 为什么首选这里
-       *   语境最贴切：她正在想「要不要写点什么」，此时告诉她
-       *   「那段时间你有过念头但当时不能落成」最自然。
-       *
-       * ## 与兜底通道的关系
-       *   `takeObserveEcho()` 是**消费即清**的（先清标记再渲染），
-       *   所以两条通道谁先到谁消费，都只补一次。
-       *   兜底在 `memory.build()` 的 synthetic 轮（见 memory.js）。
-       *
-       * ## 失败必须静默
-       *   补注入是叙述素材，取不到就不给。绝不因为它挡住这次拟稿。
-       */
-      try {
-        if (this.memory && typeof this.memory.takeObserveEcho === 'function') {
-          const echo = this.memory.takeObserveEcho();
-          if (echo) sections.push('\n' + echo);
-        }
-      } catch { /* 补注入失败不注入，绝不外抛 */ }
-
-      sections.push('\n如果你确实想留下点什么，就写下来；不想就说不。');
-
-      const userContent = sections.join('\n');
-
-      const res = await this.api.complete(
-        [{ role: 'system', content: WANT_TO_LEAVE_SYS },
-         { role: 'user', content: userContent }],
-        { maxTokens: 400, temperature: 0.7 }
-      );
-      const text = String((res && res.text) || '').trim();
-      if (res && res.usage) this.track(res.usage, true, 'selfNote');
-      if (this.shutdownRequested) return null;
-
-      // 判据 1：她说「不」就是不留。识别几种常见的拒绝写法。
-      //   ⚠️ 只认**极短且明确**的拒绝，不要用「含不含某个词」的大网：
-      //     那会把「不想留」和「不想留遗憾」混为一谈。
-      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没什么想留', '没有'];
-      const head = text.slice(0, 12);
-      const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
-      if (!text || isRefusal) return null;
-
-      // 判据 1.5：留言句式护栏（WANT_TO_LEAVE_SYS 规则 2「不是给用户的留言，不要写‘等你回来’这类把对方牵进来的话」）。
-      //   ⚠️ 严格对齐 isRefusal 口径（text.length <= 12）：只认极短纯套话（「等你回来。」「等你忙完」），
-      //     绝不误伤长句或有画面感的自留便签（如「等你回来的时候，窗外的雨应该停了，我把灯给你留着。」）。
-      const toUserPatterns = ['等你回来', '等你忙完', '等你哦', '等你下班', '等你有空'];
-      const isToUser = text.length <= 12 && toUserPatterns.some((p) => head.startsWith(p));
-      if (isToUser) return null;
-
-      // 判据 2：长度护栏。这是留给自己的两三句话，不是文章。
-      //   超长说明它跑偏了（在写汇报或留言），宁可不要。
-      if (text.length > 600) return null;
-
-      return { content: text, usage: (res && res.usage) || null };
-    } catch (err) {
-      // 判据 3：旁路异常一律吞掉。这是「她安静时想留点什么」，
-      //   失败了不该影响任何别的东西。
-      return null;
-    }
-  }
-
-  /**
-   * 🔴 v1.4-b：生命观察日记（沙盒通路 B）—— 关窗时刻的自发生活沉淀。
-   *
-   * ## 与 askForSelfNote 的本质分工
-   *   1. 意图与视角不同：
-   *      - askForSelfNote 是「你独自安静了一段时间，留给自己的两三句话」，
-   *        严格禁止牵扯用户（不许写「等你回来」等）；
-   *      - askForObserverJournal 是「属于初澜的生活观察日记」，以第一人称
-   *        记录彼此相处的痕迹、日常细节或对共同生活的观察。
-   *   2. 触发契机不同：
-   *      - askForSelfNote 由离线自发愿望（wantToLeaveSomething）触发；
-   *      - askForObserverJournal 严格仅在窗口轮转关窗（closeWindow）时刻触发。
-   *   3. 篇幅护栏：
-   *      - askForSelfNote 是 600 字以内两三句话；
-   *      - askForObserverJournal 设定为 30~400 字符的一段生活观察。
-   *
-   * ## 铁律守护
-   *   - 坚决零程序数字（零 \d+ 分钟、零 HH:MM 时钟数字、零 token 预算）。
-   *   - 整条丢弃 synthetic 消息（利用 _extractRecentDialogueForSelfNote）。
-   *   - 支持自然拒绝（「不」「不想写」等），返回 null 时绝不建案。
-   *
-   * @param {object} opts
-   * @param {number} [opts.windowNo]
-   * @param {string} [opts.synthesis]
-   * @returns {Promise<?{content:string, usage:object}>} null = 她说不写/过短/超长/异常
-   */
-  async askForObserverJournal(opts = {}) {
-    try {
-      if (this.shutdownRequested) return null;
-      if (this.api && typeof this.api.complete !== 'function') return null;
-
-      const sections = [];
-      sections.push('【此刻】');
-      sections.push('这一段陪伴与日常告一段落。你可以为自己的生活日记留下这一段的观察。');
-
-      // 自我倾向与生理体感（纯定性，坚决零时钟与程序数字）
-      const selfParts = [];
-      const pm = this._getLatestPlasticityMultiplier();
-      selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
-
-      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
-        const regSense = this.internalRegulation.formatPerception();
-        if (regSense) selfParts.push(regSense.trim());
-      }
-
-      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
-        const projection = this.selfLedger.currentSelfText();
-        if (projection) selfParts.push(projection.trim());
-      }
-
-      if (selfParts.length > 0) {
-        sections.push('\n【你此刻的状态与感受】\n' + selfParts.join('\n'));
-      }
-
-      // 素材：彼此真实交流痕迹（最近 2~3 轮真实对话，整条过滤 synthetic，防程序数字与指令泄漏）
-      const recentDialogue = this._extractRecentDialogueForSelfNote(6);
-      if (recentDialogue.length > 0) {
-        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
-        sections.push('\n【刚刚彼此交流的痕迹】\n' + dlgLines.join('\n'));
-      }
-
-      // 上次日记或便签回响（若有）
-      const lastNote = (this.memory && Array.isArray(this.memory.data.selfNotes) && this.memory.data.selfNotes.length > 0)
-        ? this.memory.data.selfNotes[this.memory.data.selfNotes.length - 1] : null;
-      if (lastNote && typeof lastNote.content === 'string' && lastNote.content.trim()) {
-        sections.push('\n【你上次曾写下】\n「' + lastNote.content.trim() + '」');
-      }
-
-      sections.push('\n如果你想记下一篇生活观察日记，就写下来；如果现在不想写，就说不。');
-
-      const userContent = sections.join('\n');
-
-      const res = await this.api.complete(
-        [{ role: 'system', content: OBSERVER_JOURNAL_SYS },
-         { role: 'user', content: userContent }],
-        { maxTokens: 400, temperature: 0.7 }
-      );
-      const text = String((res && res.text) || '').trim();
-      if (res && res.usage) this.track(res.usage, true, 'observerJournal');
-      if (this.shutdownRequested) return null;
-
-      // 判据 1：她说「不」即拒绝，静默放弃建案返回 null
-      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没什么想写', '没有', '不想写'];
-      const head = text.slice(0, 12);
-      const isRefusal = text.length <= 12 && refusePatterns.some((p) => head.startsWith(p));
-      if (!text || isRefusal) return null;
-
-      // 判据 2：篇幅护栏。
-      //   · 过短（< 30 字）丢弃 —— 那是没写出东西，不是日记
-      //   · 过长不丢弃，改为句界截断保留 —— 她真诚写了 450 字却整篇扔掉，
-      //     比截断更糟（且完全静默，日志里看不出她写过）。
-      //   · 复用 v1.2.x 的 truncateFadingText，不另写第二套截断逻辑。
-      if (text.length < 30) return null;
-      const finalContent = text.length > 400 ? truncateFadingText(text, 400) : text;
-
-      return { content: finalContent, usage: (res && res.usage) || null };
-    } catch (err) {
-      return null;
-    }
-  }
-
-  /**
-   * 🔴 D-27：通路 B 的正文来源 —— 把「用户刚才要求落档的那件事」拟成一份可写的文档。
-   *
-   * ## 与 askForSelfNote / askForObserverJournal 的关系
-   *   三者**同形**：都是「主流程结束后另起一次独立调用」，都带拒绝权，都返回
-   *   `{ content, usage } | null`。区别只在**素材与立场**：
-   *     · askForSelfNote       —— 用户不在，留给自己的两三句话
-   *     · askForObserverJournal—— 关窗时刻，第一人称的生活观察
-   *     · askForProposalContent—— **用户明确要了**，所以立场是「该不该立项、立成什么样」
-   *
-   * ## 三条铁律（与上面两个同源，改动前请逐条确认）
-   *   1. **严禁传入数字标量**：只给 subject-state 的感知文本，不给 energy=40 这类数值。
-   *      本函数刻意不调 currentSelfContext()（会带出出生时刻）。
-   *   2. **严禁传入系统时钟**：不给绝对时间戳，提示词里也明令不许写钟点。
-   *   3. **过滤合成消息**：整条丢弃 synthetic（复用 _extractRecentDialogueForSelfNote）。
-   *      ⚠️ 本函数把单条上限调到 240 字 —— 拟稿要看得到上下文，80 字会被截断成碎片。
-   *      这个参数是本轮新增的**可选**参数，缺省行为一字未变。
-   *
-   * ## 主体性：拒绝是一等结果
-   *   她说「不 / 还没想清楚」⇒ `{ status: 'refused' }`，主进程**不建案**。
-   *   这不是失败路径，是 D-27 要保住的那个权利：**她可以拒绝立项**。
-   *
-   * ## 🔴 返回结构（D-27 复核修订：不再用裸 null）
-   *   **三态必须可区分**，否则主进程既没法按要求把拒案写进审计，
-   *   也分不清「她主体性地拒绝」与「这次输出不可用」：
-   *     `{ status:'ok', content, usage }`      —— 可建案
-   *     `{ status:'refused', reason }`         —— 她拒绝（EXPLICIT_REFUSAL / SOFT_REFUSAL）
-   *     `{ status:'unavailable', reason }`     —— 不可用（EMPTY / TOO_SHORT / SHUTDOWN / EXCEPTION）
-   *   ⚠️ 调用方**必须**按下 status 分支，不得再用 `if (!result)` 判空。
-   *
-   * @param {object} [intent] agent-intent.shouldProposeFrom 的判定结果
-   * @param {string} [intent.hint] 用户提到的目标名（只作参考，不拼成路径）
-   * @returns {Promise<{status:'ok'|'refused'|'unavailable', content?:string, reason?:string, usage?:object}>}
-   */
-  async askForProposalContent(intent = {}) {
-    try {
-      if (this.shutdownRequested) return { status: 'unavailable', reason: 'SHUTDOWN' };
-      if (!this.api || typeof this.api.complete !== 'function') {
-        return { status: 'unavailable', reason: 'NO_API' };
-      }
-
-      const sections = [];
-
-      sections.push('【要落档的事由】');
-      // hint 是用户自己说出的目标名（可能没有：这时她可以从对话自己拟）
-      const rawHint = intent && typeof intent.hint === 'string' ? intent.hint.trim() : '';
-      if (rawHint) sections.push('用户提到的目标名：' + rawHint.slice(0, 120));
-      else sections.push('用户没有指定名字 —— 你自己拟一个合适的标题。');
-
-      // 素材 1：她的自我倾向与体感（定性，绝无数字标量）
-      const selfParts = [];
-      if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
-        const regSense = this.internalRegulation.formatPerception();
-        if (regSense) selfParts.push(regSense.trim());
-      }
-      if (this.selfLedger && typeof this.selfLedger.currentSelfText === 'function') {
-        const projection = this.selfLedger.currentSelfText();
-        if (projection) selfParts.push(projection.trim());
-      }
-      if (selfParts.length > 0) {
-        sections.push('\n【你此刻的状态】（这是你判断「该不该现在立项」的依据之一）\n' + selfParts.join('\n'));
-      }
-
-      // 素材 2：刚才真实的对话（整条过滤 synthetic，单条上限放宽到 240 字）
-      const recentDialogue = this._extractRecentDialogueForSelfNote(10, 240);
-      if (recentDialogue.length > 0) {
-        const dlgLines = recentDialogue.map((d) => (d.role === 'user' ? `用户曾说：「${d.text}」` : `你曾说：「${d.text}」`));
-        sections.push('\n【刚才聊到的内容】\n' + dlgLines.join('\n'));
-      } else {
-        // 没有任何真实对话痕迹 ⇒ 硬编一份文档就是在编造
-        sections.push('\n【刚才聊到的内容】\n（没有任何真实对话痕迹）');
-      }
-
-      /* 🔴 第 2 步（动作史投影）：与 askForSelfNote 同一个理由、同一个方法。
-       *
-       *   语境比便签那边更贴切：她正在判断「这件事值不值得立档」，
-       *   而「我上次立过什么、成没成」正是这类判断最该有的依据。
-       *
-       *   ⚠️ 仍然只进这次独立调用的 prompt，**不进 memory.build() 的任何部分**。
-       */
-      try {
-        const historyText = this._buildActionHistoryText();
-        if (historyText) sections.push('\n' + historyText);
-      } catch { /* 投影失败不注入，绝不外抛 */ }
-
-      /* 🔴 v1.9.0-dev（观察档缺口补齐）：与 askForSelfNote 同一首选通道。
-       *   两条独立调用都可能先到，`takeObserveEcho()` 消费即清，保证只补一次。 */
-      try {
-        if (this.memory && typeof this.memory.takeObserveEcho === 'function') {
-          const echo = this.memory.takeObserveEcho();
-          if (echo) sections.push('\n' + echo);
-        }
-      } catch { /* 补注入失败不注入，绝不外抛 */ }
-
-      sections.push('\n如果值得留档，就写；不值得，就说不。');
-
-      const res = await this.api.complete(
-        [{ role: 'system', content: PROPOSAL_DRAFT_SYS },
-         { role: 'user', content: sections.join('\n') }],
-        // 比便签大得多：一份有几个小节的短文档
-        { maxTokens: 1600, temperature: 0.6 }
-      );
-      const text = String((res && res.text) || '').trim();
-      if (res && res.usage) this.track(res.usage, true, 'proposalDraft');
-      if (this.shutdownRequested) return { status: 'unavailable', reason: 'SHUTDOWN' };
-
-      // ── 判据 1：她拒绝立项 ──
-      //   🔴 D-27 修订（复核 D-1）：原来「拒绝 / 过短 / 异常」三者都返回 null，
-      //     主进程无法区分「她主体性地拒绝」与「这次输出不可用」——
-      //     前者是 D-27 要保住的**一等结果**（应该留痕），后者是故障（也该留痕，但原因不同）。
-      //     现在返回带 status 的结构化结果，`refused` 与 `unavailable` 分开。
-      //
-      //   ⚠️ 判据本身**不放宽**：仍只认「极短且明确」的拒绝（≤12 字且开头就是拒绝词），
-      //     绝不用「含不含某词」的大网 —— 那会把「不想留遗憾，所以我写下来」误判成拒绝。
-      const refusePatterns = ['不', '不想', '不了', '算了吧', '算了', '没有',
-        '还没想清楚', '没想清楚', '先不', '还不到'];
-      const head = text.slice(0, 12);
-      if (!text) return { status: 'unavailable', reason: 'EMPTY' };
-      if (text.length <= 12 && refusePatterns.some((p) => head.startsWith(p))) {
-        return { status: 'refused', reason: 'EXPLICIT_REFUSAL' };
-      }
-
-      // ── 判据 2：**长句里的礼貌拒绝** ──
-      //   🔴 D-27 修订（复核实测抓到的真洞）：原来只认 ≤12 字的拒绝，
-      //     于是 40 字以上的礼貌拒绝（「我觉得这个还是先放一放吧，现在信息还不太够……」）
-      //     会**被当成正文建案**。实测：55 字的这类句子原样通过了全部判据。
-      //   修法：判「整段没有任何 Markdown 结构 且 含拒绝措辞」。
-      //     · 一份真正的方案文档几乎必然有 `#`/`-`/`1.`/`**` 里的至少一种；
-      //     · 纯散文 + 「先放一放 / 等下次 / 还不太够」⇒ 那是回话，不是文档。
-      //   ⚠️ 为什么限定「没有 Markdown 结构」：避免把
-      //     「- 暂时先不做的部分：因为信息不够」这类**合法的方案条目**误判成拒绝。
-      const hasMarkdownStructure = /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s)|\*\*/.test(text);
-      const softRefuse = ['先放一放', '放一放', '等下次', '等以后', '再说吧', '还不太够',
-        '信息还不够', '信息还不太够', '聊透了再说', '先不急', '暂时不'];
-      if (!hasMarkdownStructure && text.length <= 200 && softRefuse.some((p) => text.includes(p))) {
-        return { status: 'refused', reason: 'SOFT_REFUSAL' };
-      }
-
-      // ── 判据 2b：**带结构的礼貌拒绝**（复核 D-5）──
-      //   🔴 上面那条判据只在「没有 Markdown 结构」时生效，于是模型偏离提示词、
-      //     把拒绝写成一个带标题的小段落时，它会因「有结构且够长」而被当成正文建案。
-      //   实测过两种形态都漏了：
-      //     `# 关于这次落档\n\n我觉得这个还是先放一放吧…等下次聊透了再说。`
-      //     `- 这个先放一放\n- 信息还不太够\n- 等下次再说吧`
-      //   与其继续堆启发式（总会漏），不如加一条**更强的判据**：
-      //     **全部行都是 Markdown 标记 + 拒绝措辞 ⇒ 拒案。**
-      //   判据拆解：
-      //     ① 逐行去掉 `#`/`-`/`*`/`>`/有序编号/粗体符号，得到"实质文字"；
-      //     ② 过滤掉空行；
-      //     ③ 若**每一行**的实质文字都以拒绝措辞开头（或很短且含拒绝措辞）⇒ 整篇是拒绝
-      //     ④ 只要有一行是正常内容（如「- 第一期：主闭环」）⇒ 不是拒绝
-      //   ⚠️ 这条不会误伤「- 先放一放的部分：第二期再说」，因为同一篇里
-      //     还有「- 第一期：主闭环」这样的正常行 ⇒ 不是"每一行都是拒绝"。
-      {
-        const lines = text.split(/\r?\n/)
-          .map((l) => l.replace(/^\s*(#{1,6}\s*|[-*+]\s*|\d+[.)]\s*|>\s*)/, '')
-            .replace(/[*_`~]/g, '').replace(/\s+/g, '').trim())
-          .filter((l) => l.length > 0);
-
-        /* 🔴 复核 D-5b（本条修的是**误杀**，比漏判严重）：
-         *
-         *   上一版用 `refusalHeads.some(p => l.startsWith(p))` 且表里含单个「不」，
-         *   于是这类**完全合法的方案**被整体判成拒绝：
-         *     # 不做范围
-         *     - 不做自动同步
-         *     - 不写入原文件
-         *     - 不记录敏感字段
-         *   每一行都以「不」开头 ⇒ allRefusive ⇒ refused ⇒ **方案被静默丢弃，
-         *   用户连确认卡都看不到**。实测复现。
-         *
-         *   ⇒ 判据必须收紧。「不」不是拒绝前缀，它只是中文里最常见的否定字；
-         *     方案文档里写"不做/不写入/不记录"是**正常且必要**的内容。
-         *
-         *   新的判据（三条同时成立才算整篇是拒绝）：
-         *     ① **行数很少**（≤6）：真正的方案列了几个也就不止 6 行；
-         *     ② **没有任何"规范性"痕迹**：不出现数字序号细节、不出现冒号定义的条目；
-         *     ③ **每一行都是"纯粹的拒绝语气"** —— 判据见 isPureRefusalLine()：
-         *          · 整行就是拒绝词本身（「不」「不想」「算了」…），或
-         *          · 含强拒绝短语且整行很短（≤12 字），或
-         *          · 以"拒绝 + 语气词"结尾（「…先放一放」「…等下次吧」）
-         *        **不包含**「不做X / 不写入X / 不记录X」这类**祈使/规范句式**——
-         *        它们在中文里是"约束说明"，不是"拒绝"。
-         */
-        /* 🔴 复核 D-5d（**第四次同类误杀，改用有据可依的判据，不再打补丁**）
-         *
-         *   D-5c 用 `endsWith` 修掉了「先放一放**搜索**」（短语在名词前），
-         *   但 `搜索**放一放**`（名词在短语前、句尾仍是短语）照样被误杀：
-         *     # 下阶段再说
-         *     - 搜索放一放
-         *     - 统计放一放
-         *   实测复现。而 `这个先放一放` 与 `搜索放一放` **结构完全一样**，
-         *   只靠句尾位置永远分不开 —— 再加第五个补丁也会漏。
-         *
-         *   ## 真正的分界：拒绝短语**前面有没有实义宾语**
-         *     `先放一放`        —— 前面什么都没有 ⇒ 就是在说"别存了" ⇒ 拒绝
-         *     `这个先放一放`    —— 前面是**代词**（指代提案本身）⇒ 拒绝
-         *     `等下次吧`        —— 前面只有语气 ⇒ 拒绝
-         *     `搜索放一放`      —— 前面是**具体名词**（指代某个待延期的东西）⇒ 文档
-         *     `统计放一放`      —— 同上 ⇒ 文档
-         *
-         *   判据：去掉短语后剩下的部分**只能是空、代词、或虚词**。
-         *   出现任何实义名词/动词 ⇒ 那是"把 X 延期"，不是"拒绝落档"。
-         *
-         *   ## ⚠️ 失败方向刻意偏向"放行"
-         *     按要求（宁可漏判，不可误杀）：认不出的一律当文档。
-         *     后果是 `- 信息还不太够` 这类**不带宾语的中性短句**也会被判成文档
-         *     （实义名词「信息」拦住了它）—— 这是**有意接受**的漏判，不是遗漏。
-         */
-        const STRONG_END = ['先放一放', '放一放', '等下次', '等以后', '再说',
-          '还不太够', '信息还不够', '信息还不太够', '聊透了再说', '先不急', '还不急', '还不到'];
-        // 整行**恰好等于**拒绝词（最干净的拒绝形态）
-        const BARE = ['不', '不想', '不了', '算了', '算了吧', '没有', '还没想清楚',
-          '没想清楚', '不想写', '不想存', '先不存', '不用了', '不必了', '不写了', '不存了'];
-        // 短语前允许出现的东西：空 / 代词（指代提案本身）/ 纯虚词
-        const OK_PREFIX = ['', '这个', '那个', '这', '那', '它', '此事', '这件事',
-          '这次', '这份', '这事', '我', '还是', '就', '也', '都'];
-
-        const isPureRefusalLine = (l) => {
-          if (BARE.includes(l)) return true;
-          // 🔴 硬信号：有冒号或有数字 ⇒ 这是文档条目，直接排除
-          if (/[:：]/.test(l)) return false;
-          if (/\d/.test(l)) return false;
-          // 🔴 否定式规范句式：「不/没/别 + 动词」⇒ 是约束说明，不是拒绝
-          if (/^[不没别]/.test(l) && l.length >= 3 && !BARE.includes(l)) return false;
-          // 🔴 核心：以拒绝短语收尾，且**短语前面没有实义成分**
-          const stripped = l.replace(/[。！？.!?~…，,\s]+$/, '').replace(/[吧了呢啊呀嘛哦]+$/, '');
-          for (const p of STRONG_END) {
-            if (!stripped.endsWith(p)) continue;
-            const rest = stripped.slice(0, stripped.length - p.length);
-            if (OK_PREFIX.includes(rest)) return true;
-          }
-          return false;
-        };
-
-        // 行数上限 6：真正的方案列起来不止 6 行
-        if (lines.length > 0 && lines.length <= 6) {
-          const allPure = lines.every(isPureRefusalLine);
-          if (allPure) return { status: 'refused', reason: 'STRUCTURED_REFUSAL' };
-        }
-      }
-
-      /* ⚠️ 已知边界（**故意不修**，如实留档）：
-       *
-       *   仍有一种形态会被当成正文建案 —— 模型偏离提示词，把拒绝写成
-       *   「标题 + 若干完整句子」的段落，例如：
-       *     # 关于这次落档
-       *
-       *     我觉得这个还是先放一放吧，现在信息还不太够。
-       *     等下次聊透了再说。
-       *
-       *   我试过再加一条「强拒绝短语 + 无实质内容行」的判据来抓它，
-       *   **结果同时把合法方案打死了**：
-       *     # 方案 / ## 分期 / - 第一期：主闭环 / - 先放一放的部分：第二期再说
-       *   两者在结构上不可区分（都有一条 16 字以上的行），差别只在语义。
-       *
-       *   ⇒ 结论：**这类边界用正则打不过去**，继续堆词表只会把误伤面越铺越宽。
-       *     真要根治得换成显式协议（让模型先输出一个 `YES/NO` 再给正文），
-       *     但那是改提示词契约、要重跑全部拟稿用例，**不在 D-27 范围内**。
-       *   当前后果可接受：最坏情况是她多拟了一份稿、用户看到卡片后点【拒绝】——
-       *     卡片本来就要用户点头，**不会自动落盘**，也没有安全影响。
-       */
-
-      // ── 判据 3：篇幅护栏 ──
-      //   🔴 D-27 修订（复核 D-2）：原来固定 40 字下限会**误丢合法的短清单**
-      //     （实测：22 字的「# 计划 / - 先跑通主闭环 / - 其余往后放」被丢弃）。
-      //     现在改为**按有没有文档结构判断**，而不是数长度：
-      //       · 有 Markdown 结构且 ≥12 字  ⇒ 收（短清单是合法的档）
-      //       · 无结构 且 <40 字          ⇒ 丢（那不是文档，是应答）
-      //     长度只用来挡「好的」「可以」这类应答，不用来裁决什么是文档。
-      const MIN_STRUCTURED = 12;
-      const MIN_PLAIN = 40;
-      if (hasMarkdownStructure ? text.length < MIN_STRUCTURED : text.length < MIN_PLAIN) {
-        return { status: 'unavailable', reason: 'TOO_SHORT' };
-      }
-
-      // 过长 ⇒ 说明它跑偏成了长报告；用句界截断保留，不整篇丢弃
-      //   （整篇丢弃是静默的，日志里看不出她写过）。
-      const MAX_CHARS = 8000;
-      const finalContent = text.length > MAX_CHARS ? truncateFadingText(text, MAX_CHARS) : text;
-
-      return { status: 'ok', content: finalContent, usage: (res && res.usage) || null };
-    } catch (err) {
-      // 判据 4：旁路异常不外抛 —— 它挂在 chat-send 的收尾上，
-      //   崩了会砸掉她这一轮已经说出口的回话。
-      //   ⚠️ 但要如实分类返回，好让主进程把「拟稿失败」记进审计 ——
-      //     全吞成 null 的话，出了问题时审计里连「她试过」都看不到。
-      return { status: 'unavailable', reason: 'EXCEPTION', error: String((err && err.message) || '').slice(0, 200) };
-      return null;
-    }
-  }
+  /** 🔴 D-27：通路 B 的正文来源 —— 把「用户刚才要求落档的那件事」拟成一份可写的文档。 */
+  async askForProposalContent(intent = {}) { return this._autonomousDraft.askForProposalContent(intent); }
 
   /**
    * 🔴 D-24 & v1.4-b（A 段）：关窗铸造 —— 把「她自发写下的字与生活观察日记」铸进 experiences.jsonl。
@@ -4072,128 +2278,11 @@ class Brain {
    * 小结/合并是另一套前缀，混进主线会让命中率的数字失真。
    */
   track(usage, summary = false, bucket = summary ? 'summary' : 'chat') {
-    const hit = usage.prompt_cache_hit_tokens || 0;
-    const miss = usage.prompt_cache_miss_tokens || 0;
-    const out = usage.completion_tokens || 0;
-    // P5-A: 成本统计由当前 providerId 的 Cost Strategy 决定（不再由 DeepSeek concrete costOf 记账）。
-    // DeepSeek 峰谷价格语义保持（pricing context 仍按 peak/valley 选择）；
-    // generic/local/custom 未定义 pricing -> strategy 为 null -> cost=null（不伪造 0、不累加、不隐式继承 DeepSeek 价格）。
-    const providerIdForCost = this.cfg.provider || require('./provider-policy').providerFor(this.cfg.baseURL);
-    const costStrategy = getCostStrategy(providerIdForCost);
-    let c = null;
-    if (costStrategy) {
-      const peakValleyPrice = (this.cfg.price && (isPeakHour() ? this.cfg.price.peak : this.cfg.price.valley)) || {};
-      const pricingContext = {
-        ...peakValleyPrice,
-        pricingVersion: (this.cfg.price && this.cfg.price.pricingVersion) || undefined
-      };
-      c = costStrategy.calculate(normalizeUsage(usage, providerIdForCost), pricingContext).cost;
-    }
-    // E-02: 未知成本（null）不得伪装为 0 —— 不累加、history 显式记 null
-    const costKnown = c !== null;
-    const hitRateRatio = (hit + miss) ? hit / (hit + miss) : 0;
-
-    let breakReason = null;
-    if (miss > 0) {
-      if (bucket === 'chat') {
-        breakReason = this.pendingCacheBreakReason || (hit === 0 ? 'unknown' : null);
-        this.pendingCacheBreakReason = null;
-      } else {
-        // v0.9.9: 小结/合并/成长/梦境各是独立提示词家族，不消费 chat 的缓存破坏归因
-        //（否则会偷走下一轮 chat 的归因），但 0 命中同样要留痕 —— 此前只有 chat 桶标注，
-        // 离群的 0% 调用查无原因（实测 37 笔里 4 笔 0%，其中 1 笔至今无归因）
-        breakReason = hit === 0 ? 'unknown' : null;
-      }
-    }
-
-    this.appendTelemetry({
-      timestamp: Date.now(),
-      windowNo: this.memory ? this.memory.data.windowNo : 1,
-      requestType: bucket,
-      promptTokens: usage.prompt_tokens || hit + miss,
-      promptCacheHitTokens: hit,
-      promptCacheMissTokens: miss,
-      completionTokens: out,
-      cacheHitRate: +(hitRateRatio.toFixed(4)),
-      cacheBreakReason: breakReason
-    });
-
-    this.stats.history.push({
-      t: Date.now(), hit, miss, out, cost: costKnown ? +c.toFixed(6) : null,
-      rate: (hit + miss) ? +(hit / (hit + miss) * 100).toFixed(1) : 0,
-      kind: bucket,
-      prompt: usage.prompt_tokens || hit + miss
-    });
-    if (this.stats.history.length > 300) this.stats.history.shift();
-
-    if (costKnown) this.stats.cost += c;
-    if (summary) {
-      // v0.9.9: 计数按桶如实分账 —— summaryCalls 只数「summary」小结调用，
-      // 成长/合并/梦境各有自己的口径；此前四类全挤进 summaryCalls，与遥测 requestType 对不上
-      if (bucket === 'summary') {
-        this.stats.summaryCalls = (this.stats.summaryCalls || 0) + 1;
-      }
-      this.stats[bucket + 'PromptTokens'] = (this.stats[bucket + 'PromptTokens'] || 0)
-        + (usage.prompt_tokens || hit + miss);
-      this.stats[bucket + 'OutputTokens'] = (this.stats[bucket + 'OutputTokens'] || 0) + out;
-      if (costKnown) this.stats[bucket + 'Cost'] = (this.stats[bucket + 'Cost'] || 0) + c;
-    } else {
-      this.stats.requests++;
-      this.stats.hit += hit;
-      this.stats.miss += miss;
-      this.stats.out += out;
-      this.stats.lastHitRate = (hit + miss) ? hit / (hit + miss) : 0;
-    }
-    this.saveStats();
+    return this._telemetry.track(usage, summary, bucket);
   }
 
   report() {
-    const tot = this.stats.hit + this.stats.miss;
-    const m = this.memory;
-    return {
-      requests: this.stats.requests,
-      hit: this.stats.hit,
-      miss: this.stats.miss,
-      out: this.stats.out,
-      rate: tot ? +(this.stats.hit / tot * 100).toFixed(1) : 0,
-      lastRate: +(this.stats.lastHitRate * 100).toFixed(1),
-      cost: +this.stats.cost.toFixed(4),
-      compressions: this.stats.compressions,
-      merges: this.stats.merges || 0,
-      growthCalls: this.stats.growthCalls || 0,
-      growthPromptTokens: this.stats.growthPromptTokens || 0,
-      growthOutputTokens: this.stats.growthOutputTokens || 0,
-      growthCost: +(this.stats.growthCost || 0).toFixed(4),
-      summaryCost: +(this.stats.summaryCost || 0).toFixed(4),
-      mergeCost: +(this.stats.mergeCost || 0).toFixed(4),
-      peak: isPeakHour(),
-      model: this.cfg.model,
-
-      // 记忆状态
-      windowTurns: m.data.turnsInWindow,
-      windowTarget: m.windowTurns,
-      windowNo: m.data.windowNo,
-      totalTurns: m.data.totalTurns,
-      historyLen: m.history.length,
-      historyTokens: m.historyTokens(),
-      segments: m.windows.length,
-      memoryTokens: m.memoryTokens(),
-      memoryCap: m.memoryCap,
-      contextTokens: m.contextTokens(),
-      selfLedgerEntries: this.selfLedger.entries.length,
-      rawLedgerChars: this.selfLedger.estimatedRawChars(),
-      currentSelfTokens: Math.ceil(this.selfLedger.currentSelfText().length / 2),
-      birthAt: this.birthAt,
-      archiveStatus: this.selfLedger.status,
-      subjectState: this.subjectState ? this.subjectState.values : null,
-      archiveEntries: this.experiencesArchive ? this.experiencesArchive.count() : 0,
-      bridgeCount: m.history.filter(x => x.bridge).length,
-      // v0.9.9 P0-2（C 半）：主链锁死导致经历溢写到 sidecar 的告警，供上层/人工检查
-      archiveSpilloverCount: Array.isArray(this.archiveSpillovers) ? this.archiveSpillovers.length : 0,
-      archiveSpilloverLast: (Array.isArray(this.archiveSpillovers) && this.archiveSpillovers.length)
-        ? this.archiveSpillovers[this.archiveSpillovers.length - 1]
-        : null
-    };
+    return this._telemetry.report();
   }
 
   clearMemory() { this.memory.reset(); }

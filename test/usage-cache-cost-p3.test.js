@@ -136,6 +136,16 @@ function check(name, cond, extra) {
   }, 'openai-compatible');
   check('P2-6 normalizeUsage 兼容读取 OpenAI prompt_tokens_details.cached_tokens',
     uOai.cacheHitTokens === 64 && uOai.promptTokens === 100 && uOai.usageSource === 'provider_response');
+
+  // Batch 3.3: 负 token 拦截 + 无缓存细分但有 promptTokens 时按 missPrice 保守计费
+  const neg = normalizeUsage({ prompt_tokens: -5, completion_tokens: -1, prompt_cache_hit_tokens: -2 });
+  const unsplit = getCostStrategy('deepseek').calculate(
+    normalizeUsage({ prompt_tokens: 1e6, completion_tokens: 0 }),
+    { hit: 0.1, miss: 2, out: 3 }
+  );
+  check('Batch3.3: normalizeUsage 拦截负 token 为 null，且无缓存细分时按 missPrice 保守计费',
+    neg.promptTokens === null && neg.completionTokens === null && neg.cacheHitTokens === null
+    && Math.abs(unsplit.cost - 2) < 1e-9);
 }
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
