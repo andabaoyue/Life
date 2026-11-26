@@ -153,7 +153,7 @@ class TelemetryTracker {
       }
     }
 
-    this.appendTelemetry({
+    b.appendTelemetry({
       timestamp: Date.now(),
       windowNo: b.memory ? b.memory.data.windowNo : 1,
       requestType: bucket,
@@ -190,7 +190,7 @@ class TelemetryTracker {
       b.stats.out += out;
       b.stats.lastHitRate = (hit + miss) ? hit / (hit + miss) : 0;
     }
-    this.saveStats();
+    b.saveStats();
   }
 
   report() {

@@ -154,8 +154,13 @@ class ResearchQuery {
           if (!entry || entry.valid === false) return false;
           if (opts.excludeRecordTypes && opts.excludeRecordTypes.has(entry.recordType)) return false;
           if (opts.recordTypes && !opts.recordTypes.has(entry.recordType)) return false;
-          if (opts.fromWindow !== undefined && opts.fromWindow !== null && (typeof entry.windowNo !== 'number' || entry.windowNo < opts.fromWindow)) return false;
-          if (opts.toWindow !== undefined && opts.toWindow !== null && (typeof entry.windowNo !== 'number' || entry.windowNo > opts.toWindow)) return false;
+          const unknownWin = typeof entry.windowNo !== 'number';
+          if (opts.fromWindow !== undefined && opts.fromWindow !== null) {
+            if (unknownWin ? !opts.includeUnknownWindow : entry.windowNo < opts.fromWindow) return false;
+          }
+          if (opts.toWindow !== undefined && opts.toWindow !== null) {
+            if (unknownWin ? !opts.includeUnknownWindow : entry.windowNo > opts.toWindow) return false;
+          }
           return true;
         });
       }
@@ -290,6 +295,7 @@ class ResearchQuery {
       _preloadedRecords,
       fromWindow,
       toWindow,
+      includeUnknownWindow: true,
       excludeRecordTypes: NON_STATE_RECORD_TYPES
     });
 
@@ -348,9 +354,9 @@ class ResearchQuery {
       stateChangeId: sc.stateChangeId || sc.changeId,
       windowNo: (typeof sc.windowNo === 'number' && !isNaN(sc.windowNo)) ? sc.windowNo : null,
       trait: sc.trait,
-      previousValue: sc.previousValue ?? 0,
-      delta: sc.delta ?? 0,
-      newValue: sc.newValue ?? 0,
+      previousValue: Number.isFinite(sc.previousValue) ? sc.previousValue : null,
+      delta: Number.isFinite(sc.delta) ? sc.delta : null,
+      newValue: Number.isFinite(sc.newValue) ? sc.newValue : null,
       evidenceIds: Array.isArray(sc.evidenceIds) ? sc.evidenceIds : [],
       createdAt: sc.createdAt || null
     }));
@@ -1092,6 +1098,7 @@ class ResearchQuery {
       _preloadedRecords,
       fromWindow: windowNo,
       toWindow: windowNo,
+      includeUnknownWindow: true,
       excludeRecordTypes: NON_STATE_RECORD_TYPES
     });
     const allItems = [];

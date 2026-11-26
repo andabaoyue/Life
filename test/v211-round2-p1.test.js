@@ -242,7 +242,7 @@ function cleanup(dir) {
       && capSlice.includes("fail('display_mismatch')")
       && capSlice.includes('clampedX') && capSlice.includes('clampedY'));
     check('R2-P1-4d main.js vision:stage 校验正整数宽高边界',
-      stageSlice.includes('Number.isInteger(opts.width)') && stageSlice.includes("errorType: 'bad_dimensions'"));
+      /Number\.isInteger\((?:safeOpts|opts)\.width\)/.test(stageSlice) && stageSlice.includes("errorType: 'bad_dimensions'"));
   }
 
   // ── R2-P1-5: snapshotMaxSeq 防尾部弹出后新窗消息被误标 bridge: true ──

@@ -75,10 +75,11 @@ function registerSttIpc(ipcGuard, ctx) {
   });
 
   ipcGuard.handle('stt:set-config', (e, opts = {}) => {
+    const safeOpts = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
     const patch = {
-      endpoint: typeof opts.endpoint === 'string' ? opts.endpoint : '',
-      model: typeof opts.model === 'string' ? opts.model : '',
-      lang: typeof opts.lang === 'string' ? opts.lang : ''
+      endpoint: typeof safeOpts.endpoint === 'string' ? safeOpts.endpoint : '',
+      model: typeof safeOpts.model === 'string' ? safeOpts.model : '',
+      lang: typeof safeOpts.lang === 'string' ? safeOpts.lang : ''
     };
     if (patch.endpoint.trim()) {
       const v = require('./stt-transport').validateConfig({
@@ -90,14 +91,14 @@ function registerSttIpc(ipcGuard, ctx) {
     const saved = writeSttConfig(patch);
     if (!saved) return { ok: false, errorType: 'config_write_failed' };
 
-    const hasNewCred = typeof opts.credential === 'string' && opts.credential.trim().length > 0;
+    const hasNewCred = typeof safeOpts.credential === 'string' && safeOpts.credential.trim().length > 0;
     if (prevOrigin && prevOrigin !== getUrlOrigin(saved.endpoint) && !hasNewCred) {
       try { secureCreds.deleteCredential(STT_CREDENTIAL_REF, { dir: app.getPath('userData'), getSS }); } catch {}
     }
 
     let encrypted = null;
     if (hasNewCred) {
-      const w = secureCreds.setCredential(STT_CREDENTIAL_REF, opts.credential.trim(), {
+      const w = secureCreds.setCredential(STT_CREDENTIAL_REF, safeOpts.credential.trim(), {
         dir: app.getPath('userData'), getSS
       });
       if (!w.ok) return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
@@ -116,7 +117,7 @@ function registerSttIpc(ipcGuard, ctx) {
   });
 
   ipcGuard.handle('stt:transcribe', async (e, opts = {}) => {
-    if (!opts || typeof opts !== 'object') return { ok: false, errorType: 'invalid_input' };
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) return { ok: false, errorType: 'invalid_input' };
     const c = readSttConfig();
     const secret = readSttSecret();
     if (!secret) return { ok: false, errorType: 'not_configured' };

@@ -310,7 +310,9 @@
         if (document.hidden) {
           if (currentFrameStopper) { currentFrameStopper(); currentFrameStopper = null; }
         } else {
-          const curState = document.body && document.body.getAttribute ? (document.body.getAttribute('data-state') || 'idle') : 'idle';
+          const curState = (document.body && document.body.dataset && document.body.dataset.motionState)
+            ? document.body.dataset.motionState
+            : 'idle';
           updateSpriteAnim(curState);
         }
       });

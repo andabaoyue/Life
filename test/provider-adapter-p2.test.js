@@ -398,6 +398,35 @@ const baseCfg = () => ({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model
       redirectCalls === 1 && redirectErr && redirectErr.errorType === 'redirect_blocked' && redirectErr.retryable === false);
   }
 
+  /* ============ P1-2 & P2-4 回归 ============ */
+  {
+    const { requestChatCompletion } = require('../src/openai-transport');
+    const { validateCredentialTarget } = require('../src/provider-policy');
+    let capturedSig = null;
+    mockFetch(async (_u, init) => {
+      capturedSig = init && init.signal;
+      return okRes({ choices: [{ message: { content: 'ok' } }], usage: {}, model: 'm' });
+    });
+    const rOk = await requestChatCompletion({
+      cfg: { ...baseCfg(), requestTimeoutMs: 80 },
+      body: { model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: false },
+      provider: 'deepseek',
+      credentialType: 'deepseek-api-key'
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    check('P1-2 requestChatCompletion 成功返回 200 后清理兜底 timer（后续不误 abort）',
+      rOk && rOk.ok === true && capturedSig && capturedSig.aborted === false);
+    globalThis.fetch = realFetch;
+
+    const vHex = validateCredentialTarget({
+      provider: 'custom',
+      baseURL: 'https://[::ffff:169.254.169.254]/v1',
+      credentialType: 'apiKey'
+    });
+    check('P2-4 isLinkLocalHost 拦截 IPv4-mapped IPv6 十六进制归一化链路本地地址',
+      vHex.ok === false);
+  }
+
   globalThis.fetch = realFetch;
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

@@ -162,8 +162,8 @@ console.log('--- D-22 记忆渐褪梯度门禁 ---');
   check('❌ config.js 有 memoryFadingMaxChars', cfgSrc.includes('memoryFadingMaxChars'));
   const brainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'brain.js'), 'utf8');
   check('❌ brain.js 把两个配置透传进 engramConfig',
-    brainSrc.includes('activeThreshold: this.cfg.memoryActiveThreshold') &&
-    brainSrc.includes('fadingMaxChars: this.cfg.memoryFadingMaxChars'));
+    brainSrc.includes('activeThreshold:') && brainSrc.includes('memoryActiveThreshold')
+    && brainSrc.includes('fadingMaxChars:') && brainSrc.includes('memoryFadingMaxChars'));
   const memSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'memory.js'), 'utf8');
   check('❌ needsMemoryMerge 用 visibleTokens 而非 memoryTokens',
     /needsMemoryMerge\(\)\s*\{[^}]*visibleTokens\(\)/.test(memSrc));

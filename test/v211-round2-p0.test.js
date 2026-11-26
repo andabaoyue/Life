@@ -51,7 +51,7 @@ function cleanup(dir) {
   check('P0-1a main.js vision:capture 显式引入 visionPicker',
     /const visionPicker = require\('\.(?:\/src)?\/vision-picker-window'\)/.test(capSlice));
   check('P0-1b main.js vision:capture 对 opts 与 display 做空值守卫',
-    capSlice.includes("const rawOpts = (opts && typeof opts === 'object') ? opts : {}")
+    /const rawOpts = \(opts && typeof opts === 'object'(?: && !Array\.isArray\(opts\))?\) \? opts : \{\}/.test(capSlice)
     && capSlice.includes("if (!display || !display.size) return fail('no_screen_source')"));
 
   // ── P0-2: connections.js 新建 DeepSeek 官方连接成功且命名空间隔离 ──

@@ -224,10 +224,23 @@ console.log('--- D-5 Agent 沙盒门禁 ---');
 
   let proposeRes = null;
   if (handlers.has('agent:propose-action')) {
-    proposeRes = await handlers.get('agent:propose-action')(
-      { sender: fakeWin.webContents, senderFrame: fakeWin.webContents.mainFrame },
-      { capability: 'workspace.write', scope: path.join(badDesktop, SANDBOX_DIR_NAME, 'x.txt'), reason: 's3', content: 'hi' }
-    );
+    const origLoad2 = Module._load;
+    Module._load = function (request) {
+      if (request === 'electron') {
+        const e = new Error("Cannot find module 'electron'");
+        e.code = 'MODULE_NOT_FOUND';
+        throw e;
+      }
+      return origLoad2.apply(this, arguments);
+    };
+    try {
+      proposeRes = await handlers.get('agent:propose-action')(
+        { sender: fakeWin.webContents, senderFrame: fakeWin.webContents.mainFrame },
+        { capability: 'workspace.write', scope: path.join(badDesktop, SANDBOX_DIR_NAME, 'x.txt'), reason: 's3', content: 'hi' }
+      );
+    } finally {
+      Module._load = origLoad2;
+    }
   }
   check('S3-4 降级后经 agent:propose-action 发起写提案自动被 scope_not_in_whitelist 拒绝',
     proposeRes && proposeRes.ok === false &&

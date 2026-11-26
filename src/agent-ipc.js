@@ -196,7 +196,11 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   //   ⚠️ 刻意**不在这里 new TicketStore()**——那会造出第二个实例，
   //      两个 store 各持一份 tickets 数组：面板建的单子注入时读不到。
   //      唯一实例在 brain.js:305，由 main.js 注入进来。
-  const ticketStore = options.ticketStore || ctx.ticketStore || null;
+  const resolveTicketStore = typeof options.getTicketStore === 'function'
+    ? options.getTicketStore
+    : (typeof ctx.getTicketStore === 'function'
+      ? ctx.getTicketStore
+      : () => (options.ticketStore || ctx.ticketStore || null));
   const getWindowNo = (typeof options.getWindowNo === 'function')
     ? options.getWindowNo
     : (typeof ctx.getWindowNo === 'function' ? ctx.getWindowNo : () => 1);
@@ -1152,6 +1156,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   // 9. Ticket 列表（只读，含全部状态；面板据此渲染）
   ipcGuard.handle('agent:ticket-list', guard((event) => {
     assertByHandler(event);
+    const ticketStore = resolveTicketStore();
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     return { ok: true, tickets: ticketStore.list() };
   }));
@@ -1161,6 +1166,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   ipcGuard.handle('agent:ticket-create', guard((event, raw = {}) => {
     assertByHandler(event);
     if (!allowTicketWriteIpc) return fail('TICKET_WRITE_IPC_DISABLED');
+    const ticketStore = resolveTicketStore();
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     const r = ticketStore.createTicket({
       title: raw && raw.title,
@@ -1176,6 +1182,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   ipcGuard.handle('agent:ticket-transition', guard((event, raw = {}) => {
     assertByHandler(event);
     if (!allowTicketWriteIpc) return fail('TICKET_WRITE_IPC_DISABLED');
+    const ticketStore = resolveTicketStore();
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     const r = ticketStore.transition(raw && raw.id, raw && raw.state, {
       note: raw && raw.note,
@@ -1188,6 +1195,7 @@ function registerAgentIpc(ipcGuard, agentContext, options = {}) {
   ipcGuard.handle('agent:ticket-note', guard((event, raw = {}) => {
     assertByHandler(event);
     if (!allowTicketWriteIpc) return fail('TICKET_WRITE_IPC_DISABLED');
+    const ticketStore = resolveTicketStore();
     if (!ticketStore) return fail('TICKETS_UNAVAILABLE');
     const r = ticketStore.updateNote(raw && raw.id, raw && raw.note, {
       windowNo: getWindowNo(),

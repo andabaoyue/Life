@@ -652,6 +652,43 @@ console.log('=== Phase 0 数字生命实验层架构契约与 10 大不变量检
         hadManagerNow === true
         && baseBrain.memory.isMemoryDynamicsActive === true
         && !baseBrain.memory.systemText().includes('【第1段】'));
+
+      // P2-1: 从归档恢复 DORMANT traces 后立即同步 memoryActiveThreshold / memoryFadingMaxChars 与 deepHorizon
+      const recArchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-test-'));
+      try {
+        const snapBrain = new Brain(recArchDir, {
+          ...DEFAULTS,
+          apiKey: 'sk-test-p21',
+          experimentMode: 'experimental',
+          experimentModules: { ...DEFAULTS.experimentModules, memoryDynamics: true },
+          memoryActiveThreshold: 0.99,
+          memoryFadingMaxChars: 42
+        });
+        snapBrain.memory.data.windows = [{ no: 1, text: '来自第一窗的很长的一段沉淀经历内容。' }];
+        snapBrain.memory.engramManager.registerTrace({ sourceWindowNo: 1, createdWindow: 1, contentRef: '第1段' });
+        snapBrain.memory.engramManager.decayAll(10);
+        const snapPayload = snapBrain.memory.engramManager.exportSnapshot(10);
+        snapBrain.experiencesArchive.appendRecord('memory_dynamics_snapshot', 1, { snapshot: snapPayload });
+        // 清空 memory.json 中的 engrams 强制走归档恢复链路
+        snapBrain.memory.data.engrams = null;
+        snapBrain.memory.save(true);
+
+        const restoredBrain = new Brain(recArchDir, {
+          ...DEFAULTS,
+          apiKey: 'sk-test-p21',
+          experimentMode: 'experimental',
+          experimentModules: { ...DEFAULTS.experimentModules, memoryDynamics: true },
+          memoryActiveThreshold: 0.99,
+          memoryFadingMaxChars: 42
+        });
+        check('P2-1: 归档恢复 engramManager 后立即同步 deepHorizon 与 memoryFadingMaxChars',
+          restoredBrain.memory.isMemoryDynamicsActive === true
+          && restoredBrain.memory.fadingMaxChars === 42
+          && restoredBrain.memory.engramManager.config.fadingMaxChars === 42
+          && restoredBrain.memory.systemText().includes('【底座深处沉淀】'));
+      } finally {
+        fs.rmSync(recArchDir, { recursive: true, force: true });
+      }
     } finally {
       fs.rmSync(baseDir, { recursive: true, force: true });
     }

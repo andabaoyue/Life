@@ -13,6 +13,7 @@ function isLinkLocalHost(hostname) {
   if (!h) return false;
   if (/^169\.254\.\d+\.\d+$/.test(h) || h.startsWith('169.254.')) return true;
   if (h.startsWith('::ffff:169.254.')) return true;
+  if (/^(?:::(?:0+:){0,4}|(?:0+:){5})ffff:(?:169\.254\.\d+\.\d+|a9fe:[0-9a-f]{1,4})$/.test(h)) return true;
   if (/^fe[89ab][0-9a-f]:/.test(h) || h.startsWith('fe80::')) return true;
   return false;
 }

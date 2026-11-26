@@ -265,6 +265,18 @@ const invoke = async (ch, arg) => handlers.get(ch)(trustedEvent(), arg);
   }
   check('14 IPC guard：untrusted sender / remote frame 均被拒（UNTRUSTED_RENDERER）', guardHit === 2);
 
+  {
+    const rNullCreate = await invoke('connections:create', null);
+    const rNullUpdate = await invoke('connections:update', null);
+    const rNullDelete = await invoke('connections:delete', null);
+    const rNullTest = await invoke('connections:test', null);
+    const rNullAct = await invoke('connections:activate', null);
+    const rNullGet = await invoke('connections:get', null);
+    check('P2-6 connections IPC 传入 null 均返回结构化 { ok: false } 且不抛 TypeError',
+      [rNullCreate, rNullUpdate, rNullDelete, rNullTest, rNullAct, rNullGet]
+        .every((r) => r && r.ok === false));
+  }
+
   const mainSrc = ['main.js', 'src/main-connections-ipc.js']
     .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   check('19 SEC-01 回归：connections:* 全经 ipcGuard（main.js 无裸 ipcMain.handle/on）',

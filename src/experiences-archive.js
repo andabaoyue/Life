@@ -28,7 +28,7 @@ class ExperiencesArchive {
   _statStamp(filePath) {
     try {
       const st = fs.statSync(filePath);
-      return { size: st.size, mtimeMs: st.mtimeMs, ino: st.ino || 0 };
+      return { size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs || 0, ino: st.ino || 0 };
     } catch {
       return null;
     }
@@ -37,7 +37,17 @@ class ExperiencesArchive {
   _stampsMatch(a, b) {
     if (a === null && b === null) return true;
     if (!a || !b) return false;
-    return a.size === b.size && a.mtimeMs === b.mtimeMs && a.ino === b.ino;
+    return a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs && a.ino === b.ino;
+  }
+
+  _readAnchorRaw() {
+    const anchorPath = this.path + '.anchor.json';
+    try {
+      return fs.readFileSync(anchorPath, 'utf8');
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return null;
+      return undefined;
+    }
   }
 
   _verifyCachedTailBytes(cache) {
@@ -69,9 +79,12 @@ class ExperiencesArchive {
   _getValidatedAppendState() {
     const archiveStat = this._statStamp(this.path);
     const anchorStat = this._statStamp(this.path + '.anchor.json');
+    const anchorRaw = this._readAnchorRaw();
     if (this._appendCache
+        && anchorRaw !== undefined
         && this._stampsMatch(this._appendCache.archiveStat, archiveStat)
         && this._stampsMatch(this._appendCache.anchorStat, anchorStat)
+        && this._appendCache.anchorRaw === anchorRaw
         && this._verifyCachedTailBytes(this._appendCache)) {
       return {
         valid: true,
@@ -80,6 +93,7 @@ class ExperiencesArchive {
         legacyPrefixCount: this._appendCache.legacyPrefixCount,
       };
     }
+    this._appendCache = null;
 
     const { records, diagnostics } = this.readAllWithDiagnostics();
     if (diagnostics.skippedCount > 0) {
@@ -387,10 +401,12 @@ class ExperiencesArchive {
       }
       const nextArchiveStat = this._statStamp(this.path);
       const nextAnchorStat = this._statStamp(this.path + '.anchor.json');
-      if (nextArchiveStat && nextAnchorStat) {
+      const nextAnchorRaw = this._readAnchorRaw();
+      if (nextArchiveStat && nextAnchorStat && nextAnchorRaw !== undefined) {
         this._appendCache = {
           archiveStat: nextArchiveStat,
           anchorStat: nextAnchorStat,
+          anchorRaw: nextAnchorRaw,
           last: entry,
           legacyPrefix: appendState.legacyPrefix || false,
           legacyPrefixCount: appendState.legacyPrefixCount || 0,
@@ -444,6 +460,7 @@ class ExperiencesArchive {
       const fd = fs.openSync(auditPath, 'a');
       try { fs.writeSync(fd, JSON.stringify({ ...record, recoveryAudit: true }) + '\n', null, 'utf8'); fs.fsyncSync(fd); }
       finally { fs.closeSync(fd); }
+      this._countCache = null;
       return true;
     } catch (e) {
       console.error('[ExperiencesArchive] recovery audit sidecar write failed:', e.message);

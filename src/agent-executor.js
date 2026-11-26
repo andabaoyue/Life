@@ -806,7 +806,7 @@ class ControlledAgentExecutor {
         }
       }
       return fail(code, {
-        detail: String((err && err.message) || '').slice(0, 200),
+        detail: redactSecrets(String((err && err.message) || '')).slice(0, 200),
         rollbackFailed: Boolean(isRollbackFailure),
       });
     }

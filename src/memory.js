@@ -193,12 +193,23 @@ class Memory {
     const next = Boolean(enabled);
     this.memoryDynamicsEnabled = next;
     if (next) {
+      if (engramOpts && typeof engramOpts === 'object') {
+        const merged = { ...(this.opts.engramConfig || {}) };
+        if (Number.isFinite(engramOpts.activeThreshold)) merged.activeThreshold = engramOpts.activeThreshold;
+        if (Number.isFinite(engramOpts.fadingMaxChars)) merged.fadingMaxChars = engramOpts.fadingMaxChars;
+        this.opts.engramConfig = merged;
+      }
       if (!this.engramManager) {
         const { EngramTraceManager } = require('./memory-dynamics');
-        this.engramManager = new EngramTraceManager(engramOpts || this.opts.engramConfig);
+        this.engramManager = new EngramTraceManager(this.opts.engramConfig);
         if (this.data && this.data.engrams) {
           this.engramManager.restoreFromSnapshot(this.data.engrams);
         }
+      } else if (engramOpts && typeof engramOpts === 'object') {
+        this.engramManager.config = {
+          ...this.engramManager.config,
+          ...(this.opts.engramConfig || {})
+        };
       }
       this.fadingMaxChars = this.engramManager.config.fadingMaxChars;
       if (this.data) this.refreshDeepHorizon();

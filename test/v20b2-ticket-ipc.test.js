@@ -17,6 +17,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 // 临时目录卫生：统一 v20b2- 前缀并在退出时清空
 const _hygDirs = [];
@@ -282,11 +283,43 @@ function buildHarness(opts = {}) {
     const mainSrc = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
     const regBlock = mainSrc.slice(mainSrc.indexOf('registerAgentIpc('), mainSrc.indexOf('registerAgentIpc(') + 1800);
 
-    check('T1.10 源码门禁：agent-ipc.js 内零 new TicketStore 且 main.js 注入 brain.ticketStore 与 getWindowNo',
+    check('T1.10 源码门禁：agent-ipc.js 内零 new TicketStore 且 main.js 注入 getTicketStore 与 getWindowNo',
       !/new\s+TicketStore\b/.test(ipcCode)
       && !/require\(['"]\.\/agent-lifecycle['"]\)/.test(ipcCode)
-      && /ticketStore\s*:.*brain\s*&&\s*brain\.ticketStore/.test(regBlock)
+      && /getTicketStore\s*:.*brain\s*&&\s*brain\.ticketStore/.test(regBlock)
       && /getWindowNo\s*:/.test(regBlock));
+
+    // P1-3 回归：getTicketStore 动态指向新 TicketStore 实例后，agent:ticket-list 立即返回新实例工单
+    const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'v20b2-data-'));
+    const dirB = fs.mkdtempSync(path.join(os.tmpdir(), 'v20b2-data-'));
+    const storeA = new TicketStore({ dir: dirA });
+    const storeB = new TicketStore({ dir: dirB });
+    storeA.createTicket({ title: '旧实例事项', windowNo: 1 });
+    storeB.createTicket({ title: '热切换后新实例事项', windowNo: 2 });
+    let activeStore = storeA;
+    const fakeOriginUrl = pathToFileURL(path.join(ROOT, 'index.html')).href;
+    const mainWc = { mainFrame: { url: fakeOriginUrl }, on() {}, setWindowOpenHandler() {} };
+    const hsHandlers = new Map();
+    const hsGuard = createIpcGuard({
+      ipcMain: { handle: (ch, fn) => hsHandlers.set(ch, fn), on() {} },
+      getMainWindow: () => ({ webContents: mainWc }),
+      appDir: ROOT,
+      getTrustedWebContents: () => [],
+    });
+    const fakeEv = { sender: mainWc, senderFrame: mainWc.mainFrame };
+    registerAgentIpc(hsGuard, {
+      registry: new CapabilityRegistry(),
+      policy: new PermissionPolicy({ killSwitch: false, allowed: [] }),
+      budget: new ExecutionBudget(),
+      auditLog: new AuditLog({ dir: dirA }),
+    }, { getTicketStore: () => activeStore, getWindowNo: () => 2, allowTicketWriteIpc: false });
+    const listBefore = hsHandlers.get('agent:ticket-list')(fakeEv);
+    activeStore = storeB;
+    const listAfter = hsHandlers.get('agent:ticket-list')(fakeEv);
+    check('P1-3 热切换 getTicketStore 切换指向新 TicketStore 后 agent:ticket-list 立刻同步',
+      listBefore && listBefore.ok && listBefore.tickets[0].title === '旧实例事项'
+      && listAfter && listAfter.ok && listAfter.tickets[0].title === '热切换后新实例事项');
+    try { fs.rmSync(dirA, { recursive: true, force: true }); fs.rmSync(dirB, { recursive: true, force: true }); } catch {}
   }
 
   /* ============ 7. 端到端：IPC 建单 → Brain.ask() 尾部注入（含摘除 provider 对照 & 10→3 上限） ============ */

@@ -310,6 +310,7 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
         retryState: { attempts: attempt + 1, maxRetries, retryAfterMs }
       });
     }
+    clearFallbackTimer();
     res.attempts = attempt + 1;
     return res;
   }

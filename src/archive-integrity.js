@@ -185,7 +185,11 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
   const claims = collectFactualClaims(records);
   const messageAtts = normalizeExternalMessageAttestations(messageAttestations);
   const attestations = normalizeExternalEvidenceAttestations(evidenceAttestations);
-  const byEvidenceId = new Map(attestations.map(a => [a.evidenceId, a]));
+  const byEvidenceId = new Map();
+  for (const a of attestations) {
+    if (!byEvidenceId.has(a.evidenceId)) byEvidenceId.set(a.evidenceId, []);
+    byEvidenceId.get(a.evidenceId).push(a);
+  }
 
   const defects = [];
   // 同一 messageId 可能在 memory.reset() 后跨血脉重复出现，必须保留全部证明列表
@@ -226,8 +230,8 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
   }
 
   for (const claim of claims.evidenceClaims) {
-    const att = byEvidenceId.get(claim.evidenceId);
-    if (!att) {
+    const atts = byEvidenceId.get(claim.evidenceId);
+    if (!atts || atts.length === 0) {
       defects.push({
         status: 'UNRESOLVED',
         relation: 'evidence->external-attestation',
@@ -238,6 +242,16 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
       continue;
     }
 
+    const quoteHash = hashCanonicalText(String(claim.quote || '').trim().toLowerCase().replace(/\s+/g, ' '));
+    const matched = atts.find((a) =>
+      a.fingerprint === claim.fingerprint
+      && (!claim.messageId || a.messageId === claim.messageId)
+      && (!a.quoteHash || a.quoteHash === quoteHash)
+      && (!Number.isFinite(claim.windowNo) || !Number.isFinite(a.windowNo) || claim.windowNo === a.windowNo)
+    );
+    if (matched) continue;
+
+    const att = atts[0];
     if (att.fingerprint !== claim.fingerprint) {
       defects.push({
         status: 'UNRESOLVED',
@@ -258,7 +272,6 @@ function verifyIndependentEvidence(records, evidenceAttestations, messageAttesta
       });
     }
 
-    const quoteHash = hashCanonicalText(String(claim.quote || '').trim().toLowerCase().replace(/\s+/g, ' '));
     if (att.quoteHash && att.quoteHash !== quoteHash) {
       defects.push({
         status: 'UNRESOLVED',
@@ -1000,13 +1013,14 @@ class ArchiveIntegrityService {
     } else if (hashed.length > 0 && hashed.length < validRecords.length) {
       // 含 Legacy 前缀的混合归档：仍须对所有现代记录做规范化哈希与 prevHash 链校验，防头部前置 Legacy 绕过篡改检测
       let hashOk = true;
+      const legacyOffset = validRecords.length - hashed.length;
       for (let j = 0; j < hashed.length; j++) {
         const rec = hashed[j];
         const expectedHash = computeCanonicalRecordHash(rec);
         if (rec.recordHash !== expectedHash) {
           hashOk = false;
           diagnostics.push({
-            lineNumber: j + 1,
+            lineNumber: legacyOffset + j + 1,
             error: `RECORD_HASH_MISMATCH: recordId ${rec.recordId || j}`
           });
           break;
@@ -1015,7 +1029,7 @@ class ArchiveIntegrityService {
           if (rec.archiveSeq === 1 && rec.prevHash !== 'GENESIS') {
             hashOk = false;
             diagnostics.push({
-              lineNumber: 1,
+              lineNumber: legacyOffset + 1,
               error: `GENESIS_HASH_MISMATCH: expected GENESIS, got ${rec.prevHash}`
             });
             break;
@@ -1025,7 +1039,7 @@ class ArchiveIntegrityService {
           if (rec.prevHash !== prevRec.recordHash) {
             hashOk = false;
             diagnostics.push({
-              lineNumber: j + 1,
+              lineNumber: legacyOffset + j + 1,
               error: `PREV_HASH_CHAIN_BROKEN: at record ${rec.recordId || j}, expected ${prevRec.recordHash}, got ${rec.prevHash}`
             });
             break;

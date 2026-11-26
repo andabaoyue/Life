@@ -258,6 +258,38 @@ ipcCalls.length = 0;
 handleGetWindow({}, {});
 check('Test G (IPC window): 空参数 {} 默认传 null（不再伪造 Window 1）', ipcCalls[0].wNo === null);
 
+// P2-8: 顶层 windowNo === null 但内含有效 windowNo 的迁移/聚合记录不被索引过滤误杀
+{
+  const dirP28 = tmpDir('idx-p28-');
+  const archiveP28 = path.join(dirP28, 'experiences.jsonl');
+  fs.writeFileSync(archiveP28, JSON.stringify({
+    schemaVersion: 1,
+    recordType: 'state_migration',
+    windowNo: null,
+    timestamp: 4000,
+    payload: {
+      stateChanges: [{
+        stateChangeId: 'sc-unk-w2',
+        windowNo: 2,
+        trait: 'quiet_preference',
+        previousValue: 0,
+        delta: 5,
+        newValue: 5
+      }]
+    }
+  }) + '\n', 'utf8');
+  fs.writeFileSync(path.join(dirP28, 'subject-state.json'), JSON.stringify({ windowNo: 2, values: {}, stateChanges: [] }), 'utf8');
+  const idxP28 = new ResearchIndex(archiveP28);
+  const qP28 = new ResearchQuery(dirP28, { index: idxP28 });
+  const scRes = qP28.getStateChanges({ windowNo: 2 });
+  const trajRes = qP28.getStateTrajectory({ fromWindow: 2, toWindow: 2 });
+  check('P2-8: getStateChanges({ windowNo: 2 }) 放行顶层 windowNo=null 的记录并精确命中内部变化',
+    scRes && Array.isArray(scRes.items) && scRes.items.some((x) => x.stateChangeId === 'sc-unk-w2'));
+  check('P2-8: getStateTrajectory({ fromWindow: 2, toWindow: 2 }) 同样命中顶层 windowNo=null 的内部变化',
+    Array.isArray(trajRes) && trajRes.some((x) => x.stateChangeId === 'sc-unk-w2'));
+  try { fs.rmSync(dirP28, { recursive: true, force: true }); } catch {}
+}
+
 try {
   fs.rmSync(dirA, { recursive: true, force: true });
   fs.rmSync(dirD, { recursive: true, force: true });

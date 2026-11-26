@@ -277,6 +277,31 @@ check('append 传入非法参数不崩溃', !archive.append(null) && !archive.ap
   const auditMerged = auditArch.readAll();
   check('Batch3.1: O(1) 计数缓存与 clear() 失效、recovery-audit 损坏行跳过不吞后续记录',
     c1 === 2 && c2 === 0 && auditMerged.length === 2 && auditMerged[1].windowNo === 2);
+
+  // P2-2: .anchor.json 同毫秒等长篡改检测 + appendRecoveryAudit() 后立即失效 _countCache
+  const tamDir = tmpDir();
+  const tamArch = new ExperiencesArchive(tamDir);
+  tamArch.appendRecord('window_summary', 1, { rawSummaryText: 'anchor-check-1' });
+  const anchorFile = tamArch.path + '.anchor.json';
+  const origAnchorRaw = fs.readFileSync(anchorFile, 'utf8');
+  const origSt = fs.statSync(anchorFile);
+  const parsedAnchor = JSON.parse(origAnchorRaw);
+  const oldHead = parsedAnchor.recordHash.slice(0, 1);
+  const flippedHash = (oldHead === 'a' ? 'b' : 'a') + parsedAnchor.recordHash.slice(1);
+  const tamperedAnchorRaw = origAnchorRaw.replace(parsedAnchor.recordHash, flippedHash);
+  fs.writeFileSync(anchorFile, tamperedAnchorRaw, 'utf8');
+  fs.utimesSync(anchorFile, origSt.atime, origSt.mtime);
+  const tamWriteOk = tamArch.appendRecord('window_summary', 2, { rawSummaryText: 'anchor-check-2' });
+  const cntDir = tmpDir();
+  const cntArch = new ExperiencesArchive(cntDir);
+  cntArch.appendRecord('window_summary', 1, { rawSummaryText: 'rec-1' });
+  const beforeAuditCnt = cntArch.count();
+  const sidecarOk = cntArch.appendRecoveryAudit({ recordType: 'recovery_event', windowNo: 2, payload: { action: 'sidecar' } });
+  const afterAuditCnt = cntArch.count();
+  check('P2-2: 同毫秒等长篡改 .anchor.json 不命中缓存且 appendRecoveryAudit() 后 count() 立即刷新',
+    origAnchorRaw.length === tamperedAnchorRaw.length
+    && tamWriteOk === false
+    && sidecarOk === true && beforeAuditCnt === 1 && afterAuditCnt === 2);
 }
 
 console.log(`ASSERT total=${total} passed=${passed} failed=${failures}`);

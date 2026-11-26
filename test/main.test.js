@@ -630,6 +630,26 @@ const readCfg = () => fs.readFileSync(CFG, 'utf8');
   check('chat-busy 双窗广播通道受控（对话生命周期同步）',
     busyRes && busyRes.ok === true);
 
+  {
+    let nullThrown = false;
+    try {
+      const rSttNull = await invoke('stt:set-config', null);
+      const rVisNull = await invoke('vision:stage', null);
+      const rBusyNull = await invoke('chat-busy', null);
+      const rVpNull = await invoke('panel-viewport', true, null);
+      await emit('drag-move', null);
+      await emit('motion-ui-state', null);
+      check('P2-6 main-*-ipc handlers 传入 null 负载平稳收敛，不抛 TypeError',
+        rSttNull && rSttNull.ok === false
+        && rVisNull && rVisNull.ok === false
+        && rBusyNull && rBusyNull.ok === true
+        && rVpNull && typeof rVpNull.ok === 'boolean');
+    } catch (e) {
+      nullThrown = true;
+      check('P2-6 main-*-ipc handlers 传入 null 负载平稳收敛，不抛 TypeError', !nullThrown, String(e && e.message));
+    }
+  }
+
   /* ============ chat-history 投影白名单（v1.0 笔 2） ============ */
   const chList = await invoke('chat-history');
   // 🔴 10-07 由 7 字段扩为 8 字段：新增 bedside。

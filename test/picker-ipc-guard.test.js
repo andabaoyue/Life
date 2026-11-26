@@ -121,6 +121,17 @@ check('主进程将精确四通道策略挂到 ipcGuard 全局入口',
   && configuredChannels.length === ALLOWED.size
   && [...ALLOWED].every((channel) => configuredChannels.includes(channel)));
 
+{
+  const { bindPickerWindowProvider, assertChannelAllowedForPicker } = require('../src/main-vision-ipc');
+  bindPickerWindowProvider(null);
+  const noPickerAllowed = assertChannelAllowedForPicker({ sender: {} }, 'agent:propose-action');
+  bindPickerWindowProvider(() => { throw new Error('picker check failed'); });
+  const throwDenied = assertChannelAllowedForPicker({ sender: {} }, 'agent:propose-action');
+  bindPickerWindowProvider(null);
+  check('P1-1 未装配 picker 时放行常规通道，provider 运行时抛错仍 fail-closed 拒绝',
+    noPickerAllowed === true && throwDenied === false);
+}
+
 console.log(`ASSERT total=${assertions} passed=${assertions - failures} failed=${failures}`);
 console.log(failures ? `${failures} 项失败` : '全部通过');
 process.exit(failures ? 1 : 0);

@@ -197,23 +197,26 @@ async function runTests() {
         archiveOpenCount === 1, 'archiveOpenCount=' + archiveOpenCount);
 
       // Batch 3.4: verifyIntegrity 对空字符串基线 sha256('') 变化同样敏感；并发 Replay 上限拦截
-      const svcCheck = new (require('../src/research-service').ResearchService)(idxDir, { maxConcurrentReplays: 1 });
-      const before = svcCheck.computeIntegrityHashes();
+      const emptyBaselineDir = path.join(os.tmpdir(), 'life-test-integrity-efficiency-' + Date.now() + '-empty');
+      fs.mkdirSync(emptyBaselineDir, { recursive: true });
       let violCaught = false;
-      const tmpArchPath = path.join(idxDir, 'subject-state.json');
+      let emptyBeforeSha = null;
       try {
-        // state 不存在时 stateSha256 为 ''；写入后应检测到校验变更
-        fs.writeFileSync(tmpArchPath, '{"windowNo":1}', 'utf8');
-        try { svcCheck.verifyIntegrity(before); } catch (ve) {
+        const svcBase = new (require('../src/research-service').ResearchService)(emptyBaselineDir);
+        const before = svcBase.computeIntegrityHashes();
+        emptyBeforeSha = before.stateSha256;
+        fs.writeFileSync(path.join(emptyBaselineDir, 'subject-state.json'), '{"windowNo":1}', 'utf8');
+        try { svcBase.verifyIntegrity(before); } catch (ve) {
           if (String(ve.message).includes('RESEARCH_WRITE_VIOLATION')) violCaught = true;
         }
       } finally {
-        try { fs.rmSync(tmpArchPath, { force: true }); } catch {}
+        try { fs.rmSync(emptyBaselineDir, { recursive: true, force: true }); } catch {}
       }
+      const svcCheck = new (require('../src/research-service').ResearchService)(idxDir, { maxConcurrentReplays: 1 });
       const rTask1 = svcCheck.startReplayTask({});
       const rTask2 = svcCheck.startReplayTask({});
       check('Batch3.4: verifyIntegrity 捕获空基线篡改且 Replay 并发受 maxConcurrentReplays 限制',
-        violCaught === true && rTask1.status === 'running' && rTask2.ok === false && rTask2.error === 'REPLAY_CONCURRENCY_LIMIT');
+        emptyBeforeSha === '' && violCaught === true && rTask1.status === 'running' && rTask2.ok === false && rTask2.error === 'REPLAY_CONCURRENCY_LIMIT');
     } finally {
       fs.rmSync(idxDir, { recursive: true, force: true });
     }

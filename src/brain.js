@@ -238,14 +238,7 @@ class Brain {
       //   一开动力学就把她积攒的长期记忆砍成碎片。
       //   ⚠️ EngramTraceManager 构造器做 `{...DEFAULT, ...config}`，
       //      所以这里只传覆盖项即可；未传字段仍走 DEFAULT（默认行为不变）。
-      engramConfig: {
-        activeThreshold: this.cfg.memoryActiveThreshold !== undefined
-          ? this.cfg.memoryActiveThreshold
-          : DEFAULTS.memoryActiveThreshold,
-        fadingMaxChars: this.cfg.memoryFadingMaxChars !== undefined
-          ? this.cfg.memoryFadingMaxChars
-          : DEFAULTS.memoryFadingMaxChars
-      }
+      engramConfig: this._buildEngramConfig()
     });
 
     /* 🔴 v1.8-a：把「重逢事实」的取数权交给 brain（memory 不碰 stats）。
@@ -284,7 +277,7 @@ class Brain {
     });
     this.memory.opts.experimentModules = this.currentWindowSnapshot.modules;
     if (typeof this.memory.setMemoryDynamicsEnabled === 'function') {
-      this.memory.setMemoryDynamicsEnabled(Boolean(this.currentWindowSnapshot.modules?.memoryDynamics), this.cfg.engramConfig);
+      this.memory.setMemoryDynamicsEnabled(Boolean(this.currentWindowSnapshot.modules?.memoryDynamics), this._buildEngramConfig());
     } else {
       this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
     }
@@ -627,6 +620,19 @@ class Brain {
     }
   }
 
+  _buildEngramConfig(cfg = this.cfg) {
+    const c = cfg || {};
+    return {
+      ...(c.engramConfig && typeof c.engramConfig === 'object' ? c.engramConfig : {}),
+      activeThreshold: c.memoryActiveThreshold !== undefined
+        ? c.memoryActiveThreshold
+        : DEFAULTS.memoryActiveThreshold,
+      fadingMaxChars: c.memoryFadingMaxChars !== undefined
+        ? c.memoryFadingMaxChars
+        : DEFAULTS.memoryFadingMaxChars
+    };
+  }
+
   /**
    * 从经历归档冷启动恢复最新的记忆动力学快照 (若 memory.json 缺损或初次启动)
    */
@@ -645,6 +651,12 @@ class Brain {
       }
       if (latestSnapshot) {
         this.memory.engramManager.restoreFromSnapshot(latestSnapshot);
+        const ec = this._buildEngramConfig();
+        this.memory.engramManager.config = { ...this.memory.engramManager.config, ...ec };
+        this.memory.fadingMaxChars = this.memory.engramManager.config.fadingMaxChars;
+        if (typeof this.memory.refreshDeepHorizon === 'function') {
+          this.memory.refreshDeepHorizon();
+        }
       }
     } catch (e) {
       console.warn('[Brain] 从经历归档恢复记忆动力学快照失败:', e.message);
@@ -2099,11 +2111,22 @@ class Brain {
       return { added: 0, rejected: vr.rejected.length };
     }
     // provenance sidecar 同步（与主通道同款两阶段纪律）
+    let provOk = true;
     if (this.experiencesArchive && typeof this.experiencesArchive.updateProvenanceAttestations === 'function') {
-      this.experiencesArchive.updateProvenanceAttestations(
-        this.subjectState.data.messageAttestations || [],
-        this.subjectState.data.evidenceAttestations || []
-      );
+      const msgAtts = this.subjectState.data.messageAttestations || [];
+      const evAtts = this.subjectState.data.evidenceAttestations || [];
+      provOk = this.experiencesArchive.updateProvenanceAttestations(msgAtts, evAtts);
+      if (provOk && typeof this.subjectState.prunePersistedAttestations === 'function') {
+        this.subjectState.prunePersistedAttestations(msgAtts, evAtts);
+      }
+    }
+    if (!provOk) {
+      if (staging && typeof this.subjectState.rollbackStage === 'function') {
+        this.subjectState.rollbackStage(staging);
+      }
+      this.subjectState.recoveryPending = true;
+      this.subjectState.recoveryPendingReason = 'self_note_provenance_commit_failed';
+      return { added: 0, rejected: vr.rejected.length };
     }
     const committed = this.subjectState.commit();
     if (!committed) {

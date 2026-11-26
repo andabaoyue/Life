@@ -22,7 +22,14 @@ const { buildReadSandboxScope, createMainAgentController } = require('./src/main
 const { createWindowManager } = require('./src/main-window-ipc');
 const { createConnectionsController } = require('./src/main-connections-ipc');
 const { registerSttIpc } = require('./src/main-stt-ipc');
-const { assertChannelAllowedForPicker, registerVisionIpc } = require('./src/main-vision-ipc');
+const { bindPickerWindowProvider, assertChannelAllowedForPicker, registerVisionIpc } = require('./src/main-vision-ipc');
+let pickerWindowMod = null;
+try {
+  pickerWindowMod = require('./src/vision-picker-window');
+} catch { pickerWindowMod = null; }
+if (pickerWindowMod && typeof pickerWindowMod.getPickerWindow === 'function') {
+  bindPickerWindowProvider(() => pickerWindowMod.getPickerWindow());
+}
 // v1.0 D-1：Agent 执行能力 IPC 治理通道（纯只读+ 提案受理，执行器仍为 Mock）
 const { registerAgentIpc } = require('./src/agent-ipc');
 const { CapabilityRegistry, PermissionPolicy, ExecutionBudget, AuditLog } = require('./src/agent-interfaces');
@@ -121,8 +128,7 @@ const ipcGuard = createIpcGuard({ ipcMain, getMainWindow: () => win, appDir: __d
     const cw = typeof windowMgr !== 'undefined' && windowMgr ? windowMgr.getChatWin() : null;
     const list = [win, cw];
     try {
-      const pickerMod = require('./src/vision-picker-window');
-      const pw = pickerMod.getPickerWindow ? pickerMod.getPickerWindow() : null;
+      const pw = pickerWindowMod && pickerWindowMod.getPickerWindow ? pickerWindowMod.getPickerWindow() : null;
       if (pw && !pw.isDestroyed()) list.push(pw);
     } catch (e) { /* 模块异常不影响主链路的信任判定 */ }
     return list.filter(w => w && !w.isDestroyed()).map(w => w.webContents);
@@ -1498,15 +1504,27 @@ app.whenReady().then(() => {
       if (!it || typeof it !== 'object' || !Array.isArray(it.sources) || !it.sources.length) return null;
       return { sources: it.sources, kind: typeof it.kind === 'string' ? it.kind : null };
     },
-    // v2.0-b2：注入唯一 TicketStore 实例与主进程当前 windowNo（不在 agent-ipc 内 new 第二份实例）
-    ticketStore: brain && brain.ticketStore ? brain.ticketStore : null,
+    // v2.0-b2：注入唯一 TicketStore 实例 getter 与主进程当前 windowNo（不在 agent-ipc 内 new 第二份实例，且支持热切换）
+    getTicketStore: () => (brain && brain.ticketStore ? brain.ticketStore : null),
     getWindowNo: () => (brain && brain.memory && brain.memory.data
       && Number.isFinite(brain.memory.data.windowNo)) ? brain.memory.data.windowNo : 1,
     allowTicketWriteIpc: false,
     confirmHighRiskAction: (proposal) => {
       if (!dialog || typeof dialog.showMessageBoxSync !== 'function') return false;
       const cap = proposal && proposal.capability ? proposal.capability : 'unknown';
-      const scope = proposal && proposal.scope ? proposal.scope : '';
+      const rawScope = proposal && proposal.scope ? String(proposal.scope) : '';
+      let targetText = rawScope;
+      if (!targetText && proposal && Array.isArray(proposal.targets) && proposal.targets.length > 0) {
+        const preview = proposal.targets.slice(0, 3).map((t) => {
+          if (t && typeof t === 'object') {
+            return t.scope || t.target || t.src || t.dst || t.path || JSON.stringify(t);
+          }
+          return String(t);
+        }).join(', ');
+        targetText = proposal.targets.length > 3
+          ? `${preview} …（共 ${proposal.targets.length} 项）`
+          : `${preview}（共 ${proposal.targets.length} 项）`;
+      }
       const targetWin = (win && !win.isDestroyed()) ? win : undefined;
       const idx = dialog.showMessageBoxSync(targetWin, {
         type: 'warning',
@@ -1515,7 +1533,7 @@ app.whenReady().then(() => {
         cancelId: 0,
         title: '高风险沙盒操作二次确认',
         message: `即将执行高风险操作：${cap}`,
-        detail: `目标范围：${String(scope).slice(0, 200)}\n该操作不可自动撤销，请确认是否继续。`,
+        detail: `目标范围：${String(targetText).slice(0, 200)}\n该操作不可自动撤销，请确认是否继续。`,
       });
       return idx === 1;
     },

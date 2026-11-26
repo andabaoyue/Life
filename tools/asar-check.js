@@ -92,15 +92,29 @@ function normalizeList(list) {
   return list.map((p) => String(p).replace(/\\/g, '/').replace(/^\/+/, ''));
 }
 
+const MAX_ASAR_HEADER_BYTES = 64 * 1024 * 1024;
+
+function readExactSync(fd, length, position) {
+  const buf = Buffer.alloc(length);
+  let total = 0;
+  while (total < length) {
+    const n = fs.readSync(fd, buf, total, length - total, position + total);
+    if (n <= 0) throw new Error(`Unexpected EOF reading ASAR archive (read ${total}/${length})`);
+    total += n;
+  }
+  return buf;
+}
+
 /** 零依赖原生读取 ASAR 包头文件清单（内置兜底，确保无 @electron/asar 时亦可秒级运行） */
 function readAsarFileList(archivePath) {
   const fd = fs.openSync(archivePath, 'r');
   try {
-    const sizeBuf = Buffer.alloc(16);
-    fs.readSync(fd, sizeBuf, 0, 16, 0);
+    const sizeBuf = readExactSync(fd, 16, 0);
     const headerSize = sizeBuf.readUInt32LE(12);
-    const headerBuf = Buffer.alloc(headerSize);
-    fs.readSync(fd, headerBuf, 0, headerSize, 16);
+    if (headerSize <= 0 || headerSize > MAX_ASAR_HEADER_BYTES) {
+      throw new Error(`Invalid ASAR header size: ${headerSize}`);
+    }
+    const headerBuf = readExactSync(fd, headerSize, 16);
     const header = JSON.parse(headerBuf.toString('utf8'));
     const files = [];
     function walk(node, curPath) {

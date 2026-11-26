@@ -246,6 +246,29 @@ console.log('--- D-24 便签入传门禁 ---');
     check('🔴 归档失败 ⇒ 回滚暂存、特质分毫不动（Replay 对称优先）',
       rollRes && rollRes.added === 0 && b.subjectState.data.values.vitality === vRoll,
       'v=' + b.subjectState.data.values.vitality);
+
+    /* ============ 10. P2-3: Provenance sidecar 失败回滚 & 成功裁剪 ============ */
+    const bP23 = freshBrain(freshDir());
+    bP23.memory.addSelfNote({ content: '独立测试侧车回滚与裁剪的自留文本。', name: 'n-p23.md', source: 'selfNote' });
+    const mint2 = bP23._engraveSelfNotes(1);
+    const noteId2 = [...mint2.attestations.keys()][0];
+    const hint2 = [{ noteId: noteId2, quote: '独立测试侧车回滚与裁剪的自留文本。', trait: 'vitality', direction: 1, strength: 1 }];
+    const vProv = bP23.subjectState.data.values.vitality;
+    const realUpdProv = bP23.experiencesArchive.updateProvenanceAttestations.bind(bP23.experiencesArchive);
+    const realPrune = bP23.subjectState.prunePersistedAttestations.bind(bP23.subjectState);
+    let pruneCalled = false;
+    bP23.experiencesArchive.updateProvenanceAttestations = () => false;
+    const provFailRes = bP23._applySelfNoteTraitHints(hint2, mint2.attestations, new Map(), 1);
+    check('P2-3: Provenance sidecar 更新返回 false 时回滚暂存、标记 recoveryPending 且不动特质',
+      provFailRes && provFailRes.added === 0 && bP23.subjectState.recoveryPending === true && bP23.subjectState.data.values.vitality === vProv);
+    bP23.subjectState.recoveryPending = false;
+    bP23.subjectState.recoveryPendingReason = null;
+    bP23.experiencesArchive.updateProvenanceAttestations = realUpdProv;
+    bP23.subjectState.prunePersistedAttestations = (...args) => { pruneCalled = true; return realPrune(...args); };
+    const provOkRes = bP23._applySelfNoteTraitHints(hint2, mint2.attestations, new Map(), 1);
+    bP23.subjectState.prunePersistedAttestations = realPrune;
+    check('P2-3: Provenance sidecar 更新成功后同步调用 prunePersistedAttestations 裁剪已落盘证明',
+      provOkRes && provOkRes.added === 1 && pruneCalled === true);
   });
 
   // growSelf 是异步的：尾声放 then 链里收口

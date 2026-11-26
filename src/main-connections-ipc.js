@@ -60,26 +60,30 @@ function createConnectionsController(ctx) {
       };
     });
 
+    const safeObj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+
     ipcGuard.handle('connections:get', (e, opts) => {
+      const safeOpts = safeObj(opts);
       ensureConnectionStore();
       const st = connectionsMod.loadStore(app.getPath('userData'));
       if (!st.ok) return { ok: false, error: st.error };
-      const c = st.store && st.store.connections.find((x) => x.connectionId === (opts && opts.connectionId));
+      const c = st.store && st.store.connections.find((x) => x.connectionId === safeOpts.connectionId);
       return c ? { ok: true, connection: connectionDto(c) } : { ok: false, error: 'CONNECTION_NOT_FOUND' };
     });
 
     ipcGuard.handle('connections:create', (e, opts = {}) => {
+      const safeOpts = safeObj(opts);
       ensureConnectionStore();
       const r = connectionsMod.createConnection(app.getPath('userData'), {
-        displayName: opts.displayName,
-        providerId: opts.providerId,
-        protocol: opts.protocol,
-        baseURL: opts.baseURL,
-        model: opts.model
+        displayName: safeOpts.displayName,
+        providerId: safeOpts.providerId,
+        protocol: safeOpts.protocol,
+        baseURL: safeOpts.baseURL,
+        model: safeOpts.model
       });
       if (!r.ok) return r;
-      if (typeof opts.credential === 'string' && opts.credential) {
-        const w = secureCreds.setCredential(r.connection.credentialRef, opts.credential, { dir: app.getPath('userData'), getSS });
+      if (typeof safeOpts.credential === 'string' && safeOpts.credential) {
+        const w = secureCreds.setCredential(r.connection.credentialRef, safeOpts.credential, { dir: app.getPath('userData'), getSS });
         if (!w.ok) {
           connectionsMod.deleteConnection(app.getPath('userData'), r.connection.connectionId, { deleteCredential: true, getSS });
           return { ok: false, error: 'CREDENTIAL_WRITE_FAILED: ' + (w.error || '') };
@@ -89,9 +93,12 @@ function createConnectionsController(ctx) {
     });
 
     ipcGuard.handle('connections:update', (e, opts = {}) => {
-      const { connectionId, patch = {}, credential } = opts;
+      const safeOpts = safeObj(opts);
+      const connectionId = safeOpts.connectionId;
+      const patch = safeObj(safeOpts.patch);
+      const credential = safeOpts.credential;
       const hasNewCred = typeof credential === 'string' && credential.trim().length > 0;
-      const r = connectionsMod.updateConnection(app.getPath('userData'), connectionId, patch || {}, {
+      const r = connectionsMod.updateConnection(app.getPath('userData'), connectionId, patch, {
         allowOriginChange: hasNewCred
       });
       if (!r.ok) return r;
@@ -103,8 +110,9 @@ function createConnectionsController(ctx) {
     });
 
     ipcGuard.handle('connections:delete', (e, opts = {}) => {
-      const r = connectionsMod.deleteConnection(app.getPath('userData'), opts.connectionId, {
-        deleteCredential: opts.deleteCredential !== false,
+      const safeOpts = safeObj(opts);
+      const r = connectionsMod.deleteConnection(app.getPath('userData'), safeOpts.connectionId, {
+        deleteCredential: safeOpts.deleteCredential !== false,
         getSS
       });
       if (!r.ok) return r;
@@ -112,12 +120,13 @@ function createConnectionsController(ctx) {
     });
 
     ipcGuard.handle('connections:test', async (e, opts = {}) => {
+      const safeOpts = safeObj(opts);
       const cfg = getCfg();
       const dir = app.getPath('userData');
-      const r = await runConnectionTest(dir, opts.connectionId, { getSS, fallbackSecret: (cfg && cfg.apiKey) || '' });
+      const r = await runConnectionTest(dir, safeOpts.connectionId, { getSS, fallbackSecret: (cfg && cfg.apiKey) || '' });
       if (r.ok) {
         try {
-          connectionsMod.updateConnection(dir, opts.connectionId, {
+          connectionsMod.updateConnection(dir, safeOpts.connectionId, {
             testState: { status: r.status, phase: r.phase, reason: r.reason || null, lastTestedAt: Date.now() }
           });
         } catch { /* 快照持久化失败不影响测试结果返回 */ }
@@ -126,11 +135,12 @@ function createConnectionsController(ctx) {
     });
 
     ipcGuard.handle('connections:activate', (e, opts = {}) => {
+      const safeOpts = safeObj(opts);
       const dir = app.getPath('userData');
       const st = connectionsMod.loadStore(dir);
       if (!st.ok) return { ok: false, swapped: false, error: st.error };
       if (!st.store) return { ok: false, swapped: false, error: 'STORE_ABSENT' };
-      const targetId = opts && opts.connectionId;
+      const targetId = safeOpts.connectionId;
       const brain = getBrain();
       const cfg = getCfg();
       if (st.store.activeConnectionId === targetId && brain) {

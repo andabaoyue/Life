@@ -9,14 +9,23 @@ const VISION_ONLY_CHANNELS = new Set([
   'vision-notify'
 ]);
 
+let _pickerWindowProvider = null;
+
+/**
+ * 在主进程启动装配期注入框选窗读取器，避免每次 IPC 校验动态 require('./vision-picker-window')。
+ */
+function bindPickerWindowProvider(fn) {
+  _pickerWindowProvider = typeof fn === 'function' ? fn : null;
+}
+
 /**
  * 框选窗通道级收窄（fail-closed）：异常返回 false，仅放行四条视觉通道。
  */
 function assertChannelAllowedForPicker(event, channel) {
+  if (typeof _pickerWindowProvider !== 'function') return true;
   let pw = null;
   try {
-    const mod = require('./vision-picker-window');
-    pw = mod.getPickerWindow ? mod.getPickerWindow() : null;
+    pw = _pickerWindowProvider();
   } catch (e) { return false; }
   const pickerContents = pw && !pw.isDestroyed() ? pw.webContents : null;
   return isChannelAllowedForPicker(event, channel, pickerContents, VISION_ONLY_CHANNELS);
@@ -76,7 +85,7 @@ function registerVisionIpc(ipcGuard, ctx) {
     if (!pw || (typeof pw.isDestroyed === 'function' && pw.isDestroyed()) || !e || e.sender !== pw.webContents) {
       return fail('picker_not_active');
     }
-    const rawOpts = (opts && typeof opts === 'object') ? opts : {};
+    const rawOpts = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
     const displayId = (rawOpts.displayId !== undefined && rawOpts.displayId !== null)
       ? rawOpts.displayId
       : (typeof visionPicker.getPickerDisplayId === 'function' ? visionPicker.getPickerDisplayId() : null);
@@ -170,29 +179,31 @@ function registerVisionIpc(ipcGuard, ctx) {
   });
 
   ipcGuard.on('vision-notify', (e, payload = {}) => {
+    const p = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
     broadcastToWindows('vision-notify', {
-      ok: payload.ok === true,
-      errorType: typeof payload.errorType === 'string' ? payload.errorType.slice(0, 40) : null
+      ok: p.ok === true,
+      errorType: typeof p.errorType === 'string' ? p.errorType.slice(0, 40) : null
     });
   });
 
   ipcGuard.handle('vision:stage', (e, opts = {}) => {
+    const safeOpts = (opts && typeof opts === 'object' && !Array.isArray(opts)) ? opts : {};
     const brain = getBrain();
     if (!brain) return { ok: false, errorType: 'no_brain' };
     const visionMod = require('./vision');
-    if (typeof opts.dataUrl !== 'string' || !visionMod.validateStageDataUrl(opts.dataUrl)) {
-      const overSize = typeof opts.dataUrl === 'string' && opts.dataUrl.length > visionMod.MAX_STAGE_DATA_URL_CHARS;
+    if (typeof safeOpts.dataUrl !== 'string' || !visionMod.validateStageDataUrl(safeOpts.dataUrl)) {
+      const overSize = typeof safeOpts.dataUrl === 'string' && safeOpts.dataUrl.length > visionMod.MAX_STAGE_DATA_URL_CHARS;
       return { ok: false, errorType: overSize ? 'payload_too_large' : 'bad_image' };
     }
     const MAX_STAGE_DIM = 16384;
-    if (!Number.isInteger(opts.width) || opts.width <= 0 || opts.width > MAX_STAGE_DIM
-        || !Number.isInteger(opts.height) || opts.height <= 0 || opts.height > MAX_STAGE_DIM) {
+    if (!Number.isInteger(safeOpts.width) || safeOpts.width <= 0 || safeOpts.width > MAX_STAGE_DIM
+        || !Number.isInteger(safeOpts.height) || safeOpts.height <= 0 || safeOpts.height > MAX_STAGE_DIM) {
       return { ok: false, errorType: 'bad_dimensions' };
     }
     const ok = brain.stageVisionPick({
-      dataUrl: opts.dataUrl,
-      width: opts.width,
-      height: opts.height
+      dataUrl: safeOpts.dataUrl,
+      width: safeOpts.width,
+      height: safeOpts.height
     });
     return ok ? { ok: true } : { ok: false, errorType: 'stage_failed' };
   });
@@ -225,4 +236,10 @@ function registerVisionIpc(ipcGuard, ctx) {
   });
 }
 
-module.exports = { VISION_ONLY_CHANNELS, assertChannelAllowedForPicker, appendVisionAudit, registerVisionIpc };
+module.exports = {
+  VISION_ONLY_CHANNELS,
+  bindPickerWindowProvider,
+  assertChannelAllowedForPicker,
+  appendVisionAudit,
+  registerVisionIpc
+};

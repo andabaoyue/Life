@@ -368,7 +368,8 @@ check('🔴 brain 接线 vision provider',
   // 🔴 框选窗必须在 IPC 信任白名单里，否则它连自己的截图/关闭都调不通
   //   （2026-10-21 实测事故：拖框不提交、ESC 关不掉、进程锁死）
   check('🔴 框选窗在 IPC 信任白名单内（否则所有 IPC 被拒）',
-    /getTrustedWebContents:[\s\S]{0,1400}vision-picker-window/.test(mainSrc),
+    /getTrustedWebContents:[\s\S]{0,1400}(?:vision-picker-window|pickerWindowMod)/.test(mainSrc)
+    && mainSrc.includes("require('./src/vision-picker-window')"),
     '不在白名单 = 拖框不提交 + ESC 关不掉 + 进程锁死');
 
   check('🔴 框选窗通道守卫覆盖所有 IPC 且只放行实际四通道',

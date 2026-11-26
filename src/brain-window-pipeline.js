@@ -694,7 +694,8 @@ class WindowClosingPipeline {
     if (b.memory) {
       const nextDynamics = Boolean(b.currentWindowSnapshot.modules?.memoryDynamics);
       if (typeof b.memory.setMemoryDynamicsEnabled === 'function') {
-        b.memory.setMemoryDynamicsEnabled(nextDynamics, b.cfg.engramConfig);
+        const ec = typeof b._buildEngramConfig === 'function' ? b._buildEngramConfig() : b.cfg.engramConfig;
+        b.memory.setMemoryDynamicsEnabled(nextDynamics, ec);
       } else {
         b.memory.memoryDynamicsEnabled = nextDynamics;
       }
@@ -803,6 +804,7 @@ class WindowClosingPipeline {
         isWindowClose: false,
         preClose: true,
         fromSleep: true,
+        sleepStartTime,
         sleepElapsedMs,
         sleepStaging: staging
       });
@@ -940,7 +942,9 @@ class WindowClosingPipeline {
           gateThresholds: gateResult.thresholds,
           fromSleep: ctx.fromSleep === true,
           sleepElapsedMs: (ctx.fromSleep === true && Number.isFinite(ctx.sleepElapsedMs)) ? ctx.sleepElapsedMs : null,
-          sleepStartTime: (ctx.fromSleep === true && staging && Number.isFinite(staging.at)) ? staging.at : null
+          sleepStartTime: (ctx.fromSleep === true && Number.isFinite(ctx.sleepStartTime))
+            ? ctx.sleepStartTime
+            : ((ctx.fromSleep === true && staging && Number.isFinite(staging.at)) ? staging.at : null)
         }, {
           ...(b.cfg.dreamConfig || {}),
           now

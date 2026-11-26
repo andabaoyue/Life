@@ -1325,6 +1325,22 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
     return rEloop.ok === false && rEloop.code === 'SYMLINK_ESCAPE'
       && rQuota.ok === false && rQuota.code === 'SANDBOX_QUOTA_EXCEEDED' && !fs.existsSync(target2);
   })());
+
+  check('P2-5 执行失败返回体的 detail 与审计日志同口径执行 redactSecrets 脱敏', (() => {
+    const e = env();
+    const fakeKey = 'sk-' + '1234567890abcdef1234567890';
+    e.executor.txn = {
+      begin(opts) { return { ...opts, id: 'tx-p25' }; },
+      commit() { throw new Error('commit failed with token ' + fakeKey); },
+      rollback() {},
+    };
+    const target = path.join(e.sandbox, 'secret-err.txt');
+    const pid = authorizeProposal(e, { capability: 'workspace.write', scope: target, content: 'x' });
+    const res = e.executor.execute({ proposalId: pid, content: 'x' });
+    return res.ok === false && typeof res.detail === 'string'
+      && !res.detail.includes(fakeKey)
+      && res.detail.includes('[REDACTED]');
+  })());
 }
 
 /* ================= 汇总 ================= */

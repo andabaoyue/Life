@@ -172,20 +172,24 @@ function createWindowManager(ctx) {
   }
 
   function registerMainWindowIpc() {
+    const safeObj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
     ipcGuard.on('drag-start', () => { dragging = true; syncMotionBlock('drag'); });
     ipcGuard.on('drag-end', () => { dragging = false; syncMotionBlock('drag-end'); });
-    ipcGuard.on('drag-move', (e, { dx, dy }) => {
+    ipcGuard.on('drag-move', (e, payload) => {
+      const p = safeObj(payload);
+      if (!Number.isFinite(p.dx) || !Number.isFinite(p.dy)) return;
       const win = getWin();
       if (!dragging || !win || win.isDestroyed()) return;
       const [x, y] = win.getPosition();
-      const tx = Math.round(x + dx), ty = Math.round(y + dy);
+      const tx = Math.round(x + p.dx), ty = Math.round(y + p.dy);
       setPinnedBounds(tx, ty);
       reconfigureMotion();
     });
 
     ipcGuard.on('motion-ui-state', (e, state = {}) => {
+      const safeState = safeObj(state);
       for (const k of Object.keys(motionUi)) {
-        if (typeof state[k] === 'boolean') motionUi[k] = state[k];
+        if (typeof safeState[k] === 'boolean') motionUi[k] = safeState[k];
       }
       syncMotionBlock('ui-state');
     });
@@ -235,7 +239,8 @@ function createWindowManager(ctx) {
     ipcGuard.handle('chat-window-toggle', () => toggleChatWindow());
 
     ipcGuard.handle('chat-busy', (e, p = {}) => {
-      broadcastToWindows('chat-busy', { busy: !!p.busy, state: p.state || null });
+      const safeP = (p && typeof p === 'object' && !Array.isArray(p)) ? p : {};
+      broadcastToWindows('chat-busy', { busy: !!safeP.busy, state: safeP.state || null });
       return { ok: true };
     });
 
@@ -251,11 +256,12 @@ function createWindowManager(ctx) {
     });
 
     ipcGuard.handle('panel-viewport', (e, open, opt = {}) => {
+      const safeOpt = (opt && typeof opt === 'object' && !Array.isArray(opt)) ? opt : {};
       const win = getWin();
       if (typeof open !== 'boolean') return { ok: false, error: 'INVALID_OPEN' };
       if (!win || win.isDestroyed()) return { ok: false, error: 'NO_WINDOW' };
-      const tw = Math.min(640, Math.max(layout.BASE_W, Math.round(opt.w) || PANEL_W));
-      const th = Math.min(760, Math.max(400, Math.round(opt.h) || PANEL_H));
+      const tw = Math.min(640, Math.max(layout.BASE_W, Math.round(safeOpt.w) || PANEL_W));
+      const th = Math.min(760, Math.max(400, Math.round(safeOpt.h) || PANEL_H));
       const target = open ? { w: tw, h: th } : { w: layout.BASE_W, h: layout.BASE_H };
       const [w, h] = win.getSize();
       if (w === target.w && h === target.h) return { ok: true, w, h, changed: false };

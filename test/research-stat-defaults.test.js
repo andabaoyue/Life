@@ -129,6 +129,30 @@ check('Window 1 JSON 绝对不含 "turns":100', !JSON.stringify(d1).includes('"t
 check('Window 1 JSON 绝对不含 "messageCount":200', !JSON.stringify(d1).includes('"messageCount":200'));
 check('Window 1 概况 JSON 绝对不含 "segmentCount":5', !JSON.stringify(s1).includes('"segmentCount":5'));
 
+// 4. P2-7: getStateTrajectory() 禁止对缺失 previousValue / delta / newValue 执行 ?? 0 补零
+{
+  const { exportStateTrajectory } = require('../src/research-export');
+  const dirTraj = tmpDir('traj-null-');
+  fs.writeFileSync(path.join(dirTraj, 'experiences.jsonl'), JSON.stringify({
+    schemaVersion: 1,
+    recordType: 'window_summary',
+    windowNo: 1,
+    timestamp: 1000,
+    payload: {
+      stateChanges: [{ stateChangeId: 'sc-null-1', windowNo: 1, trait: 'quiet_preference' }]
+    }
+  }) + '\n', 'utf8');
+  fs.writeFileSync(path.join(dirTraj, 'subject-state.json'), JSON.stringify({ windowNo: 1, values: {}, stateChanges: [] }), 'utf8');
+  const qTraj = new ResearchQuery(dirTraj);
+  const traj = qTraj.getStateTrajectory();
+  const csv = exportStateTrajectory(traj, 'csv');
+  check('P2-7: getStateTrajectory 缺失 previousValue/delta/newValue 返回 null 而不补零',
+    traj.length === 1 && traj[0].previousValue === null && traj[0].delta === null && traj[0].newValue === null);
+  check('P2-7: exportStateTrajectory CSV 缺失数值字段导出为空串而非 0',
+    csv.split(/\r?\n/)[1] === '1,quiet_preference,,,');
+  try { fs.rmSync(dirTraj, { recursive: true, force: true }); } catch {}
+}
+
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
