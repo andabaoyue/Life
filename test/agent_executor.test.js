@@ -306,7 +306,7 @@ check('❌ D4-R8b 执行成功后授权被作废（不能拿旧授权去执行�
 })());
 
 check('❌ D4-R9 content 传对象必须被类型校验本身拒（不是被下游兜住）', (() => {
-  const e = env();
+  const e = env({ budget: { maxConsecutiveErrors: 10 } });
   const target = path.join(e.sandbox, 'obj.txt');
   // 🔴 变异测试实测（2026-10-06）：只断言「被拒」是**假反例**——
   //   把 `_writeFile` 里的 typeof 校验删掉后，下游 Buffer.byteLength(content,'utf8')
@@ -1128,7 +1128,7 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
   })());
 
   check('❌ SEC03-R1 非白名单扩展名硬拒绝 DISALLOWED_EXTENSION 且不落盘并作废授权', (() => {
-    const e = env({ budget: { maxWritesPerSession: 30, maxActionsPerSession: 40 } });
+    const e = env({ budget: { maxWritesPerSession: 30, maxActionsPerSession: 40, maxConsecutiveErrors: 20 } });
     const badTargets = [
       path.join(e.sandbox, 'bad.exe'),
       path.join(e.sandbox, 'hack.bat'),
@@ -1187,6 +1187,70 @@ check('D4-23 执行器默认拿不到 policy 时必须全拒（不能默认放�
       }
     }
     return allPassed;
+  })());
+
+  // ============ P1-1 & P1-4：预算预检不误扣、沙盒符号链接防线 ============
+  check('P1-1 未确认提案返回 EXECUTION_NOT_ALLOWED 时 budget.writes 不增加且 consecutiveErrors 不清零', (() => {
+    const e = env();
+    e.budget.recordError(); // consecutiveErrors = 1
+    const target = path.join(e.sandbox, 'unconfirmed-p1.txt');
+    const c = 'content-p1';
+    const hash = crypto.createHash('sha256').update(c, 'utf8').digest('hex');
+    const prop = createActionProposal({
+      capability: 'workspace.write',
+      scope: target,
+      content: c,
+      contentHash: hash,
+      contentBytes: Buffer.byteLength(c, 'utf8'),
+      reason: 'P1-1 test',
+    });
+    e.proposalStore.set(prop.id, prop);
+    const r = e.executor.execute({ proposalId: prop.id, content: c });
+    const s = e.budget.state();
+    return r.ok === false && r.code === 'EXECUTION_NOT_ALLOWED'
+      && s.writes === 0 && s.actions === 0 && s.consecutiveErrors === 1;
+  })());
+
+  check('P1-4a ensureSandboxDir 遇到符号链接沙盒根时拒绝初始化 (SANDBOX_UNAVAILABLE)', (() => {
+    const { ensureSandboxDir } = require('../src/agent-sandbox');
+    let code = null;
+    try {
+      ensureSandboxDir(path.join(os.tmpdir(), 'fake-symlink-sandbox'), {
+        mkdirSync: () => {},
+        lstatSync: () => ({ isSymbolicLink: () => true, isDirectory: () => true }),
+        statSync: () => ({ isSymbolicLink: () => false, isDirectory: () => true }),
+      });
+    } catch (err) {
+      code = err && err.code;
+    }
+    return code === 'SANDBOX_UNAVAILABLE';
+  })());
+
+  check('P1-4b 结构操作指向沙盒内 symlink 时提前被 _lstatBest 拦截为 SYMLINK_ESCAPE 并保护目标文件', (() => {
+    const e = env({ allowed: ['workspace.read', 'workspace.write', 'workspace.remove'] });
+    e.policy.setScopeRoots('workspace.remove', [e.sandbox]);
+    const important = path.join(e.sandbox, 'important.txt');
+    const linkPath = path.join(e.sandbox, 'link.txt');
+    fs.writeFileSync(important, 'CRITICAL-DATA', 'utf8');
+    // 用确定性 _lstatBest 注入模拟沙盒内 symlink -> important.txt（免受 Windows 非提权环境限制）
+    const origLstat = e.executor.fs.lstatSync.bind(e.executor.fs);
+    const origRealpath = fs.realpathSync.bind(fs);
+    e.executor.fs = {
+      ...e.executor.fs,
+      lstatSync: (p) => {
+        if (path.resolve(p) === path.resolve(linkPath)) {
+          return { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
+        }
+        return origLstat(p);
+      },
+      realpathSync: (p) => (path.resolve(p) === path.resolve(linkPath) ? important : origRealpath(p)),
+    };
+    const id = authorizeProposal(e, { capability: 'workspace.remove', scope: linkPath });
+    const r = e.executor.execute({ proposalId: id });
+    const auth = e.confirmation.isExecutionAllowed(id, Date.now());
+    return r.ok === false && r.code === 'SYMLINK_ESCAPE'
+      && auth.allowed === false && auth.reason === 'SYMLINK_ESCAPE'
+      && fs.readFileSync(important, 'utf8') === 'CRITICAL-DATA';
   })());
 }
 

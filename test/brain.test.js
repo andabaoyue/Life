@@ -1143,6 +1143,116 @@ async function main() {
       hasRecEvt && recoveredSs.data.values.quiet_preference > 0 && recoveredSs.recoveryPending === false);
   }
 
+  // -------------------------------------------------------------
+  // P1-8: _restoreInternalRegulationFromArchive 恢复 mood / isSleeping / allostasis
+  // -------------------------------------------------------------
+  {
+    const dirRegRec = tmpDir();
+    const tSleep = Date.now() - 3600000;
+    const bReg1 = new Brain(dirRegRec, {
+      ...DEFAULTS,
+      apiKey: 'sk-test',
+      experimentMode: 'experimental',
+      experimentModules: { internalRegulation: true, allostasisPrior: true }
+    });
+    const recSnap = bReg1.internalRegulation.createSnapshotRecord(1, {
+      state: {
+        energy: 42, restPressure: 68, arousal: 35, interactionDensity: 0.4, cognitiveLoadProxy: 0.25,
+        isSleeping: true, sleepStartTime: tSleep, updatedAt: tSleep
+      },
+      mood: { warmth: 74, stillness: 31 },
+      allostasis: { lastUserTurnAt: tSleep, recentGapsMs: [3600000, 4200000, 3900000], lastSurprise: 0.42 }
+    });
+    bReg1.experiencesArchive.append(recSnap);
+    try { fs.unlinkSync(path.join(dirRegRec, 'internal-regulation.json')); } catch {}
+
+    const bReg2 = new Brain(dirRegRec, {
+      ...DEFAULTS,
+      apiKey: 'sk-test',
+      experimentMode: 'experimental',
+      experimentModules: { internalRegulation: true, allostasisPrior: true }
+    });
+    const r2 = bReg2.internalRegulation;
+    check('P1-8 _restoreInternalRegulationFromArchive 同步恢复 mood、isSleeping、sleepStartTime 与 allostasis',
+      r2.energy === 42
+      && Math.round(r2.moodWarmth) === 74
+      && Math.round(r2.moodStillness) === 31
+      && r2.isSleeping === true
+      && r2.sleepStartTime === tSleep
+      && r2.allostasisPrior.recentGapsMs.length === 3
+      && r2.allostasisPrior.lastSurprise === 0.42);
+  }
+
+  // -------------------------------------------------------------
+  // P1-9: memoryDynamics=false 时 selfNotes 语境唤回依然生效
+  // -------------------------------------------------------------
+  {
+    const dirNoteWake = tmpDir();
+    const bNote = new Brain(dirNoteWake, {
+      ...DEFAULTS,
+      apiKey: 'sk-test',
+      experimentMode: 'experimental',
+      experimentModules: { memoryDynamics: false, selfNotes: true }
+    });
+    bNote.memory.addSelfNote({
+      content: '旧抽屉里的青瓷风铃是我冬天写下的记号',
+      name: 'bell.md',
+      source: 'selfNote',
+      windowNo: 1
+    });
+    const sn = bNote.memory.data.selfNotes[0];
+    sn.drained = true;
+    sn.tier = 'DORMANT';
+    sn.strength = 0.2;
+    sn.lastRetrievedWindow = 1;
+    bNote.memory.data.windowNo = 8;
+    bNote.api = {
+      complete: async () => ({ text: 'ok', usage: {} }),
+      stream: async (msgs) => {
+        const last = msgs[msgs.length - 1];
+        bNote._lastSeenUserPrompt = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+        return { text: '记得那个风铃。', usage: {} };
+      }
+    };
+    await bNote.ask('初澜还记得青瓷风铃吗', () => {}, {});
+    check('P1-9 消融 memoryDynamics 时 ask() 仍唤醒 DORMANT selfNotes 并注入当轮上下文',
+      bNote.memory.engramManager === null
+      && sn.retrievalCount === 1
+      && (bNote._lastSeenUserPrompt || '').includes('青瓷风铃'));
+  }
+
+  // -------------------------------------------------------------
+  // P1-11: 关窗幂等分支容错非数组 stableUserFacts 并完成内态与实验快照同步
+  // -------------------------------------------------------------
+  {
+    const dirIdem = tmpDir();
+    const bIdem = new Brain(dirIdem, {
+      ...DEFAULTS,
+      apiKey: 'sk-test',
+      experimentMode: 'experimental',
+      experimentModules: { internalRegulation: true }
+    });
+    bIdem.memory.append('user', '第一句');
+    bIdem.memory.append('assistant', '第一答');
+    bIdem.experiencesArchive.appendRecord('window_summary', 1, {
+      epoch: bIdem.memory.data.epoch,
+      rawSummaryText: '',
+      windowSynthesis: { moodTone: 'calm', stableUserFacts: 'not-an-array' }
+    });
+    bIdem.subjectState.data.windowNo = 2;
+    let regClosed = 0;
+    bIdem.internalRegulation.updateOnWindowClose = () => { regClosed++; };
+    let idemThrew = false;
+    let idemDone = false;
+    try {
+      idemDone = await bIdem._closeWindowInternal({ manual: true });
+    } catch {
+      idemThrew = true;
+    }
+    check('P1-11 关窗幂等分支容错非数组 stableUserFacts，推进 windowNo 并同步 internalRegulation 与快照',
+      !idemThrew && idemDone === true && regClosed === 1 && bIdem.memory.data.windowNo === 2);
+  }
+
   server.close();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

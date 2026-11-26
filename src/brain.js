@@ -743,14 +743,48 @@ class Brain {
       }
       if (latestPayload && latestPayload.state) {
         const s = latestPayload.state;
-        if (typeof s.energy === 'number') this.internalRegulation.energy = s.energy;
-        if (typeof s.restPressure === 'number') this.internalRegulation.restPressure = s.restPressure;
-        if (typeof s.arousal === 'number') this.internalRegulation.arousal = s.arousal;
-        if (typeof s.interactionDensity === 'number') this.internalRegulation.interactionDensity = s.interactionDensity;
-        if (typeof s.cognitiveLoadProxy === 'number') this.internalRegulation.cognitiveLoadProxy = s.cognitiveLoadProxy;
-        this.internalRegulation.salienceThreshold = this.internalRegulation._computeSalienceThreshold(this.internalRegulation.arousal);
-        this.internalRegulation.updatedAt = s.updatedAt || Date.now();
-        this.internalRegulation.save();
+        const reg = this.internalRegulation;
+        if (typeof s.energy === 'number') reg.energy = s.energy;
+        if (typeof s.restPressure === 'number') reg.restPressure = s.restPressure;
+        if (typeof s.arousal === 'number') reg.arousal = s.arousal;
+        if (typeof s.interactionDensity === 'number') reg.interactionDensity = s.interactionDensity;
+        if (typeof s.cognitiveLoadProxy === 'number') reg.cognitiveLoadProxy = s.cognitiveLoadProxy;
+        reg.salienceThreshold = reg._computeSalienceThreshold(reg.arousal);
+        reg.updatedAt = s.updatedAt || Date.now();
+        // P1-8：同步恢复快照中的 mood、isSleeping、sleepStartTime 与 allostasis，避免回退中性默认值。
+        if (latestPayload.mood && typeof latestPayload.mood === 'object') {
+          if (typeof latestPayload.mood.warmth === 'number' && Number.isFinite(latestPayload.mood.warmth)) {
+            reg.moodWarmth = Math.max(0, Math.min(100, latestPayload.mood.warmth));
+          }
+          if (typeof latestPayload.mood.stillness === 'number' && Number.isFinite(latestPayload.mood.stillness)) {
+            reg.moodStillness = Math.max(0, Math.min(100, latestPayload.mood.stillness));
+          }
+          reg.moodUpdatedAt = s.updatedAt || latestPayload.timestamp || Date.now();
+          if (reg._moodState) {
+            reg._moodState.warmthActive = reg.moodWarmth >= 62;
+            reg._moodState.coldActive = reg.moodWarmth <= 38;
+            if (reg.moodWarmth <= 50) { reg._moodState.warmthActive = false; reg._moodState.warmthExitAt = 0; }
+            if (reg.moodWarmth >= 50) { reg._moodState.coldActive = false; reg._moodState.coldExitAt = 0; }
+          }
+        }
+        if (typeof s.isSleeping === 'boolean') {
+          reg.isSleeping = s.isSleeping;
+        }
+        if (typeof s.sleepStartTime === 'number' && Number.isFinite(s.sleepStartTime)) {
+          reg.sleepStartTime = s.sleepStartTime;
+        } else if (typeof latestPayload.sleepStartTime === 'number' && Number.isFinite(latestPayload.sleepStartTime)) {
+          reg.sleepStartTime = latestPayload.sleepStartTime;
+        }
+        if (latestPayload.allostasis && typeof latestPayload.allostasis === 'object' && reg.allostasisEnabled && reg.allostasisPrior) {
+          const allo = latestPayload.allostasis;
+          if (Array.isArray(allo.recentGapsMs)) {
+            reg.allostasisPrior.fromJSON(allo);
+            reg._preservedAllostasis = allo;
+          } else if (typeof allo.lastSurprise === 'number' && Number.isFinite(allo.lastSurprise)) {
+            reg.allostasisPrior.lastSurprise = Math.max(-2, Math.min(3, allo.lastSurprise));
+          }
+        }
+        reg.save();
       }
     } catch (e) {
       console.warn('[Brain] 从经历归档恢复内部调节快照失败:', e.message);
@@ -1520,8 +1554,9 @@ class Brain {
     }
 
     // v0.9.7: 关联线索触发休眠记忆重新激活 (Contextual Reactivation)
+    // P1-9：将 reactivateByContext 移出 engramManager 守卫，确保消融 memoryDynamics 时独立的 selfNotes 语境唤回仍正常运作。
     let involuntarySnippet = '';
-    if (this.memory && this.memory.engramManager && !proactive) {
+    if (this.memory && !proactive) {
       const reactivated = this.memory.reactivateByContext(userText, this.memory.data.windowNo);
       // v2.1-d：记忆再巩固只读观测埋点（仅记录 FADING/DORMANT 跨窗唤醒，baseline 跳过，绝不写入 agent-observations.jsonl）
       if (Array.isArray(reactivated) && reactivated.length > 0 && this.cfg && this.cfg.experimentMode !== 'baseline') {
@@ -1539,12 +1574,14 @@ class Brain {
           }
         }
       }
-      // v1.0.5: 普鲁斯特式非自愿回忆浮现 (仅在非主动搭话的自然交互中触发，避开 proactive 误消耗冷却)
-      const inv = typeof this.memory.triggerInvoluntaryRecall === 'function'
-        ? this.memory.triggerInvoluntaryRecall(this.memory.data.windowNo)
-        : null;
-      if (inv && inv.text) {
-        involuntarySnippet = inv.text;
+      if (this.memory.engramManager) {
+        // v1.0.5: 普鲁斯特式非自愿回忆浮现 (仅在非主动搭话的自然交互中触发，避开 proactive 误消耗冷却)
+        const inv = typeof this.memory.triggerInvoluntaryRecall === 'function'
+          ? this.memory.triggerInvoluntaryRecall(this.memory.data.windowNo)
+          : null;
+        if (inv && inv.text) {
+          involuntarySnippet = inv.text;
+        }
       }
     }
 
@@ -1916,12 +1953,29 @@ class Brain {
       // L2/prompt。历史记录缺 epoch（未记录）时保持 null、不回填 —— 诚实降级，不猜。
       const sameLineage = Number.isInteger(p.epoch) && p.epoch === this.memory.data.epoch;
       if (sameLineage) {
-        const summaryText = p.rawSummaryText || (p.windowSynthesis && p.windowSynthesis.stableUserFacts.map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '')).filter(Boolean) && p.windowSynthesis.stableUserFacts.map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || '')).filter(Boolean).join('\n')) || '窗口小结已归档';
+        const stableFacts = (p.windowSynthesis && Array.isArray(p.windowSynthesis.stableUserFacts))
+          ? p.windowSynthesis.stableUserFacts
+              .map((x) => (typeof x === 'string' ? x : (x && (x.content || x.text)) || ''))
+              .filter(Boolean)
+          : [];
+        const summaryText = p.rawSummaryText || (stableFacts.length ? stableFacts.join('\n') : '') || '窗口小结已归档';
         const done = this.memory.closeWindow(summaryText, snap);
         if (done) {
+          if (typeof this.memory.flushPendingDreamFragments === 'function') {
+            this.memory.flushPendingDreamFragments();
+            this.memory.save(true);
+          }
+          if (this.internalRegulation && this.isExperimentModuleActive('internalRegulation')) {
+            try {
+              this.internalRegulation.updateOnWindowClose(snap.windowNo, {
+                turnsRecorded: snap.actualTurnCount,
+                moodTone: p.windowSynthesis && p.windowSynthesis.moodTone
+              });
+            } catch {}
+          }
           this.stats.compressions++;
           this.saveStats(true);
-          this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
+          this._syncWindowExperimentSnapshot();
         }
         return done;
       }
@@ -2378,6 +2432,9 @@ class Brain {
       snap.generationContext = summaryGenerationContext;
       const done = this.memory.closeWindow(summaryTextForMemory, snap);
       if (done) {
+        if (typeof this.memory.flushPendingDreamFragments === 'function') {
+          this.memory.flushPendingDreamFragments();
+        }
         // v0.9.9 意志层·好奇：本窗未解疑问入队（与轮转同刻更新，窗口内逐字节稳定）
         this.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo);
         // v1.0 §4.7 #3/#4：词汇与预期入库（引证按快照解析，防 keepTail 裁头误判；门槛拒收即跳过，绝不硬造）
@@ -2521,50 +2578,7 @@ class Brain {
             this.memory.wardrobe = this.getWardrobePrompt();
           }
           // 窗口轮转成功：读取盘上可能更新的最新实验配置，并铸造新窗口的不可变实验快照
-          const diskCfg = tryLoad(this.dir);
-          const nextExp = diskCfg ? sanitize({
-            experimentMode: diskCfg.experimentMode,
-            experimentModules: diskCfg.experimentModules
-          }) : {
-            experimentMode: this.currentWindowSnapshot.experimentMode,
-            experimentModules: this.currentWindowSnapshot.modules
-          };
-
-          this.runManifest = createExperimentRunManifest({
-            experimentMode: nextExp.experimentMode,
-            modules: nextExp.experimentModules,
-            windowNo: this.memory.data.windowNo
-          });
-          this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
-          this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
-          this.cfg.experimentModules = this.currentWindowSnapshot.modules;
-
-          if (this.internalRegulation) {
-            const mods = this.currentWindowSnapshot.modules || {};
-            const wasEnabled = Boolean(this.internalRegulation.enabled);
-            const nextEnabled = Boolean(mods.internalRegulation);
-            this.internalRegulation.enabled = nextEnabled;
-            // P0-4 修复：baseline -> experimental 跨窗热切回时，必须先从磁盘 load() 回灌既有内态与先验，
-            // 避免内存默认值在下一次 save() 时覆写销毁磁盘历史
-            if (!wasEnabled && nextEnabled && typeof this.internalRegulation.load === 'function') {
-              this.internalRegulation.load();
-            }
-            const nextAllostasis = Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
-              ? Boolean(mods.allostasisPrior)
-              : true;
-            if (typeof this.internalRegulation.setAllostasisEnabled === 'function') {
-              this.internalRegulation.setAllostasisEnabled(nextAllostasis);
-            } else {
-              this.internalRegulation.allostasisEnabled = this.internalRegulation.enabled && nextAllostasis;
-            }
-            if (!this.internalRegulation.enabled) {
-              this.internalRegulation._recentLoadTrail = [];
-              this.internalRegulation.approachingOverload = false;
-            }
-          }
-          if (this.memory) {
-            this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
-          }
+          this._syncWindowExperimentSnapshot();
         }
       }
       return done;
@@ -2573,6 +2587,54 @@ class Brain {
       console.error('window summary failed:', redactSecrets(e.message));
       this._noteWindowCloseFailure('SUMMARY_EXCEPTION: ' + redactSecrets(e.message));
       return false;
+    }
+  }
+
+  /** P1-11：新窗口开启后统一同步实验配置快照、internalRegulation 开关及 memoryDynamicsEnabled（正常与幂等收尾共用）。 */
+  _syncWindowExperimentSnapshot() {
+    const diskCfg = tryLoad(this.dir);
+    const nextExp = diskCfg ? sanitize({
+      experimentMode: diskCfg.experimentMode,
+      experimentModules: diskCfg.experimentModules
+    }) : {
+      experimentMode: this.currentWindowSnapshot.experimentMode,
+      experimentModules: this.currentWindowSnapshot.modules
+    };
+
+    this.runManifest = createExperimentRunManifest({
+      experimentMode: nextExp.experimentMode,
+      modules: nextExp.experimentModules,
+      windowNo: this.memory.data.windowNo
+    });
+    this.currentWindowSnapshot = createWindowExperimentSnapshot(this.memory.data.windowNo, this.runManifest);
+    this.cfg.experimentMode = this.currentWindowSnapshot.experimentMode;
+    this.cfg.experimentModules = this.currentWindowSnapshot.modules;
+
+    if (this.internalRegulation) {
+      const mods = this.currentWindowSnapshot.modules || {};
+      const wasEnabled = Boolean(this.internalRegulation.enabled);
+      const nextEnabled = Boolean(mods.internalRegulation);
+      this.internalRegulation.enabled = nextEnabled;
+      // P0-4 修复：baseline -> experimental 跨窗热切回时，必须先从磁盘 load() 回灌既有内态与先验，
+      // 避免内存默认值在下一次 save() 时覆写销毁磁盘历史
+      if (!wasEnabled && nextEnabled && typeof this.internalRegulation.load === 'function') {
+        this.internalRegulation.load();
+      }
+      const nextAllostasis = Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
+        ? Boolean(mods.allostasisPrior)
+        : true;
+      if (typeof this.internalRegulation.setAllostasisEnabled === 'function') {
+        this.internalRegulation.setAllostasisEnabled(nextAllostasis);
+      } else {
+        this.internalRegulation.allostasisEnabled = this.internalRegulation.enabled && nextAllostasis;
+      }
+      if (!this.internalRegulation.enabled) {
+        this.internalRegulation._recentLoadTrail = [];
+        this.internalRegulation.approachingOverload = false;
+      }
+    }
+    if (this.memory) {
+      this.memory.memoryDynamicsEnabled = Boolean(this.currentWindowSnapshot.modules?.memoryDynamics);
     }
   }
 
@@ -2808,20 +2870,29 @@ class Brain {
             const { computeWindowArousalTrajectory, evaluateDreamGate, extractDayResidues, buildDreamSynthesisPrompt, synthesizeDream } = require('./dream-system');
             
             // v1.0 生理真迹（方案 2）：把她真实落盘的生理状态史送进唤醒度轨迹 —— 梦由身体驱动
+            const staging = ctx.sleepStaging || null;
             const regHistory = (this.internalRegulation && Array.isArray(this.internalRegulation.history))
               ? this.internalRegulation.history
               : [];
-                        // 真实唤醒度轨迹计算 (基于本窗口真实消息节奏与情绪证据)
-            const arousalTrajectory = computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory });
+            // P1-7：睡眠来源结算优先消费入睡冻结的 arousalTrajectory / noveltyScore，不再被苏醒现算覆盖。
+            const hasFrozenTrajectory = ctx.fromSleep === true && staging && staging.arousalTrajectory && typeof staging.arousalTrajectory === 'object';
+            const arousalTrajectory = hasFrozenTrajectory
+              ? staging.arousalTrajectory
+              : computeWindowArousalTrajectory(snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory });
 
-            // 新异度计算 (基于窗口综合提取的新事实/新经历数量)
-            let newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +
-                                 (Array.isArray(syn.subjectExperiences) ? syn.subjectExperiences.length : 0);
-            // v2.0 入睡路径 syn 缺席时：新异度改用「今日消息量」物理代理（只数真实交互条数，不编内容）
-            if (!ctx.syn && ctx.noveltyProxy) {
-              newFactCount = Math.min(4, Math.round(((snap && snap.activeItems) || []).length / 25));
+            // 新异度计算 (基于窗口综合提取的新事实/新经历数量；睡眠冻结值优先)
+            let noveltyScore;
+            if (ctx.fromSleep === true && staging && typeof staging.noveltyScore === 'number' && Number.isFinite(staging.noveltyScore)) {
+              noveltyScore = Number(Math.max(0, Math.min(1, staging.noveltyScore)).toFixed(2));
+            } else {
+              let newFactCount = (Array.isArray(syn.stableUserFacts) ? syn.stableUserFacts.length : 0) +
+                                   (Array.isArray(syn.subjectExperiences) ? syn.subjectExperiences.length : 0);
+              // v2.0 入睡路径 syn 缺席时：新异度改用「今日消息量」物理代理（只数真实交互条数，不编内容）
+              if (!ctx.syn && ctx.noveltyProxy) {
+                newFactCount = Math.min(4, Math.round(((snap && snap.activeItems) || []).length / 25));
+              }
+              noveltyScore = Number(Math.min(1.0, newFactCount * 0.25).toFixed(2));
             }
-            const noveltyScore = Number(Math.min(1.0, newFactCount * 0.25).toFixed(2));
             const now = (snap && typeof snap.at === 'number') ? snap.at : Date.now();
 
             const gateResult = evaluateDreamGate({
@@ -2947,19 +3018,25 @@ class Brain {
                 this.dreamHistory.push(dreamRecord);
                 this.experiencesArchive.append(dreamRecord);
                 // v0.9.9 五大方向·①：归档成功的离线重组碎片同步进心智视野（防伪标签由 systemText 负责）。
-                // P1-#2: 必须阻断非关窗时段对 systemText 的污染——严格仅在窗口轮转关窗时刻同步进心智视野，
-                // 窗口内（入睡/昏睡触发）产物仅入归档，严禁中途向 memory.data.dreamFragments 追加碎片，
+                // P1-#2 & P1-7: 必须阻断非关窗时段对 systemText 的污染——严格仅在窗口轮转关窗时刻同步进心智视野，
+                // 窗口内（苏醒触发）产物先暂存 pendingDreamFragments，待下次真正关窗轮转时合并进 dreamFragments，
                 // 从而确保窗口内 systemText 逐字节绝对稳定，严格维护 DeepSeek 前缀缓存不变式。
-                if (ctx.isWindowClose === true) {
-                  const fragText = String((dreamRecord.payload && (dreamRecord.payload.content || dreamRecord.payload.narrative)) || '').trim();
-                  if (fragText && this.memory && this.memory.data) {
+                const fragText = String((dreamRecord.payload && (dreamRecord.payload.content || dreamRecord.payload.narrative)) || '').trim();
+                if (fragText && this.memory && this.memory.data) {
+                  if (ctx.isWindowClose === true) {
                     if (!Array.isArray(this.memory.data.dreamFragments)) this.memory.data.dreamFragments = [];
                     this.memory.data.dreamFragments.push(fragText.slice(0, 400));
                     if (this.memory.data.dreamFragments.length > 3) {
                       this.memory.data.dreamFragments = this.memory.data.dreamFragments.slice(-3);
                     }
-                    this.memory.save();
+                  } else {
+                    if (!Array.isArray(this.memory.data.pendingDreamFragments)) this.memory.data.pendingDreamFragments = [];
+                    this.memory.data.pendingDreamFragments.push(fragText.slice(0, 400));
+                    if (this.memory.data.pendingDreamFragments.length > 3) {
+                      this.memory.data.pendingDreamFragments = this.memory.data.pendingDreamFragments.slice(-3);
+                    }
                   }
+                  this.memory.save();
                 }
                 if (dreamRecord.usage) {
                   this.track(dreamRecord.usage, true, 'dream');

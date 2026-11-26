@@ -51,8 +51,55 @@ const RUNTIME_SOURCES = Object.freeze([
   'ui-chat-render.js',
   'ui-provider-presets.js',
   'ui-outfit-complete.js',
-  'ui-agent-confirm.js'
+  'ui-agent-confirm.js',
+  'vision-picker-preload.js',
+  'vision-picker.html',
+  'vision-picker.js'
 ]);
+
+const RUNTIME_DIRS = Object.freeze(['src']);
+
+/** 递归收集运行目录（如 src/）下的 .js 相对 POSIX 路径，用于补充 RUNTIME_SOURCES 新鲜度比对。 */
+function collectRuntimeDirFiles(root, dirs = RUNTIME_DIRS) {
+  const collected = [];
+  for (const dirRel of (Array.isArray(dirs) ? dirs : [])) {
+    const startDir = path.join(root, dirRel);
+    if (!fs.existsSync(startDir)) continue;
+    const stack = [startDir];
+    while (stack.length) {
+      const cur = stack.shift();
+      let entries = [];
+      try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+      for (const ent of entries) {
+        const full = path.join(cur, ent.name);
+        if (ent.isDirectory()) {
+          stack.push(full);
+        } else if (ent.isFile() && ent.name.endsWith('.js')) {
+          collected.push(path.relative(root, full).replace(/\\/g, '/'));
+        }
+      }
+    }
+  }
+  return collected.sort();
+}
+
+/** 递归扫描运行目录（src 下所有 .js）的最新 mtimeMs，便于识别「改动 src 忘重打 asar」。 */
+function getLatestRuntimeDirMtimeMs(root, dirs = RUNTIME_DIRS) {
+  let latestMtimeMs = 0;
+  let latestFile = null;
+  let fileCount = 0;
+  for (const rel of collectRuntimeDirFiles(root, dirs)) {
+    try {
+      const st = fs.statSync(path.join(root, rel));
+      fileCount++;
+      if (st.mtimeMs > latestMtimeMs) {
+        latestMtimeMs = st.mtimeMs;
+        latestFile = rel;
+      }
+    } catch {}
+  }
+  return { latestMtimeMs, latestFile, fileCount };
+}
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -94,7 +141,13 @@ function readAsarEntry(asarPath, name) {
     fs.readSync(fd, headerBuf, 0, headerJsonLen, 16);
     const header = JSON.parse(headerBuf.toString('utf8'));
 
-    const node = header && header.files ? header.files[name] : null;
+    // P1-17：支持嵌套路径（如 'src/brain.js'）逐级在 ASAR header.files 中寻址
+    const parts = String(name || '').replace(/\\/g, '/').split('/').filter(Boolean);
+    let node = header;
+    for (const seg of parts) {
+      node = (node && node.files) ? node.files[seg] : null;
+      if (!node) break;
+    }
     if (!node || node.files || node.link) return null;   // 目录 / 符号链接都不算
     const offset = Number(node.offset);
     const size = Number(node.size);
@@ -147,9 +200,12 @@ function readArtifactVersion(asarPath) {
  * @returns {{checked:number, stale:string[], missing:string[]}}
  *   stale = 产物里那份与工作树字节不一致；missing = 产物里根本没有这个文件
  */
-function compareArtifact({ root, readPacked, files } = {}) {
+function compareArtifact({ root, readPacked, files, runtimeDirs } = {}) {
   if (typeof readPacked !== 'function') throw new Error('readPacked is required');
-  const list = Array.isArray(files) && files.length ? files : RUNTIME_SOURCES;
+  const explicitFiles = Array.isArray(files) && files.length ? files : null;
+  const list = explicitFiles
+    ? explicitFiles
+    : [...RUNTIME_SOURCES, ...collectRuntimeDirFiles(root, runtimeDirs || RUNTIME_DIRS)];
   const stale = [];
   const missing = [];
   let checked = 0;
@@ -187,6 +243,9 @@ function discoverAsar(root) {
 
 module.exports = {
   RUNTIME_SOURCES,
+  RUNTIME_DIRS,
+  collectRuntimeDirFiles,
+  getLatestRuntimeDirMtimeMs,
   sha256,
   readAsarEntry,
   readArtifactVersion,

@@ -84,7 +84,10 @@ function validateConfig(cfg) {
   if (!/^https?:$/.test(u.protocol)) {
     return { ok: false, errorType: 'bad_endpoint', detail: '协议必须是 http(s)' };
   }
-  const isLocal = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
+  const isLocal = u.hostname === 'localhost'
+    || u.hostname === '127.0.0.1'
+    || u.hostname === '::1'
+    || u.hostname === '[::1]';
   if (u.protocol === 'http:' && !isLocal) {
     // 与 provider-policy 同口径：公网明文 HTTP 一律拒
     return { ok: false, errorType: 'insecure_endpoint', detail: '公网端点必须使用 HTTPS' };
@@ -133,10 +136,16 @@ function classifyStatus(status) {
  * @param {string} contentType
  * @returns {string|null}
  */
+const MAX_STT_RESPONSE_BYTES = 1024 * 1024; // 1MB 响应文本硬上限（P1-14）
+
 function extractText(raw, contentType) {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  // P1-14：网关/代理返回 HTML 错误页时绝不冒充识别文本填入输入框
+  if (/^\s*text\/html\b/i.test(contentType || '') || /^<!DOCTYPE\b|^<html\b/i.test(trimmed)) {
+    throw Object.assign(new Error('HTML error page returned by STT endpoint'), { code: 'HTML_RESPONSE' });
+  }
   // JSON 形态：{"text":"..."}
   if (/json/i.test(contentType || '') || trimmed.startsWith('{')) {
     try {
@@ -148,6 +157,38 @@ function extractText(raw, contentType) {
     }
   }
   return trimmed;
+}
+
+/** 带字节上限读取响应体：优先流式 reader，测试注入无 body 时回退 res.text() 并校验字节上限。 */
+async function readSttResponseCapped(res, maxBytes = MAX_STT_RESPONSE_BYTES) {
+  if (res && res.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        total += buf.length;
+        if (total > maxBytes) {
+          try { await reader.cancel(); } catch {}
+          throw Object.assign(new Error('STT response too large'), { code: 'RESPONSE_TOO_LARGE' });
+        }
+        chunks.push(buf);
+      }
+      return Buffer.concat(chunks, total).toString('utf8');
+    } catch (e) {
+      if (e && e.code === 'RESPONSE_TOO_LARGE') throw e;
+      try { await reader.cancel(); } catch {}
+      throw e;
+    }
+  }
+  const text = await res.text();
+  if (typeof text === 'string' && Buffer.byteLength(text, 'utf8') > maxBytes) {
+    throw Object.assign(new Error('STT response too large'), { code: 'RESPONSE_TOO_LARGE' });
+  }
+  return text;
 }
 
 /**
@@ -222,6 +263,7 @@ async function transcribe(input) {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + cfg.apiKey },
       body: form,
+      redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (e) {
@@ -231,11 +273,12 @@ async function transcribe(input) {
     return fail('network', name || 'network');
   }
 
-  /* ---- 5. 读响应 ---- */
+  /* ---- 5. 读响应（带 1MB 字节上限，防 OOM）---- */
   let raw = '';
   try {
-    raw = await res.text();
+    raw = await readSttResponseCapped(res, MAX_STT_RESPONSE_BYTES);
   } catch (e) {
+    if (e && e.code === 'RESPONSE_TOO_LARGE') return fail('response_too_large');
     return fail('read_failed');
   }
 
@@ -245,8 +288,13 @@ async function transcribe(input) {
   }
 
   /* ---- 6. 取文本 ---- */
-  const text = extractText(raw, res.headers && typeof res.headers.get === 'function'
-    ? res.headers.get('content-type') : '');
+  let text = null;
+  try {
+    text = extractText(raw, res.headers && typeof res.headers.get === 'function'
+      ? res.headers.get('content-type') : '');
+  } catch (e) {
+    return fail('invalid_response', e && e.code ? e.code : 'invalid_response');
+  }
   if (!text) return fail('empty_result');
 
   return {

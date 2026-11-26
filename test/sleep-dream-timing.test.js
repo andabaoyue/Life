@@ -345,5 +345,64 @@ function mkReg(dir) {
     !/max_tokens:\s*opts\.maxTokens\s*\?\?\s*600\b/.test(ds));
 }
 
-console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
-process.exit(failures ? 1 : 0);
+// ============ 15. P1-7：_dreamCycle 优先消费冻结原料 + 醒后梦境延后至下一次关窗同步 ============
+(async () => {
+  const { Brain } = require('../src/brain');
+  const { DEFAULTS } = require('../src/config');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-sdt1-'));
+  try {
+    const b = new Brain(dir, {
+      ...DEFAULTS,
+      apiKey: 'sk-test',
+      experimentMode: 'experimental',
+      experimentModules: { sleepConsolidation: true, internalRegulation: true, memoryDynamics: false }
+    });
+    b.memory.append('user', '晚安啦');
+    b.memory.append('assistant', '晚安');
+    const sysBeforeWakeDream = b.memory.systemText();
+    const origFragLen = (b.memory.data.dreamFragments || []).length;
+
+    b.api = {
+      complete: async () => ({ text: '梦里窗外的风吹过书页。', usage: {} }),
+      stream: async () => ({ text: 'ok', usage: {} })
+    };
+    const emptySnap = {
+      windowNo: 1,
+      activeItems: [], // 故意置空，证明认知门禁拿到的是冻结后的高波动轨迹而不是现算空轨迹
+      items: []
+    };
+    await b._dreamCycle({
+      snap: emptySnap,
+      syn: null,
+      verifiedEvidence: TENSE_EVIDENCE,
+      events: [],
+      isWindowClose: false,
+      fromSleep: true,
+      sleepElapsedMs: 120 * MIN,
+      sleepStaging: {
+        fromSleep: true,
+        at: T0,
+        windowNo: 1,
+        dayResidues: [{ sourceType: 'tail_conversation', role: 'user', text: '晚安啦' }],
+        arousalTrajectory: { arousalValues: [30, 80, 45, 75], arousalMean: 57.5, arousalMax: 80, arousalMin: 30, arousalVariance: 380, maxArousalSpike: 50, sampleCount: 4 },
+        noveltyScore: 0.75
+      }
+    });
+
+    check('P1-7a 苏醒结算优先采用入睡冻结轨迹，暂存 pendingDreamFragments 且窗口内 systemText() 逐字节不变',
+      b.dreamHistory.length === 1
+      && (b.memory.data.pendingDreamFragments || []).length === 1
+      && (b.memory.data.dreamFragments || []).length === origFragLen
+      && b.memory.systemText() === sysBeforeWakeDream);
+
+    const flushed = b.memory.flushPendingDreamFragments();
+    check('P1-7b 下次关窗 flushPendingDreamFragments 后 dreamFragments 收到睡眠梦境碎片且 pending 清空',
+      flushed === 1
+      && (b.memory.data.pendingDreamFragments || []).length === 0
+      && (b.memory.data.dreamFragments || []).some((f) => f.includes('梦里窗外的风吹过书页')));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
+    process.exit(failures ? 1 : 0);
+  }
+})();

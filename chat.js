@@ -476,19 +476,26 @@ function stopMicTracks() {
 /** 开始录音。失败一律静默降级成一行提示。 */
 async function startRecording() {
   if (micState !== 'idle') return;
+  micState = 'starting';
+  renderMicState();
   micHint('');
   let stream = null;
   try {
     // 只要音频；不请求视频 —— 最小权限
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    // 权限被拒 / 无设备：都走静默提示，不弹窗
+    // 权限被拒 / 无设备：都走静默提示，不弹窗；归位 idle 解除并发锁
+    micState = 'idle';
+    renderMicState();
     const name = e && e.name;
     micHint(name === 'NotAllowedError'
       ? t('stt.denied', '麦克风权限被拒绝')
       : t('stt.noDevice', '没有找到麦克风'));
     return;
   }
+
+  // P1-13：拿到 stream 后立刻托管进 mediaStream，确保后续任意异常时 stopMicTracks 都能关闭音轨
+  mediaStream = stream;
 
   let rec = null;
   try {
@@ -497,12 +504,13 @@ async function startRecording() {
     // 个别平台不支持 webm，退回默认格式
     try { rec = new MediaRecorder(stream); } catch (e2) {
       stopMicTracks();
+      micState = 'idle';
+      renderMicState();
       micHint(t('stt.failed', '识别失败'));
       return;
     }
   }
 
-  mediaStream = stream;
   mediaRecorder = rec;
   micChunks = [];
   micStartedAt = Date.now();
@@ -677,7 +685,9 @@ if (micBtn) {
    用户中途反悔必须有个不产生识别请求的出口。 */
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && micState === 'recording') {
-    stopRecording(true);              // true = 丢弃，不送识别
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    stopRecording(true);
     micHint('');
   }
 });

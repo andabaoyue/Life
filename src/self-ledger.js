@@ -340,25 +340,52 @@ class SelfLedger {
     const at = Number.isFinite(meta.at) ? meta.at : Date.now();
     const window = Number.isInteger(meta.window) ? meta.window : 0;
     const cleanKey = cleanText(traitOrId);
+    const rejected = Array.isArray(meta.rejected) ? meta.rejected : [];
+    let verifiedOppose = null;
+    if (meta.verify) {
+      const verifyWindow = Number.isInteger(meta.verify.windowNo) ? meta.verify.windowNo : window;
+      const rawList = Array.isArray(rawOpposingEvidence) ? rawOpposingEvidence : [rawOpposingEvidence];
+      verifiedOppose = [];
+      for (const ev of rawList.slice(0, 4)) {
+        const res = verifyGrowthEvidence(ev, meta.verify.msgMap, verifyWindow);
+        if (res.ok) verifiedOppose.push(res.evidence);
+        else rejected.push({ entry: cleanKey, channel: 'oppose', reason: res.reason, evidence: ev });
+      }
+    }
     let target = this.entries.find(e => e.id === cleanKey || e.trait === cleanKey);
     if (!target) {
+      const initialOppose = verifiedOppose !== null
+        ? verifiedOppose
+        : (Array.isArray(rawOpposingEvidence) ? rawOpposingEvidence : [rawOpposingEvidence]);
+      if (verifiedOppose !== null && !initialOppose.length) {
+        return { created: false, error: 'NO_VERIFIABLE_EVIDENCE' };
+      }
       target = normalizeEntry({
         trait: cleanKey,
         at,
         window,
-        oppose: [rawOpposingEvidence]
+        oppose: initialOppose
       });
       if (target) {
         this.entries.push(target);
-        if (this.entries.length > this.maxEntries) this.entries = this.entries.slice(-this.maxEntries);
+        if (this.entries.length > this.maxEntries) {
+          // D-005：淘汰旧条目时通过 meta.onEvict 通知调用方转存归档，严禁静默截断丢失历史。
+          const evicted = this.entries.slice(0, this.entries.length - this.maxEntries);
+          this.entries = this.entries.slice(-this.maxEntries);
+          if (evicted.length && typeof meta.onEvict === 'function') {
+            try { meta.onEvict(evicted); } catch { /* 转存失败不得影响账本本身 */ }
+          }
+        }
         this.save(false, true);
         return { created: true, entry: target, metrics: calculateRevisionPressure(target) };
       }
       return { created: false, error: 'INVALID_ENTRY' };
     }
 
-    const normList = normalizeEvidenceList(rawOpposingEvidence, at, window);
-    if (!normList.length) return { updated: false, reason: 'NO_VALID_EVIDENCE' };
+    const normList = verifiedOppose !== null
+      ? normalizeEvidenceList(verifiedOppose, at, Number.isInteger(meta.verify.windowNo) ? meta.verify.windowNo : window)
+      : normalizeEvidenceList(rawOpposingEvidence, at, window);
+    if (!normList.length) return { updated: false, reason: verifiedOppose !== null ? 'NO_VERIFIABLE_EVIDENCE' : 'NO_VALID_EVIDENCE' };
 
     for (const ev of normList) {
       target.oppose.push(ev);

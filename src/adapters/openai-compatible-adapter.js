@@ -197,7 +197,7 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             stream: true,
             stream_options: { include_usage: true },
             temperature: callOpts.temperature ?? 1.0,
-            max_tokens: callOpts.maxTokens ?? 600
+            max_tokens: callOpts.maxTokens ?? 1200
           },
           signal: ctrl.signal
         });
@@ -225,12 +225,14 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             if (j.usage) usage = j.usage;
             const d = j.choices?.[0]?.delta?.content;
             if (d) {
-              full += d;
-              // SEC-03: 累计文本硬上限（full 不得无界增长）
-              if (full.length > MAX_STREAM_TEXT_CHARS) {
-                ctrl.abort();
-                throw makeResponseTooLargeError(MAX_STREAM_TEXT_CHARS, 'stream');
+              // SEC-03 / P1-12: 累计文本上限 —— 先判后拼，不得先无界 full += d
+              if (full.length + d.length > MAX_STREAM_TEXT_CHARS) {
+                const tooLarge = makeResponseTooLargeError(MAX_STREAM_TEXT_CHARS, 'stream');
+                ctrl.abort(tooLarge);
+                streamError = tooLarge;
+                return;
               }
+              full += d;
               yielded = true;
               if (onDelta) onDelta(d);
             }
@@ -239,6 +241,9 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
 
         const reader = res.body.getReader();
         const dec = new TextDecoder();
+        const streamIdleTimeoutMs = Number.isFinite(cfg && cfg.streamIdleTimeoutMs)
+          ? cfg.streamIdleTimeoutMs : 20000;
+        let streamFinished = false;
         try {
           for (;;) {
             if (ctrl.signal.aborted) {
@@ -247,8 +252,37 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
               err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
               throw err;
             }
-            const { done, value } = await reader.read();
-            if (done) break;
+            let idleTimer = null;
+            let onAbortHandler = null;
+            let chunk;
+            try {
+              const readPromise = reader.read();
+              const idlePromise = new Promise((_, reject) => {
+                idleTimer = setTimeout(() => {
+                  const err = new Error('stream idle timeout');
+                  err.name = 'TimeoutError';
+                  reject(err);
+                }, streamIdleTimeoutMs);
+              });
+              const abortPromise = new Promise((_, reject) => {
+                onAbortHandler = () => {
+                  const reason = ctrl.signal.reason;
+                  const err = reason instanceof Error ? reason : new Error(reason || 'aborted');
+                  err.name = err.message === 'request timeout' ? 'TimeoutError' : 'AbortError';
+                  reject(err);
+                };
+                ctrl.signal.addEventListener('abort', onAbortHandler, { once: true });
+              });
+              chunk = await Promise.race([readPromise, idlePromise, abortPromise]);
+            } finally {
+              if (idleTimer) clearTimeout(idleTimer);
+              if (onAbortHandler) ctrl.signal.removeEventListener('abort', onAbortHandler);
+            }
+            const { done, value } = chunk;
+            if (done) {
+              streamFinished = true;
+              break;
+            }
             parser.feed(dec.decode(value, { stream: true }));
             if (streamError) {
               // 已报错就不再读（也避免挂到连接超时）；post-yield 绝不重启
@@ -257,10 +291,12 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
             }
           }
         } finally {
-          if (streamError) {
+          if (!streamFinished) {
             try { await reader.cancel(); } catch {}
           }
         }
+        const tail = dec.decode();
+        if (tail) parser.feed(tail);
         parser.flush();
 
         if (streamError) {

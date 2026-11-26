@@ -27,6 +27,9 @@ function isAppLocalUrl(url, appDir) {
     return false;
   }
   if (parsed.protocol !== 'file:') return false; // 不接受任意 remote URL
+  // 拒绝 file://remote-host/...（只允许本机 file:/// 或 file://localhost/...）
+  const host = String(parsed.hostname || '').toLowerCase();
+  if (host !== '' && host !== 'localhost') return false;
   let filePath;
   try {
     filePath = decodeURIComponent(parsed.pathname);
@@ -37,8 +40,12 @@ function isAppLocalUrl(url, appDir) {
   // 仅在 Windows 下剥离前导 /：POSIX 上剥离后会变成相对路径并被 path.resolve 拼到 cwd 下，
   // 当 cwd === appDir 时会误判为「落在 app 目录内」（2026-11-24 Linux CI 实测复现）。
   if (process.platform === 'win32' && /^\/[A-Za-z]:/.test(filePath)) filePath = filePath.slice(1);
-  const resolved = path.resolve(filePath);
-  const root = path.resolve(appDir);
+  let resolved = path.resolve(filePath);
+  let root = path.resolve(appDir);
+  if (process.platform === 'win32') {
+    resolved = resolved.toLowerCase();
+    root = root.toLowerCase();
+  }
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 

@@ -252,6 +252,42 @@ check('v1.0.5 markCuriosityIncubated 潜意识发酵标记且保持 systemText �
   recallMem.data.curiosityQueue[0].incubated === true &&
   sysBefore === sysAfter);
 
+// P1-7 & P1-11: flushPendingDreamFragments 延迟合并 + lastSnapshotMsgId 锚定 bridge 边界
+{
+  const pDir = tmpDir();
+  try {
+    const pm = new Memory(pDir, { persona: 'p', windowTurns: 20, keepTail: 4 });
+    pm.data.pendingDreamFragments = ['睡眠碎片一', '睡眠碎片二'];
+    const sysMid = pm.systemText();
+    const moved = pm.flushPendingDreamFragments();
+    check('P1-7 flushPendingDreamFragments 将睡眠暂存碎片合并至 dreamFragments 并清空 pending',
+      moved === 2
+      && !sysMid.includes('睡眠碎片一')
+      && pm.data.pendingDreamFragments.length === 0
+      && pm.data.dreamFragments.length === 2
+      && pm.systemText().includes('睡眠碎片一'));
+
+    for (let i = 1; i <= 4; i++) {
+      pm.append('user', 'u' + i);
+      pm.append('assistant', 'a' + i);
+    }
+    const snap = pm.windowSnapshot(); // len=8, drop=4, lastSnapshotMsgId=末尾a4
+    // 模拟 waits 期间前置一条旧历史被回滚删除 + 新窗新 append 一条 user（共仍 <=4 条尾部）
+    pm.data.history.splice(4, 1); // 删掉 u3（快照尾部少 1 条，但 lastSnapshotMsgId 还在）
+    pm.append('user', '新窗第一句');
+    pm.closeWindow('第一窗小结。', snap);
+    const tailLast = pm.data.history[pm.data.history.length - 1];
+    check('P1-11 lastSnapshotMsgId 精准锚定快照边界，阻止并发裁剪后把新窗消息误标 bridge: true',
+      snap.lastSnapshotMsgId !== null
+      && pm.data.history.slice(0, -1).every((m) => m.bridge === true)
+      && tailLast.content === '新窗第一句'
+      && tailLast.bridge === false
+      && tailLast.windowNo === pm.data.windowNo);
+  } finally {
+    try { fs.rmSync(pDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 try { fs.rmSync(testRecallDir, { recursive: true, force: true }); } catch {}
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

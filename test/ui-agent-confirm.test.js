@@ -497,7 +497,36 @@ check('UXSEC-U3 show() 将覆写警告安全渲染至 warn 字段（纯 textCont
   return hasHighRisk && hasOverwrite && onlyOverwrite && noWarn;
 })());
 
-if (origDoc === undefined) delete global.document; else global.document = origDoc;
+(async () => {
+  const f = fakeEl();
+  let resolveA = null;
+  const c = bind(f.root, () => {}, null, {
+    onFetchContent: (id) => (id === 'prop-A'
+      ? new Promise((res) => { resolveA = res; })
+      : Promise.resolve({ ok: true, content: 'B-FULL' })),
+  });
+  c.show({
+    ...goodProposal,
+    id: 'prop-A', capability: 'workspace.write', scope: '/tmp/a.txt',
+    contentPreview: 'pA', contentBytes: 100, contentHash: 'hA', isTruncated: true,
+  }, {});
+  const expandBtn = f.nodes['[data-agent-action="expand-content"]'];
+  const clickPromise = expandBtn._h.click();
+  // 在 prop-A 异步拉取尚未返回时切走展示 prop-B
+  c.show({
+    ...goodProposal,
+    id: 'prop-B', capability: 'workspace.write', scope: '/tmp/b.txt',
+    contentPreview: 'pB', contentBytes: 200, contentHash: 'hB', isTruncated: true,
+  }, {});
+  // 让 prop-A 的旧请求现在 resolve，验证不会把 A-STALE 渲染到 prop-B 上
+  if (resolveA) resolveA({ ok: true, content: 'A-STALE' });
+  await clickPromise;
+  check('P1-16 查看完整正文等待期间切换到新提案后丢弃过期响应（防 TOCTOU 串台）',
+    f.nodes['[data-agent-field="content-full"]'].textContent === ''
+    && f.nodes['[data-agent-box="content-full"]'].classList.contains('hidden'));
 
-console.log(failures === 0 ? '\nall ui-agent-confirm tests passed' : `\n${failures} FAILED`);
-if (failures !== 0) process.exitCode = 1;
+  if (origDoc === undefined) delete global.document; else global.document = origDoc;
+
+  console.log(failures === 0 ? '\nall ui-agent-confirm tests passed' : `\n${failures} FAILED`);
+  if (failures !== 0) process.exitCode = 1;
+})();

@@ -93,9 +93,13 @@
       return;
     }
 
-    // 🔴 本窗就是全屏，clientX/Y 即屏幕坐标 —— 不需要加窗口偏移
+    // 🔴 本窗就是全屏，clientX/Y 即屏幕坐标 —— 不需要加窗口偏移；透传所在显示器 displayId 给主进程对齐多屏
+    const displayId = new URLSearchParams(window.location.search).get('displayId');
     const res = api && api.vision
-      ? await api.vision.capture({ rect: { x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) } })
+      ? await api.vision.capture({
+          rect: { x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) },
+          ...(displayId ? { displayId } : {})
+        })
       : null;
 
     if (res && res.ok) {

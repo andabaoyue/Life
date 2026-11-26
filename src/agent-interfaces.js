@@ -16,6 +16,7 @@
  */
 const path = require('path');
 const crypto = require('crypto');
+const { redactSecrets } = require('./redact');
 
 /**
  * 提案 id 生成器。
@@ -372,6 +373,18 @@ class ExecutionBudget {
    * @param {{ free?: boolean }} [opts] 可选配置；free=true 表示只读免扣 actions（仍受 tripped 熔断约束且成功可重置 consecutiveErrors）
    * @returns {boolean} true=放行；false=已熔断，调用方**必须停止**且不得重试
    */
+  canConsume(isWrite = false, opts = {}) {
+    if (this.tripped) return false;
+    const isFree = Boolean(opts && opts.free);
+    if (!isFree && this.actions + 1 > this.limits.maxActionsPerSession) {
+      return false;
+    }
+    if (isWrite && this.writes + 1 > this.limits.maxWritesPerSession) {
+      return false;
+    }
+    return true;
+  }
+
   consume(isWrite = false, now = Date.now(), opts = {}) {
     if (this.tripped) return false;
     const isFree = Boolean(opts && opts.free);
@@ -669,12 +682,13 @@ class AuditLog {
     try {
       const fs = require('fs');
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      // 只落元数据：剔除任何形似凭据的键值（纵深防御，正常调用方本就不该传这些）。
+      // 只落元数据：剔除任何形似凭据的键值（纵深防御，正常调用方本就不该传这些），并经 redactSecrets 清洗值。
       const safe = {};
       for (const [k, v] of Object.entries(record)) {
         if (/key|token|secret|password|credential|cookie/i.test(k)) continue;
-        if (typeof v === 'string' && v.length > 500) safe[k] = v.slice(0, 500);
-        else safe[k] = v;
+        const cleaned = redactSecrets(v);
+        if (typeof cleaned === 'string' && cleaned.length > 500) safe[k] = cleaned.slice(0, 500);
+        else safe[k] = cleaned;
       }
       fs.appendFileSync(this.file, JSON.stringify(safe) + '\n', 'utf8');
       return true;

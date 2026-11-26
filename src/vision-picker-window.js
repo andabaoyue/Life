@@ -30,6 +30,8 @@ const path = require('path');
 
 /** 当前框选窗（同一时刻只允许一个） */
 let pickerWin = null;
+/** 当前框选窗所在的显示器 id（多屏截屏对齐） */
+let pickerDisplayId = null;
 
 /**
  * 已隐藏、可复用的框选窗实例。
@@ -65,17 +67,24 @@ function openVisionPicker(deps = {}) {
       const d2 = screen.getCursorScreenPoint
         ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
         : screen.getPrimaryDisplay();
+      pickerDisplayId = d2 && d2.id !== undefined ? d2.id : null;
       pickerWin.setBounds({ x: d2.bounds.x, y: d2.bounds.y, width: d2.bounds.width, height: d2.bounds.height });
     } catch (e) { /* 尺寸设置失败不影响可用性 */ }
     pickerWin.show();
-    try { pickerWin.reload(); } catch (e) { /* reload 失败也还能用旧页面 */ }
+    try {
+      pickerWin.loadFile(
+        path.join(__dirname, '..', 'vision-picker.html'),
+        pickerDisplayId !== null ? { query: { displayId: String(pickerDisplayId) } } : undefined
+      );
+    } catch (e) { /* loadFile 失败尝试 reload */ try { pickerWin.reload(); } catch {} }
     pickerWin.focus();
-    return { ok: true, reused: true };
+    return { ok: true, reused: true, displayId: pickerDisplayId };
   }
 
   const display = screen.getCursorScreenPoint
     ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     : screen.getPrimaryDisplay();
+  pickerDisplayId = display && display.id !== undefined ? display.id : null;
   const bounds = display.bounds;
 
   pickerWin = new BrowserWindow({
@@ -105,7 +114,10 @@ function openVisionPicker(deps = {}) {
   try { pickerWin.setAlwaysOnTop(true, 'screen-saver'); } catch (e) { /* 老版本不支持 level */ }
   try { pickerWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (e) {}
 
-  pickerWin.loadFile(path.join(__dirname, '..', 'vision-picker.html'));
+  pickerWin.loadFile(
+    path.join(__dirname, '..', 'vision-picker.html'),
+    pickerDisplayId !== null ? { query: { displayId: String(pickerDisplayId) } } : undefined
+  );
   if (deps.ipcGuard && typeof deps.ipcGuard.attachNavigationGuard === 'function') {
     deps.ipcGuard.attachNavigationGuard(pickerWin.webContents);
   }
@@ -196,4 +208,8 @@ function getPickerWindow() {
   return (pickerWin && !pickerWin.isDestroyed()) ? pickerWin : null;
 }
 
-module.exports = { openVisionPicker, closeVisionPicker, isVisionPickerOpen, getPickerWindow };
+function getPickerDisplayId() {
+  return pickerDisplayId;
+}
+
+module.exports = { openVisionPicker, closeVisionPicker, isVisionPickerOpen, getPickerWindow, getPickerDisplayId };

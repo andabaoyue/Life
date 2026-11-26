@@ -23,11 +23,17 @@ const SECRET_STRING_PATTERNS = [
   // 常见 API key 形态（sk-... / 深度长串）
   /\bsk-[A-Za-z0-9_-]{4,}/g,
   // key=value / key: value 形态（含可选引号包裹键名，支持 JSON 格式；支持 pwd 键名）
-  /(["']?)\b(api[-_]?key|access[-_]?token|refresh[-_]?token|token|secret|password|passwd|pwd|authorization|cookie|credential)\b\1(\s*[:=]\s*)(["']?)[^\s"',;)&]+\4/gi,
-  // v0.9.8 A-01: 典型平台 token 形态
+  /(["']?)\b(api[-_]?key|access[-_]?token|refresh[-_]?token|token|secret|password|passwd|pwd|passphrase|authorization|cookie|credential)\b\1(\s*[:=]\s*)(["']?)[^\s"',;)&]+\4/gi,
+  // v0.9.8 A-01 + v2.1 P1-6: 典型平台/现代 token 与本仓降级形态
   /\bgh[pousr]_[A-Za-z0-9]{16,}/g,   // GitHub PAT (ghp_/gho_/ghu_/ghs_/ghr_)
+  /\bgithub_pat_[A-Za-z0-9_]{22,}/g, // GitHub fine-grained PAT
   /\bAKIA[A-Z0-9]{16}\b/g,           // AWS Access Key ID
-  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g  // Slack token
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g, // Slack token
+  /\bAIza[0-9A-Za-z_-]{35}\b/g,      // Google / Gemini API Key
+  /\bhf_[A-Za-z0-9]{20,}/g,          // Hugging Face token
+  /\bgsk_[A-Za-z0-9]{20,}/g,         // Groq API key
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
+  /plain:v1:[A-Za-z0-9+/=]+/g        // 本仓降级明文凭据前缀
 ];
 
 const SECRET_HEADER_KEYS = new Set([
@@ -38,7 +44,7 @@ const SECRET_HEADER_KEYS = new Set([
 // v0.9.8 A-01: 对象敏感键名识别 —— 后缀模糊匹配（大小写不敏感），
 // 覆盖复合键名（dbPassword / sessionToken / clientSecret / privateKey / my_api_key / user_pwd 等）。
 // 显式表保留 header 类与 passwd/pwd 等无共同后缀的形态。
-const SECRET_KEY_SUFFIXES = ['secret', 'password', 'token', 'key', 'credential', 'passwd', 'pwd'];
+const SECRET_KEY_SUFFIXES = ['secret', 'password', 'token', 'key', 'credential', 'passwd', 'pwd', 'cookie', 'passphrase'];
 
 function isSecretKey(key) {
   const k = String(key).toLowerCase();
@@ -49,6 +55,8 @@ function isSecretKey(key) {
 function redactString(text) {
   let out = String(text);
   try {
+    // 整段 Cookie / Set-Cookie HTTP 头值脱敏（到换行结束；(?<!["']) 保留 JSON `"cookie": "..."` 结构交由下方 pattern[2]）
+    out = out.replace(/(?<!["'])\b((?:set-)?cookie\s*:\s*)([^\r\n]+)/gi, '$1[REDACTED]');
     out = out.replace(SECRET_STRING_PATTERNS[0], (_m, scheme) => `${scheme} [REDACTED]`);
     out = out.replace(SECRET_STRING_PATTERNS[1], '[REDACTED]');
     out = out.replace(SECRET_STRING_PATTERNS[2], (_m, q1, key, sep, q2) => `${q1}${key}${q1}${sep}${q2}[REDACTED]${q2}`);

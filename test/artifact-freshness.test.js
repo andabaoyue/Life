@@ -218,5 +218,30 @@ check('⑦ discoverAsar 返回 null 或真实存在的路径',
     && /checkArtifactFreshness\(\);/.test(rc));
 }
 
+/* ⑫ P1-17：补全 vision-picker* 与递归 src 目录下 .js 扫描盲区。 */
+{
+  check('P1-17a RUNTIME_SOURCES 含 vision-picker* 且 RUNTIME_DIRS 含 src',
+    af.RUNTIME_SOURCES.includes('vision-picker-preload.js')
+    && af.RUNTIME_SOURCES.includes('vision-picker.html')
+    && af.RUNTIME_SOURCES.includes('vision-picker.js')
+    && Array.isArray(af.RUNTIME_DIRS) && af.RUNTIME_DIRS.includes('src'));
+
+  const dirSrc = fs.mkdtempSync(path.join(require('os').tmpdir(), 'artifact-fresh-'));
+  TMP_DIRS.push(dirSrc);
+  fs.mkdirSync(path.join(dirSrc, 'src', 'adapters'), { recursive: true });
+  fs.writeFileSync(path.join(dirSrc, 'main.js'), 'M');
+  fs.writeFileSync(path.join(dirSrc, 'src', 'core.js'), 'NEW-CORE');
+  fs.writeFileSync(path.join(dirSrc, 'src', 'adapters', 'a.js'), 'ADAPTER');
+  const packed = {
+    'main.js': Buffer.from('M'),
+    'src/core.js': Buffer.from('OLD-CORE'),
+    'src/adapters/a.js': Buffer.from('ADAPTER')
+  };
+  const r = af.compareArtifact({ root: dirSrc, readPacked: (n) => packed[n] });
+  const mt = af.getLatestRuntimeDirMtimeMs(dirSrc);
+  check('P1-17b 改动 src 子目录源码被 compareArtifact 与 getLatestRuntimeDirMtimeMs 识别（不再假绿）',
+    r.stale.includes('src/core.js') && mt.fileCount === 2 && mt.latestMtimeMs > 0);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

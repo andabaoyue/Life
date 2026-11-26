@@ -658,6 +658,26 @@ check('🔴 brain 接线 vision provider',
       }
     }
 
+    // ============ P1-5：vision:stage 格式收紧与多屏对齐纯函数 ============
+    check('P1-5a validateStageDataUrl 拒绝 svg+xml 与超大载荷并放行 png/jpeg/webp',
+      vision.validateStageDataUrl('data:image/svg+xml;base64,PHN2Zz4=') === false
+      && vision.validateStageDataUrl('data:image/png;base64,' + 'A'.repeat(vision.MAX_STAGE_DATA_URL_CHARS + 1)) === false
+      && vision.validateStageDataUrl('data:image/png;base64,QUFB') === true
+      && vision.validateStageDataUrl('data:image/jpeg;base64,QUFB') === true
+      && vision.validateStageDataUrl('data:image/webp;base64,QUFB') === true);
+
+    {
+      const d1 = { id: 101, size: { width: 1920, height: 1080 } };
+      const d2 = { id: 202, size: { width: 2560, height: 1440 } };
+      const s1 = { display_id: '101', id: 'screen:101:0' };
+      const s2 = { display_id: '202', id: 'screen:202:0' };
+      const pickedDisp = vision.resolveCaptureDisplay([d1, d2], d1, '202');
+      const pickedSrc = vision.pickCaptureSource([s1, s2], pickedDisp);
+      const fallbackDisp = vision.resolveCaptureDisplay([d1, d2], d1, '999');
+      check('P1-5b 多屏截屏按 displayId 匹配副屏及对应 desktopCapturer 源并安全回退主屏',
+        pickedDisp === d2 && pickedSrc === s2 && fallbackDisp === d1);
+    }
+
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
     /* ⚠️ 退出必须干净，否则门禁会把「崩溃」当成失败原因（实测踩过两次）。
      *

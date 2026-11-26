@@ -256,6 +256,18 @@ check('回退取到明文降级凭据时 encrypted 必须为 false（不谎报�
 const fallbackVal = secure.decryptKey(() => fakeSS(true), dir, 'deepseek');
 check('主密文损坏且加密恢复可用时自动重建主密文并恢复', fallbackVal === KEY);
 
+// P1-3: dropKeyFile 删除 legacy v0 文件前先校验 legacyV0Claimants 唯一性（防多 Provider 碰撞误删）
+{
+  const colDir = tmp();
+  const reg = require('../src/provider-registry');
+  reg.registerProvider({ providerId: 'p13/alpha', adapterFactory: () => ({}), override: true });
+  reg.registerProvider({ providerId: 'p13:alpha', adapterFactory: () => ({}), override: true });
+  const sharedLegacy = path.join(colDir, 'gpt-girl-key--p13_alpha');
+  fs.writeFileSync(sharedLegacy, 'plain:v1:shared-key', 'utf8');
+  secure.dropKeyFile(colDir, 'p13/alpha');
+  check('P1-3 legacy v0 命名碰撞时 dropKeyFile 不得误删共享旧文件', fs.existsSync(sharedLegacy));
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
 

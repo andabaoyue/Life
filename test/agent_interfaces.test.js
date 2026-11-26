@@ -414,6 +414,44 @@ function tmpDir(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), tag)); }
       && r.register('process.execute', { dangerLevel: 'critical', scopeKind: 'command' }) === true;
   })());
 
+  // ============ P1-1 & P1-6 回归 ============
+  check('P1-1 ExecutionBudget.canConsume 只读预检不改计数、不熔断、不清零 consecutiveErrors', (() => {
+    const b = new ExecutionBudget({ maxActionsPerSession: 2, maxWritesPerSession: 1 });
+    b.recordError();
+    const ok1 = b.canConsume(true);
+    const s1 = b.state();
+    b.consume(true);
+    const overWrite = b.canConsume(true);
+    const s2 = b.state();
+    return ok1 === true && s1.writes === 0 && s1.actions === 0 && s1.consecutiveErrors === 1 && !s1.tripped
+      && overWrite === false && !s2.tripped && s2.writes === 1;
+  })());
+
+  check('P1-6 redactSecrets 覆盖现代凭据前缀、Cookie 头全段及 passphrase/cookie 键', (() => {
+    const { redactSecrets } = require('../src/redact');
+    const aiza = 'AIza' + 'SyAbCdEfGhIjKlMnOpQrStUvWxYz123456789'.slice(0, 35);
+    const hf = 'hf_' + 'AbCdEfGhIjKlMnOpQrStUv'.slice(0, 22);
+    const gsk = 'gsk_' + 'AbCdEfGhIjKlMnOpQrStUv'.slice(0, 22);
+    const ghp = 'github_pat_' + 'AbCdEfGhIjKlMnOpQrStUvWxYz1234'.slice(0, 24);
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDefGhiJklMnoPqrStuVwxyz';
+    const raw = `k1=${aiza} k2=${hf} k3=${gsk} k4=${ghp} k5=${jwt} k6=plain:v1:abc123==\nCookie: sid=xyz; theme=dark\nNext: ok`;
+    const red = redactSecrets(raw);
+    const objRed = redactSecrets({ myCookie: 's=1', walletPassphrase: 'pw', safe: 'ok' });
+    return !red.includes(aiza) && !red.includes(hf) && !red.includes(gsk) && !red.includes(ghp)
+      && !red.includes(jwt) && !red.includes('plain:v1:abc123==')
+      && !red.includes('sid=xyz') && !red.includes('theme=dark') && red.includes('Next: ok')
+      && objRed.myCookie === '[REDACTED]' && objRed.walletPassphrase === '[REDACTED]' && objRed.safe === 'ok';
+  })());
+
+  check('P1-6 AuditLog._appendToDisk 落盘前通过 redactSecrets 清洗 Bearer 与 Cookie 错误', (() => {
+    const dAudit = tmpDir('agent-audit-p16-');
+    const aud = new AuditLog({ dir: dAudit });
+    aud.append({ action: 'fail', detail: 'err Bearer tok_secret_1234\nCookie: sid=abc123; p=1' });
+    const onDisk = aud.readAll();
+    return onDisk.length === 1 && !String(onDisk[0].detail).includes('tok_secret_1234')
+      && !String(onDisk[0].detail).includes('sid=abc123');
+  })());
+
   fs.rmSync(root, { recursive: true, force: true });
   console.log('agent interface tests passed:', pass);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -304,6 +304,66 @@ const baseCfg = () => ({ baseURL: 'https://api.deepseek.com', apiKey: KEY, model
       PROVIDER_TYPES.includes('local') && PROVIDER_TYPES.includes('custom'));
   }
 
+  /* ============ 32-33. P1-12：OpenAI 兼容适配器流式超时/释放/UTF-8尾刷新/max_tokens ============ */
+  {
+    const { createOpenAICompatibleAdapter } = require('../src/adapters/openai-compatible-adapter');
+    let seenBody = null;
+    let cancelCalled = false;
+    // 1) max_tokens 默认 1200 + UTF-8 多字节跨 chunk 分片经 dec.decode() 刷新保留 + 未完成流 reader.cancel()
+    const enc = new TextEncoder();
+    const bytesAll = enc.encode('data: {"choices":[{"delta":{"content":"你好🌸世界"}}]}\n\ndata: [DONE]\n\n');
+    // 在 4 字节 emoji (F0 9F 8C B8) 中间切开两个 chunk，检验 dec.decode({stream:true}) + 尾 dec.decode() 不丢字
+    const splitAt = bytesAll.indexOf(0xF0) + 2;
+    const chunks = [bytesAll.slice(0, splitAt), bytesAll.slice(splitAt)];
+    let ci = 0;
+    globalThis.fetch = async (_u, init) => {
+      seenBody = JSON.parse(init.body);
+      return {
+        ok: true, status: 200, headers: new Headers({ 'content-type': 'text/event-stream' }),
+        body: {
+          getReader: () => ({
+            read: async () => (ci < chunks.length ? { done: false, value: chunks[ci++] } : { done: true }),
+            cancel: async () => { cancelCalled = true; }
+          })
+        }
+      };
+    };
+    const rStream = await createOpenAICompatibleAdapter({
+      baseURL: 'https://llm.example.com/v1', apiKey: 'sk-test-1234', model: 'gpt-4o-mini', maxRetries: 0
+    }).stream([{ role: 'user', content: 'hi' }]);
+    check('P1-12a OpenAI兼容适配器默认 max_tokens=1200 且 UTF-8 跨块/正常收尾不断裂',
+      seenBody && seenBody.max_tokens === 1200 && rStream.text === '你好🌸世界' && cancelCalled === false);
+
+    // 2) 未完流提前报错时 !streamFinished 触发 reader.cancel()；且先判长再拼接（partial <= MAX_STREAM_TEXT_CHARS）
+    const { MAX_STREAM_TEXT_CHARS } = require('../src/openai-transport');
+    let midCancel = false;
+    let step = 0;
+    const bigHalf = 'x'.repeat(Math.floor(MAX_STREAM_TEXT_CHARS * 0.6));
+    globalThis.fetch = async () => ({
+      ok: true, status: 200, headers: new Headers({ 'content-type': 'text/event-stream' }),
+      body: {
+        getReader: () => ({
+          read: async () => {
+            step++;
+            if (step === 1) return { done: false, value: enc.encode('data: ' + JSON.stringify({ choices: [{ delta: { content: bigHalf } }] }) + '\n\n') };
+            if (step === 2) return { done: false, value: enc.encode('data: ' + JSON.stringify({ choices: [{ delta: { content: bigHalf } }] }) + '\n\n') };
+            return { done: true };
+          },
+          cancel: async () => { midCancel = true; }
+        })
+      }
+    });
+    let bigErr = null;
+    try {
+      await createOpenAICompatibleAdapter({
+        baseURL: 'https://llm.example.com/v1', apiKey: 'sk-test-1234', model: 'gpt-4o-mini', maxRetries: 0
+      }).stream([{ role: 'user', content: 'hi' }]);
+    } catch (e) { bigErr = e; }
+    check('P1-12b 超长增量先判后拼（partial 未超限）并在提前退出时调用 reader.cancel()',
+      bigErr && midCancel === true && typeof bigErr.partial === 'string' && bigErr.partial.length <= MAX_STREAM_TEXT_CHARS);
+    globalThis.fetch = realFetch;
+  }
+
   globalThis.fetch = realFetch;
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);

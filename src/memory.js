@@ -200,7 +200,7 @@ class Memory {
      *   本队列只参与 build() 的**当轮尾部**拼接，不碰历史一个字节。
      */
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
-                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
+                  totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [],
                   lexicon: [], expectations: [], selfNotes: [],
                   lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
     // 🔴 D-20：她写过的东西 —— 与 lexicon/expectations 同款（落在 data 里，原子写保护）。
@@ -291,11 +291,15 @@ class Memory {
         }
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
-                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], deepHorizon: '', curiosityQueue: [],
+                    windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [],
                     lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0, ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
       // v1.0 兼容平移：旧档案缺字段 → 空表；脏数据 → 归一为数组（绝不静默丢历史）
       this.data.lexicon = Array.isArray(this.data.lexicon) ? this.data.lexicon : [];
       this.data.expectations = Array.isArray(this.data.expectations) ? this.data.expectations : [];
+      this.data.dreamFragments = Array.isArray(this.data.dreamFragments)
+        ? this.data.dreamFragments.filter((x) => typeof x === 'string' && x.trim()).slice(-3) : [];
+      this.data.pendingDreamFragments = Array.isArray(this.data.pendingDreamFragments)
+        ? this.data.pendingDreamFragments.filter((x) => typeof x === 'string' && x.trim()).slice(-3) : [];
       // 🔴 D-20：selfNotes 同款兼容平移。
       //   · 旧档案（D-19 之前）**完全没有这个字段** → 空表（不是 undefined）
       //   · 脏数据 → 归一为数组，绝不因它让整次 load 失败
@@ -1946,6 +1950,9 @@ class Memory {
       ? activeItems.filter(m => m.role === 'user' && !m.synthetic).length
       : snapshotTurnCount;
     const snapshotActiveMessageIds = activeItems.map(m => m.messageId).filter(Boolean);
+    const lastSnapshotMsgId = (len > drop && this.data.history[len - 1] && this.data.history[len - 1].messageId)
+      ? this.data.history[len - 1].messageId
+      : null;
     const closeReason = opts.closeReason || (snapshotTurnCount >= targetTurnCount ? 'turn_limit' : (this.needsWindowReset() ? 'token_limit' : 'turn_limit'));
 
     return {
@@ -1953,6 +1960,7 @@ class Memory {
       activeItems: activeItems.length > 0 ? activeItems : this.data.history.slice(0, drop),
       drop,
       len,
+      lastSnapshotMsgId,
       epoch: this.data.epoch,
       windowNo: currentWindowNo,
       snapshotTurnCount,
@@ -1962,6 +1970,24 @@ class Memory {
       targetTurnCount,
       actualTurnCount
     };
+  }
+
+  /** P1-7：仅在关窗轮转时刻把睡眠期暂存的梦境碎片并入 dreamFragments（维护窗口内 systemText 逐字节稳定）。 */
+  flushPendingDreamFragments() {
+    if (!this.data) return 0;
+    const pending = Array.isArray(this.data.pendingDreamFragments)
+      ? this.data.pendingDreamFragments.map((x) => String(x || '').trim().slice(0, 400)).filter(Boolean)
+      : [];
+    this.data.pendingDreamFragments = [];
+    if (!pending.length) return 0;
+    if (!Array.isArray(this.data.dreamFragments)) this.data.dreamFragments = [];
+    for (const frag of pending) {
+      this.data.dreamFragments.push(frag);
+    }
+    if (this.data.dreamFragments.length > 3) {
+      this.data.dreamFragments = this.data.dreamFragments.slice(-3);
+    }
+    return pending.length;
   }
 
   /**
@@ -2009,15 +2035,22 @@ class Memory {
     // v1.0.6 词汇动力学静默流转（方案 A1）：扫描本窗活跃消息，共振词升权，久未提及词平滑衰减
     this.refreshLexiconDynamics(snap.activeItems || snap.items, closedWindowNo);
 
+    // v2.0-s1（s1-b）：与 engramManager.decayAll(closedWindowNo) 保持同窗节拍，先结算再递增窗口号。
+    this.decaySelfNotes(closedWindowNo);
     this.data.windowNo++;
-    // v2.0-s1（s1-b）：窗口号递增后同步结算 selfNotes 的幂律衰减，保留零物理丢弃与 D-24 未铸造资格。
-    this.decaySelfNotes(this.data.windowNo);
     // 快照之后可能被 rollback 弹掉几条，drop 不能越过当前长度
     this.data.history.splice(0, Math.min(snap.drop, this.data.history.length));
 
     // 快照内的尾部保留消息（0 .. keptFromSnapshotCount - 1）属于已归档窗口，标记为 bridge: true
     // 快照之后等待期间新追加的消息（keptFromSnapshotCount .. end）属于新窗口，更新 windowNo 且 bridge: false
-    const keptFromSnapshotCount = Math.max(0, Math.min(this.data.history.length, snap.len - snap.drop));
+    // P1-11：优先用 lastSnapshotMsgId 锚定快照边界（防止并发 ask+abort 时把新窗消息误标为 bridge: true）；找不到时再回退长度差计算。
+    let keptFromSnapshotCount = Math.max(0, Math.min(this.data.history.length, snap.len - snap.drop));
+    if (snap && snap.lastSnapshotMsgId) {
+      const anchorIdx = this.data.history.findIndex(m => m && m.messageId === snap.lastSnapshotMsgId);
+      if (anchorIdx >= 0) {
+        keptFromSnapshotCount = anchorIdx + 1;
+      }
+    }
     for (let i = 0; i < this.data.history.length; i++) {
       const m = this.data.history[i];
       if (i < keptFromSnapshotCount) {
@@ -2140,7 +2173,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
     this.save(true);
   }
 }

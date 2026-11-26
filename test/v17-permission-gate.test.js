@@ -243,5 +243,21 @@ check('🔴 闸门安装失败时只告警、不 throw（不阻塞启动）',
     'threw=' + r5bThrew + ' r5b=' + r5b);
 }
 
+/* ============ 12. P1-2：isAppLocalUrl 主机名与 Windows 大小写归一 ============ */
+{
+  const { isAppLocalUrl } = require(path.join(ROOT, 'src', 'ipc-guard'));
+  const remoteFileUrl = process.platform === 'win32'
+    ? 'file://evil.example/' + path.join(ROOT, 'index.html').replace(/\\/g, '/')
+    : 'file://evil.example' + path.join(ROOT, 'index.html');
+  check('P1-2a isAppLocalUrl 拒绝非空远端 hostname 的 file:// URL',
+    isAppLocalUrl(remoteFileUrl, ROOT) === false, 'url=' + remoteFileUrl);
+
+  const localHostUrl = process.platform === 'win32'
+    ? 'file://localhost/' + path.join(ROOT, 'index.html').replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => d.toLowerCase() + ':')
+    : 'file://localhost' + path.join(ROOT, 'index.html');
+  check('P1-2b isAppLocalUrl 放行 localhost（含 Windows 盘符大小写变体）',
+    isAppLocalUrl(localHostUrl, ROOT) === true, 'url=' + localHostUrl);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

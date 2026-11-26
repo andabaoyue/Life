@@ -451,8 +451,9 @@ function releaseActiveCard(proposalId) {
 }
 
 async function onProposalSignal(payload) {
+  let id = null;
   try {
-    const id = payload && payload.proposalId;
+    id = payload && payload.proposalId;
     if (!id) return;
     // 边界 1：去重（集合含**等待项 + 正在回查/展示**的那一条）
     if (pendingCardIds.has(id)) return;
@@ -648,7 +649,10 @@ function showFallbackSprite() {
   if (animRenderer) animRenderer.refreshLayers();
 }
 
+let wardrobeApplyGen = 0;
+
 function applyLayers(layers) {
+  const gen = ++wardrobeApplyGen;
   layerSrcs = layers || [];
   // v1.0 像素换代：只要处于像素预览期，素体（base_pixel_chibi）永远上屏；衣柜为空表示素体，绝非无图回退
   if (!layerSrcs.length && !PIXEL_PREVIEW) return showFallbackSprite();
@@ -666,6 +670,7 @@ function applyLayers(layers) {
   }));
 
   Promise.all(imgs).then(() => {
+    if (gen !== wardrobeApplyGen) return;
     if (currentFrameStopper) { currentFrameStopper(); currentFrameStopper = null; }
     layerBox.replaceChildren();
     srcs.forEach((src, i) => {
@@ -685,7 +690,9 @@ function applyLayers(layers) {
     if (animRenderer) animRenderer.refreshLayers();
     figure.classList.add('layered');
     relayout();
+    updateSpriteAnim(document.body.dataset.motionState || 'idle');
   }).catch(() => {
+    if (gen !== wardrobeApplyGen) return;
     // 有一张图缺了就整套回退 —— 半张脸没头发比穿旧衣服难看多了
     showFallbackSprite();
     relayout();
@@ -1870,7 +1877,11 @@ if (api && api.onChatBusy) {
 if (api && api.onChatHidden) api.onChatHidden(() => setTalking(false));
 // v2.0 睡相：她睡着时呼吸放缓（纯物理表现，零台词）
 if (api && api.onSleepState) api.onSleepState((p) => {
-  document.body.classList.toggle('sleeping', !!(p && p.sleeping));
+  const sleeping = !!(p && p.sleeping);
+  document.body.classList.toggle('sleeping', sleeping);
+  if (animController && typeof animController.setSleeping === 'function') {
+    animController.setSleeping(sleeping, 'ipc_sleep_state');
+  }
 });
 
 

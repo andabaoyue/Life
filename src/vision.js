@@ -172,12 +172,47 @@ function formatVisionNote(w, h) {
   return '【你看到了一块 ' + width + '×' + height + ' 的屏幕区域】';
 }
 
+const MAX_STAGE_DATA_URL_CHARS = 4 * 1024 * 1024;
+const STAGE_DATA_URL_RE = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
+/** 校验 vision:stage 传入的 image dataUrl（仅放行 png/jpeg/webp base64，拒 svg+xml 与超大载荷）。 */
+function validateStageDataUrl(dataUrl, maxChars = MAX_STAGE_DATA_URL_CHARS) {
+  if (typeof dataUrl !== 'string' || !dataUrl) return false;
+  if (dataUrl.length > maxChars) return false;
+  return STAGE_DATA_URL_RE.test(dataUrl);
+}
+
+/** 按 displayId 匹配目标显示器，找不到时安全回退 primaryDisplay。 */
+function resolveCaptureDisplay(displays, primaryDisplay, displayId) {
+  const list = Array.isArray(displays) ? displays : [];
+  if (displayId !== undefined && displayId !== null && String(displayId) !== '') {
+    const matched = list.find((d) => d && String(d.id) === String(displayId));
+    if (matched) return matched;
+  }
+  return primaryDisplay || list[0] || null;
+}
+
+/** 按目标显示器的 id 匹配 desktopCapturer 的屏幕源，找不到时安全回退 sources[0]。 */
+function pickCaptureSource(sources, display) {
+  const list = Array.isArray(sources) ? sources : [];
+  if (!list.length) return null;
+  if (display && display.id !== undefined && display.id !== null) {
+    const matched = list.find((s) => s && String(s.display_id) === String(display.id));
+    if (matched) return matched;
+  }
+  return list[0];
+}
+
 module.exports = {
   MIN_RECT_SIDE,
   MAX_CAPTURE_SIDE,
+  MAX_STAGE_DATA_URL_CHARS,
   modelSupportsVision,
   normalizeRect,
   fitCaptureSize,
+  validateStageDataUrl,
+  resolveCaptureDisplay,
+  pickCaptureSource,
   attachImageToLastUser,
   formatVisionNote
 };

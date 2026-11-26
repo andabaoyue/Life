@@ -311,6 +311,26 @@
     }
 
     /**
+     * 同步物理睡眠/苏醒姿态（由 pet.js onSleepState 调用，P1-15）
+     */
+    setSleeping(sleeping, reason) {
+      if (this._destroyed) return false;
+      if (sleeping) {
+        return this.transitionTo(ANIMATION_STATES.SLEEP, {
+          force: true,
+          reason: reason || 'sleep_enter'
+        });
+      }
+      if (this.state === ANIMATION_STATES.SLEEP) {
+        return this.transitionTo(
+          this.motion.isMoving ? ANIMATION_STATES.WALK : ANIMATION_STATES.IDLE,
+          { force: true, reason: reason || 'sleep_wake' }
+        );
+      }
+      return false;
+    }
+
+    /**
      * 设置调试模式
      */
     setDebug(enabled) {

@@ -509,6 +509,20 @@ class ControlledAgentExecutor {
           return fail('DISALLOWED_FILENAME');
         }
 
+        // 🔴 P1-4：在 resolveRealPath 解引用之前先对原始路径执行 _lstatBest，
+        // 阻止「沙盒内 symlink -> 沙盒内文件」绕过下游 isSymbolicLink 检查而误删/误移目标。
+        try {
+          const srcLstat = this._lstatBest(entry.src);
+          if (srcLstat && typeof srcLstat.isSymbolicLink === 'function' && srcLstat.isSymbolicLink()) {
+            symlinkEscape = true;
+            break;
+          }
+        } catch (err) {
+          if (err && err.code !== 'ENOENT') {
+            symlinkEscape = true;
+            break;
+          }
+        }
         const realSrc = (this.resolveRealPath || resolveRealPath)(entry.src, this.fs);
         const matchedSrcRoot = isInsideAnyRealRoot(realSrc);
         if (!realSrc || !matchedSrcRoot || !path.relative(matchedSrcRoot, realSrc)) {
@@ -518,6 +532,18 @@ class ControlledAgentExecutor {
         let realDst = null;
         let matchedDstRoot = null;
         if (proposal.capability === 'workspace.move') {
+          try {
+            const dstLstat = this._lstatBest(entry.dst);
+            if (dstLstat && typeof dstLstat.isSymbolicLink === 'function' && dstLstat.isSymbolicLink()) {
+              symlinkEscape = true;
+              break;
+            }
+          } catch (err) {
+            if (err && err.code !== 'ENOENT') {
+              symlinkEscape = true;
+              break;
+            }
+          }
           realDst = (this.resolveRealPath || resolveRealPath)(entry.dst, this.fs);
           matchedDstRoot = isInsideAnyRealRoot(realDst);
           if (!realDst || !matchedDstRoot || !path.relative(matchedDstRoot, realDst)) {
@@ -563,11 +589,14 @@ class ControlledAgentExecutor {
       return fail('SYMLINK_ESCAPE');
     }
 
-    // ── 闸门 3：预算（执行也要计费，不能是免费动作；v2.0-s1 只读 read/list 传 { free: true } 不耗 actions，已熔断仍拦截）
+    // ── 闸门 3：预算预检（P1-1：只读预检不扣减，待闸门 4 与写前静态校验全过后再实际扣减）
     const isWrite = proposal.capability === 'workspace.write';
     const isList = proposal.capability === 'workspace.list';
     const isReadOnlyOp = proposal.capability === 'workspace.read' || isList;
-    if (!this.budget.consume(isWrite, Date.now(), { free: isReadOnlyOp })) {
+    const budgetPrecheckOk = typeof this.budget.canConsume === 'function'
+      ? this.budget.canConsume(isWrite, { free: isReadOnlyOp })
+      : this.budget.consume(isWrite, Date.now(), { free: isReadOnlyOp });
+    if (!budgetPrecheckOk) {
       this._audit({
         outcome: 'rejected',
         code: 'BUDGET_TRIPPED',
@@ -648,11 +677,26 @@ class ControlledAgentExecutor {
       return fail('EXECUTION_NOT_ALLOWED', { reason });
     }
 
-    // ── 第五道闸门：事务。真正的写盘/结构变更从这里开始。
+    // ── 第五道闸门：事务。先完成写前静态校验，再扣减预算，真正的写盘/结构变更从这里开始。
     let result;
     try {
+      let writeSpec = null;
       if (isWrite) {
-        result = this._writeFile(proposal, input.content, real);
+        writeSpec = this._validateWriteFile(proposal, input.content, real);
+      }
+      if (typeof this.budget.canConsume === 'function') {
+        if (!this.budget.consume(isWrite, Date.now(), { free: isReadOnlyOp })) {
+          this._audit({
+            outcome: 'rejected',
+            code: 'BUDGET_TRIPPED',
+            capability: proposal.capability,
+            proposalId: proposalId.slice(0, 120),
+          }, proposal);
+          return fail('BUDGET_TRIPPED', { budget: this.budget.state() });
+        }
+      }
+      if (isWrite) {
+        result = this._writeFile(proposal, input.content, real, writeSpec);
       } else if (isList) {
         result = this._listDir(proposal, real);
       } else if (proposal.capability === 'workspace.mkdir') {
@@ -797,7 +841,7 @@ class ControlledAgentExecutor {
     return { bytes: stat.size, content: this.fs.readFileSync(target, 'utf8') };
   }
 
-  _writeFile(proposal, content, resolvedPath) {
+  _validateWriteFile(proposal, content, resolvedPath) {
     // 🔴 SEC-01：对正式写入路径强制要求有效的内容哈希和 UTF-8 字节数绑定；缺少绑定时失败关闭。
     if (!proposal || !proposal.contentHash || typeof proposal.contentHash !== 'string' || !Number.isFinite(proposal.contentBytes)) {
       throw Object.assign(new Error('CONTENT_HASH_REQUIRED'), { code: 'CONTENT_HASH_REQUIRED' });
@@ -848,7 +892,8 @@ class ControlledAgentExecutor {
     if (content.length === 0) {
       throw Object.assign(new Error('CONTENT_EMPTY'), { code: 'CONTENT_EMPTY' });
     }
-    if (Buffer.byteLength(content, 'utf8') > this.maxWriteBytes) {
+    const byteLength = Buffer.byteLength(content, 'utf8');
+    if (byteLength > this.maxWriteBytes) {
       throw Object.assign(new Error('PAYLOAD_TOO_LARGE'), { code: 'PAYLOAD_TOO_LARGE' });
     }
     // 🔴 SEC-01：权威哈希强绑定断言
@@ -857,13 +902,18 @@ class ControlledAgentExecutor {
     if (actualHash !== proposal.contentHash) {
       throw Object.assign(new Error('CONTENT_HASH_MISMATCH'), { code: 'CONTENT_HASH_MISMATCH' });
     }
-    if (Buffer.byteLength(content, 'utf8') !== proposal.contentBytes) {
+    if (byteLength !== proposal.contentBytes) {
       throw Object.assign(new Error('CONTENT_BYTES_MISMATCH'), { code: 'CONTENT_BYTES_MISMATCH' });
     }
+    return { target, byteLength };
+  }
+
+  _writeFile(proposal, content, resolvedPath, preValidated) {
+    const spec = preValidated || this._validateWriteFile(proposal, content, resolvedPath);
     // 第五道闸门真正生效处：begin →写盘 → commit，任一步失败即 rollback。
-    const tx = this.txn.begin({ target, data: content });
+    const tx = this.txn.begin({ target: spec.target, data: content });
     this.txn.commit(tx);
-    return { bytes: Buffer.byteLength(content, 'utf8'), target: path.basename(proposal.scope || target) };
+    return { bytes: spec.byteLength, target: path.basename(proposal.scope || spec.target) };
   }
 
   _extractStructureItems(proposal) {

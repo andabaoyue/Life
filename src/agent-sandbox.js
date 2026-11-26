@@ -86,14 +86,14 @@ function ensureSandboxDir(dir, fsImpl) {
       code: 'SANDBOX_UNAVAILABLE',
     });
   }
-  // 建完必须确认它真的是目录：mkdirSync 遇到同名**文件**时不会报错就返回。
+  // 建完必须确认它真的是真实目录（非文件且非符号链接/Junction）：mkdirSync 遇到同名文件或符号链接不会报错。
   let st = null;
   try {
-    st = f.statSync(target);
+    st = typeof f.lstatSync === 'function' ? f.lstatSync(target) : f.statSync(target);
   } catch {
     throw Object.assign(new Error('SANDBOX_UNAVAILABLE: stat failed'), { code: 'SANDBOX_UNAVAILABLE' });
   }
-  if (!st || !st.isDirectory()) {
+  if (!st || (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) || !st.isDirectory()) {
     throw Object.assign(new Error('SANDBOX_UNAVAILABLE: not a directory'), { code: 'SANDBOX_UNAVAILABLE' });
   }
   return target;

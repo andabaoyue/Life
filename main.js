@@ -2466,7 +2466,9 @@ ipcGuard.on('stt-audit', (e, payload = {}) => {
       // 成功时只记文本长度，不记文本本身
       textLen: Number.isFinite(payload.textLen) ? payload.textLen : null,
       errorType: typeof payload.errorType === 'string' ? payload.errorType.slice(0, 40) : null,
-      error: typeof payload.error === 'string' ? payload.error.slice(0, 120) : null
+      error: typeof payload.error === 'string'
+        ? String(require('./src/redact').redactSecrets(payload.error)).slice(0, 120)
+        : null
     };
     fs.appendFileSync(path.join(dir, 'stt-audit.jsonl'), JSON.stringify(line) + '\n', 'utf8');
   } catch (err) {
@@ -2533,7 +2535,11 @@ ipcGuard.handle('vision:capture', async (e, opts = {}) => {
   };
 
   const visionMod = require('./src/vision');
-  const display = screen.getPrimaryDisplay();
+  const displayId = (opts && opts.displayId !== undefined && opts.displayId !== null)
+    ? opts.displayId
+    : (typeof visionPicker.getPickerDisplayId === 'function' ? visionPicker.getPickerDisplayId() : null);
+  const allDisplays = typeof screen.getAllDisplays === 'function' ? screen.getAllDisplays() : [];
+  const display = visionMod.resolveCaptureDisplay(allDisplays, screen.getPrimaryDisplay(), displayId);
   const rect = visionMod.normalizeRect(opts.rect, {
     maxW: display.size.width,
     maxH: display.size.height
@@ -2564,7 +2570,7 @@ ipcGuard.handle('vision:capture', async (e, opts = {}) => {
     if (!sources || !sources.length) return fail('no_screen_source');
 
     // 选与框选窗同一块显示器（多屏时不至于截错）
-    const target = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+    const target = visionMod.pickCaptureSource(sources, display);
     const full = target.thumbnail;
     if (!full || (typeof full.isEmpty === 'function' && full.isEmpty())) {
       return fail('capture_failed');
@@ -2685,8 +2691,10 @@ ipcGuard.on('vision-notify', (e, payload = {}) => {
  */
 ipcGuard.handle('vision:stage', (e, opts = {}) => {
   if (!brain) return { ok: false, errorType: 'no_brain' };
-  if (typeof opts.dataUrl !== 'string' || !opts.dataUrl.startsWith('data:image/')) {
-    return { ok: false, errorType: 'bad_image' };
+  const visionMod = require('./src/vision');
+  if (typeof opts.dataUrl !== 'string' || !visionMod.validateStageDataUrl(opts.dataUrl)) {
+    const overSize = typeof opts.dataUrl === 'string' && opts.dataUrl.length > visionMod.MAX_STAGE_DATA_URL_CHARS;
+    return { ok: false, errorType: overSize ? 'payload_too_large' : 'bad_image' };
   }
   const ok = brain.stageVisionPick({
     dataUrl: opts.dataUrl,

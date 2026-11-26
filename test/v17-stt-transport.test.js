@@ -340,6 +340,44 @@ check('🔴 传输层零新增第三方依赖（只用 Node 内置）',
 check('🔴 真的使用原生 FormData', srcNoComment.includes('new FormData()'));
 check('🔴 真的使用原生 Blob', srcNoComment.includes('new Blob('));
 
+// ============ P1-14：IPv6 [::1]、HTML 网关错误页拒收、redirect:'error' 与 1MB 上限 ============
+{
+  const v6 = stt.validateConfig({ endpoint: 'http://[::1]:8080/v1/audio/transcriptions', apiKey: 'k', model: 'w' });
+  check('P1-14a IPv6 回环 [::1] 允许明文 HTTP', v6.ok === true);
+
+  let htmlThrew = false;
+  try { stt.extractText('<!DOCTYPE html><html><body>502 Bad Gateway</body></html>', 'text/html'); } catch { htmlThrew = true; }
+  const rHtml = await stt.transcribe({
+    audio: Buffer.from([1, 2, 3, 4]),
+    mimeType: 'audio/webm',
+    cfg: { endpoint: 'http://[::1]:8080/v1/audio/transcriptions', apiKey: 'k', model: 'w' },
+    fetchImpl: async () => ({
+      ok: true, status: 200,
+      headers: { get: () => 'text/html; charset=utf-8' },
+      text: async () => '<html><body>Gateway Error</body></html>'
+    })
+  });
+  check('P1-14b HTML 错误页在 extractText 抛错且 transcribe 不 reject 返回失败',
+    htmlThrew === true && rHtml.ok === false && rHtml.errorType === 'invalid_response');
+
+  let seenRedirect = null;
+  const rBig = await stt.transcribe({
+    audio: Buffer.from([1, 2, 3, 4]),
+    mimeType: 'audio/webm',
+    cfg: { endpoint: 'http://127.0.0.1:8080/v1/audio/transcriptions', apiKey: 'k', model: 'w' },
+    fetchImpl: async (_url, init) => {
+      seenRedirect = init && init.redirect;
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/json' },
+        text: async () => 'x'.repeat(1024 * 1024 + 10)
+      };
+    }
+  });
+  check('P1-14c STT 请求显式 redirect:error 并以 1MB 响应上限拦住过大响应',
+    seenRedirect === 'error' && rBig.ok === false && rBig.errorType === 'response_too_large');
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);
 

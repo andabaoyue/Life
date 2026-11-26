@@ -214,7 +214,11 @@ function dropKeyFile(dir, providerId) {
   if (credentialNamespace(providerId) === 'deepseek') {
     try { fs.unlinkSync(path.join(dir, LEGACY_KEY_FILE)); } catch {}
   } else {
-    try { fs.unlinkSync(path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId))); } catch {}
+    // 与 keyPath()/decryptKey() 一致：只有唯一声索者时才删 legacy v0 文件，避免误删碰撞命名空间的另一 Provider 凭据
+    const claimants = legacyV0Claimants(providerId);
+    if (claimants && claimants.length === 1) {
+      try { fs.unlinkSync(path.join(dir, KEY_FILE + '--' + legacyV0Namespace(providerId))); } catch {}
+    }
   }
 }
 

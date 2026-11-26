@@ -342,5 +342,38 @@ const mockMessages = new Map([
     try { fs.rmSync(dirWire, { recursive: true, force: true }); } catch {}
   }
 
+  // P1-10: recordOpposingEvidence 接入 onEvict 与 verify provenance 核验
+  {
+    const dirOpp = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-wire-'));
+    try {
+      const ledgerOpp = new SelfLedger(dirOpp, { maxEntries: 2 });
+      const evicts = [];
+      ledgerOpp.append({ trait: 't1', support: [{ sourceType: 'USER', messageIds: ['m1'], quote: 'a', confidence: 0.8 }] });
+      ledgerOpp.append({ trait: 't2', support: [{ sourceType: 'USER', messageIds: ['m2'], quote: 'b', confidence: 0.8 }] });
+      ledgerOpp.recordOpposingEvidence('t3', { sourceType: 'USER', messageIds: ['m3'], quote: 'c', confidence: 0.8 }, {
+        onEvict: (items) => evicts.push(...items),
+      });
+      check('P1-10a recordOpposingEvidence 超限时经 meta.onEvict 通知淘汰条目而非静默截断',
+        evicts.length === 1 && evicts[0].trait === 't1' && ledgerOpp.entries.length === 2);
+
+      const rej = [];
+      const badMsgMap = new Map([['m10', { messageId: 'm10', role: 'user', content: '我其实很喜欢熬夜写代码' }]]);
+      const rBad = ledgerOpp.recordOpposingEvidence('t-new', { sourceType: 'USER', messageIds: ['m999'], quote: '假引用', confidence: 0.8 }, {
+        verify: { msgMap: badMsgMap, windowNo: 1 },
+        rejected: rej,
+      });
+      const rGood = ledgerOpp.recordOpposingEvidence('t-new', { sourceType: 'USER', messageIds: ['m10'], quote: '喜欢熬夜写代码', confidence: 0.8 }, {
+        verify: { msgMap: badMsgMap, windowNo: 1 },
+        rejected: rej,
+      });
+      check('P1-10b recordOpposingEvidence 带 meta.verify 时拒收无出处证据、放行已核验证据',
+        rBad.created === false && rBad.error === 'NO_VERIFIABLE_EVIDENCE'
+        && rej.length === 1
+        && rGood.created === true && rGood.entry.oppose.length === 1);
+    } finally {
+      try { fs.rmSync(dirOpp, { recursive: true, force: true }); } catch {}
+    }
+  }
+
   console.log('self-ledger tests passed:', pass);
 })();

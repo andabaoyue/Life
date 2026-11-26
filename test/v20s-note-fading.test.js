@@ -109,10 +109,11 @@ console.log('=== v2.0-s1 (s1-b) 便签渐褪门禁 ===');
   check('2.1 ACTIVE 态首次注入给出完整原文（> 300 字未截断）且不改 systemText',
     activeUserTail.includes(longBody) && m.systemText() === sys0);
 
-  // 关 2 次窗（entering windowNo = 3, ΔW = 2）：应进入 FADING 态
-  advanceCloseWindow(m, 2);
+  // P1-9：先在 closedWindowNo 结算 decaySelfNotes 再递增 windowNo：
+  //   关 3 次窗（closedWindowNo = 3, entering windowNo = 4, ΔW = 2）：应进入 FADING 态
+  advanceCloseWindow(m, 3);
   check('2.2 跨 2 窗进入 FADING 态，且 8 条一条未删（零物理删除）',
-    m.data.windowNo === 3
+    m.data.windowNo === 4
     && m.data.selfNotes.length === 8
     && m.data.selfNotes[0].tier === 'FADING'
     && m.data.selfNotes[0].strength < 0.50
@@ -123,10 +124,10 @@ console.log('=== v2.0-s1 (s1-b) 便签渐褪门禁 ===');
   check('2.3 FADING 态投影按 fadingMaxChars=300 截断并附隐退提示',
     fadingText.includes('印象已渐褪') && fadingText.length < longBody.length);
 
-  // 再关 4 次窗（共 6 次关窗，entering windowNo = 7, ΔW = 6）：进入 DORMANT 态
+  // 再关 4 次窗（共 7 次关窗，closedWindowNo = 7, entering windowNo = 8, ΔW = 6）：进入 DORMANT 态
   advanceCloseWindow(m, 4);
   check('2.4 跨 6 窗进入 DORMANT 态且队列条数仍为 8（零物理删除）、D-24 待铸造仍在',
-    m.data.windowNo === 7
+    m.data.windowNo === 8
     && m.data.selfNotes.length === 8
     && m.data.selfNotes.every((n) => n.tier === 'DORMANT' && n.strength < 0.35)
     && m.selfNotesToEngrave().length === 8);
@@ -155,8 +156,8 @@ console.log('=== v2.0-s1 (s1-b) 便签渐褪门禁 ===');
       && !b2[b2.length - 1].content.includes('你之前写下过');
   })());
 
-  // 跨 6 窗全部变 DORMANT
-  advanceCloseWindow(m, 6);
+  // 跨 6 窗（共关 7 次窗，closedWindowNo = 7, ΔW = 6）全部变 DORMANT
+  advanceCloseWindow(m, 7);
   check('3.2 前提：无 engramManager 时仍正确衰减为 DORMANT',
     m.engramManager === null && m.data.selfNotes.every((n) => n.tier === 'DORMANT'));
 

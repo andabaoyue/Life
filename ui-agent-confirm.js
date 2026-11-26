@@ -189,6 +189,7 @@ function bind(el, onDecision, t, bindOpts = {}) {
   if (expandBtn) {
     expandBtn.addEventListener('click', async () => {
       if (!current || !current.proposalId || fetchingContent) return;
+      const reqProposalId = current.proposalId;
       fetchingContent = true;
       expandBtn.disabled = true;
       expandBtn.textContent = tr('agent.content.loading', '正在获取完整正文…');
@@ -201,7 +202,9 @@ function bind(el, onDecision, t, bindOpts = {}) {
               ? (id) => window.deskpet.agent.getProposalContent(id)
               : null));
         if (typeof fetchFn !== 'function') throw new Error('NO_FETCH_HANDLER');
-        const res = await fetchFn(current.proposalId);
+        const res = await fetchFn(reqProposalId);
+        // P1-16：等待期间用户切换/关闭了卡片则丢弃过期正文，防止 TOCTOU 错位渲染到新提案上
+        if (!current || current.proposalId !== reqProposalId) return;
         let text = null;
         if (typeof res === 'string') {
           text = res;
@@ -217,6 +220,7 @@ function bind(el, onDecision, t, bindOpts = {}) {
         }
         expandBtn.classList.add('hidden');
       } catch (err) {
+        if (!current || current.proposalId !== reqProposalId) return;
         if (fullTextEl && fullBox) {
           fullTextEl.textContent = tr('agent.content.fetch_error', '（无法加载完整正文，请谨慎授权）');
           fullBox.classList.remove('hidden');
