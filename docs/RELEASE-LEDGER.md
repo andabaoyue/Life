@@ -26,10 +26,10 @@
 | 项 | 值 |
 |---|---|
 | 版本 | **2.1.2** |
-| 公库 tag | `v2.1.2`（发布后补记） |
-| 公库提交 | 待同步（`v2.1.2` 发布同步） |
-| 私库提交 | 待补记（`v2.1.2` 版本号、CHANGELOG 与发布账本收口） |
-| Release | 发布后补记 |
+| 公库 tag | `v2.1.2`（annotated，tag 对象 `ea5ec6a` → 提交 `54adf5b`） |
+| 公库提交 | **`54adf5b`**（`v2.1.2` 发布同步） |
+| 私库提交 | `7d06e74`（`v2.1.2` 版本号、CHANGELOG 与发布账本收口） |
+| Release | https://github.com/andabaoyue/Life/releases/tag/v2.1.2 |
 | 公开集文件数 | **386**（按规则排除 42 个私库/开发文件） |
 
 ### 交付物
@@ -39,10 +39,10 @@
 | `Life-2.1.2-win-x64-portable.exe` | 100,756,590 | `9d33fc9b68610f6d70176d5a560f53462c7f2f7272581235942548bc946f38bc` |
 | `Life-2.1.2-win-x64.zip` | 153,892,195 | `0252487355cfdeb2bfff53a051d56848ffb1906c8a6346016afe9a7e8dda016b` |
 
-> ℹ️ 上表两个 SHA-256 为本地 `Get-FileHash -Algorithm SHA256` 实测值（小写）；GitHub Release 创建后将核对 `gh release view v2.1.2 --json assets` digest 并补记最终提交与 Release 链接。
+> ✅ 两个 digest 来自 `gh release view v2.1.2 --json assets`，与本地 `Get-FileHash -Algorithm SHA256` 逐位核对一致。
 
 > 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
-> 与 v1.9.0 / v2.0.0 / v2.1.0 / v2.1.1 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,859` 字节 `Life-2.1.2-Setup.exe` 空壳存根及 `life-2.1.2-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.1.2-win-x64.zip` 均包含完整 `LICENSE`（4,435 字节）与 `NOTICE`（1,205 字节），待通过全量 8 项发布前门禁后正式打包发布。
+> 与 v1.9.0 / v2.0.0 / v2.1.0 / v2.1.1 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,859` 字节 `Life-2.1.2-Setup.exe` 空壳存根及 `life-2.1.2-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.1.2-win-x64.zip` 均包含完整 `LICENSE`（4,435 字节）与 `NOTICE`（1,205 字节），并通过 `tools/asar-check.js`（PASS 8 / FAIL 0）、`tools/artifact-freshness.js --strict`（156 个运行入口逐字节一致）与 `tools/release-check.js`（PASS 13 / WARN 0 / FAIL 0，含 `portable.exe` PE overlay = `96.0MB`）。
 
 ### 主要内容
 
