@@ -21,6 +21,37 @@
 
 ---
 
+## v2.1.2 · 2026-11-27
+
+| 项 | 值 |
+|---|---|
+| 版本 | **2.1.2** |
+| 公库 tag | `v2.1.2`（发布后补记） |
+| 公库提交 | 待同步（`v2.1.2` 发布同步） |
+| 私库提交 | 待补记（`v2.1.2` 版本号、CHANGELOG 与发布账本收口） |
+| Release | 发布后补记 |
+| 公开集文件数 | **386**（按规则排除 42 个私库/开发文件） |
+
+### 交付物
+
+| 文件 | 字节数 | SHA-256 |
+|---|---|---|
+| `Life-2.1.2-win-x64-portable.exe` | 100,756,590 | `9d33fc9b68610f6d70176d5a560f53462c7f2f7272581235942548bc946f38bc` |
+| `Life-2.1.2-win-x64.zip` | 153,892,195 | `0252487355cfdeb2bfff53a051d56848ffb1906c8a6346016afe9a7e8dda016b` |
+
+> ℹ️ 上表两个 SHA-256 为本地 `Get-FileHash -Algorithm SHA256` 实测值（小写）；GitHub Release 创建后将核对 `gh release view v2.1.2 --json assets` digest 并补记最终提交与 Release 链接。
+
+> 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
+> 与 v1.9.0 / v2.0.0 / v2.1.0 / v2.1.1 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,859` 字节 `Life-2.1.2-Setup.exe` 空壳存根及 `life-2.1.2-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.1.2-win-x64.zip` 均包含完整 `LICENSE`（4,435 字节）与 `NOTICE`（1,205 字节），待通过全量 8 项发布前门禁后正式打包发布。
+
+### 主要内容
+
+- **四大核心大文件工程化拆分（新增 16 个模块）**：主进程 IPC 拆出 `src/main-window-ipc.js`、`src/main-vision-ipc.js`、`src/main-stt-ipc.js`、`src/main-connections-ipc.js`、`src/main-research-ipc.js`；记忆与大脑主循环拆出 `src/memory-cache.js`、`src/memory-lifecycle.js`、`src/memory-self-note.js`、`src/memory-window.js` 与 `src/brain-telemetry.js`、`src/brain-window-pipeline.js`、`src/brain-dream-cycle.js`；前端拆出 `ui-pet-stage.js`、`ui-wardrobe.js`、`ui-settings.js`、`ui-research.js`；全部 16 个新模块已完整纳入 `electron-builder.yml`、`tools/asar-check.js`、`tools/artifact-freshness.js`、`tools/public-export.js`、`tools/release-check.js` 与 `index.html` 加载链。
+- **验收闭环修复与安全/可靠性加固**：修复 `main-vision-ipc` `pickerWindow` 预注入与通道守卫、`openai-transport` 200 OK 前清兜底定时器、`main.js` / `agent-ipc` `getTicketStore` 热切换状态分裂、`provider-policy` `::ffff:a9fe:*` SSRF 规范化绕过、`agent-executor` 失败 `detail` 脱敏、4 处新 IPC `opts === null` 守卫、`brain` / `brain-window-pipeline` 归档恢复与阈值配置键对齐、`.anchor.json` 内容校验与 `appendRecoveryAudit` 缓存失效、`self_note` 背书返回值校验、以及 `research-query` 缺失轨迹保持 `null` 与 `windowNo === null` 透传等；同时修复 `test/brain.test.js` 用例 5.5/5.6/5.7 确定性 Promise 门控消除 CI 并发竞态，并在 `test/docs.test.js` 补齐子套件失败明细回显。
+- **门禁**：**150 个已标项数套件 / 5557 项断言**（`test/docs.test.js` 全量执行 `executed=150` 0 FAIL，含 `ui_test.py` 171/171）+ `test/gate-selfcheck.test.js` 全绿；`tools/asar-check.js`、`tools/artifact-freshness.js --strict`、`tools/public-export.js --check` 与 `tools/release-check.js` 全部通过。
+
+---
+
 ## v2.1.1 · 2026-11-26
 
 | 项 | 值 |

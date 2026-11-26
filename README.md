@@ -1,4 +1,4 @@
-# Life v2.1.1
+# Life v2.1.2
 
 ```text
         . ~ ~ ~ ~ ~ .
@@ -148,9 +148,9 @@
 
 ## 快速开始
 
-**普通玩家。** 到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-2.1.1-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
+**普通玩家。** 到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-2.1.2-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
 
-***Just want to run it.** Grab `Life-2.1.1-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
+***Just want to run it.** Grab `Life-2.1.2-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
 
 **开发者。** 需要 Node.js 20 以上：
 
@@ -190,6 +190,7 @@ README 只放门面。真正想读细节、改代码、或者核对测试的，�
 
 | 版本 | 日期 | 一句话 |
 | --- | --- | --- |
+| **v2.1.2** | 2026-11-27 | 四大核心模块解耦拆分（16 个新模块）、安全/可靠性/性能加固、验收闭环收口与 CI 并发稳定性修复 |
 | **v2.1.1** | 2026-11-26 | 二轮全仓深度审计闭环修复（9 项 P0 + 22 项 P1），加固生命周期、并发归档、安全凭据、渲染竞态与构建校验 |
 | **v2.1.0** | 2026-11-26 | 生命动力学升级（异稳态先验 / 认知边界 / 轻量认知张力 / 再巩固观测）与全仓深度审计三批 39 项加固收口 |
 | **v2.0.0** | 2026-11-21 | Agent 决策与沙盒/Ticket 底座重构：统一决策路由 `agentRouter`、沙盒读写感官与受控结构操作、便签三阶渐褪、纯只读未完事项面板与零猜测关窗转单、非流式思考链与交互密度衰减修正 |

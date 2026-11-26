@@ -5,6 +5,33 @@
 
 ---
 
+## [2.1.2] - 2026-11-27
+
+> **相比 `v2.1.1`**，本版完成四大核心大文件的工程化拆分解耦（新增 **16 个内聚模块**），并完成全仓安全边界、热切换状态一致性、核心生命记忆可靠性与高负载 CI 门禁稳定性的系统性收口。以下按模块边界归纳：
+
+### 🧩 核心架构解耦拆分（16 个新模块）
+
+- **主进程 IPC 按职责拆分（5 个新模块）**：将原 `main.js` 内的窗口控制、视觉/框选、STT 语音、连接配置与研究面板 IPC 拆分为 `src/main-window-ipc.js`、`src/main-vision-ipc.js`、`src/main-stt-ipc.js`、`src/main-connections-ipc.js` 与 `src/main-research-ipc.js`。
+- **生命与记忆领域服务抽离（7 个新模块）**：将记忆管理与大脑主循环拆出 `src/memory-cache.js`、`src/memory-lifecycle.js`、`src/memory-self-note.js`、`src/memory-window.js` 与 `src/brain-telemetry.js`、`src/brain-window-pipeline.js`、`src/brain-dream-cycle.js`，主干职责更清晰。
+- **渲染界面与打包闭包同步（4 个新模块）**：将前端大脚本拆分为 `ui-pet-stage.js`、`ui-wardrobe.js`、`ui-settings.js`、`ui-research.js`；全部 16 个新模块已完整纳入 `index.html`、`electron-builder.yml`、`tools/asar-check.js`、`tools/artifact-freshness.js`、`tools/public-export.js` 与 `tools/release-check.js` 闭包校验。
+
+### 🛡️ 安全边界、热切换与核心可靠性加固
+
+- **网络 SSRF 与渲染安全边界**：`src/provider-policy.js` 补充 `/^::ffff:a9fe:[0-9a-f]{1,4}$/` 正则，拦截 Node `new URL()` 将 IPv4 映射地址归一化为 `a9fe` 导致的元数据端点绕过；`src/main-vision-ipc.js` 将 `pickerWindow` 探测提前至主进程装配期注入并保持 fail-closed 通道拦截；`src/agent-executor.js` 对执行失败返回体 `detail` 补齐 `redactSecrets(...)` 脱敏；新拆分主进程 IPC 统一补齐 `opts === null` 守卫防未捕获 `TypeError`。
+- **热切换状态一致与传输定时清理**：`main.js` 与 `src/agent-ipc.js` 将 `TicketStore` 传递改为 `getTicketStore` 动态 getter，彻底消除 `config-set-key` / `connections:activate` 热重建 `Brain` 后的新旧实例分裂；`src/openai-transport.js` 在 200 OK 返回路径前显式调用 `clearFallbackTimer()`，防止流式读取阶段被残留定时器误掐断。
+- **核心生命记忆与研究导出修复**：`src/brain.js` 与 `src/brain-window-pipeline.js` 修复归档恢复后重算 `refreshDeepHorizon()` 与正确读取 `memoryActiveThreshold` / `memoryFadingMaxChars` 同步，`_applySelfNoteTraitHints()` 校验证明更新返回值并在成功后裁剪持久化背书；`src/experiences-archive.js` 改用 `.anchor.json` 字节比对并在 `appendRecoveryAudit()` 后清理 `_countCache`；`src/research-query.js` 保留缺失状态轨迹值为 `null`（不再补零）且在记录过滤时放行顶层 `windowNo === null` 让内层 `stateChanges` 精确命中。
+
+### 🖥️ 交互细节与 CI 门禁稳定性
+
+- **交互与行为细节收口**：`main.js` 批量 `move`/`remove` 确认框补充 `targets` 摘要展示；`ui-pet-stage.js` `visibilitychange` 恢复动画改读 `dataset.motionState` 避免行走切回误落回 `idle`；`src/brain-window-pipeline.js` 向 `_dreamCycle` 透传 `sleepStartTime`；统一 `src/brain-telemetry.js` 引用与 `src/archive-integrity.js` 诊断边界。
+- **消除高负载 CI 竞态与增强失败回显**：`test/brain.test.js` 用例 5.5/5.6/5.7 由 `sleep(50/60)` + delay 改造为本地假服务确定性 Promise 门控；`test/docs.test.js` 在子套件失败时自动缩进回显 `FAIL`/`Error:` 明细行，便于 CI 日志直接排障。
+
+### 🧪 门禁规模
+
+- 已标项数门禁保持 **150 个套件 / 5557 项断言**（`test/docs.test.js` 全量执行 `executed=150` 0 FAIL，含 `ui_test.py` 171/171；`test/brain.test.js` 连续 10 次压测 10/10 全绿；详见 [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md)）。
+
+---
+
 ## [2.1.1] - 2026-11-26
 
 > **相比 `v2.1.0`**，本版为二轮全仓深度审计的稳定性、并发安全与边界加固维护版本，共完成 **9 项 P0 止血修复 + 22 项 P1 深度加固**（全链路零功能退让、无已知回归）。以下按模块边界归纳：
