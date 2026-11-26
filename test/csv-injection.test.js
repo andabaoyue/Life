@@ -133,5 +133,23 @@ for (const [v, label] of DANGERS) {
     'cell=' + JSON.stringify(cell));
 }
 
+/* ---- 7. P0-8：exportStateChanges 与 exportEvidence 全字段防注入 ---- */
+{
+  const dde = "=cmd|' /C calc'!A0";
+  const scCsv = ex.exportStateChanges([{
+    stateChangeId: 'sc-1', windowNo: 1, trait: 'vitality',
+    previousValue: 0, delta: dde, newValue: 0, evidenceIds: []
+  }], 'csv');
+  check('P0-8a exportStateChanges 对 delta 字段公式注入前置单引号转义',
+    scCsv.includes("'" + dde), scCsv.split('\n')[1]);
+
+  const evCsv = ex.exportEvidence([{
+    evidenceId: 'ev-1', messageId: 'm-1', quote: 'ok', trait: 'vitality',
+    direction: dde, strength: 0.5, status: 'verified'
+  }], 'csv');
+  check('P0-8b exportEvidence 对 direction 字段公式注入前置单引号转义',
+    evCsv.includes("'" + dde), evCsv.split('\n')[1]);
+}
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

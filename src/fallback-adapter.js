@@ -135,24 +135,33 @@ function createFallbackAdapter({
           err.code = 'CIRCUIT_BREAKER_OPEN';
           throw err;
         }
+        let settled = false;
         try {
           const r = await primary.complete(msgs, opts);
           activeBreaker.recordSuccess();
+          settled = true;
           if (r && r.usage) lastUsage = r.usage;
           return r;
         } catch (e) {
           if (shouldFallback(e, opts && opts.signal)) {
             activeBreaker.recordFailure();
+            settled = true;
           }
           throw e;
+        } finally {
+          if (!settled && typeof activeBreaker.releaseHalfOpenProbe === 'function') {
+            activeBreaker.releaseHalfOpenProbe();
+          }
         }
       }
 
       // 主端点处于放行或半开探测状态
       if (activeBreaker.allowAttempt()) {
+        let settled = false;
         try {
           const r = await primary.complete(msgs, opts);
           activeBreaker.recordSuccess();
+          settled = true;
           if (r && r.usage) lastUsage = r.usage;
           return r;
         } catch (err) {
@@ -160,7 +169,12 @@ function createFallbackAdapter({
             throw err;
           }
           activeBreaker.recordFailure();
+          settled = true;
           return await doFallbackComplete(err, msgs, opts);
+        } finally {
+          if (!settled && typeof activeBreaker.releaseHalfOpenProbe === 'function') {
+            activeBreaker.releaseHalfOpenProbe();
+          }
         }
       }
 
@@ -182,29 +196,39 @@ function createFallbackAdapter({
           err.code = 'CIRCUIT_BREAKER_OPEN';
           throw err;
         }
+        let settled = false;
         try {
           const r = await primary.stream(msgs, countingDelta, opts);
           activeBreaker.recordSuccess();
+          settled = true;
           if (r && r.usage) lastUsage = r.usage;
           return r;
         } catch (e) {
           if (shouldFallback(e, opts && opts.signal)) {
             activeBreaker.recordFailure();
+            settled = true;
           }
           throw e;
+        } finally {
+          if (!settled && typeof activeBreaker.releaseHalfOpenProbe === 'function') {
+            activeBreaker.releaseHalfOpenProbe();
+          }
         }
       }
 
       // 主端点处于放行或半开探测状态
       if (activeBreaker.allowAttempt()) {
+        let settled = false;
         try {
           const r = await primary.stream(msgs, countingDelta, opts);
           activeBreaker.recordSuccess();
+          settled = true;
           if (r && r.usage) lastUsage = r.usage;
           return r;
         } catch (err) {
           if (shouldFallback(err, opts && opts.signal)) {
             activeBreaker.recordFailure();
+            settled = true;
           }
           // §8.2 核心守则：
           // 若已吐出至少一个 chunk（emitted > 0），已在用户屏幕渲染，
@@ -216,6 +240,10 @@ function createFallbackAdapter({
             throw err;
           }
           return await doFallbackStream(err, msgs, onDelta, opts);
+        } finally {
+          if (!settled && typeof activeBreaker.releaseHalfOpenProbe === 'function') {
+            activeBreaker.releaseHalfOpenProbe();
+          }
         }
       }
 

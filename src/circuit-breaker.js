@@ -31,8 +31,18 @@ function createCircuitBreaker({ failureThreshold = 3, cooldownMs = 30000, now = 
       }
       return false;
     }
-    // half-open：一次只允许一个探测，其余拒绝
+    // half-open：仅允许一个在飞探测；若被取消或客户端错误释放探测锁，允许下一次重探
+    if (state === 'half-open' && !probeInFlight) {
+      probeInFlight = true;
+      return true;
+    }
     return false;
+  }
+
+  function releaseHalfOpenProbe() {
+    if (state === 'half-open' && probeInFlight) {
+      probeInFlight = false;
+    }
   }
 
   function recordSuccess() {
@@ -66,7 +76,7 @@ function createCircuitBreaker({ failureThreshold = 3, cooldownMs = 30000, now = 
     };
   }
 
-  return { allowAttempt, recordSuccess, recordFailure, getState };
+  return { allowAttempt, recordSuccess, recordFailure, releaseHalfOpenProbe, getState };
 }
 
 module.exports = { createCircuitBreaker };

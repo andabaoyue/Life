@@ -204,8 +204,14 @@ const USER_DIR_RE = /[\\/](?:Users|home)[\\/]([A-Za-z0-9._\-\p{Script=Han}]+)/gu
  * 四、凭据形态（与绝对路径分开，命中即违规，无豁免）
  * ============================================================ */
 const SECRET_PATTERNS = [
+  [/sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/, 'OpenAI Project/Service Key'],
+  [/sk-ant-[A-Za-z0-9_-]{20,}/, 'Anthropic API Key'],
   [/sk-[A-Za-z0-9]{16,}/, 'OpenAI/DeepSeek 风格 API Key'],
+  [/AIza[0-9A-Za-z_-]{35}/, 'Google/Gemini API Key'],
+  [/github_pat_[A-Za-z0-9_]{22,}/, 'GitHub Fine-Grained PAT'],
   [/gh[pousr]_[A-Za-z0-9]{20,}/, 'GitHub Token'],
+  [/hf_[A-Za-z0-9]{20,}/, 'HuggingFace Token'],
+  [/gsk_[A-Za-z0-9]{20,}/, 'Groq API Key'],
   [/AKIA[0-9A-Z]{16}/, 'AWS Access Key'],
   [/BEGIN [A-Z ]*PRIVATE KEY/, '私钥 PEM 块'],
   [/xox[baprs]-[A-Za-z0-9-]{10,}/, 'Slack Token']

@@ -93,5 +93,18 @@ check('17 位置记忆契约：{ dx, dyFromBottom } 两键数值', (() => {
     && Number.isFinite(p.dx) && Number.isFinite(p.dyFromBottom);
 })());
 
+check('18 P0-7 双窗同步：pet.js render() 同时传 streaming || remoteStreaming，onChatBusy 重置 acc 并去光标收尾', (() => {
+  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const hasStripBoth = /stripState\s*\(\s*text\s*,\s*streaming\s*\|\|\s*remoteStreaming\s*\)/.test(petSrc);
+  const busyBlock = petSrc.match(/api\.onChatBusy\(\(p\)\s*=>\s*\{[\s\S]*?\}\);/);
+  const resetsAcc = busyBlock && /if\s*\(p\s*&&\s*p\.busy\)\s*\{[\s\S]*?acc\s*=\s*''/.test(busyBlock[0]);
+  const rerendersEnd = busyBlock && /else\s*\{[\s\S]*?remoteStreaming\s*=\s*false[\s\S]*?render\s*\(\s*acc\s*,\s*false\s*\)/.test(busyBlock[0]);
+  return Boolean(hasStripBoth && resetsAcc && rerendersEnd);
+})());
+
+check('19 P0-7 标记遮蔽实测：remoteStreaming 期间半截 [state:hap 被隐藏，收尾后完整剥除不拼接旧轮',
+  stripState('第二轮[state:hap', true) === '第二轮' &&
+  stripState('第二轮[state:happy]', false) === '第二轮');
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

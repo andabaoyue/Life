@@ -141,7 +141,7 @@ function wearIdsFrom(cat) {
 
 function render(text, withCursor = streaming) {
   lastText = text;
-  const shown = stripState(text, streaming);
+  const shown = stripState(text, streaming || remoteStreaming);
   bubble.textContent = '';
   // 正文必须装进一个真实的子元素：#bubble 用 flex + justify-content:flex-end
   // 把溢出裁在顶部，靠的是"有一个可对齐的盒子"。
@@ -728,11 +728,10 @@ if (api && api.onWardrobe) {
 
 /* ---------------- 衣柜面板 ----------------
    全部 textContent 写入；条目名来自数据层，但依然按不可信文本对待。 */
-async function refreshWardrobe() {
-  const presetBox = document.getElementById('wdPresets');
-  /* ---------- 智能成套建议（v1.0 UX-02b） ----------
+/* ---------- 智能成套建议（v1.0 UX-02b） ----------
    只建议不强制：单品点击后算差量、出建议条，用户点一键才逐槽落子。
-   失败走 UI 提示（#wdHint），绝不 say() 冒充她说话（铁律 2）。 */
+   失败走 UI 提示（#wdHint），绝不 say() 冒充她说话（铁律 2）。
+   P0-6 修复：模块级锚点状态与 #wdSuggestBtn 监听器置于 refreshWardrobe 外部，只绑定一次，避免重绑与清空。 */
 const wdSuggest = document.getElementById('wdSuggest');
 const wdSuggestText = document.getElementById('wdSuggestText');
 const wdSuggestBtn = document.getElementById('wdSuggestBtn');
@@ -789,7 +788,9 @@ if (wdSuggestBtn) wdSuggestBtn.addEventListener('click', async () => {
   refreshWardrobe();
 });
 
-const slotBox = document.getElementById('wdSlots');
+async function refreshWardrobe() {
+  const presetBox = document.getElementById('wdPresets');
+  const slotBox = document.getElementById('wdSlots');
   presetBox.textContent = '';
   slotBox.textContent = '';
   if (!api) {
@@ -1852,10 +1853,14 @@ if (api) {
 if (api && api.onChatBusy) {
   api.onChatBusy((p) => {
     if (p && p.busy) {
+      acc = '';
       remoteStreaming = true;
       setState('thinking');
     } else {
       remoteStreaming = false;
+      if (bubble && !bubble.classList.contains('hidden')) {
+        render(acc, false);
+      }
       if (p && p.state) setState(p.state);
       clearTimeout(bubbleTimer);
       bubbleTimer = setTimeout(hideBubble, 6000);

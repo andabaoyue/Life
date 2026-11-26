@@ -1097,6 +1097,52 @@ async function main() {
       bSmall.memory.history.length === histBefore, 'history=' + bSmall.memory.history.length);
   }
 
+  // -------------------------------------------------------------
+  // P0-2: plasticityMultiplier 从 stateChanges.reducer 读取，而非空 history
+  // -------------------------------------------------------------
+  {
+    const bPm = new Brain(tmpDir(), { ...DEFAULTS, apiKey: 'sk-test' });
+    bPm.subjectState.data.history = [{ windowNo: 1, at: Date.now(), deltas: { vitality: 5 }, evidenceCount: 1 }];
+    bPm.subjectState.data.stateChanges = [
+      { stateChangeId: 'sc-pm-1', trait: 'vitality', reducer: { plasticityMultiplier: 0.62 } }
+    ];
+    const selfCtx = bPm.currentSelfContext();
+    check('P0-2: currentSelfContext 从 stateChanges.reducer 读取 plasticityMultiplier (<0.85 -> 趋于平稳沉静)',
+      selfCtx.includes('趋于平稳沉静') && !selfCtx.includes('敏锐波动中'));
+  }
+
+  // -------------------------------------------------------------
+  // P0-3b: _applySelfNoteTraitHints commit 失败写 recovery_event 并在下次启动自动恢复
+  // -------------------------------------------------------------
+  {
+    const { SubjectState } = require('../src/subject-state');
+    const dirSnRec = tmpDir();
+    const bSnRec = new Brain(dirSnRec, { ...DEFAULTS, apiKey: 'sk-test' });
+    bSnRec.experiencesArchive.appendRecord('self_note', 1, {
+      windowNo: 1,
+      noteId: 'selfnote-w1-1',
+      content: '我想写点安静的东西',
+      proposalSource: 'selfNote',
+      writtenWindowNo: 1
+    });
+    const att = new Map([['selfnote-w1-1', { content: '我想写点安静的东西', windowNo: 1, noteId: 'selfnote-w1-1' }]]);
+    bSnRec.subjectState.commit = () => false;
+    bSnRec._applySelfNoteTraitHints(
+      [{ noteId: 'selfnote-w1-1', trait: 'quiet_preference', direction: 1, strength: 0.8, quote: '安静' }],
+      att,
+      new Map(),
+      1
+    );
+    const hasRecEvt = bSnRec.experiencesArchive.readAll().some((r) =>
+      r && r.recordType === 'recovery_event' &&
+      r.payload && r.payload.recoveryPending === true &&
+      r.payload.reason === 'self_note_state_commit_failed'
+    );
+    const recoveredSs = new SubjectState(dirSnRec);
+    check('P0-3b: self_note_state commit 失败写入 recovery_event，且冷启动可自动重放恢复',
+      hasRecEvt && recoveredSs.data.values.quiet_preference > 0 && recoveredSs.recoveryPending === false);
+  }
+
   server.close();
 
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

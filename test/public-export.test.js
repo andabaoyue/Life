@@ -135,5 +135,25 @@ check('sync 守卫：私有库内子目录被拒（SELF_OR_NESTED，而不是误
 check('sync 守卫：私有库的父目录被拒（SELF_OR_NESTED，否则会连带清空仓库）',
   guardReason(path.join(PROJECT_ROOT, '..')) === 'SELF_OR_NESTED');
 
+/* ---------- 七、P0-9：现代主流 API Key 扫描覆盖 + 短测试夹具不误伤 ---------- */
+const modernSample = [
+  'OPENAI_PROJ=sk-' + 'proj-' + 'A'.repeat(24),
+  'ANTHROPIC=sk-' + 'ant-' + 'api03-' + 'B'.repeat(24),
+  'GEMINI=AI' + 'za' + 'C'.repeat(35),
+  'GH_PAT=github' + '_pat_' + 'D'.repeat(24),
+  'HF=hf' + '_' + 'E'.repeat(24),
+  'GROQ=gsk' + '_' + 'F'.repeat(24)
+].join('\n');
+const modernHits = pe.scanText(modernSample, { inTest: false }).filter(v => v.kind === 'secret');
+check('P0-9: SECRET_PATTERNS 捕获 sk-proj / sk-ant / AIza / github_pat_ / hf_ / gsk_ 六种现代凭据',
+  modernHits.length === 6,
+  'hits=' + modernHits.length);
+
+const shortFixtures = "detect('sk-proj-abc123'); detect('sk-ant-abc123');";
+const fixtureHits = pe.scanText(shortFixtures, { inTest: false }).filter(v => v.kind === 'secret');
+check('P0-9 防误伤: 短测试夹具 sk-proj-abc123 与 sk-ant-abc123 零误报',
+  fixtureHits.length === 0,
+  'fixtureHits=' + fixtureHits.length);
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

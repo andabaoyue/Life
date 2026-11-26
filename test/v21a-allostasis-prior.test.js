@@ -269,6 +269,50 @@ function check(name, cond, extra) {
       afterToggleReload.getAllostasisSummary().priorReady === true &&
       afterToggleReload.allostasisPrior.recentGapsMs.length === 3 &&
       afterToggleReload.allostasisPrior.lastUserTurnAt === T0 + 6 * H);
+
+    // 5.9 P0-4：baseline 启动 -> 跨窗热切回 experimental，必须先 load() 再切开关，绝不销毁磁盘既有 mood/energy/allostasis
+    const hotDir = makeTempDir();
+    const seedHot = new InternalRegulationManager(hotDir, { enabled: true });
+    seedHot.energy = 77;
+    seedHot.moodWarmth = 68;
+    seedHot.allostasisPrior.lastUserTurnAt = T0 + 6 * H;
+    seedHot.allostasisPrior.recentGapsMs = [2 * H, 2 * H, 2 * H];
+    seedHot.save();
+
+    // 以 baseline 启动（内存保持默认且跳过 load），模拟磁盘热改回 experimental 后关窗轮转
+    const hotBrain = new Brain(hotDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-mock-v21a-hot',
+      experimentMode: 'baseline'
+    });
+    hotBrain.api.complete = async () => ({
+      text: JSON.stringify({
+        windowSynthesis: { stableUserFacts: [], subjectExperiences: [], stateChangesSuggested: [], unresolved: [], coinages: [], expectations: [], expectationOutcomes: [] },
+        segments: [{ range: '1-2', userGiven: [], chulanExperience: [], stateEvidence: [], uncertainties: [] }]
+      }),
+      observedModel: 'deepseek-flash',
+      usage: { prompt_tokens: 20, completion_tokens: 10 }
+    });
+    hotBrain.api.stream = async (_msgs, onDelta) => {
+      onDelta('嗯。');
+      return { text: '嗯。', observedModel: 'deepseek-flash', usage: { prompt_tokens: 10, completion_tokens: 4 } };
+    };
+    const { save: saveConfig } = require(path.join(ROOT, 'src', 'config'));
+    saveConfig(hotDir, {
+      ...DEFAULTS,
+      apiKey: 'sk-mock-v21a-hot',
+      experimentMode: 'experimental',
+      experimentModules: { ...DEFAULTS.experimentModules, internalRegulation: true, allostasisPrior: true, sleepConsolidation: false }
+    });
+    hotBrain.memory.append('user', '切窗测试消息一');
+    hotBrain.memory.append('assistant', '收到');
+    await hotBrain.closeWindow('turn_limit');
+    hotBrain.internalRegulation.save();
+    const reloadedHot = new InternalRegulationManager(hotDir, { enabled: true });
+    check('5.9 P0-4: baseline 启动跨窗热切回 experimental 保留磁盘 energy/moodWarmth/allostasis 历史不被覆写',
+      reloadedHot.energy === 77 &&
+      reloadedHot.moodWarmth === 68 &&
+      reloadedHot.allostasisPrior.recentGapsMs.length === 3);
   }
 
   // ---- 6. Brain 端到端：proactive 防污染 + 同轮零错位 + systemText 不变 + reunion 零改动 ----

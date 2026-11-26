@@ -1293,6 +1293,7 @@ class InternalRegulationManager {
    * 原子持久化写盘
    */
   save() {
+    if (!this.enabled) return false;
     if (!this.dir) return false;
     try {
       if (!fs.existsSync(this.dir)) {

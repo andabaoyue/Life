@@ -113,13 +113,13 @@ function exportStateChanges(stateChanges, format = 'json') {
       const evIds = Array.isArray(sc.evidenceIds) ? sc.evidenceIds.join(';') : '';
       lines.push([
         escapeCsvCell(id),
-        sc.windowNo ?? '',
+        escapeCsvCell(sc.windowNo ?? ''),
         escapeCsvCell(sc.trait),
-        sc.previousValue ?? 0,
-        sc.delta ?? 0,
-        sc.newValue ?? 0,
+        escapeCsvCell(sc.previousValue ?? 0),
+        escapeCsvCell(sc.delta ?? 0),
+        escapeCsvCell(sc.newValue ?? 0),
         escapeCsvCell(evIds),
-        sc.createdAt || sc.timestamp || ''
+        escapeCsvCell(sc.createdAt || sc.timestamp || '')
       ].join(','));
     }
     return lines.join('\n');
@@ -140,8 +140,8 @@ function exportEvidence(evidenceList, format = 'json') {
         escapeCsvCell(ev.messageId || ''),
         escapeCsvCell(ev.quote || ''),
         escapeCsvCell(ev.trait || ''),
-        ev.direction ?? 0,
-        ev.strength ?? 0,
+        escapeCsvCell(ev.direction ?? 0),
+        escapeCsvCell(ev.strength ?? 0),
         escapeCsvCell(ev.status || 'unknown'),
         escapeCsvCell(ev.reason || ''),
         escapeCsvCell(ev.fingerprint || '')

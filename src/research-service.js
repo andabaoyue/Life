@@ -34,6 +34,7 @@ const NON_STATE_RECORD_TYPES = new Set([
   'replay_report',
   'internal_log',
   'audit_log',
+  'self_note',
   // v0.9.9 P1-d: 账本淘汰条目是模型叙事产物，不参与状态轨迹
   'self_ledger_evicted',
   // v0.9.9 P2-1d: 与 subject-state.js 的 NON_STATE 统一收敛 —— 程序/模型生成产物

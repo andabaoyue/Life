@@ -33,6 +33,8 @@ files:
   - "src/**"
   - "assets/**"
   - "package.json"
+  - "LICENSE"
+  - "NOTICE"
   - "!test/**"
   - "!tools/**"
   - "!research/**"
@@ -42,6 +44,10 @@ files:
   # tools/asar-check.js 会断言它们不在 app.asar 里，这条排除是配套的第一道闸。
   - "!assets/character-archive-760x1000/**"
   - "!assets/character/base/base_legacy_full.png"
+
+extraFiles:
+  - "LICENSE"
+  - "NOTICE"
 
 win:
   target:

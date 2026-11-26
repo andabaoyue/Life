@@ -592,10 +592,28 @@ class SubjectState {
       const { records } = archive.readAllWithDiagnostics();
       if (!records || records.length === 0) return;
 
-      const hasPendingRecovery = records.some(r =>
-        (r.recordType === 'recovery_event' || r.type === 'recovery_event') &&
-        (r.payload?.recoveryPending === true || r.recoveryPending === true)
+      const recoveryEvents = records.filter(r =>
+        r && (r.recordType === 'recovery_event' || r.type === 'recovery_event')
       );
+      let hasPendingRecovery = false;
+      if (recoveryEvents.length > 0) {
+        let latestIdx = recoveryEvents.length - 1;
+        let latestSeq = Number.isFinite(recoveryEvents[latestIdx].archiveSeq)
+          ? recoveryEvents[latestIdx].archiveSeq : -Infinity;
+        for (let i = 0; i < recoveryEvents.length; i++) {
+          const seq = recoveryEvents[i] && Number.isFinite(recoveryEvents[i].archiveSeq)
+            ? recoveryEvents[i].archiveSeq : null;
+          if (seq !== null && seq >= latestSeq) {
+            latestSeq = seq;
+            latestIdx = i;
+          }
+        }
+        const latestRec = recoveryEvents[latestIdx];
+        const latestAction = (latestRec.payload && latestRec.payload.action) || latestRec.action;
+        const latestPending = (latestRec.payload && latestRec.payload.recoveryPending === true)
+          || latestRec.recoveryPending === true;
+        hasPendingRecovery = Boolean(latestPending && latestAction !== 'state_rebuilt_from_replay');
+      }
 
       const NON_STATE = new Set([
         'recovery_event',
@@ -603,6 +621,7 @@ class SubjectState {
         'replay_report',
         'internal_log',
         'audit_log',
+        'self_note',
         'self_projection',
         'self_ledger_evicted',
         'subject_dream',
@@ -1145,6 +1164,7 @@ class SubjectState {
       'replay_report',
       'internal_log',
       'audit_log',
+      'self_note',
       'self_projection',
       'self_ledger_evicted',
       'subject_dream',

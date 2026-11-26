@@ -370,6 +370,77 @@ check('P0-1 前提：同一条证据重提仍被拒绝（判据没被削弱成�
   check('M7: 持久化变更截断为 500 时与 Replay 最新 500 条成功对账', resM7.match === true);
 }
 
+// 13. P0-1: hasPendingRecovery 仅检查最后一条 recovery_event，避免永久死循环
+{
+  const { ExperiencesArchive } = require('../src/experiences-archive');
+  const dirP01 = tmpDir();
+  const arcP01 = new ExperiencesArchive(dirP01);
+  arcP01.appendWindowArchive({
+    windowNo: 1,
+    turns: 10,
+    windowSynthesis: { stableUserFacts: ['事实1'] },
+    verifiedEvidence: [
+      { evidenceId: 'ev-p01-1', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-p01', quote: '安静' }
+    ],
+    stateChanges: [
+      { stateChangeId: 'sc-p01-1', trait: 'quiet_preference', delta: 10, previousValue: 0, newValue: 10, evidenceIds: ['ev-p01-1'] }
+    ]
+  });
+  arcP01.appendRecord('recovery_event', 1, {
+    action: 'state_commit_failed',
+    reason: 'state_commit_failed',
+    recoveryPending: true
+  });
+  arcP01.appendRecord('recovery_event', 2, {
+    action: 'state_rebuilt_from_replay',
+    reason: 'state_commit_failed',
+    restoredWindowNo: 2
+  });
+  fs.writeFileSync(path.join(dirP01, 'subject-state.json'), JSON.stringify({
+    windowNo: 2,
+    values: { quiet_preference: 10 },
+    history: [],
+    stateChanges: []
+  }), 'utf8');
+  const countBefore = arcP01.readAll().length;
+  const s1 = new SubjectState(dirP01);
+  const s2 = new SubjectState(dirP01);
+  const countAfter = arcP01.readAll().length;
+  check('P0-1: 已结案的历史 recoveryPending 不导致冷启动死循环重放与追加记录',
+    s1.data.values.quiet_preference === 10 &&
+    s1.recoveryPending === false &&
+    s2.recoveryPending === false &&
+    countBefore === countAfter);
+}
+
+// 14. P0-3: self_note 已纳入 NON_STATE_RECORD_TYPES，离线 replay 不产出空窗口或报错
+{
+  const repSelfNote = SubjectState.replay([
+    {
+      archiveSeq: 1,
+      recordType: 'window_archive',
+      windowNo: 1,
+      payload: {
+        windowNo: 1,
+        verifiedEvidence: [
+          { evidenceId: 'ev-sn-1', trait: 'quiet_preference', direction: 1, strength: 0.5, messageId: 'm-1', quote: '安静' }
+        ],
+        rejectedEvidence: [],
+        stateChanges: [{ stateChangeId: 'sc-sn-1', trait: 'quiet_preference', delta: 10, previousValue: 0, newValue: 10, evidenceIds: ['ev-sn-1'] }]
+      }
+    },
+    {
+      archiveSeq: 2,
+      recordType: 'self_note',
+      windowNo: 1,
+      payload: { windowNo: 1, noteId: 'selfnote-w1-1', content: '只是记录下自己的想法' }
+    }
+  ]);
+  check('P0-3: SubjectState.replay 将 self_note 视作非状态记录（无空窗口、无 legacy 警告）',
+    repSelfNote.windowStates.length === 1 &&
+    !repSelfNote.warnings.some((w) => w && w.reason === 'legacy_reducer_parameters'));
+}
+
 console.log(`ASSERT total=${total} passed=${passed} failed=${failures}`);
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

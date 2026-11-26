@@ -767,6 +767,21 @@ check('P0-3 前提：启用时同一目录确实读得到残留（否则上一�
     }
     return md12 > 0 && md15 > 0 && mPeak >= 60;
   })());
+
+  check('P0-4: enabled=false 时直接调用 save() 返回 false 且绝不覆写磁盘文件', (() => {
+    const dirGuard = makeTempDir();
+    const mgrOn = new InternalRegulationManager(dirGuard, { enabled: true });
+    mgrOn.energy = 82;
+    mgrOn.moodWarmth = 71;
+    mgrOn.save();
+    const rawBefore = fs.readFileSync(mgrOn.path, 'utf8');
+
+    const mgrOff = new InternalRegulationManager(dirGuard, { enabled: false });
+    mgrOff.energy = 100;
+    const saved = mgrOff.save();
+    const rawAfter = fs.readFileSync(mgrOn.path, 'utf8');
+    return saved === false && rawBefore === rawAfter;
+  })());
 })();
 
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));

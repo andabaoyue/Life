@@ -61,5 +61,69 @@ check('9 防御：缺失 catalog / 未知锚 → null / 空计划不崩',
   && completeOutfit({ top: 'x' }, CATALOG, 'unknown_item') === null
   && planOutfit(null, null).length === 0);
 
+check('10 P0-6 结构守卫：wdAnchor / wdPendingPlan 与 #wdSuggestBtn 监听绑定均位于 refreshWardrobe 外部模块作用域', (() => {
+  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const idxFn = petSrc.indexOf('async function refreshWardrobe()');
+  const idxAnchor = petSrc.indexOf('let wdAnchor = null;');
+  const idxPlan = petSrc.indexOf('let wdPendingPlan = [];');
+  const idxBind = petSrc.indexOf("if (wdSuggestBtn) wdSuggestBtn.addEventListener('click'");
+  const fnBodyStart = idxFn;
+  const fnBodyEnd = petSrc.indexOf('\nfunction say(', fnBodyStart);
+  const fnBody = petSrc.slice(fnBodyStart, fnBodyEnd);
+  return idxFn > 0 && idxAnchor > 0 && idxPlan > 0 && idxBind > 0
+    && idxAnchor < idxFn && idxPlan < idxFn && idxBind < idxFn
+    && !/let\s+wdAnchor\s*=/.test(fnBody)
+    && !/wdSuggestBtn\.addEventListener/.test(fnBody);
+})());
+
+check('11 P0-6 行为模拟：连续刷新衣橱不叠加 #wdSuggestBtn 监听器且点击单品后锚点保留触发单次建议', (() => {
+  const petSrc = fs.readFileSync(path.join(__dirname, '..', 'pet.js'), 'utf8');
+  const m = petSrc.match(/\/\* -{10} 智能成套建议[\s\S]*?(?=\nasync function refreshWardrobe\(\))/);
+  if (!m) return false;
+  let btnClicks = 0;
+  let wardrobeSetCalls = 0;
+  const suggestEl = { classList: { _s: new Set(['hidden']), add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); } } };
+  const textEl = { textContent: '' };
+  const btnEl = {
+    textContent: '',
+    handlers: [],
+    addEventListener(ev, fn) { if (ev === 'click') this.handlers.push(fn); }
+  };
+  const hintEl = { textContent: '' };
+  const sandbox = {
+    document: {
+      getElementById(id) {
+        if (id === 'wdSuggest') return suggestEl;
+        if (id === 'wdSuggestText') return textEl;
+        if (id === 'wdSuggestBtn') return btnEl;
+        if (id === 'wdHint') return hintEl;
+        return null;
+      }
+    },
+    api: { wardrobeSet: async () => { wardrobeSetCalls++; return { ok: true }; } },
+    t: (_k, fb) => fb || _k,
+    completeOutfit,
+    planOutfit,
+    refreshWardrobe: () => { sandbox.updateOutfitSuggest(sandbox._cat); },
+    _cat: {
+      equip: { hair: 'silver_wavy_01', top: 'gray_tee_01', bottom: null, shoes: null, dress: null },
+      items: {
+        top: [{ id: 'gray_tee_01', name: '灰T' }],
+        bottom: [{ id: 'sport_shorts_01', name: '运动短裤' }],
+        shoes: [{ id: 'white_sneakers_01', name: '白运动鞋' }]
+      }
+    }
+  };
+  const vm = require('vm');
+  vm.runInNewContext(m[0] + '; this.updateOutfitSuggest = updateOutfitSuggest; this.setAnchor = (v) => { wdAnchor = v; }; this.getAnchor = () => wdAnchor;', sandbox);
+  sandbox.setAnchor('gray_tee_01');
+  sandbox.refreshWardrobe();
+  sandbox.refreshWardrobe();
+  sandbox.refreshWardrobe();
+  const shown = !suggestEl.classList._s.has('hidden') && sandbox.getAnchor() === 'gray_tee_01';
+  for (const h of btnEl.handlers) btnClicks++, h();
+  return shown && btnEl.handlers.length === 1 && btnClicks === 1;
+})());
+
 console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
 process.exit(failures ? 1 : 0);

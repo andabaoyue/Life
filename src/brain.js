@@ -1244,6 +1244,17 @@ class Brain {
    *    因此仍保留观察线：若再出现**精确值**或**无话题触发**的报时，
    *    那时才需要更强手段（当前不预支）。
    */
+  /**
+   * P0-2 修复：从 subjectState.data.stateChanges 末项读取真实生效的发育阻尼塑性系数（非 data.history）
+   */
+  _getLatestPlasticityMultiplier() {
+    const changes = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.stateChanges))
+      ? this.subjectState.data.stateChanges : [];
+    const lastChange = changes.length ? changes[changes.length - 1] : null;
+    const pm = lastChange && lastChange.reducer ? lastChange.reducer.plasticityMultiplier : null;
+    return (typeof pm === 'number' && Number.isFinite(pm) && pm > 0) ? pm : 1.0;
+  }
+
   currentSelfContext() {
     if (!this.cfg.currentSelfTokenBudget) return '';
     const projection = this.selfLedger.currentSelfText();
@@ -1252,10 +1263,7 @@ class Brain {
     const perception = this.subjectState ? this.subjectState.formatPerception() : '';
     // v0.9.9 五大方向·④：可塑性只作定性感知注入 —— 零数值、零研究标签；
     // 取「实际生效」的吸收系数（缺省 1.0，与 reduce 的 fail-closed 门控同源），绝不虚构敏感度
-    const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
-      ? this.subjectState.data.history : [];
-    const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
-    const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+    const pm = this._getLatestPlasticityMultiplier();
     // v1.0 生理内感受（合流批）：身体真实生理感觉注入瞬时尾部 —— 绝不写入 memory.history（前缀缓存逐字节安全）
     const regSense = (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function')
       ? this.internalRegulation.formatPerception() : '';
@@ -2533,7 +2541,14 @@ class Brain {
 
           if (this.internalRegulation) {
             const mods = this.currentWindowSnapshot.modules || {};
-            this.internalRegulation.enabled = Boolean(mods.internalRegulation);
+            const wasEnabled = Boolean(this.internalRegulation.enabled);
+            const nextEnabled = Boolean(mods.internalRegulation);
+            this.internalRegulation.enabled = nextEnabled;
+            // P0-4 修复：baseline -> experimental 跨窗热切回时，必须先从磁盘 load() 回灌既有内态与先验，
+            // 避免内存默认值在下一次 save() 时覆写销毁磁盘历史
+            if (!wasEnabled && nextEnabled && typeof this.internalRegulation.load === 'function') {
+              this.internalRegulation.load();
+            }
             const nextAllostasis = Object.prototype.hasOwnProperty.call(mods, 'allostasisPrior')
               ? Boolean(mods.allostasisPrior)
               : true;
@@ -3101,10 +3116,7 @@ class Brain {
 
       // 素材 1 & 2：自我投射、生理感受与可塑性（纯定性，不调 currentSelfContext() 防带出出生时刻）
       const selfParts = [];
-      const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
-        ? this.subjectState.data.history : [];
-      const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
-      const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+      const pm = this._getLatestPlasticityMultiplier();
       selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
 
       if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
@@ -3254,10 +3266,7 @@ class Brain {
 
       // 自我倾向与生理体感（纯定性，坚决零时钟与程序数字）
       const selfParts = [];
-      const hist = (this.subjectState && this.subjectState.data && Array.isArray(this.subjectState.data.history))
-        ? this.subjectState.data.history : [];
-      const last = hist.length ? (hist[hist.length - 1].reducer || hist[hist.length - 1]) : null;
-      const pm = (last && typeof last.plasticityMultiplier === 'number') ? last.plasticityMultiplier : 1.0;
+      const pm = this._getLatestPlasticityMultiplier();
       selfParts.push('- 当前对新经历的特质吸收偏向：' + (pm >= 0.85 ? '敏锐波动中' : '趋于平稳沉静'));
 
       if (this.internalRegulation && typeof this.internalRegulation.formatPerception === 'function') {
@@ -3774,7 +3783,16 @@ class Brain {
     const committed = this.subjectState.commit();
     if (!committed) {
       this.subjectState.recoveryPending = true;
-      this.subjectState.recoveryPendingReason = 'state_commit_failed';
+      this.subjectState.recoveryPendingReason = 'self_note_state_commit_failed';
+      if (this.experiencesArchive) {
+        this.experiencesArchive.appendRecord('recovery_event', windowNo, {
+          action: 'self_note_state_commit_failed',
+          timestamp: Date.now(),
+          windowNo,
+          reason: 'self_note_state_commit_failed',
+          recoveryPending: true
+        });
+      }
     }
     return { added: changes.length, rejected: vr.rejected.length };
   }

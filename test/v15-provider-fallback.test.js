@@ -513,6 +513,69 @@ console.log('--- v1.5-a Provider 容灾自动回落门禁 ---');
       resp && resp.text === 'fallback succeeded from decrypted secondary');
   }
 
+  /* ============ 14. P0-5：half-open 探测遇 AbortError / 401 释放探测锁，不再永久死锁 ============ */
+  {
+    let clock = 1000;
+    let mode = 'fail500';
+    const primary = makeMockAdapter({
+      providerId: 'primary',
+      onComplete: async () => {
+        if (mode === 'fail500') {
+          const e = new Error('500');
+          e.retryable = true;
+          throw e;
+        }
+        if (mode === 'abort') {
+          const e = new Error('user aborted');
+          e.name = 'AbortError';
+          throw e;
+        }
+        if (mode === '401') {
+          const e = new Error('401 unauthorized');
+          e.status = 401;
+          e.retryable = false;
+          throw e;
+        }
+        return { text: 'probe ok', usage: { prompt_tokens: 1, completion_tokens: 1 } };
+      },
+      onStream: async (_msgs, onDelta) => {
+        if (mode === 'abort') {
+          const e = new Error('stream aborted');
+          e.name = 'AbortError';
+          throw e;
+        }
+        onDelta('stream probe ok');
+        return { text: 'stream probe ok', usage: { prompt_tokens: 1, completion_tokens: 1 } };
+      }
+    });
+    const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 5000, now: () => clock });
+    const adapter = createFallbackAdapter({ primary, secondary: null, breaker });
+
+    try { await adapter.complete([{ role: 'user', content: '1' }]); } catch {}
+    clock += 6000; // 到期进入 half-open
+    mode = 'abort';
+    try { await adapter.complete([{ role: 'user', content: '2' }]); } catch {}
+    const afterAbort = breaker.getState();
+
+    mode = '401';
+    try { await adapter.complete([{ role: 'user', content: '3' }]); } catch {}
+    const after401 = breaker.getState();
+
+    mode = 'abort';
+    try { await adapter.stream([{ role: 'user', content: '4' }], () => {}); } catch {}
+    const afterStreamAbort = breaker.getState();
+
+    check('14a. half-open 探测遇 AbortError / 401 时正确释放 probeInFlight 锁且不卡死',
+      afterAbort.state === 'half-open' && afterAbort.probeInFlight === false &&
+      after401.state === 'half-open' && after401.probeInFlight === false &&
+      afterStreamAbort.state === 'half-open' && afterStreamAbort.probeInFlight === false);
+
+    mode = 'ok';
+    const recovered = await adapter.complete([{ role: 'user', content: '5' }]);
+    check('14b. 释放探测锁后下次请求允许放行，成功后熔断器正确恢复 closed',
+      recovered && recovered.text === 'probe ok' && breaker.getState().state === 'closed');
+  }
+
   console.log('\n' + (failures ? failures + ' 项失败' : '全部通过'));
   process.exit(failures ? 1 : 0);
 })();

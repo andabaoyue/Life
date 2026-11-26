@@ -48,7 +48,9 @@ const REQUIRED_FILES = [
   'ui-provider-presets.js',
   'ui-outfit-complete.js',
   'ui-agent-confirm.js',
-  'package.json'
+  'package.json',
+  'LICENSE',
+  'NOTICE'
 ];
 const REQUIRED_DIRS = ['src', 'assets'];
 /* 源码专用内容：进包就是打包泄漏（体积、或把研究材料/内测文档发给用户） */
