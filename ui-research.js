@@ -68,7 +68,7 @@
     function buildTrendSvg(seriesList, yMin, yMax) {
       const W = 320;
       const H = 112;
-      const PAD_L = 28;
+      const PAD_L = 34;
       const PAD_R = 10;
       const PAD_T = 10;
       const PAD_B = 18;
@@ -95,6 +95,23 @@
       const maxW = allWins.length ? Math.max(...allWins) : 2;
       const spanW = Math.max(1, maxW - minW);
       const spanY = Math.max(1e-6, yMax - yMin);
+
+      const fmtAxisNum = (v) => (Number.isInteger(v) ? String(v) : String(Number(v.toFixed(2))));
+      const addAxisLabel = (x, y, anchor, text) => {
+        const el = createSvgEl('text', {
+          x,
+          y,
+          'text-anchor': anchor,
+          'font-size': 9,
+          fill: 'rgba(200,214,240,0.68)'
+        });
+        el.textContent = text;
+        svg.appendChild(el);
+      };
+      addAxisLabel(PAD_L - 4, PAD_T + 3, 'end', fmtAxisNum(yMax));
+      addAxisLabel(PAD_L - 4, H - PAD_B, 'end', fmtAxisNum(yMin));
+      addAxisLabel(PAD_L, H - 4, 'start', 'W#' + minW);
+      addAxisLabel(W - PAD_R, H - 4, 'end', 'W#' + maxW);
 
       for (const s of seriesList) {
         const pts = (s.points || []).filter((p) => Number.isFinite(p.windowNo) && Number.isFinite(p.value));

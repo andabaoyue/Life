@@ -10,11 +10,20 @@
 ## 目录
 
 ```
-main.js        主进程：窗口、IPC、衣柜实例
+main.js        主进程：窗口、IPC 装配与生命周期协调
 preload.js     桥接（暴露为 window.deskpet）
 index.html     界面
 style.css      样式与动画
-pet.js         交互逻辑
+pet.js         交互逻辑（主立绘与渲染协调）
+ui-pet-stage.js 桌宠舞台状态与气泡表情协调
+ui-wardrobe.js 换装面板控制器
+ui-settings.js 设置面板、连接配置与遥测展示控制器
+ui-research.js 研究面板、Replay 与历时轨迹看板控制器
+src/main-window-ipc.js      主进程窗口与桌面交互 IPC 控制器
+src/main-vision-ipc.js      主进程屏幕视觉探针与框选 IPC 控制器
+src/main-stt-ipc.js         主进程语音识别 IPC 控制器
+src/main-connections-ipc.js 主进程多连接档案与本地探活 IPC 控制器
+src/main-agent-ipc.js       主进程 Agent 提案与沙盒执行 IPC 控制器
 src/config.js    配置读写（落盘不含明文 key；按目录缓存、每次真读盘，手改即生效）
 src/secure.js    Key 的加密存储边界：safeStorage 可用则密文，不可用如实降级
 src/atomic.js    原子写：临时文件 + fsync + rename，避免半截 JSON（含 Windows 瞬态重试）
@@ -22,6 +31,12 @@ src/layout.js    窗口几何：常量宽高比 + 下边缘锚点（纯函数，
 src/desktop-motion.js  桌面运动状态机：底部漫步、贴边悬挂、可注入障碍物攀爬
 src/deepseek.js  API 客户端（流式 + 峰谷计价）
 src/memory.js    三层用户记忆：对话窗口 / 窗口小结 / 长期记忆
+src/memory-self-notes.js         自发便签队列与渐褪动力学子存储
+src/memory-observe-epoch.js      观察档时期印迹与补注入回声子存储
+src/memory-lexicon.js            语言指纹词库与词汇动力学子存储
+src/memory-expectations.js       预期与承诺时间矢量子存储
+src/memory-relational-anchor.js  互惠关系锚定子存储（稳定称呼与跨窗互惠事实沉淀）
+src/engram-graph.js              共激活记忆联想图谱子存储（幂等衰减与弱边修剪）
 src/self-ledger.js 版本化生命档案 + provenance + Current Self 投影
 src/experiences-archive.js experiences.jsonl 原始实验底座（Append-Only、容错与诊断读取）
 src/subject-state.js     主体状态五维模型、Provenance 强验证、确定性 Reducer 与离线 Replay v2
@@ -33,7 +48,7 @@ src/dream-system.js  成本门禁式弗洛伊德梦境系统（本地认知张�
 src/internal-regulation.js 内部状态调节中枢（短时调节与长期特质双轨分离、严格事件驱动、唤醒度与门限反向耦合）
 src/allostasis-prior.js    关系节奏先验（间隔预测误差 Winsorize 队列，仅作用于 internalRegulation）
 src/digital-umwelt.js      数字环周感知流水线（过滤→降采样→显著性评估→仅产出 SUBJECT_ACQUIRED=false 候选）
-src/internal-state.js      内部标量只读/内部投影边界辅助
+src/internal-state.js      内部标量只读/内部投影边界辅助（契约/研究储备）
 src/attention-gate.js      注意力闸门与感知分流（显著性与认知负荷过滤、ATTENDED≠SUBJECT_ACQUIRED 铁律防线）
 src/power-monitor-source.js 宿主电源与锁屏事件注入适配器
 research/ENGINEERING-DECISION-LOG.md 工程与实验架构不可逆决策账本（D-001~D-011）
@@ -56,20 +71,21 @@ src/constraints.js        共享人格与留痕系统公共约束常量
 src/provider-policy.js    Provider / Endpoint / Credential 边界策略
 src/provider-adapter.js   统一 Provider Adapter 契约与错误归一化
 src/provider-registry.js  Adapter 注册表（无凭据、非运行时证据信任根）
-src/provider-routing.js   路由契约储备
+src/provider-routing.js   路由契约储备（契约/研究储备）
 src/provider-runtime-trust.js 运行时 evidence 绑定与可信度核验
 src/openai-transport.js   通用 OpenAI 兼容传输、重试与响应硬上限
 src/sse-parser.js         原生流式 SSE 分帧解析器
 src/usage-normalizer.js   用量事实层归一化
 src/cache-strategy.js     DeepSeek 前缀缓存命中解析策略
 src/cost-strategy.js      模型定价与成本策略
-src/fallback-adapter.js   主/备端点容灾回落与半开探测保护
+src/fallback-adapter.js   主/备端点容灾回落、本地轻量兜底守卫与半开探测保护
 src/circuit-breaker.js    端点熔断器状态机
 src/budget-guard.js       单轮/会话模型 Token 预算护栏
-src/generation-attempt.js 生成尝试元数据储备
+src/generation-attempt.js 生成尝试元数据储备（契约/研究储备）
 src/connections.js        多连接档案管理
 src/connection-switch.js  安全连接切换器
 src/connection-test.js    连接连通性只读探测
+src/local-probe.js        本地回环 SLM（Ollama / llama-server）零推理原生探活器
 src/secure-credentials.js 分域凭据索引与迁移辅助
 src/adapters/deepseek-adapter.js          DeepSeek 适配器实现
 src/adapters/openai-compatible-adapter.js 通用 OpenAI 兼容适配器实现
@@ -83,7 +99,7 @@ src/ipc-guard.js          IPC 发送者 / frame / 本地 URL 三重校验与导�
 src/redact.js             统一凭据与 Cookie/Bearer/现代 API Key 脱敏层
 # ---- 实验研究、完整度校验与离线 Replay ----
 src/research-service.js   Research 只读服务与异步 Replay 任务管道
-src/research-query.js     研究查询层（归档/证据/状态轨迹/EOI 分页）
+src/research-query.js     研究查询层（归档/证据/状态轨迹/双尺度轨迹汇总）
 src/research-index.js     归档字节偏移索引与批量读取器
 src/research-export.js    轨迹/证据/研究包 CSV & JSON 只读原子导出器（含公式注入防护）
 src/research-ipc.js       研究 IPC 通道与本地原生目录选择安全边界
@@ -91,17 +107,22 @@ src/archive-integrity.js  归档哈希链与 Anchor 完整性服务
 src/experiment-metadata.js 实验条件元数据（Generation Context）构造
 src/experiment-run.js     窗口不可变实验快照与运行清单
 src/experiment-types.js   实验模式/模块开关配置归一与校验
-src/null-hypothesis.js    基线对照与零假设检验辅助
-src/biographical-candidate.js 自传候选整理辅助
-src/sleep-consolidation-types.js 睡眠梦境巩固类型定义
+src/null-hypothesis.js    基线对照与零假设检验辅助（契约/研究储备）
+src/path-dependency.js    发育轨迹路径依赖非线性对比实验模型（契约/研究储备）
+src/biographical-candidate.js 自传候选整理辅助（契约/研究储备）
+src/sleep-consolidation-types.js 睡眠梦境巩固类型定义（契约/研究储备）
 src/persona.js   人设（只写身份，不写穿着细节；不含旧耳坠设定）
 src/wardrobe.js  换装数据层：槽位、衣柜、预设、校验、持久化
 src/tracker.js   本地活动：被戳/被拖的真实计数（双轨 + 水位线）、晚安与唤醒
 src/trigger.js   主动搭话判据：该不该开口（纯函数，只出提案不改状态）
 src/brain.js     调度：对话、关窗、记忆合并、换装提案执行、缓存统计
+src/brain-window-pipeline.js  窗口关闭、归档提交与睡眠梦境流水线服务
+src/brain-autonomous-draft.js 自主便签、观察日记与方案拟稿旁路服务
+src/brain-telemetry.js        实验遥测、成本计费与缓存归因追踪器
+src/brain-hot-swap.js         连接热切换（oldBrain 中止预刷盘与回滚协调器）
 src/animation-state.js 程序化自然动画：物理微动与姿态状态机
 src/render-adapter.js  动画渲染适配器：解耦状态输出与 DOM / CSS 图层接管
-src/animation-controller.js 动画控制器：60fps 驱动器与图层微动矩阵
+src/animation-controller.js 动画控制器：60fps 驱动器与图层微动矩阵（契约/研究储备）
 src/behavior-scheduler.js 自主行为调度器：呼吸、眨眼、打哈欠、伸懒腰
 src/asset-check.js     启动立绘与换装资产完整性分级检查
 src/deferred-writer.js 脏标记与延迟合并写盘

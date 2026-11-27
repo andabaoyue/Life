@@ -2319,6 +2319,10 @@ class Brain {
       this.saveStats();
       return added;
     } catch (e) {
+      if (e && (e.code === 'LOCAL_FALLBACK_DEFERRED' || e.deferredByLocalGuard === true)) {
+        console.log('[Brain] 云端降级期间暂缓本地小模型执行自传成长提炼，保留既有账本');
+        return 0;
+      }
       // 成长提炼失败不能影响已经成功归档的对话窗口；下一个窗口继续尝试。
       // 非 JSON 的兼容模型响应属于“本轮没有形成可验证成长记录”，不刷屏；
       // 网络/文件等真正异常仍保留日志，便于定位。
