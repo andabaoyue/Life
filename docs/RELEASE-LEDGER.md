@@ -21,6 +21,36 @@
 
 ---
 
+## v2.2.2 · 2026-11-27
+
+| 项 | 值 |
+|---|---|
+| 版本 | **2.2.2** |
+| 公库 tag | `v2.2.2`（annotated，tag 对象 `4a2784b` → 提交 `561f86d`） |
+| 公库提交 | **`561f86d`**（`chore(release): 收口 v2.2.2 版本号与发版文档`） |
+| 私库提交 | `ab197a7`（`chore(release): 收口 v2.2.2 版本号与发版文档`） |
+| Release | https://github.com/andabaoyue/Life/releases/tag/v2.2.2 |
+| 公开集文件数 | **393**（按规则排除 42 个私库/开发文件） |
+
+### 交付物
+
+| 文件 | 字节数 | SHA-256 |
+|---|---|---|
+| `Life-2.2.2-win-x64-portable.exe` | 100,771,794 | `1364804ded090f0adf82478c885aff1ff9e694c789b78dafec17188b748ccdb2` |
+| `Life-2.2.2-win-x64.zip` | 153,916,090 | `e0ea116964f9769862c699b63a3be6c4b03408febaaf3693ed578a273823eea1` |
+
+> ✅ 两个 digest 来自 `gh release view v2.2.2 --json assets`，与本地 `Get-FileHash -Algorithm SHA256` 逐位核对一致。
+
+> 🔴 **为什么本版未附 `Setup.exe`**（仅 2 个资产）：
+> 与 v1.9.0 / v2.0.0 / v2.1.0 / v2.1.1 / v2.1.2 同因——NSIS 卸载器导出阶段仍被本机 Defender 实时保护阻断（`exit code: 3221225794`）。已清除构建残留的 `231,853` 字节 `Life-2.2.2-Setup.exe` 空壳存根及 `life-2.2.2-x64.nsis.7z` 中间文件；留存的两个产物中，`dist/win-unpacked` 与 `Life-2.2.2-win-x64.zip` 均包含完整 `LICENSE` 与 `NOTICE`，并通过 `tools/asar-check.js`（PASS 8 / FAIL 0，180 个条目）、`tools/artifact-freshness.js --strict`（159 个运行入口逐字节一致）与 `tools/release-check.js`（PASS 13 / WARN 0 / FAIL 0，含 `portable.exe` PE overlay = `96.0MB`）。
+
+### 主要内容
+
+- **v2.2-a ~ c 与 v2.2.2 完整收官**：落地赫布共激活记忆图谱（`src/engram-graph.js`）与精准度加权认知觅食、能动性表型审计与双尺度历时看板（含 `ui-research.js` SVG 坐标刻度，零 `innerHTML`）、本地 SLM 原生探活与离线轻陪伴双过程容灾（`src/local-probe.js` 及 `brain.js` `growSelf()` 暂缓守卫），以及互惠关系锚定（`src/memory-relational-anchor.js`，关窗双点幂等刷新与 `memory.relationalAnchors` 只读观测）；同步完成 `docs/ARCHITECTURE.md` 全仓模块地图与 8 个契约/研究储备标注。
+- **门禁**：**154 个已标项数套件 / 5644 项断言**（`test/docs.test.js` 全量执行 `executed=154` 0 FAIL，含 `ui_test.py` 171/171）+ `test/gate-selfcheck.test.js` 全绿；`tools/asar-check.js`、`tools/artifact-freshness.js --strict`、`tools/public-export.js --check` 与 `tools/release-check.js` 全部通过。
+
+---
+
 ## v2.1.2 · 2026-11-27
 
 | 项 | 值 |
