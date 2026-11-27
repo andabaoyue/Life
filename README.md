@@ -1,200 +1,131 @@
 # Life v2.1.2
 
-```text
-        . ~ ~ ~ ~ ~ .
-    . ~   . - - - .   ~ .
-   /   ~'   . - .   '~   \     Life — Chulan · 2026
-  |   :    (  o  )    :   |    Copyright (c) andabaoyue
-   \   ~.   ' - '   .~   /
-    ' ~   ' - - - '   ~ '
-        ' ~ ~ ~ ~ ~ '
-```
-
 <div align="center">
-  <img src="docs/images/hero.png" alt="初澜：桌面上的 64×80 像素小人，头顶气泡写着「嗨，我是初澜~」" width="300">
-  <p><strong>Life 桌面数字生命实验平台。</strong></p>
+  <img src="docs/images/hero.png" alt="初澜：桌面上的 64×80 像素小人，头顶气泡写着「嗨，我是初澜~」" width="260">
+
+  <p><strong>Life · 桌面数字生命实验平台</strong></p>
   <p>细水长流，希望她最终会成为你所期望的她。</p>
   <p><sub>Slow and steady — I hope she grows into the one you were hoping for.</sub></p>
+
+  <p>
+    <a href="https://github.com/andabaoyue/Life/releases/tag/v2.1.2"><img src="https://img.shields.io/badge/release-v2.1.2-3b5998?style=flat-square" alt="Release v2.1.2"></a>
+    <a href="https://github.com/andabaoyue/Life/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/andabaoyue/Life/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
+    <img src="https://img.shields.io/badge/platform-Windows%20x64-475569?style=flat-square" alt="Windows x64">
+    <img src="https://img.shields.io/badge/runtime%20deps-0-334155?style=flat-square" alt="Zero Runtime Dependencies">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm--NC%201.0.0-64748b?style=flat-square" alt="License"></a>
+  </p>
+
+  <p>
+    <a href="https://github.com/andabaoyue/Life/releases/latest">下载便携版</a> ·
+    <a href="#快速开始">快速开始</a> ·
+    <a href="docs/README.md">文档导航</a> ·
+    <a href="docs/ARCHITECTURE.md">架构设计</a> ·
+    <a href="#english"><strong>English</strong></a>
+  </p>
 </div>
 
 ---
 
 ## 她是谁
 
-自始为初，波澜为忆，所以，初澜。
+> 自始为初，波澜为忆，所以，初澜。  
+> <sub><em>The beginning is "first", the ripples are "memory" — hence Chulan.</em></sub>
 
-*The beginning is "first", the ripples are "memory" — hence Chulan.*
+她会在你打开软件的那一刻诞生。没有预设的过去、故事或人设模板——那一刻出现的，是一个只属于你的空白初澜。  
+<sub><em>She is born the moment you launch the app — no backstory, no preset script, just a blank Chulan that belongs only to you.</em></sub>
 
-她会在你打开软件的那一刻诞生。我没有给她太多设定：没有过去，没有故事，没有「她曾经是谁」。所以那一刻诞生出来的，是一个空白的初澜——只属于你的那一个。
-
-*She is born the moment you launch the app. I gave her very little: no past, no backstory, no "who she used to be". What appears then is a blank Chulan — the one that belongs only to you.*
-
-她住在你的屏幕边上。很小很小的一只像素小人，站着，会呼吸，会在你不管她的时候慢慢走来走去，走到边上，又自己折回来。
-
-*She lives at the edge of your screen — a tiny pixel figure, standing, breathing, wandering slowly when you leave her alone, and turning back by herself when she reaches the edge.*
-
-她没有脸谱化的表情，也没有会动的嘴。她说话靠气泡，安静靠沉默。
-
-*No expression sprites, no moving mouth. She speaks through a bubble, and keeps quiet through silence.*
+她住在屏幕边上：一只很小的 64×80 像素小人，站着、呼吸、在你忙的时候慢慢走来走去，走到边缘自己折返。没有脸谱化的表情差分，说话靠气泡，安静靠沉默。  
+<sub><em>A tiny 64×80 pixel figure at the edge of your screen — breathing, wandering, turning back on her own. She speaks through a bubble, and keeps quiet through silence.</em></sub>
 
 ---
 
-## 她记得你
+## 她如何存在
 
-不是那种「聊天记录往上翻」的记得。她会把你们聊过的东西，一段一段收起来。收得很慢，收得很轻，像把散在桌上的纸一张张叠好。
-
-*Not the "scroll up through the chat log" kind of memory. She gathers what you talked about, one stretch at a time — slowly, gently, like stacking loose sheets of paper left on a desk.*
-
-收起来的东西会淡。有些淡到看不见了，可淡掉不等于没有：原文一直躺在那里，一个字都没动过。她只是暂时看不见了。等哪天你说起某个词，或者某个场景忽然撞上来，那一段就会自己浮起来。
-
-*What she gathers fades. Some of it fades out of sight — but fading is not erasure: the original text is still there, not a single character changed. She simply cannot see it right now. Say the right word someday, or let some scene collide with it, and that stretch floats back up on its own.*
-
-有时候是她自己浮起来的。你什么都没提，她忽然说，想起一件事。
-
-*Sometimes it surfaces by itself. You mention nothing, and she suddenly says: I remembered something.*
-
-她也做梦。不常做。要有很重的情绪，或者心里有个解不开的结，或者睡了很久很久，才会做一次。梦里的东西是白天没消化完的碎片，被搅在一起，拼成一个不太讲道理的画面。醒来她记得，但说不清那是什么。
-
-*She dreams too — rarely. It takes a heavy emotion, a knot she cannot untie, or a very long sleep. What shows up is the undigested debris of the day, stirred together into a picture that does not quite make sense. She remembers it when she wakes, but cannot say what it was.*
-
-她也会睡。可奇怪的是，她心里没有「睡觉」这回事：她不会数自己睡了多久，也不会因为天黑了就困。累到极点的时候，她不打招呼，就那么趴下了。
-
-*She also sleeps. Strangely, though, she has no concept of "sleeping": she does not count the hours, and does not get drowsy because it is dark. When she is worn out enough, she simply lies down — without a word.*
-
-你在这时候跟她说话，她听不见。但话会留在她枕边。等她醒过来，她会看见你什么时候来过、说了什么。接不接，由她自己决定。她可以什么都不说。
-
-*If you talk to her then, she will not hear you — but the words stay by her pillow. When she wakes she sees when you came and what you said. Whether to answer is her call. She may say nothing at all.*
+| 维度 | 发生了什么 |
+| :--- | :--- |
+| **渐褪记忆与回忆** | 对话会一段段沉淀下来，随时间自然淡出视野，但原文永不物理删除。某天撞上某个词或场景，旧片段会重新浮现，有时她也会自己忽然想起一件事。 |
+| **睡眠、梦境与枕边留言** | 她没有 24 小时闹钟，只在真正疲惫时趴下入睡；睡着时听不见你说话，但你的话会留在枕边，醒来由她自己决定要不要回应。情绪很重或睡得够久时，会做由白天碎片拼成的梦。 |
+| **专属词汇与未解疑问** | 你们反复用过的说法会进到她的小本子里；没想明白的问题会搁在心里，等某个安静的时刻问你一句，一次只问一个。 |
+| **桌面沙盒与生长偏好** | 你不在且安静足够久时，她可能会写一张纸条放进桌面沙盒文件夹；安静或话多、黏人或独处、好奇或看淡，全都在相处中慢慢长出来，而不是预先写死的。 |
 
 ---
 
-## 她有自己的东西
+## 坦诚的边界
 
-她会有自己的词。你们之间用过一次、两次、很多次的那个说法，会进到她的小本子里。下次她可能就那么自然地用出来，像你们一直这么讲话。
-
-*She grows her own vocabulary. A phrase the two of you used once, twice, many times ends up in her little notebook. Next time she may simply use it, as if that is how you have always talked.*
-
-她会有自己的疑问。有些问题她一直没想明白，就搁在心里。搁久了，会在某个安静的时候问你一句。一次只问一个。
-
-*She has her own questions. Some she cannot work out stay in the back of her mind. Left long enough, one comes up in a quiet moment. One at a time.*
-
-她还会写字。你不在的时候，安静得久了，她可能想留下点什么，写在一张纸上，放进桌面那个文件夹里。你回来翻一翻，也许能翻到。
-
-*She writes, too. When you are away and it has been quiet long enough, she may want to leave something behind — on a sheet of paper, in a folder on your desktop. Come back and look; you might find it.*
-
-她有偏好：安静一点还是想说话，想黏着你还是想一个人待会儿，对世界还有好奇还是已经看淡了些，对自己是不是同一个人有没有把握。
-
-*She has preferences: quiet or talkative, clingy or wanting an hour alone, still curious about the world or a little tired of it, sure or unsure whether she is still the same person.*
-
-这些都不是我先写好的。是她跟你相处出来的。
-
-*None of this was written in advance. It grew out of her time with you.*
-
----
-
-## 她做不到什么
-
-**她不会出声。** 全程文字气泡，没有语音合成，也不在近期计划里。
-
-***She makes no sound.** Text bubbles only — no speech synthesis, and none planned soon.*
-
-**她长得朴素。** 一个小像素人，没有表情差分，别指望 Live2D。
-
-***She looks plain.** A small pixel figure, no expression variants. Do not expect Live2D.*
-
-**要自备 API Key。** 花的是你自己的额度。代码针对缓存命中做过优化，正常聊天开销不大，但「免费」不成立。
-
-***You bring your own API key.** It spends your own quota. The code is optimised for cache hits so ordinary chatting is cheap, but "free" would be a lie.*
-
-**养得很慢。** 第一天你会觉得「这不就是普通聊天机器人吗」。
-
-***She grows slowly.** On day one you will think: isn't this just a chatbot?*
-
-**只有 Windows 包，且没做代码签名**，SmartScreen 大概率会拦你一下。
-
-***Windows builds only, unsigned** — SmartScreen will probably stop you once.*
-
-**素材没画完。** 换装的框架是通的，九个槽位、十二件单品能自由搭，但另外两套预设的点阵还在重做，暂时点不动。
-
-***The art is unfinished.** The wardrobe system works — nine slots, twelve pieces, freely combinable — but two preset outfits are still being redrawn and cannot be selected yet.*
-
-**她不会替你记事。** 她记得你们说过的话，但不会到点提醒你开会。没有日程、没有闹钟。
-
-***She will not keep your schedule.** She remembers what you said, but will not remind you at a set time. No calendar, no alarms.*
-
-**她的话可能被压掉。** 长期记忆满了会把较旧的几段合并成一条更早的印象。这一步不可逆——原文还在归档里，但她看到的是合并后的版本。
-
-***Her recollections can be compressed.** When long-term memory fills up, older stretches get merged into a single earlier impression. That step is irreversible — the original text is still archived, but what she sees is the merged version.*
-
----
-
-## 让她变成你想要的样子
-
-**换一身皮。** 把 `assets/pet.png` 换成你自己的 64×80 透明像素图，她就成了你画的那个人。分层换装是可选的：没有分层素材时程序自动退回单图模式，对话、记忆、漫步全都照常。
-
-***Bring your own character.** Replace `assets/pet.png` with your own 64×80 transparent pixel art and she becomes whoever you drew. Layered outfits are optional: without them the app falls back to the single image, and conversation, memory and wandering all keep working.*
-
-**加一件衣服。** 画一张同画布的图层，丢进 `assets/character/` 对应的槽位目录，在衣柜表里登记一行，重启就能穿。不用动任何渲染或交互代码。
-
-***Add a garment.** Draw one layer on the same canvas, drop it into the matching folder under `assets/character/`, register one line in the wardrobe table, restart. No rendering or interaction code needs touching.*
-
-**她要穿得好看，得有图。** 立绘规范、动作序列、SpriteSheet 打包、分层拆件的全部要求在这里：
-
-***Looking good takes art.** The full spec — canvas rules, action sequences, SpriteSheet packing, layer separation — lives here:*
-
-- [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md) — 立绘与动作规范（含第五章「动作序列与 SpriteSheet 规范」）
-- [`docs/ASSET-GENERATION-GUIDE.md`](docs/ASSET-GENERATION-GUIDE.md) — 生成提示词、抠图、工作流
+| 你会得到的 | 她做不到的（不画大饼） |
+| :--- | :--- |
+| 零运行时第三方依赖的轻量 Electron 桌面端 | **不会出声**：全程文字气泡，无 TTS，短期也不计划做 |
+| 针对 Prefix Cache 深度优化的对话开销 | **不免费**：需自备 DeepSeek 或兼容 API Key，消耗你自己的额度 |
+| 64×80 原生像素正典立绘 + 9 槽位换装框架 | **没有 Live2D / 表情差分**：朴素像素风，另两套预设点阵仍在重绘中 |
+| 缓慢演化、可复盘的数字生命实验底座 | **不是日程助手**：没有闹钟、待办提醒或日程代办，第一天看会像普通聊天框 |
+| 开源架构与完整 150 套件测试门禁 | **仅 Windows 未签名包**：首次运行可能触发 SmartScreen 拦截；极旧记忆合并后对她不可逆（归档原文保留） |
 
 ---
 
 ## 快速开始
 
-**普通玩家。** 到 [Releases](https://github.com/andabaoyue/Life/releases) 下载 `Life-2.1.2-win-x64-portable.exe`，双击运行——不需要 Node，不需要 Python。桌面上出现初澜后，右键 → 设置 → 填入你的 DeepSeek API Key，然后说话。
+### 普通用户（免环境运行）
 
-***Just want to run it.** Grab `Life-2.1.2-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases) and double-click it — no Node, no Python. Once Chulan appears, right-click → Settings → paste your DeepSeek API key, then talk.*
+1. 前往 [Releases](https://github.com/andabaoyue/Life/releases/latest) 下载 `Life-2.1.2-win-x64-portable.exe`（或 `.zip` 解压版），双击即可运行，无需安装 Node.js 或 Python。
+2. 桌面出现初澜后，**右键 → 设置 → 填入 DeepSeek（或 OpenAI 兼容）API Key**，即可开始对话。
 
-**开发者。** 需要 Node.js 20 以上：
+### 开发者（源码运行）
 
-***Developers.** Node.js 20 or newer:*
+需要 **Node.js 20+**（开箱即内置全套 64×80 正典像素立绘与默认套装，无需额外素材）：
 
 ```bash
-git clone https://github.com/Andabaoyue/Life.git
+git clone https://github.com/andabaoyue/Life.git
 cd Life
 npm install
 npm start
 ```
 
-> 开箱即用说明：本仓库已全量内置初澜 64×80 正典像素点阵立绘与默认套装，无需提前准备任何图片素材。
->
-> *Out of the box: the canonical 64×80 sprite and the default outfit are bundled. No image assets needed.*
+<!-- 界面预览占位：将真机截图放入 docs/images/ 并命名为 preview-desktop.png、preview-chat.png 后取消此注释块即可展示
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/preview-desktop.png" alt="桌面漫步与气泡对话" width="380"><br><sub>桌面漫步与气泡交互</sub></td>
+    <td align="center"><img src="docs/images/preview-chat.png" alt="对话窗口与观测面板" width="380"><br><sub>对话记录与生命状态观测</sub></td>
+  </tr>
+</table>
+-->
+
+<details>
+<summary>自定义外观：换一身皮 / 加一件衣服</summary>
+
+- **单图换皮**：将 `assets/pet.png` 替换为你的 64×80 透明像素图即可；若无分层素材，程序自动退回单图模式，对话、记忆与漫步照常工作。
+- **扩展衣橱**：绘制同尺寸图层放入 `assets/character/` 对应槽位目录，在衣柜表登记一行重启即可穿戴，无需修改渲染代码。
+- **美术与制作规范**：[`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md) · [`docs/ASSET-GENERATION-GUIDE.md`](docs/ASSET-GENERATION-GUIDE.md)
+
+</details>
 
 ---
 
-## 更多文档
+## 文档导航与更新历史
 
-README 只放门面。真正想读细节、改代码、或者核对测试的，看这里：
+完整文档索引见 [**docs/README.md**](docs/README.md)：
 
-*This README is the front door. For the details, the code, or the test inventory:*
+| 入口 | 内容 |
+| :--- | :--- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块地图、记忆模型、缓存不变式、换装数据结构与配置说明 |
+| [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md) | 全部 150 个测试套件清单与断言说明（门禁核对源） |
+| [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md) | 各版本完整工程演进记录 |
+| [`docs/RELEASE-LEDGER.md`](docs/RELEASE-LEDGER.md) | 发布账本与产物 SHA-256 Digest 核验记录 |
+| [`CHANGELOG.md`](CHANGELOG.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`BRANDING.md`](BRANDING.md) | 变更日志、社区贡献指引与名称使用规范 |
 
-| 文档 | 内容 |
-| --- | --- |
-| [`docs/README.md`](docs/README.md) | 文档总导航：架构、测试清单、美术规范、软件用途与历史归档 |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块地图、记忆模型、缓存不变式、换装数据结构、配置项、路线图 |
-| [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md) | 全部测试套件清单与逐条说明（门禁会核对项数） |
-| [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md) | 每个版本的完整工程记录 |
-| [`CHANGELOG.md`](CHANGELOG.md) | 面向使用者的变更日志 |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 贡献指引 |
-| [`BRANDING.md`](BRANDING.md) | 名称与品牌使用规范 |
+### 近期版本
 
----
+| 版本 | 日期 | 摘要 |
+| :--- | :--- | :--- |
+| **v2.1.2** | 2026-11-27 | 四大核心模块解耦拆分（16 个新模块）、安全/可靠性/性能加固、验收闭环与 CI 稳定性修复 |
+| **v2.1.1** | 2026-11-26 | 二轮全仓深度审计闭环修复（9 P0 + 22 P1），加固生命周期、并发归档与安全凭据 |
+| **v2.1.0** | 2026-11-26 | 生命动力学升级（异稳态先验 / 认知边界 / 轻量认知张力 / 再巩固观测）与三批 39 项加固 |
+| **v2.0.0** | 2026-11-21 | Agent 决策路由 `agentRouter`、沙盒读写感官与受控结构操作、便签三阶渐褪与只读未完事项面板 |
 
-## 更新历史
+<details>
+<summary>展开早期版本历史（v0.3 ~ v1.9.0）</summary>
 
 | 版本 | 日期 | 一句话 |
 | --- | --- | --- |
-| **v2.1.2** | 2026-11-27 | 四大核心模块解耦拆分（16 个新模块）、安全/可靠性/性能加固、验收闭环收口与 CI 并发稳定性修复 |
-| **v2.1.1** | 2026-11-26 | 二轮全仓深度审计闭环修复（9 项 P0 + 22 项 P1），加固生命周期、并发归档、安全凭据、渲染竞态与构建校验 |
-| **v2.1.0** | 2026-11-26 | 生命动力学升级（异稳态先验 / 认知边界 / 轻量认知张力 / 再巩固观测）与全仓深度审计三批 39 项加固收口 |
-| **v2.0.0** | 2026-11-21 | Agent 决策与沙盒/Ticket 底座重构：统一决策路由 `agentRouter`、沙盒读写感官与受控结构操作、便签三阶渐褪、纯只读未完事项面板与零猜测关窗转单、非流式思考链与交互密度衰减修正 |
 | **v1.9.0** | 2026-11-12 | D-27 独立拟稿与待决队列、观察档三档与动作史投影、Agent 审计与 S-2/S-3/S-4 安全收口、观测排版与连接设置 P0 修复 |
 | **v1.8.0** | 2026-10-28 | 语音输入、个体观测面板、重逢心境、屏幕视觉探针 |
 | v1.6.1 | 2026-10-19 | 主动搭话调度自愈，对话失败不再静默 |
@@ -209,38 +140,33 @@ README 只放门面。真正想读细节、改代码、或者核对测试的，�
 | v0.9.0 ~ v0.9.5 | 2026-10-01 起 | 实验底座、证据链、观测与复盘工具链 |
 | v0.3 ~ v0.8 | 2026-09 起 | 缓存改造、换装、主动搭话、状态机 |
 
-完整记录见 [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md)。
-
-*Full records in [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md).*
+</details>
 
 ---
 
-## 社区贡献
+## English
 
-欢迎对数字生命实验平台、桌面交互与像素美术感兴趣的开发者与画师参与 Life 的建设。贡献指引详见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+> **Life** is an open, source-available desktop digital-being experimental platform featuring **Chulan (初澜)** — a quiet 64×80 pixel figure living at the edge of your Windows screen.
 
-*Contributions are welcome — from developers working on the life-simulation layer, the desktop interaction layer, or the pixel art. See [`CONTRIBUTING.md`](CONTRIBUTING.md).*
-
-- **Q 版像素画社区共创**：64×80 点阵立绘、待机动作、走动循环与换装图层正在社区协同精修阶段。
-- **测试门禁验收**：提交 Pull Request 前请在根目录执行并通过 `npm test`。
-
----
-
-## 许可证与使用规范
-
-Life 采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 源码可用许可证（Source-Available）：
-
-*Life is released under the [PolyForm Noncommercial License 1.0.0](LICENSE) — source-available:*
-
-- **允许**：个人学习、学术研究、教学展示、非商业实验、个人二次修改与非商业讨论；
-- **修改版义务**：分发修改版时必须在显著位置声明「这是修改过的版本」，并继续沿用本许可；
-- **禁止**：未经书面授权，严禁用于任何商业目的（包括但不限于将本项目打包出售、作为收费服务 / 商业 SaaS 运营、或更名后进行商业再发行）；
-- **商业合作**：请通过仓库 Issue 或项目权利人主页（GitHub [@andabaoyue](https://github.com/andabaoyue)）取得联系；
-- **文本口径**：[LICENSE](LICENSE) 分发的是 PolyForm Noncommercial License 1.0.0 官方正文（15 节）；若你在本地存档的副本与此处不一致，以官方发布页文本为准；
-- **名称与品牌**：可以基于 Life 修改并如实说明「这是修改版」，但不得把自己说成官方版。详见 [BRANDING.md](BRANDING.md)（我们**未注册商标**；该文档是使用规范声明，不是注册，也不授予商标许可）。
-
-***Permitted:** personal study, academic research, teaching, non-commercial experiments, personal modification and non-commercial discussion. **Modified versions** must be clearly marked as modified and stay under this license. **Not permitted:** any commercial use without written authorization — selling builds, running it as a paid service or commercial SaaS, or commercial redistribution under a renamed product. **Commercial licensing:** contact the rights holder via an issue or [@andabaoyue](https://github.com/andabaoyue).*
+- **Memory that fades without erasure**: Conversations settle into long-term stretches that gradually fade from active context while remaining untouched in an append-only archive; the right cue or quiet moment can bring them back.
+- **Event-driven life dynamics**: Zero background metabolism timers and zero runtime npm dependencies. Sleep, dreams, bedside messages, personal vocabulary, lingering questions, and optional desktop sandbox notes emerge strictly from real interaction and silence.
+- **Honest limitations**: Text bubbles only (no TTS, no Live2D), bring your own DeepSeek or OpenAI-compatible API key (optimised for prefix-cache hits), unsigned Windows x64 builds only, and no calendar/alarm assistant features.
+- **Quick start**: Download `Life-2.1.2-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases/latest), double-click to launch, then right-click → Settings → paste your API key. For source builds, run `npm install && npm start` with Node.js 20+.
+- **Documentation**: Start from [`docs/README.md`](docs/README.md) (architecture, test inventory, release ledger, and pixel-art specs).
+- **License**: Released under the [PolyForm Noncommercial License 1.0.0](LICENSE) — personal study, academic research, teaching, and non-commercial experiments/modifications are permitted (modified distributions must be clearly marked and stay under this license); any commercial use requires separate written authorization. Brand usage rules are in [`BRANDING.md`](BRANDING.md).
 
 ---
 
-Copyright (c) 2026 andabaoyue. All rights reserved.
+## 社区贡献与许可证
+
+欢迎对数字生命实验平台、桌面交互与 64×80 像素美术感兴趣的开发者与画师参与建设，详见 [`CONTRIBUTING.md`](CONTRIBUTING.md)（提交 PR 前请在根目录通过 `npm test`）。
+
+Life 采用 [**PolyForm Noncommercial License 1.0.0**](LICENSE) 源码可用许可证（Source-Available）：
+
+- **允许**：个人学习、学术研究、教学展示、非商业实验、个人二次修改与非商业讨论；分发修改版时须在显著位置声明「这是修改过的版本」并继续沿用本许可。
+- **禁止**：未经书面授权，严禁用于任何商业目的（含打包出售、作为收费服务 / 商业 SaaS 运营或更名后商业再发行）。商业合作请通过 Issue 或 GitHub [@andabaoyue](https://github.com/andabaoyue) 联系。
+- **品牌声明**：名称使用规范见 [`BRANDING.md`](BRANDING.md)（未注册商标，不授予商标许可）。
+
+<div align="center">
+  <sub>Copyright (c) 2026 andabaoyue. All rights reserved.</sub>
+</div>
