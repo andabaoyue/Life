@@ -230,12 +230,13 @@ async function requestChatCompletion({ cfg, body, signal, provider, credentialTy
     };
 
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 0) {
+        headers.Authorization = 'Bearer ' + cfg.apiKey;
+      }
       res = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + cfg.apiKey
-        },
+        headers,
         body: JSON.stringify(body),
         redirect: 'error',
         signal: signal || fallbackCtrl.signal

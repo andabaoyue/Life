@@ -439,10 +439,14 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       if (sourceEventIds.some(id => !known.has(id))) throw new Error('DREAM_EVENT_CROSS_REFERENCE_FAILED');
     }
 
-    const res = await apiClient.complete(promptMessages, {
+    const completeOpts = {
       maxTokens: cfg.dreamMaxTokens,
       temperature: cfg.dreamTemperature
-    });
+    };
+    if (typeof options.allowLocalFallback === 'boolean') {
+      completeOpts.allowLocalFallback = options.allowLocalFallback;
+    }
+    const res = await apiClient.complete(promptMessages, completeOpts);
 
     const content = String(res.text || '').trim();
     if (!content) return null;
@@ -651,6 +655,10 @@ async function synthesizeDream(apiClient, promptMessages, context = {}, options 
       generatedAt: now
     };
   } catch (err) {
+    if (err && (err.code === 'LOCAL_FALLBACK_DEFERRED' || err.deferredByLocalGuard === true)) {
+      console.log(`[DreamSystem] 窗口 #${windowNo} 云端降级期间暂缓本地小模型梦境合成`);
+      return null;
+    }
     console.error(`[DreamSystem] 窗口 #${windowNo} 梦境合成调用失败 (Fail-Safe 保障):`, redactSecrets(err.message));
     return null;
   }

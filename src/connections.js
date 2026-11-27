@@ -30,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeJsonAtomic } = require('./atomic');
-const { validateCredentialTarget } = require('./provider-policy');
+const { validateCredentialTarget, providerFor } = require('./provider-policy');
 const {
   parseCredentialRef,
   isLegacyProtectedRef,
@@ -504,7 +504,8 @@ function resolveRuntimeCfg(connection, opts = {}) {
       ? (typeof opts.fallbackSecret === 'string' ? opts.fallbackSecret : '')
       : ''
   });
-  if (!apiKey) return { ok: false, error: 'CREDENTIAL_UNAVAILABLE' };
+  const isLocal = connection.providerId === 'local' && providerFor(connection.baseURL) === 'local';
+  if (!apiKey && !isLocal) return { ok: false, error: 'CREDENTIAL_UNAVAILABLE' };
   return {
     ok: true,
     cfg: {
@@ -512,7 +513,7 @@ function resolveRuntimeCfg(connection, opts = {}) {
       baseURL: connection.baseURL,
       credentialType: credentialTypeFromRef(connection.credentialRef),
       model: connection.activeModel,
-      apiKey
+      apiKey: apiKey || ''
     }
   };
 }

@@ -142,6 +142,7 @@ class WindowClosingPipeline {
     const segPlan = summarySegmentPlan(snap.actualTurnCount);
     const openExps = ((b.memory && b.memory.data && b.memory.data.expectations) || [])
       .filter((x) => x && x.status === 'open');
+    const allowLocalFallback = Boolean(b.cfg && b.cfg.deferCloseWindowOnLocalFallback === false);
     try {
       const apiCompleteRes = await b.api.complete(
         [{ role: 'system', content: SUMMARY_SYS },
@@ -150,7 +151,7 @@ class WindowClosingPipeline {
            + '\n\n【待核验预期清单】\n' + (openExps.length
              ? openExps.map((x) => '- [' + x.id + '] ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')).join('\n')
              : '暂无') }],
-        { maxTokens: summaryMaxTokens, temperature: 0.2 }
+        { maxTokens: summaryMaxTokens, temperature: 0.2, allowLocalFallback }
       );
       const { text, usage, observedModel } = apiCompleteRes;
       b.track(usage, true, 'summary');
@@ -646,6 +647,12 @@ class WindowClosingPipeline {
       }
       return done;
     } catch (e) {
+      if (e && (e.code === 'LOCAL_FALLBACK_DEFERRED' || e.deferredByLocalGuard === true)) {
+        // v2.2-c: 云端不可用且备用为本地轻量模型时，温和退避延后关窗，不记作关窗异常失败也不污染长期记忆
+        b.windowCloseRetryAfterTurn = ((b.memory && b.memory.data) ? b.memory.data.turnsInWindow : 0) + 2;
+        console.log(`[Brain] 云端降级期间暂缓本地小模型关窗总结，保留窗口内容，退避至第 ${b.windowCloseRetryAfterTurn} 轮起重试`);
+        return false;
+      }
       console.error('window summary failed:', redactSecrets(e.message));
       b._noteWindowCloseFailure('SUMMARY_EXCEPTION: ' + redactSecrets(e.message));
       return false;
@@ -955,6 +962,7 @@ class WindowClosingPipeline {
             : ((ctx.fromSleep === true && staging && Number.isFinite(staging.at)) ? staging.at : null)
         }, {
           ...(b.cfg.dreamConfig || {}),
+          allowLocalFallback: Boolean(b.cfg && b.cfg.deferCloseWindowOnLocalFallback === false),
           now
         });
 

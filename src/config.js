@@ -128,6 +128,7 @@ const DEFAULTS = {
   fallbackConnectionId: '',        // 空串 = 未配置备用
   fallbackFailureThreshold: 3,
   fallbackCooldownMs: 30000,
+  deferCloseWindowOnLocalFallback: true, // v2.2-c: 默认阻止本地小模型代跑关窗/成长/合并/梦境，高配本机可手动设 false 放行
 
   // 单价（元/百万 token）。峰谷价不同，按你账单实际数字改这里。
   price: {
@@ -270,6 +271,7 @@ function sanitize(raw = {}) {
     fallbackConnectionId: typeof raw.fallbackConnectionId === 'string' ? raw.fallbackConnectionId.trim() : DEFAULTS.fallbackConnectionId,
     fallbackFailureThreshold: finiteInt(raw.fallbackFailureThreshold, DEFAULTS.fallbackFailureThreshold, 1, 100),
     fallbackCooldownMs: finiteInt(raw.fallbackCooldownMs, DEFAULTS.fallbackCooldownMs, 1000, 3600000),
+    deferCloseWindowOnLocalFallback: raw.deferCloseWindowOnLocalFallback !== false,
     price: {
       peak: { hit: finiteNonNegative(peak.hit, DEFAULTS.price.peak.hit), miss: finiteNonNegative(peak.miss, DEFAULTS.price.peak.miss), out: finiteNonNegative(peak.out, DEFAULTS.price.peak.out) },
       valley: { hit: finiteNonNegative(valley.hit, DEFAULTS.price.valley.hit), miss: finiteNonNegative(valley.miss, DEFAULTS.price.valley.miss), out: finiteNonNegative(valley.out, DEFAULTS.price.valley.out) }

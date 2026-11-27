@@ -99,7 +99,11 @@ contextBridge.exposeInMainWorld('deskpet', {
     update: (connectionId, patch, credential) => ipcRenderer.invoke('connections:update', { connectionId, patch, credential }),
     delete: (connectionId, deleteCredential) => ipcRenderer.invoke('connections:delete', { connectionId, deleteCredential }),
     test: (connectionId) => ipcRenderer.invoke('connections:test', { connectionId }),
-    activate: (connectionId) => ipcRenderer.invoke('connections:activate', { connectionId })
+    activate: (connectionId) => ipcRenderer.invoke('connections:activate', { connectionId }),
+    probeLocal: (opts) => ipcRenderer.invoke('connections:probe-local', {
+      baseURL: opts && typeof opts.baseURL === 'string' ? opts.baseURL : '',
+      model: opts && typeof opts.model === 'string' ? opts.model : ''
+    })
   },
 
   // 🔴 v1.7-a：STT 语音识别（凭据只进不出 —— 可写入密钥，绝无回读）。

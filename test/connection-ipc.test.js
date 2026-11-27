@@ -281,7 +281,7 @@ const invoke = async (ch, arg) => handlers.get(ch)(trustedEvent(), arg);
     .map((f) => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n');
   check('19 SEC-01 回归：connections:* 全经 ipcGuard（main.js 无裸 ipcMain.handle/on）',
     !mainSrc.includes('ipcMain.handle(') && !mainSrc.includes('ipcMain.on(') &&
-    (mainSrc.match(/ipcGuard\.handle\('connections:/g) || []).length === 7);
+    (mainSrc.match(/ipcGuard\.handle\('connections:/g) || []).length === 8);
 
   /* ---- 15/16：UI 接线（源码级） ---- */
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');

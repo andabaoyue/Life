@@ -31,6 +31,8 @@ const {
 } = require('../provider-adapter');
 const { normalizeUsage } = require('../usage-normalizer');
 const { redactSecrets } = require('../redact');
+const { providerFor } = require('../provider-policy');
+const { probeLocalEndpoint } = require('../local-probe');
 
 function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
   const providerId = String(opts.providerId || cfg.provider || 'generic');
@@ -53,7 +55,8 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
         problems.push('baseURL invalid');
       }
       if (!cfg || typeof cfg.model !== 'string' || !cfg.model.trim()) problems.push('model missing');
-      if (!cfg || typeof cfg.apiKey !== 'string' || !cfg.apiKey.trim()) problems.push('apiKey missing');
+      const isLocal = providerFor(cfg && cfg.baseURL) === 'local';
+      if (!isLocal && (!cfg || typeof cfg.apiKey !== 'string' || !cfg.apiKey.trim())) problems.push('apiKey missing');
       return { ok: problems.length === 0, problems };
     },
 
@@ -343,8 +346,36 @@ function createOpenAICompatibleAdapter(cfg = {}, opts = {}) {
     normalizedUsage() {
       return lastNormalizedUsage;
     }
-    // healthCheck 为可选契约项，本轮不实现
   };
+
+  // v2.2-c: 仅当端点属于回环本地（Ollama / llama-server 等）时挂载零推理原生探活 healthCheck；
+  // 非本地端点坚决保持无 healthCheck 声明（兼容 test/connection-ipc.test.js）。
+  if (providerFor(cfg && cfg.baseURL) === 'local') {
+    adapter.healthCheck = async (probeOpts = {}) => {
+      const res = await probeLocalEndpoint(cfg && cfg.baseURL, {
+        expectedModel: cfg && cfg.model,
+        timeoutMs: probeOpts.timeoutMs,
+        fetchImpl: probeOpts.fetchImpl
+      });
+      if (res.reachable && res.modelMatched !== false) {
+        return {
+          ok: true,
+          serverKind: res.serverKind,
+          models: res.models,
+          modelMatched: res.modelMatched
+        };
+      }
+      return {
+        ok: false,
+        reason: res.reachable && res.modelMatched === false
+          ? 'LOCAL_MODEL_NOT_FOUND'
+          : (res.reason || 'LOCAL_SERVER_UNREACHABLE'),
+        serverKind: res.serverKind,
+        models: res.models,
+        modelMatched: res.modelMatched
+      };
+    };
+  }
 
   const contract = validateAdapterContract(adapter);
   if (!contract.ok) {

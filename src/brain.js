@@ -1545,7 +1545,14 @@ class Brain {
     const sandboxNotice = (opts && opts.sandboxUnavailable)
       ? '【系统环境事实：本机桌面沙盒目录本次初始化失败，落盘能力已关闭。persona 里「你可以在那里留下文字」这一条此刻不成立，不要承诺或假装写过任何文件。】'
       : '';
-    const dynamicBody = [currentSelf, involuntarySnippet, perceptionSnippet, shouldAttach ? envText : '', sandboxInventoryNote, sandboxNotice].filter(Boolean).join('\n\n');
+    // v2.2-c：云端主链路熔断且回落本地轻量模型时，仅于 dynamicBody 尾部注入诚实降级事实行（不动 systemText / history）
+    const localOfflineNotice = (
+      this.api && this.api.isSecondaryLocal &&
+      typeof this.api.isPrimaryDegraded === 'function' && this.api.isPrimaryDegraded()
+    )
+      ? '【系统环境事实】当前云端链路暂不可用，本次对话由本地轻量模型维持浅层离线陪伴（长程记忆归档将待云端恢复后继续）。'
+      : '';
+    const dynamicBody = [currentSelf, involuntarySnippet, perceptionSnippet, shouldAttach ? envText : '', sandboxInventoryNote, sandboxNotice, localOfflineNotice].filter(Boolean).join('\n\n');
     // v0.9.9: 瞬时上下文挂在 user 尾部是护缓存的必要设计，但必须标明程序注入身份 ——
     // 否则模型会把状态快照误认成用户贴来的内容（实测她真的以为用户在「贴表」）
     const dynamicContext = dynamicBody
@@ -1836,7 +1843,11 @@ class Brain {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: MERGE_SYS },
          { role: 'user', content: body }],
-        { maxTokens: 400, temperature: 0.2 }
+        {
+          maxTokens: 400,
+          temperature: 0.2,
+          allowLocalFallback: Boolean(this.cfg && this.cfg.deferCloseWindowOnLocalFallback === false)
+        }
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'merge');
@@ -1867,6 +1878,10 @@ class Brain {
       this.saveStats(true);
       return true;
     } catch (e) {
+      if (e && (e.code === 'LOCAL_FALLBACK_DEFERRED' || e.deferredByLocalGuard === true)) {
+        console.log('[Brain] 云端降级期间暂缓本地小模型执行记忆合并，保留既有记忆切片');
+        return false;
+      }
       console.error('memory merge failed:', redactSecrets(e.message));
       return false;
     }
@@ -2192,7 +2207,11 @@ class Brain {
       const apiCompleteRes = await this.api.complete(
         [{ role: 'system', content: GROWTH_SYS },
          { role: 'user', content: userContent }],
-        { maxTokens: this.cfg.growthMaxTokens || 4000, temperature: 0.15 }
+        {
+          maxTokens: this.cfg.growthMaxTokens || 4000,
+          temperature: 0.15,
+          allowLocalFallback: Boolean(this.cfg && this.cfg.deferCloseWindowOnLocalFallback === false)
+        }
       );
       const { text, usage, observedModel } = apiCompleteRes;
       this.track(usage, true, 'growth');

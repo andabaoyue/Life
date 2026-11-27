@@ -123,6 +123,19 @@ class TelemetryTracker {
    */
   track(usage, summary = false, bucket = summary ? 'summary' : 'chat') {
     const b = this.brain;
+    // v2.2-c: 本地 SLM / OpenAI 兼容流式响应可能省略 usage（返回 null）；
+    // 仅如实累计请求次数，不崩溃、也不伪造 0 token / 0 成本遥测或覆盖命中率。
+    if (!usage || typeof usage !== 'object') {
+      if (summary) {
+        if (bucket === 'summary') {
+          b.stats.summaryCalls = (b.stats.summaryCalls || 0) + 1;
+        }
+      } else {
+        b.stats.requests++;
+      }
+      b.saveStats();
+      return;
+    }
     const hit = usage.prompt_cache_hit_tokens || 0;
     const miss = usage.prompt_cache_miss_tokens || 0;
     const out = usage.completion_tokens || 0;

@@ -2,6 +2,7 @@ const connectionsMod = require('./connections');
 const secureCreds = require('./secure-credentials');
 const { activateConnection } = require('./connection-switch');
 const { runConnectionTest } = require('./connection-test');
+const { probeLocalEndpoint } = require('./local-probe');
 const { Brain } = require('./brain');
 
 /**
@@ -165,6 +166,23 @@ function createConnectionsController(ctx) {
       clearAuthFailureBackoff();
       scheduleProactiveCheck(COOLDOWN_MS);
       return { ok: true, activeConnectionId: r.activeConnectionId, swapped: true };
+    });
+
+    ipcGuard.handle('connections:probe-local', async (e, opts = {}) => {
+      const safeOpts = safeObj(opts);
+      const baseURL = typeof safeOpts.baseURL === 'string' ? safeOpts.baseURL.trim() : '';
+      const expectedModel = typeof safeOpts.model === 'string' ? safeOpts.model.trim() : '';
+      if (!baseURL) {
+        return {
+          ok: false,
+          reachable: false,
+          serverKind: 'unknown',
+          models: [],
+          modelMatched: null,
+          reason: 'NON_LOCAL_HOST_REJECTED'
+        };
+      }
+      return await probeLocalEndpoint(baseURL, { expectedModel });
     });
   }
 

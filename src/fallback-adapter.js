@@ -11,6 +11,15 @@
  */
 
 const { createCircuitBreaker } = require('./circuit-breaker');
+const { providerFor } = require('./provider-policy');
+
+function makeLocalFallbackDeferredError(cause = null) {
+  const err = new Error('LOCAL_FALLBACK_DEFERRED');
+  err.code = 'LOCAL_FALLBACK_DEFERRED';
+  err.deferredByLocalGuard = true;
+  err.primaryError = cause || null;
+  return err;
+}
 
 /**
  * 回落判据（单一真源）
@@ -53,6 +62,7 @@ function createFallbackAdapter({
   }
 
   const activeBreaker = breaker || createCircuitBreaker();
+  const isSecondaryLocal = Boolean(secondary && secondary.cfg && providerFor(secondary.cfg.baseURL) === 'local');
   let lastUsage = null;
 
   async function doFallbackComplete(cause, msgs, opts) {
@@ -63,7 +73,8 @@ function createFallbackAdapter({
         onFallback({
           reason: cause ? (cause.errorType || (cause.name === 'TimeoutError' ? 'timeout' : 'server_error')) : 'breaker_open',
           primaryFailed: Boolean(cause),
-          at: Date.now()
+          at: Date.now(),
+          ...(isSecondaryLocal ? { usedLocalFallback: true } : {})
         });
       }
       return r;
@@ -84,8 +95,12 @@ function createFallbackAdapter({
         onFallback({
           reason: cause ? (cause.errorType || (cause.name === 'TimeoutError' ? 'timeout' : 'server_error')) : 'breaker_open',
           primaryFailed: Boolean(cause),
-          at: Date.now()
+          at: Date.now(),
+          ...(isSecondaryLocal ? { usedLocalFallback: true } : {})
         });
+      }
+      if (isSecondaryLocal && r && typeof r === 'object') {
+        return { ...r, usedLocalFallback: true };
       }
       return r;
     } catch (fallbackErr) {
@@ -104,6 +119,11 @@ function createFallbackAdapter({
     get primary() { return primary; },
     get secondary() { return secondary; },
     get breaker() { return activeBreaker; },
+    get isSecondaryLocal() { return isSecondaryLocal; },
+
+    isPrimaryDegraded() {
+      return Boolean(activeBreaker && typeof activeBreaker.getState === 'function' && activeBreaker.getState().state === 'open');
+    },
 
     validateConfig() {
       return typeof primary.validateConfig === 'function'
@@ -130,6 +150,8 @@ function createFallbackAdapter({
     },
 
     async complete(msgs, opts = {}) {
+      const blockLocalFallback = Boolean(opts && opts.allowLocalFallback === false && isSecondaryLocal);
+
       // 未配置备用：退化为纯熔断保护（快速失败，不改变既有单端点行为）
       if (!secondary) {
         if (!activeBreaker.allowAttempt()) {
@@ -172,6 +194,9 @@ function createFallbackAdapter({
           }
           activeBreaker.recordFailure();
           settled = true;
+          if (blockLocalFallback) {
+            throw makeLocalFallbackDeferredError(err);
+          }
           return await doFallbackComplete(err, msgs, opts);
         } finally {
           if (!settled && typeof activeBreaker.releaseHalfOpenProbe === 'function') {
@@ -180,7 +205,10 @@ function createFallbackAdapter({
         }
       }
 
-      // 主端点熔断中（open）：直接走备用端点
+      // 主端点熔断中（open）：直接走备用端点（若本地兜底守卫拦截，则延后不降级小模型）
+      if (blockLocalFallback) {
+        throw makeLocalFallbackDeferredError(null);
+      }
       return await doFallbackComplete(null, msgs, opts);
     },
 

@@ -75,8 +75,16 @@ async function runConnectionTest(dir, connectionId, opts = {}) {
   if (typeof adapter.healthCheck === 'function') {
     try {
       const h = await adapter.healthCheck();
-      if (h && h.ok !== false) return { ok: true, status: 'verified', phase: 'healthCheck' };
-      return { ok: true, status: 'failed', phase: 'healthCheck', reason: 'HEALTHCHECK_FAILED' };
+      const extra = {};
+      if (h && typeof h.serverKind === 'string' && h.serverKind) extra.serverKind = h.serverKind;
+      if (h && Array.isArray(h.models)) extra.models = h.models;
+      if (h && h.modelMatched !== undefined) extra.modelMatched = h.modelMatched;
+      if (h && h.ok !== false) {
+        return { ok: true, status: 'verified', phase: 'healthCheck', ...extra };
+      }
+      const reason = (h && typeof h.reason === 'string' && h.reason.trim())
+        ? h.reason.trim() : 'HEALTHCHECK_FAILED';
+      return { ok: true, status: 'failed', phase: 'healthCheck', reason, ...extra };
     } catch (e) {
       return { ok: true, status: 'failed', phase: 'healthCheck', reason: 'HEALTHCHECK_FAILED: ' + e.message };
     }
