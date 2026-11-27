@@ -302,6 +302,7 @@
           <div class="r-subtabs" id="rStateSubtabs">
             <button class="r-subtab active" data-subtab="subject">主体状态</button>
             <button class="r-subtab" data-subtab="obs">机制遥测</button>
+            <button class="r-subtab" data-subtab="trajectory">历时轨迹</button>
           </div>
 
           <!-- 子页 A：主体状态（非遥测项） -->
@@ -327,6 +328,13 @@
               </div>
             </div>
             <div id="rObsGroups"></div>
+          </div>
+
+          <!-- 子页 C：双尺度历时轨迹看板（1 窗起即生效；全只读） -->
+          <div id="rSubPaneTrajectory" class="r-subpane hidden">
+            <div class="r-section-title" id="rTrajTitle">双尺度历时轨迹（只读）</div>
+            <div id="rTrajMicro" class="r-traj-section"></div>
+            <div id="rTrajMacro" class="r-traj-section"></div>
           </div>
         </div>
 

@@ -89,7 +89,9 @@
       }
       if (typeof v === 'number') {
         if (!Number.isFinite(v)) return { text: dash, kind: 'null' };
-        if (key === 'confidence' || key === 'revisionPressure' || key === 'promiseFidelity') {
+        if (key === 'confidence' || key === 'revisionPressure' || key === 'promiseFidelity'
+          || key === 'closureRatio' || key === 'plasticityMultiplier'
+          || key === 'expectationFulfillRate' || key === 'selfNoteEngraveRate') {
           const pct = (v * 100).toFixed(1).replace(/\.0$/, '');
           return { text: pct + '%', kind: 'num' };
         }
@@ -116,7 +118,8 @@
 
     function resolveObsMeter(key, v, item, rootVal) {
       if (typeof v !== 'number' || !Number.isFinite(v)) return null;
-      if (key === 'dims' || key === 'min' || key === 'max' || key === 'windowNo' || key === 'archiveSeq' || key === 'cooldownUntil') {
+      if (key === 'dims' || key === 'min' || key === 'max' || key === 'windowNo' || key === 'archiveSeq' || key === 'cooldownUntil'
+        || key === 'completedWindows' || key === 'verified' || key === 'rejected' || key === 'sampleSize') {
         return null;
       }
       if (item && Array.isArray(item.range) && item.range.length === 2) {
@@ -684,6 +687,9 @@
       if (subSubject) subSubject.textContent = t('research.state.subtabSubject');
       const subObs = document.querySelector('#rStateSubtabs .r-subtab[data-subtab="obs"]');
       if (subObs) subObs.textContent = t('research.state.subtabObs');
+      const subTraj = document.querySelector('#rStateSubtabs .r-subtab[data-subtab="trajectory"]');
+      if (subTraj) subTraj.textContent = t('research.state.subtabTrajectory');
+      setText('rTrajTitle', 'research.trajectory.title');
       syncObsToggleAllBtn();
       setText('rWindowSelectLabel', 'research.windows.selectLabel');
       document.querySelectorAll('.r-seg-btn').forEach(b => {

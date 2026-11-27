@@ -1186,6 +1186,7 @@ class InternalRegulationManager {
       salienceThreshold: this.salienceThreshold,
       recentTransitionsCount: this.history.length,
       sleepStartTime: this.isSleeping && Number.isFinite(this.sleepStartTime) ? this.sleepStartTime : null,
+      lastWindowTension: this.enabled && Number.isFinite(this.lastWindowTension) ? this.getLastWindowTension() : null,
       allostasis: this.allostasisEnabled ? this.allostasisPrior.getSummary() : null,
       allostasisState: (extra && extra.allostasis && !extra.allostasisState)
         ? null

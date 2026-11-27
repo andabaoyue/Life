@@ -170,6 +170,12 @@ function registerResearchIpc(ipcMain, researchService, options = {}) {
   ipcMain.handle('research:get-hashes', () => {
     return researchService.computeIntegrityHashes();
   });
+
+  // 14. 双尺度历时轨迹只读聚合 (v2.2-b)
+  ipcMain.handle('research:get-trajectory', (e, opts) => {
+    const safeOpts = (opts && typeof opts === 'object') ? { maxWindows: opts.maxWindows } : {};
+    return researchService.query.getTrajectorySummary(safeOpts);
+  });
 }
 
 module.exports = { registerResearchIpc };

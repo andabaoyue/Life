@@ -95,6 +95,7 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
       mentionCount: 3,
       lastMentionedWindow: 1,
       lastTouchedWindow: 1,
+      lastWindowTension: 0.6184,
       epistemicGain: SENTINEL_VALUES.epistemicGain
     });
   }

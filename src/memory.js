@@ -582,7 +582,11 @@ class Memory {
           item.mentionCount = Math.min(5, (Number(item.mentionCount) || 0) + 1);
           item.lastMentionedWindow = curWin;
           item.lastTouchedWindow = curWin;
-          item.epistemicGain = computeCuriosityGain(item, curWin, 0);
+          item.epistemicGain = computeCuriosityGain(
+            item,
+            curWin,
+            Number.isFinite(item.lastWindowTension) ? item.lastWindowTension : 0
+          );
           curiosityTouched = true;
         }
       }
@@ -877,7 +881,9 @@ class Memory {
       return this.data.curiosityQueue;
     }
 
-    const windowTension = (opts && Number.isFinite(opts.windowTension)) ? opts.windowTension : 0;
+    const windowTension = (opts && Number.isFinite(opts.windowTension))
+      ? Math.max(0, Math.min(1, opts.windowTension))
+      : 0;
     const merged = queue.concat(incoming).map((rawItem, idx) => {
       const item = { ...rawItem };
       if (!Number.isFinite(item.mentionCount)) item.mentionCount = 0;
@@ -885,6 +891,7 @@ class Memory {
       if (!Number.isFinite(item.lastTouchedWindow)) {
         item.lastTouchedWindow = Number.isFinite(item.windowNo) ? item.windowNo : curWin;
       }
+      item.lastWindowTension = windowTension;
       item.epistemicGain = computeCuriosityGain(item, curWin, windowTension);
       return { item, idx };
     });
@@ -972,7 +979,11 @@ class Memory {
         hit.incubatedWindow = Number.isFinite(windowNo) ? windowNo : (this.data.windowNo || 1);
         hit.incubatedAt = Date.now();
         if (this.epistemicForagingEnabled) {
-          hit.epistemicGain = computeCuriosityGain(hit, hit.incubatedWindow, 0);
+          hit.epistemicGain = computeCuriosityGain(
+            hit,
+            hit.incubatedWindow,
+            Number.isFinite(hit.lastWindowTension) ? hit.lastWindowTension : 0
+          );
         }
         marked = true;
       }

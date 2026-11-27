@@ -19,6 +19,7 @@ const path = require('path');
 const { ALLOWED_TRAITS, DEFAULT_TRAITS } = require('./subject-state');
 const { normalizeArchiveRecord } = require('./experience-schema');
 const { ArchiveIntegrityService } = require('./archive-integrity');
+const { computePlasticityMultiplier } = require('./canalization');
 
 const NON_STATE_RECORD_TYPES = new Set([
   'recovery_event',
@@ -1205,6 +1206,128 @@ class ResearchQuery {
       offset,
       limit,
       items: results.slice(offset, offset + limit)
+    };
+  }
+
+  /**
+   * v2.2-b 双尺度历时轨迹只读聚合（1 窗起生效；缺失项严格给 null，绝不补 0 或插值）。
+   *
+   * @param {object} [opts]
+   * @param {number} [opts.maxWindows=50] 最大返回窗口数 [1, 200]
+   * @param {Array} [opts._preloadedRecords] 测试可注入预加载记录
+   */
+  getTrajectorySummary(opts = {}) {
+    const rawMax = opts && opts.maxWindows;
+    const maxWindows = Number.isInteger(rawMax) ? Math.max(1, Math.min(200, rawMax)) : 50;
+    const allRecords = this._readArchiveRecords({
+      _preloadedRecords: opts && Array.isArray(opts._preloadedRecords) ? opts._preloadedRecords : undefined
+    });
+    const queryMode = this._lastQueryMode === 'INDEX' ? 'INDEXED' : (this._lastQueryMode || 'FULL_SCAN');
+
+    const windowSet = new Set();
+    const dynMap = new Map();
+    const regMap = new Map();
+
+    for (const rec of allRecords) {
+      if (!rec) continue;
+      const recType = rec.recordType || rec.type || (rec.payload && rec.payload.type) || '';
+      const p = rec.payload || rec;
+      const wNo = getRecordWindowNo(rec);
+      if (!Number.isInteger(wNo) || wNo < 1) continue;
+
+      if (recType === 'memory_dynamics_snapshot') {
+        windowSet.add(wNo);
+        let tiers = null;
+        if (p && p.report && p.report.tierCounts && typeof p.report.tierCounts === 'object') {
+          const tc = p.report.tierCounts;
+          tiers = {
+            ACTIVE: Number.isFinite(tc.ACTIVE) ? tc.ACTIVE : 0,
+            FADING: Number.isFinite(tc.FADING) ? tc.FADING : 0,
+            DORMANT: Number.isFinite(tc.DORMANT) ? tc.DORMANT : 0
+          };
+        } else if (p && p.snapshot && Array.isArray(p.snapshot.traces)) {
+          tiers = { ACTIVE: 0, FADING: 0, DORMANT: 0 };
+          for (const tr of p.snapshot.traces) {
+            if (tr && tiers[tr.tier] !== undefined) tiers[tr.tier]++;
+          }
+        }
+        if (tiers) dynMap.set(wNo, tiers);
+        continue;
+      }
+
+      if (recType === 'internal_regulation_snapshot') {
+        windowSet.add(wNo);
+        const st = p && p.state && typeof p.state === 'object' ? p.state : null;
+        const alloRaw = p && p.allostasis && typeof p.allostasis === 'object' ? p.allostasis : null;
+        const allostasis = alloRaw ? {
+          priorReady: Boolean(alloRaw.priorReady),
+          sampleCount: Number.isFinite(alloRaw.sampleCount) ? alloRaw.sampleCount : null,
+          typicalGapMs: Number.isFinite(alloRaw.typicalGapMs) ? alloRaw.typicalGapMs : null,
+          lastSurprise: Number.isFinite(alloRaw.lastSurprise) ? alloRaw.lastSurprise : null
+        } : null;
+        regMap.set(wNo, {
+          interactionDensity: (st && Number.isFinite(st.interactionDensity)) ? st.interactionDensity : null,
+          lastWindowTension: Number.isFinite(p && p.lastWindowTension) ? p.lastWindowTension : null,
+          allostasis
+        });
+        continue;
+      }
+
+      if (!NON_STATE_RECORD_TYPES.has(recType)) {
+        windowSet.add(wNo);
+      }
+    }
+
+    const scList = this.getStateTrajectory({ _preloadedRecords: allRecords });
+    const rawTraitWinMap = {};
+    for (const sc of scList) {
+      if (!sc || !sc.trait || !ALLOWED_TRAITS.has(sc.trait)) continue;
+      if (!Number.isInteger(sc.windowNo) || sc.windowNo < 1 || !Number.isFinite(sc.newValue)) continue;
+      windowSet.add(sc.windowNo);
+      if (!rawTraitWinMap[sc.trait]) rawTraitWinMap[sc.trait] = new Map();
+      rawTraitWinMap[sc.trait].set(sc.windowNo, sc.newValue);
+    }
+
+    const sortedWindows = Array.from(windowSet).sort((a, b) => a - b);
+    const slicedWindows = sortedWindows.slice(-maxWindows);
+    const slicedSet = new Set(slicedWindows);
+
+    const microWindows = slicedWindows.slice().reverse().map((wNo) => {
+      const reg = regMap.get(wNo) || null;
+      return {
+        windowNo: wNo,
+        engramTiers: dynMap.has(wNo) ? dynMap.get(wNo) : null,
+        interactionDensity: reg ? reg.interactionDensity : null,
+        lastWindowTension: reg ? reg.lastWindowTension : null,
+        allostasis: reg ? reg.allostasis : null
+      };
+    });
+
+    const plasticitySeries = slicedWindows.map((wNo) => ({
+      windowNo: wNo,
+      plasticityMultiplier: computePlasticityMultiplier(Math.max(0, wNo - 1))
+    }));
+
+    const traitSeries = {};
+    for (const trait of ALLOWED_TRAITS) {
+      const m = rawTraitWinMap[trait];
+      if (!m || m.size === 0) continue;
+      const pts = [];
+      for (const wNo of slicedWindows) {
+        if (slicedSet.has(wNo) && m.has(wNo)) {
+          pts.push({ windowNo: wNo, value: m.get(wNo) });
+        }
+      }
+      if (pts.length > 0) {
+        traitSeries[trait] = pts;
+      }
+    }
+
+    return {
+      queryMode,
+      windowCount: slicedWindows.length,
+      micro: { windows: microWindows },
+      macro: { plasticitySeries, traitSeries }
     };
   }
 }

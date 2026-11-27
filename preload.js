@@ -199,6 +199,7 @@ contextBridge.exposeInMainWorld('deskpet', {
     exportData: (opts) => ipcRenderer.invoke('research:export', opts),
     refresh: () => ipcRenderer.invoke('research:refresh'),
     getHashes: () => ipcRenderer.invoke('research:get-hashes'),
-    verifyIntegrity: (beforeHashes) => ipcRenderer.invoke('research:verify-integrity', { beforeHashes })
+    verifyIntegrity: (beforeHashes) => ipcRenderer.invoke('research:verify-integrity', { beforeHashes }),
+    getTrajectory: (opts) => ipcRenderer.invoke('research:get-trajectory', opts)
   }
 });

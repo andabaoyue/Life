@@ -42,14 +42,272 @@
     }
 
     function switchStateSubtab(which) {
-      const name = which === 'obs' ? 'obs' : 'subject';
+      const name = (which === 'obs' || which === 'trajectory') ? which : 'subject';
       document.querySelectorAll('#rStateSubtabs .r-subtab').forEach((b) => {
         b.classList.toggle('active', b.dataset.subtab === name);
       });
       const sub = document.getElementById('rSubPaneSubject');
       const obs = document.getElementById('rSubPaneObs');
+      const traj = document.getElementById('rSubPaneTrajectory');
       if (sub) sub.classList.toggle('hidden', name !== 'subject');
       if (obs) obs.classList.toggle('hidden', name !== 'obs');
+      if (traj) traj.classList.toggle('hidden', name !== 'trajectory');
+      if (name === 'trajectory') {
+        loadTrajectoryView();
+      }
+    }
+
+    function createSvgEl(tag, attrs = {}) {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        el.setAttribute(k, String(v));
+      }
+      return el;
+    }
+
+    function buildTrendSvg(seriesList, yMin, yMax) {
+      const W = 320;
+      const H = 112;
+      const PAD_L = 28;
+      const PAD_R = 10;
+      const PAD_T = 10;
+      const PAD_B = 18;
+      const plotW = W - PAD_L - PAD_R;
+      const plotH = H - PAD_T - PAD_B;
+      const svg = createSvgEl('svg', { class: 'r-traj-svg', viewBox: `0 0 ${W} ${H}` });
+
+      svg.appendChild(createSvgEl('line', {
+        x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: H - PAD_B,
+        stroke: 'rgba(255,255,255,0.16)', 'stroke-width': 1
+      }));
+      svg.appendChild(createSvgEl('line', {
+        x1: PAD_L, y1: H - PAD_B, x2: W - PAD_R, y2: H - PAD_B,
+        stroke: 'rgba(255,255,255,0.16)', 'stroke-width': 1
+      }));
+
+      const allWins = [];
+      for (const s of seriesList) {
+        for (const p of (s.points || [])) {
+          if (Number.isFinite(p.windowNo)) allWins.push(p.windowNo);
+        }
+      }
+      const minW = allWins.length ? Math.min(...allWins) : 1;
+      const maxW = allWins.length ? Math.max(...allWins) : 2;
+      const spanW = Math.max(1, maxW - minW);
+      const spanY = Math.max(1e-6, yMax - yMin);
+
+      for (const s of seriesList) {
+        const pts = (s.points || []).filter((p) => Number.isFinite(p.windowNo) && Number.isFinite(p.value));
+        if (!pts.length) continue;
+        const coords = pts.map((p) => {
+          const x = PAD_L + ((p.windowNo - minW) / spanW) * plotW;
+          const clampedY = Math.max(yMin, Math.min(yMax, p.value));
+          const y = (H - PAD_B) - ((clampedY - yMin) / spanY) * plotH;
+          return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) };
+        });
+        if (coords.length >= 2) {
+          const d = coords.map((c, idx) => (idx === 0 ? 'M' : 'L') + c.x + ' ' + c.y).join(' ');
+          svg.appendChild(createSvgEl('path', {
+            d, fill: 'none', stroke: s.color, 'stroke-width': 1.8, 'stroke-linecap': 'round'
+          }));
+        }
+        for (const c of coords) {
+          svg.appendChild(createSvgEl('circle', {
+            cx: c.x, cy: c.y, r: 2.8, fill: s.color
+          }));
+        }
+      }
+      return svg;
+    }
+
+    function renderTrajectoryData(data) {
+      const microBox = document.getElementById('rTrajMicro');
+      const macroBox = document.getElementById('rTrajMacro');
+      if (!microBox || !macroBox) return;
+      microBox.textContent = '';
+      macroBox.textContent = '';
+
+      const dash = t('obs.dash', '—');
+      if (!data || !data.windowCount) {
+        const empty = document.createElement('div');
+        empty.className = 'r-traj-empty';
+        empty.textContent = t('research.trajectory.empty', '暂无已归档窗口轨迹数据');
+        microBox.appendChild(empty);
+        return;
+      }
+
+      const microHead = document.createElement('div');
+      microHead.className = 'r-traj-subtitle';
+      microHead.textContent = t('research.trajectory.microTitle', '微观窗口脉络（1 窗起即生效）');
+      microBox.appendChild(microHead);
+
+      const microWins = (data.micro && Array.isArray(data.micro.windows)) ? data.micro.windows.slice(0, 5) : [];
+      for (const w of microWins) {
+        const card = document.createElement('div');
+        card.className = 'r-traj-win-card';
+
+        const head = document.createElement('div');
+        head.className = 'r-traj-win-head';
+        const wLabel = document.createElement('span');
+        wLabel.textContent = 'Window #' + w.windowNo;
+        const tSpan = document.createElement('span');
+        const tenStr = Number.isFinite(w.lastWindowTension) ? String(Number(w.lastWindowTension.toFixed(2))) : dash;
+        tSpan.textContent = t('research.trajectory.tensionLabel', '认知张力') + ': ' + tenStr;
+        head.append(wLabel, tSpan);
+        card.appendChild(head);
+
+        const tiers = w.engramTiers;
+        if (tiers && typeof tiers === 'object') {
+          const total = (tiers.ACTIVE || 0) + (tiers.FADING || 0) + (tiers.DORMANT || 0);
+          if (total > 0) {
+            const bar = document.createElement('div');
+            bar.className = 'r-traj-tier-bar';
+            for (const [k, cls] of [['ACTIVE', 'active'], ['FADING', 'fading'], ['DORMANT', 'dormant']]) {
+              const cnt = tiers[k] || 0;
+              if (cnt <= 0) continue;
+              const seg = document.createElement('div');
+              seg.className = 'r-traj-tier-seg ' + cls;
+              seg.style.width = ((cnt / total) * 100).toFixed(1) + '%';
+              bar.appendChild(seg);
+            }
+            card.appendChild(bar);
+          }
+        }
+
+        const grid = document.createElement('div');
+        grid.className = 'r-traj-meta-grid';
+        const mkCell = (label, val) => {
+          const c = document.createElement('div');
+          c.className = 'r-traj-meta-cell';
+          c.textContent = label + ': ' + val;
+          return c;
+        };
+        const tierStr = tiers
+          ? `A:${tiers.ACTIVE ?? 0} / F:${tiers.FADING ?? 0} / D:${tiers.DORMANT ?? 0}`
+          : dash;
+        const densStr = Number.isFinite(w.interactionDensity) ? String(Number(w.interactionDensity.toFixed(1))) : dash;
+        let alloStr = dash;
+        if (w.allostasis && typeof w.allostasis === 'object') {
+          const parts = [];
+          if (Number.isFinite(w.allostasis.sampleCount)) {
+            parts.push(t('research.trajectory.samplesUnit', '{n} 样本', { n: w.allostasis.sampleCount }));
+          }
+          if (Number.isFinite(w.allostasis.typicalGapMs)) {
+            parts.push(t('research.trajectory.gapUnit', '间隔 {hours}h', { hours: (w.allostasis.typicalGapMs / 3600000).toFixed(1) }));
+          }
+          if (Number.isFinite(w.allostasis.lastSurprise)) {
+            parts.push(t('research.trajectory.surpriseUnit', '误差 {val}', { val: Number(w.allostasis.lastSurprise.toFixed(2)) }));
+          }
+          if (parts.length) alloStr = parts.join(' · ');
+        }
+        grid.append(
+          mkCell(t('research.trajectory.tiersLabel', '记忆分层'), tierStr),
+          mkCell(t('research.trajectory.densityLabel', '社交密度'), densStr),
+          mkCell(t('research.trajectory.allostasisLabel', '异稳态节奏'), alloStr)
+        );
+        card.appendChild(grid);
+        microBox.appendChild(card);
+      }
+
+      const macroHead = document.createElement('div');
+      macroHead.className = 'r-traj-subtitle';
+      macroHead.textContent = t('research.trajectory.macroTitle', '宏观发育与特质演进');
+      macroBox.appendChild(macroHead);
+
+      const plast = (data.macro && Array.isArray(data.macro.plasticitySeries)) ? data.macro.plasticitySeries : [];
+      if (plast.length < 2) {
+        const needTwo = document.createElement('div');
+        needTwo.className = 'r-traj-empty';
+        needTwo.textContent = t('research.trajectory.macroNeedTwo', '至少需要 2 个窗口的数据点，才可绘制宏观演化曲线。');
+        macroBox.appendChild(needTwo);
+        return;
+      }
+
+      const plastWrap = document.createElement('div');
+      plastWrap.className = 'r-traj-svg-wrap';
+      const plastTitle = document.createElement('div');
+      plastTitle.className = 'r-traj-subtitle';
+      plastTitle.textContent = t('research.trajectory.plasticityLabel', '沃丁顿发育可塑性阻尼曲线');
+      plastWrap.append(
+        plastTitle,
+        buildTrendSvg([{
+          label: 'plasticity',
+          color: '#78e0a8',
+          points: plast.map((p) => ({ windowNo: p.windowNo, value: p.plasticityMultiplier }))
+        }], 0, 1)
+      );
+      macroBox.appendChild(plastWrap);
+
+      const traitSeries = (data.macro && data.macro.traitSeries) || {};
+      const traitKeys = Object.keys(traitSeries);
+      const traitWrap = document.createElement('div');
+      traitWrap.className = 'r-traj-svg-wrap';
+      const traitTitle = document.createElement('div');
+      traitTitle.className = 'r-traj-subtitle';
+      traitTitle.textContent = t('research.trajectory.traitSeriesLabel', '已产生跃迁的特质轨迹');
+      traitWrap.appendChild(traitTitle);
+      if (!traitKeys.length) {
+        const noShifts = document.createElement('div');
+        noShifts.className = 'r-traj-empty';
+        noShifts.textContent = t('research.trajectory.noTraitShifts', '各特质尚无跨窗状态跃迁');
+        traitWrap.appendChild(noShifts);
+      } else {
+        const palette = ['#70a1ff', '#f5c969', '#ff8e99', '#a68eff', '#6ee0a8', '#7be3f5', '#f3a683', '#d4e157'];
+        let minVal = 0;
+        let maxVal = 0;
+        const seriesList = traitKeys.map((tk, idx) => {
+          const pts = traitSeries[tk] || [];
+          for (const p of pts) {
+            if (Number.isFinite(p.value)) {
+              if (p.value < minVal) minVal = p.value;
+              if (p.value > maxVal) maxVal = p.value;
+            }
+          }
+          return { label: t('trait.' + tk, tk), color: palette[idx % palette.length], points: pts };
+        });
+        if (minVal === maxVal) { minVal -= 10; maxVal += 10; }
+        traitWrap.appendChild(buildTrendSvg(seriesList, minVal, maxVal));
+        const legend = document.createElement('div');
+        legend.className = 'r-traj-legend';
+        for (const s of seriesList) {
+          const item = document.createElement('span');
+          item.className = 'r-traj-legend-item';
+          const dot = document.createElement('span');
+          dot.className = 'r-traj-dot';
+          dot.style.background = s.color;
+          const txt = document.createElement('span');
+          txt.textContent = s.label;
+          item.append(dot, txt);
+          legend.appendChild(item);
+        }
+        traitWrap.appendChild(legend);
+      }
+      macroBox.appendChild(traitWrap);
+    }
+
+    async function loadTrajectoryView() {
+      const microBox = document.getElementById('rTrajMicro');
+      const macroBox = document.getElementById('rTrajMacro');
+      if (!microBox || !macroBox) return;
+
+      if (!api || !api.research || typeof api.research.getTrajectory !== 'function') {
+        microBox.textContent = '';
+        macroBox.textContent = '';
+        const prev = document.createElement('div');
+        prev.className = 'r-traj-empty';
+        prev.textContent = t('research.trajectory.preview', '预览模式：至少需要 1 个真实窗口归档后展示微观与宏观轨迹。');
+        microBox.appendChild(prev);
+        return;
+      }
+
+      microBox.textContent = t('research.trajectory.loading', '正在加载历时轨迹...');
+      macroBox.textContent = '';
+      try {
+        const res = await api.research.getTrajectory({ maxWindows: 50 });
+        renderTrajectoryData(res);
+      } catch (e) {
+        microBox.textContent = t('research.trajectory.loadFailed', '加载历时轨迹失败: ') + e.message;
+      }
     }
 
     async function loadTraitHistory(trait) {
@@ -464,6 +722,10 @@
         const state = (snap && snap.state) || (await api.research.getState());
         renderSubjectStateTab(state);
         await loadWindowsTab();
+        const trajPane = document.getElementById('rSubPaneTrajectory');
+        if (trajPane && !trajPane.classList.contains('hidden')) {
+          await loadTrajectoryView();
+        }
       } catch (err) {
         if (statusEl) statusEl.textContent = t('research.snapshot.loadFailedPrefix', 'Snapshot 加载失败: ') + err.message;
       }
@@ -963,6 +1225,7 @@
       loadRejectedEvidence,
       switchResearchTab,
       switchStateSubtab,
+      loadTrajectoryView,
       startReplay,
       stopReplayPolling
     };

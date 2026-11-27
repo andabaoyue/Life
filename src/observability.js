@@ -42,6 +42,7 @@ const GROUP_ORDER = Object.freeze([
   'curiosity',   // 好奇与愿望
   'notes',       // 她写下的字
   'agency',      // 主动性
+  'phenotyping', // 能动性表型
   'provider',    // 供应商与容错
   'agent'        // 受控执行器
 ]);
@@ -54,6 +55,7 @@ const GROUP_LABELS = Object.freeze({
   curiosity: { zh: '好奇与愿望', en: 'Curiosity' },
   notes: { zh: '她写下的字', en: 'Her Notes' },
   agency: { zh: '主动性', en: 'Agency' },
+  phenotyping: { zh: '能动性表型', en: 'Agency Phenotyping' },
   provider: { zh: '供应商与容错', en: 'Provider' },
   agent: { zh: '受控执行器', en: 'Agent' }
 });
@@ -319,6 +321,27 @@ const OBSERVABILITY_SPECS = Object.freeze([
     })
   },
 
+  {
+    id: 'memory.engramGraph',
+    group: 'memory',
+    labelKey: 'obs.memory.engramGraph',
+    text: '共激活记忆图谱',
+    range: null,
+    read: safeRead((ctx) => {
+      const mem = ctx && ctx.brain && ctx.brain.memory;
+      if (!mem || !mem.isEngramGraphActive || !mem.engramGraph || typeof mem.engramGraph.getStats !== 'function') {
+        return null;
+      }
+      const stats = mem.engramGraph.getStats();
+      if (!stats) return null;
+      return {
+        enabled: true,
+        edgeCount: num(stats, 'edgeCount'),
+        maxWeight: num(stats, 'maxWeight')
+      };
+    })
+  },
+
   /* ---------- curiosity：好奇与愿望 ---------- */
 
   {
@@ -333,6 +356,36 @@ const OBSERVABILITY_SPECS = Object.freeze([
       // 只报条数，不报问题原文（原文属她的内态，面板职责是遥测不是展示内容）
       const q = Array.isArray(memData.curiosityQueue) ? memData.curiosityQueue : [];
       return { count: q.length, capacity: 5 };
+    })
+  },
+
+  {
+    id: 'curiosity.foraging',
+    group: 'curiosity',
+    labelKey: 'obs.curiosity.foraging',
+    text: '认知觅食权重分布',
+    range: null,
+    read: safeRead((ctx) => {
+      const mem = ctx && ctx.brain && ctx.brain.memory;
+      if (!mem || !mem.epistemicForagingEnabled || !mem.data || !Array.isArray(mem.data.curiosityQueue)) {
+        return null;
+      }
+      const q = mem.data.curiosityQueue.filter((x) => x && typeof x.q === 'string' && x.q.trim());
+      if (!q.length) return null;
+      let touchedCount = 0;
+      let maxGain = -Infinity;
+      for (const item of q) {
+        if (Number(item.mentionCount) > 0) touchedCount++;
+        if (Number.isFinite(item.epistemicGain) && item.epistemicGain > maxGain) {
+          maxGain = item.epistemicGain;
+        }
+      }
+      return {
+        enabled: true,
+        trackedCount: q.length,
+        touchedCount,
+        maxGain: Number.isFinite(maxGain) ? Number(maxGain.toFixed(4)) : null
+      };
     })
   },
 
@@ -398,6 +451,89 @@ const OBSERVABILITY_SPECS = Object.freeze([
         // 有界区间是设计约束，一并暴露便于 UI 画条
         min: 0.5,
         max: 1.5
+      };
+    })
+  },
+
+  /* ---------- phenotyping：能动性表型审计 ---------- */
+
+  {
+    id: 'phenotyping.provenanceClosure',
+    group: 'phenotyping',
+    labelKey: 'obs.phenotyping.provenanceClosure',
+    text: '证据溯源闭环率',
+    range: [0, 1],
+    read: safeRead((ctx) => {
+      const ledger = ctx && ctx.brain && ctx.brain.selfLedger;
+      if (!ledger || !Array.isArray(ledger.entries)) return null;
+      let verified = 0;
+      let rejected = 0;
+      for (const entry of ledger.entries) {
+        if (!entry || typeof entry !== 'object') continue;
+        for (const channel of ['support', 'oppose']) {
+          const list = Array.isArray(entry[channel]) ? entry[channel] : [];
+          for (const ev of list) {
+            if (!ev || typeof ev !== 'object') continue;
+            if (ev.verification === 'VERIFIED') verified++;
+            else rejected++;
+          }
+        }
+      }
+      const total = verified + rejected;
+      if (total === 0) return null;
+      return {
+        verified,
+        rejected,
+        closureRatio: Number((verified / total).toFixed(4))
+      };
+    })
+  },
+
+  {
+    id: 'phenotyping.canalizationDamping',
+    group: 'phenotyping',
+    labelKey: 'obs.phenotyping.canalizationDamping',
+    text: '发育可塑性阻尼',
+    range: [0, 1],
+    read: safeRead((ctx) => {
+      const winNo = ctx && ctx.brain && ctx.brain.memory && ctx.brain.memory.data && ctx.brain.memory.data.windowNo;
+      if (!Number.isFinite(winNo) || winNo < 1) return null;
+      const { computePlasticityMultiplier } = require('./canalization');
+      const w = Math.floor(winNo);
+      const completedWindows = Math.max(0, w - 1);
+      return {
+        windowNo: w,
+        completedWindows,
+        plasticityMultiplier: computePlasticityMultiplier(completedWindows)
+      };
+    })
+  },
+
+  {
+    id: 'phenotyping.empowermentProxy',
+    group: 'phenotyping',
+    labelKey: 'obs.phenotyping.empowermentProxy',
+    text: '能动性赋权代理',
+    range: [0, 1],
+    read: safeRead((ctx) => {
+      const memData = ctx && ctx.brain && ctx.brain.memory && ctx.brain.memory.data;
+      if (!memData) return null;
+      const expectations = Array.isArray(memData.expectations) ? memData.expectations : [];
+      const fulfilled = expectations.filter((x) => x && x.status === 'fulfilled').length;
+      const broken = expectations.filter((x) => x && x.status === 'broken').length;
+      const settled = fulfilled + broken;
+
+      const selfNotes = Array.isArray(memData.selfNotes) ? memData.selfNotes : [];
+      const trackedNotes = selfNotes.filter((n) => n && (n.source === 'selfNote' || n.source === 'observerJournal'));
+      const noteTotal = trackedNotes.length;
+      const noteEngraved = trackedNotes.filter((n) => n.engraved === true).length;
+
+      const sampleSize = settled + noteTotal;
+      if (sampleSize === 0) return null;
+      return {
+        expectationFulfillRate: settled > 0 ? Number((fulfilled / settled).toFixed(4)) : null,
+        selfNoteEngraveRate: noteTotal > 0 ? Number((noteEngraved / noteTotal).toFixed(4)) : null,
+        sampleSize
       };
     })
   },

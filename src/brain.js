@@ -222,6 +222,7 @@ class Brain {
     // 🔴 v2.0-b：Ticket 生命周期持久化（%APPDATA%\Life\agent-tickets.json，仅摘要进尾部 dynamicBody，不入 history/systemText）
     this.ticketStore = (opts && opts.ticketStore) || new TicketStore({ dir: userDataDir });
 
+    const isBaselineCfg = this.cfg.experimentMode === 'baseline';
     this.memory = new Memory(userDataDir, {
       persona: systemPersona(this.cfg),
       windowTurns: this.cfg.windowTurns,
@@ -230,9 +231,9 @@ class Brain {
       memoryCapTokens: this.cfg.memoryCapTokens,
       memoryRecallTopN: this.cfg.memoryRecallTopN,
       experimentModules: this.cfg.experimentModules,
-      memoryDynamics: this.cfg.experimentModules?.memoryDynamics,
-      engramGraph: this.cfg.experimentModules?.engramGraph,
-      epistemicForaging: this.cfg.experimentModules?.epistemicForaging,
+      memoryDynamics: isBaselineCfg ? false : this.cfg.experimentModules?.memoryDynamics,
+      engramGraph: isBaselineCfg ? false : this.cfg.experimentModules?.engramGraph,
+      epistemicForaging: isBaselineCfg ? false : this.cfg.experimentModules?.epistemicForaging,
       // 🔴 丙（2026-10-07）：把「渐褪」的两个参数透传给记忆动力学。
       //   为什么需要：默认 0.60 的门限恰好等于初始强度(0.50+0.10) ——
       //   过 1 个窗口必跌破 ⇒ 除最新一段外**全部**被截成断句碎片，没有梯度。
