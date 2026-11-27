@@ -99,7 +99,9 @@ const DEFAULT_EXPERIMENT_MODULES = Object.freeze({
   biographicalCanalization: false,
   memoryDynamics: false,
   sleepConsolidation: false,
-  allostasisPrior: false
+  allostasisPrior: false,
+  engramGraph: false,
+  epistemicForaging: false
 });
 
 module.exports = {

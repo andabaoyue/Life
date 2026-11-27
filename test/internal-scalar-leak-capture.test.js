@@ -51,7 +51,9 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     restPressure: 41.8732,
     salienceThreshold: 33.4158,
     cognitiveLoadProxy: 66.7721,
-    interactionDensity: 55.2384
+    interactionDensity: 55.2384,
+    epistemicGain: 1.7392,
+    edgeWeight: 2.8461
   };
 
   const SENTINEL_NUMBERS = Object.values(SENTINEL_VALUES).map(n => n.toString());
@@ -65,7 +67,11 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     'approachingOverload',
     'revisionPressure',
     'epistemicTension',
-    'lastWindowTension'
+    'lastWindowTension',
+    'edgeWeight',
+    'epistemicGain',
+    'mentionCount',
+    'associativeScore'
   ];
 
   if (brain.internalRegulation) {
@@ -81,6 +87,26 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
       brain.internalRegulation.allostasisPrior.lastSurprise = 2.3419;
       brain.internalRegulation.allostasisPrior.recentGapsMs = [7193456, 7193456, 7193456];
     }
+  }
+  if (brain.memory && brain.memory.data) {
+    brain.memory.data.curiosityQueue.push({
+      q: '那本书后来有没有读完',
+      windowNo: 1,
+      mentionCount: 3,
+      lastMentionedWindow: 1,
+      lastTouchedWindow: 1,
+      epistemicGain: SENTINEL_VALUES.epistemicGain
+    });
+  }
+  if (brain.memory && brain.memory.engramGraph) {
+    brain.memory.engramGraph.edges.set('tr-sentinel-a::tr-sentinel-b', {
+      a: 'tr-sentinel-a',
+      b: 'tr-sentinel-b',
+      weight: SENTINEL_VALUES.edgeWeight,
+      coactivations: 3,
+      lastCoactivatedWindow: 1,
+      lastDecayedWindow: 1
+    });
   }
 
   // 3. 拦截捕获所有发往 LLM 的完整消息列表

@@ -512,7 +512,28 @@ class WindowClosingPipeline {
         if (typeof b.memory.flushPendingDreamFragments === 'function') {
           b.memory.flushPendingDreamFragments();
         }
-        b.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo);
+        // v2.2-a：将关窗认知张力计算前移到 refreshCuriosity() 之前，供好奇排序与内稳态同源复用
+        let lastWindowTension = 0;
+        if (b.internalRegulation && b.isExperimentModuleActive('internalRegulation')) {
+          try {
+            const { computeWindowArousalTrajectory, evaluateDreamGate } = require('./dream-system');
+            const regHistory = Array.isArray(b.internalRegulation.history) ? b.internalRegulation.history : [];
+            const traj = computeWindowArousalTrajectory(
+              snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory }
+            );
+            const gateMetrics = evaluateDreamGate({
+              windowNo: snap.windowNo,
+              arousalTrajectory: traj,
+              verifiedEvidence: verifiedEvidence || [],
+              dreamHistory: b.dreamHistory || []
+            }).metrics || {};
+            const varNorm = Math.min(1, (Number(gateMetrics.arousalVariance) || 0) / 30);
+            const spikeNorm = Math.min(1, (Number(gateMetrics.maxArousalSpike) || 0) / 30);
+            const conflictNorm = Math.min(1, (Number(gateMetrics.cognitiveConflictScore) || 0) / 1.5);
+            lastWindowTension = Math.max(0, Math.min(1, Math.max(varNorm, spikeNorm) * 0.6 + conflictNorm * 0.4));
+          } catch { /* 张力计算失败降级为 0，绝不阻塞关窗 */ }
+        }
+        b.memory.refreshCuriosity((syn && Array.isArray(syn.unresolved)) ? syn.unresolved : [], snap.windowNo, { windowTension: lastWindowTension });
         const knownIds = (snap && Array.isArray(snap.snapshotActiveMessageIds)) ? snap.snapshotActiveMessageIds : [];
         const ingestOpts = { knownIds, messages: (snap && Array.isArray(snap.activeItems)) ? snap.activeItems : [] };
         for (const c of (Array.isArray(syn.coinages) ? syn.coinages : [])) {
@@ -570,25 +591,6 @@ class WindowClosingPipeline {
 
         if (b.internalRegulation && b.isExperimentModuleActive('internalRegulation')) {
           try {
-            let lastWindowTension = 0;
-            try {
-              const { computeWindowArousalTrajectory, evaluateDreamGate } = require('./dream-system');
-              const regHistory = Array.isArray(b.internalRegulation.history) ? b.internalRegulation.history : [];
-              const traj = computeWindowArousalTrajectory(
-                snap.activeItems || [], verifiedEvidence || [], segments || [], { regulationHistory: regHistory }
-              );
-              const gateMetrics = evaluateDreamGate({
-                windowNo: snap.windowNo,
-                arousalTrajectory: traj,
-                verifiedEvidence: verifiedEvidence || [],
-                dreamHistory: b.dreamHistory || []
-              }).metrics || {};
-              const varNorm = Math.min(1, (Number(gateMetrics.arousalVariance) || 0) / 30);
-              const spikeNorm = Math.min(1, (Number(gateMetrics.maxArousalSpike) || 0) / 30);
-              const conflictNorm = Math.min(1, (Number(gateMetrics.cognitiveConflictScore) || 0) / 1.5);
-              lastWindowTension = Math.max(0, Math.min(1, Math.max(varNorm, spikeNorm) * 0.6 + conflictNorm * 0.4));
-            } catch { /* 张力计算失败降级为 0，绝不阻塞关窗 */ }
-
             const snapshotExtra = (
               b.internalRegulation.allostasisEnabled &&
               typeof b.internalRegulation.getAllostasisSummary === 'function'
@@ -701,6 +703,12 @@ class WindowClosingPipeline {
       }
       if (nextDynamics && b.memory.engramManager && b.memory.engramManager.traces.size === 0) {
         b._restoreEngramSnapshotFromArchive();
+      }
+      if (typeof b.memory.setEngramGraphEnabled === 'function') {
+        b.memory.setEngramGraphEnabled(Boolean(b.currentWindowSnapshot.modules?.engramGraph));
+      }
+      if (typeof b.memory.setEpistemicForagingEnabled === 'function') {
+        b.memory.setEpistemicForagingEnabled(Boolean(b.currentWindowSnapshot.modules?.epistemicForaging));
       }
     }
   }

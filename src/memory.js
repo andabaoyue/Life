@@ -4,6 +4,7 @@ const { writeJsonAtomic } = require('./atomic');
 const { DeferredWriter } = require('./deferred-writer');
 const { migrate } = require('./migration');
 const { computeEngramDecay, DEFAULT_DYNAMICS_CONFIG } = require('./memory-dynamics');
+const { EngramGraph } = require('./engram-graph');
 const selfNotesStore = require('./memory-self-notes');
 const observeEpochStore = require('./memory-observe-epoch');
 const lexiconStore = require('./memory-lexicon');
@@ -105,6 +106,29 @@ function truncateFadingText(text, cap = 60) {
   return str.slice(0, cap) + '...';
 }
 
+/**
+ * v2.2-a 精准度加权认知觅食纯函数：计算未解疑问的本地确定性权重 epistemicGain。
+ * 所有因子有界、零 API 调用、严禁进入 prompt 文本。
+ */
+function computeCuriosityGain(item, currentWindow, windowTension = 0) {
+  if (!item || typeof item !== 'object') return 1.0;
+  const curWin = Number.isFinite(currentWindow)
+    ? currentWindow
+    : (Number.isFinite(item.windowNo) ? item.windowNo : 1);
+  const mentionCount = Math.min(5, Math.max(0, Number(item.mentionCount) || 0));
+  const mentionScore = mentionCount * 0.35;
+  const dreamBonus = item.incubated === true ? 0.50 : 0;
+  const lastTouched = Number.isFinite(item.lastTouchedWindow)
+    ? item.lastTouchedWindow
+    : (Number.isFinite(item.windowNo) ? item.windowNo : curWin);
+  const touchedThisWindow = (item.windowNo === curWin) || (lastTouched === curWin);
+  const clampedTension = Math.max(0, Math.min(1, Number(windowTension) || 0));
+  const tensionBonus = touchedThisWindow ? clampedTension * 0.30 : 0;
+  const ageGap = Math.max(0, curWin - lastTouched);
+  const ageDamping = 1 / (1 + 0.18 * ageGap);
+  return Number(((1.0 + mentionScore + dreamBonus + tensionBonus) * ageDamping).toFixed(4));
+}
+
   // selfNotes / observeEpoch / lexicon 常量的定义与实现已拆入独立子存储模块（src/memory-*.js），
   // 此处由顶部统一绑定以保持对外常量语义与行数压缩。
 
@@ -178,12 +202,28 @@ class Memory {
       this.fadingMaxChars = null;
     }
 
+    // v2.2-a: 共激活记忆图谱 & 精准度加权认知觅食（未传开关且未传 experimentModules 时默认 false，保既有单测）
+    this.engramGraphEnabled = opts.engramGraph !== undefined
+      ? Boolean(opts.engramGraph)
+      : (opts.experimentModules ? Boolean(opts.experimentModules.engramGraph) : false);
+    this.epistemicForagingEnabled = opts.epistemicForaging !== undefined
+      ? Boolean(opts.epistemicForaging)
+      : (opts.experimentModules ? Boolean(opts.experimentModules.epistemicForaging) : false);
+    this.engramGraph = (this.memoryDynamicsEnabled && this.engramGraphEnabled)
+      ? new EngramGraph(this.dir, { enabled: true })
+      : null;
+
     this.load();
   }
 
   /** 当前是否处于记忆动力学激活态（开关为真且已装载 engramManager） */
   get isMemoryDynamicsActive() {
     return Boolean(this.memoryDynamicsEnabled && this.engramManager);
+  }
+
+  /** 当前是否处于共激活图谱激活态（依赖 memoryDynamicsEnabled 与 engramGraphEnabled 同为真） */
+  get isEngramGraphActive() {
+    return Boolean(this.isMemoryDynamicsActive && this.engramGraphEnabled && this.engramGraph && this.engramGraph.enabled);
   }
 
   /**
@@ -217,7 +257,30 @@ class Memory {
       this.fadingMaxChars = null;
       if (this.data) this.data.deepHorizon = '';
     }
+    this.setEngramGraphEnabled(this.engramGraphEnabled);
     return next;
+  }
+
+  /** 跨窗热切共激活图谱开关（停用时不删盘，停止一切读写） */
+  setEngramGraphEnabled(enabled) {
+    const next = Boolean(enabled);
+    this.engramGraphEnabled = next;
+    if (next && this.memoryDynamicsEnabled) {
+      if (!this.engramGraph) {
+        this.engramGraph = new EngramGraph(this.dir, { enabled: true });
+      } else {
+        this.engramGraph.setEnabled(true);
+      }
+    } else if (this.engramGraph) {
+      this.engramGraph.setEnabled(false);
+    }
+    return this.isEngramGraphActive;
+  }
+
+  /** 跨窗热切精准度加权认知觅食开关 */
+  setEpistemicForagingEnabled(enabled) {
+    this.epistemicForagingEnabled = Boolean(enabled);
+    return this.epistemicForagingEnabled;
   }
 
   load() {
@@ -442,11 +505,11 @@ class Memory {
 
     const curWin = currentWindow || this.data.windowNo;
     const topN = Number.isFinite(this.memoryRecallTopN) ? this.memoryRecallTopN : 1;
-    if (topN <= 0) return [];   // 0 = 关闭增强
+    const allowRecall = topN > 0;
 
     // ① 印痕部分（依赖 engramManager）
     const reactivated = [];
-    if (this.isMemoryDynamicsActive) {
+    if (allowRecall && this.isMemoryDynamicsActive) {
       // 🔴 D-23：候选范围放开到**全部** trace（原来只认 DORMANT ⇒ 增强几乎不触发）。
       //   实测：她 5 段记忆里零条 DORMANT，整个强化系统空转。
       //   但**必须同时做去重**：只让「本窗口尚未被巩固」的印痕参与 top-N 争夺，
@@ -475,16 +538,57 @@ class Memory {
           scored.sort((a, b) => b.score - a.score);   // 高分优先（同分保持稳定序）
           for (let i = 0; i < Math.min(topN, scored.length); i++) {
             const res = this.engramManager.reactivate(scored[i].trace.traceId, curWin);
-            if (res) reactivated.push(res);
+            if (res) {
+              reactivated.push(res);
+              // v2.2-a：共激活边写入（与本窗已激活的其他印痕建立/强化共激活边，确定性排序限最近 3 个 peer 防组合爆炸）
+              if (this.isEngramGraphActive) {
+                const peerTraces = this.engramManager.getAllTraces()
+                  .filter((t) => t && t.lastRetrievedWindow === curWin && t.traceId !== res.traceId)
+                  .sort((a, b) => (Number(b.retrievalCount) || 0) - (Number(a.retrievalCount) || 0)
+                    || (Number(b.currentStrength) || 0) - (Number(a.currentStrength) || 0)
+                    || String(a.traceId).localeCompare(String(b.traceId)))
+                  .slice(0, 3);
+                for (const peer of peerTraces) {
+                  this.engramGraph.recordCoactivation(res.traceId, peer.traceId, curWin);
+                }
+              }
+            }
           }
         }
       }
     }
 
     // ② v2.0-s1（s1-b）：selfNotes 独立唤醒（不依赖 engramManager，不进 system 前缀，不影响其余已读条目反唠叨）
-    const selfNoteReactivated = selfNotesStore.reactivateSelfNotesByTokens(this, uniqueTokens, curWin, topN);
+    const selfNoteReactivated = allowRecall
+      ? selfNotesStore.reactivateSelfNotesByTokens(this, uniqueTokens, curWin, topN)
+      : 0;
 
-    if (reactivated.length > 0 || selfNoteReactivated > 0) {
+    // ③ v2.2-a：curiosityQueue 对话触及计数（独立于 topN <= 0 守卫；绝不改数组顺序或 q 文本，护前缀缓存）
+    let curiosityTouched = false;
+    if (this.epistemicForagingEnabled && Array.isArray(this.data.curiosityQueue) && this.data.curiosityQueue.length > 0) {
+      for (const item of this.data.curiosityQueue) {
+        if (!item || item.asked === true || typeof item.q !== 'string' || !item.q.trim()) continue;
+        // 专用 lastMentionedWindow 判重（不与 lastTouchedWindow 混用，避免新入队当窗首次提及被误吞）
+        if (item.lastMentionedWindow === curWin) continue;
+        const lowerQ = item.q.toLowerCase();
+        let hit = false;
+        for (const tok of uniqueTokens) {
+          if (lowerQ.includes(tok)) {
+            hit = true;
+            break;
+          }
+        }
+        if (hit) {
+          item.mentionCount = Math.min(5, (Number(item.mentionCount) || 0) + 1);
+          item.lastMentionedWindow = curWin;
+          item.lastTouchedWindow = curWin;
+          item.epistemicGain = computeCuriosityGain(item, curWin, 0);
+          curiosityTouched = true;
+        }
+      }
+    }
+
+    if (reactivated.length > 0 || selfNoteReactivated > 0 || curiosityTouched) {
       this.save();
     }
     return reactivated;
@@ -546,7 +650,19 @@ class Memory {
       return String(a.traceId).localeCompare(String(b.traceId));
     });
 
-    const chosen = validCandidates[0];
+    // v2.2-a：若共激活图谱启用且本窗已有激活种子印痕，优先按联想边权总和择优（无达标候选时无缝回退原排序）
+    let chosen = validCandidates[0];
+    if (this.isEngramGraphActive) {
+      const seedIds = this.engramManager.getAllTraces()
+        .filter((t) => t && t.lastRetrievedWindow === curWin)
+        .map((t) => t.traceId);
+      if (seedIds.length > 0) {
+        const assocRanked = this.engramGraph.rankAssociatedCandidates(seedIds, validCandidates, { minWeight: 1.2 });
+        if (assocRanked.length > 0) {
+          chosen = assocRanked[0];
+        }
+      }
+    }
     const winNo = chosen.sourceWindowNo || chosen.createdWindow;
     const winText = winMap.get(winNo);
     const snippet = winText.slice(0, 60).replace(/[\r\n]+/g, ' ');
@@ -566,6 +682,9 @@ class Memory {
 
   flush() {
     this.writer.flush();
+    if (this.engramGraph && typeof this.engramGraph.flush === 'function') {
+      this.engramGraph.flush();
+    }
   }
 
   get history() { return this.data.history; }
@@ -732,10 +851,20 @@ class Memory {
    * FIFO 上限 5 条，新疑问顶替旧疑问：没被解开的疑问会被更新的疑问自然冲淡，
    * 被解开的答案则自然进 stableFacts / 经历（不做问答配对，纯本地确定性代数）。
    */
-  refreshCuriosity(unresolved, windowNo) {
+  refreshCuriosity(unresolved, windowNo, opts = {}) {
+    const curWin = Number.isFinite(windowNo) ? windowNo : (this.data.windowNo || 1);
     const incoming = Array.isArray(unresolved)
       ? unresolved.filter(q => typeof q === 'string' && q.trim())
-        .map(q => ({ q: q.trim().slice(0, 120), windowNo: windowNo || null }))
+        .map(q => ({
+          q: q.trim().slice(0, 120),
+          windowNo: windowNo || null,
+          ...(this.epistemicForagingEnabled ? {
+            mentionCount: 0,
+            lastMentionedWindow: null,
+            lastTouchedWindow: curWin,
+            epistemicGain: 1.0
+          } : {})
+        }))
       : [];
     // 🔴 D-25：关窗出队 —— 被问出口的疑问**只在这里**移除（护前缀缓存红线）。
     //   【尚未解开的疑问】块长在 systemText 里，队列一变 systemText 就变；
@@ -743,7 +872,35 @@ class Memory {
     //   开口那一次只打 asked 标记（标记不改注入文本，见 markCuriosityAsked）。
     const queue = (Array.isArray(this.data.curiosityQueue) ? this.data.curiosityQueue : [])
       .filter((x) => x && x.asked !== true);
-    this.data.curiosityQueue = queue.concat(incoming).slice(-5);
+    if (!this.epistemicForagingEnabled) {
+      this.data.curiosityQueue = queue.concat(incoming).slice(-5);
+      return this.data.curiosityQueue;
+    }
+
+    const windowTension = (opts && Number.isFinite(opts.windowTension)) ? opts.windowTension : 0;
+    const merged = queue.concat(incoming).map((rawItem, idx) => {
+      const item = { ...rawItem };
+      if (!Number.isFinite(item.mentionCount)) item.mentionCount = 0;
+      if (item.lastMentionedWindow === undefined) item.lastMentionedWindow = null;
+      if (!Number.isFinite(item.lastTouchedWindow)) {
+        item.lastTouchedWindow = Number.isFinite(item.windowNo) ? item.windowNo : curWin;
+      }
+      item.epistemicGain = computeCuriosityGain(item, curWin, windowTension);
+      return { item, idx };
+    });
+
+    merged.sort((a, b) => {
+      if (b.item.epistemicGain !== a.item.epistemicGain) {
+        return b.item.epistemicGain - a.item.epistemicGain;
+      }
+      const aWin = Number.isFinite(a.item.windowNo) ? a.item.windowNo : 0;
+      const bWin = Number.isFinite(b.item.windowNo) ? b.item.windowNo : 0;
+      // 同分不同窗保留较新入队者；同分且同窗严格保持原数组顺序（保护同窗既有 FIFO 语义）
+      if (aWin !== bWin) return bWin - aWin;
+      return a.idx - b.idx;
+    });
+
+    this.data.curiosityQueue = merged.slice(0, 5).map((x) => x.item);
     return this.data.curiosityQueue;
   }
 
@@ -771,12 +928,28 @@ class Memory {
     return true;
   }
 
-  /** 🔴 D-25：供主动破冰取「放最久的那个」未解疑问（不改状态；已问的跳过）。 */
+  /** 🔴 D-25：供主动破冰取「放最久的那个」未解疑问（开启 epistemicForaging 时取 epistemicGain 最高者，不改队列顺序；已问的跳过）。 */
   nextCuriosity() {
     if (!Array.isArray(this.data.curiosityQueue)) return null;
-    const hit = this.data.curiosityQueue.find((x) => x && x.asked !== true
-      && typeof x.q === 'string' && x.q.trim());
-    return hit ? hit.q : null;
+    if (!this.epistemicForagingEnabled) {
+      const hit = this.data.curiosityQueue.find((x) => x && x.asked !== true
+        && typeof x.q === 'string' && x.q.trim());
+      return hit ? hit.q : null;
+    }
+    const curWin = this.data.windowNo || 1;
+    let best = null;
+    let bestGain = -Infinity;
+    for (const item of this.data.curiosityQueue) {
+      if (!item || item.asked === true || typeof item.q !== 'string' || !item.q.trim()) continue;
+      const gain = Number.isFinite(item.epistemicGain)
+        ? item.epistemicGain
+        : computeCuriosityGain(item, curWin, 0);
+      if (gain > bestGain) {
+        bestGain = gain;
+        best = item;
+      }
+    }
+    return best ? best.q : null;
   }
 
   /**
@@ -798,6 +971,9 @@ class Memory {
         hit.incubated = true;
         hit.incubatedWindow = Number.isFinite(windowNo) ? windowNo : (this.data.windowNo || 1);
         hit.incubatedAt = Date.now();
+        if (this.epistemicForagingEnabled) {
+          hit.epistemicGain = computeCuriosityGain(hit, hit.incubatedWindow, 0);
+        }
         marked = true;
       }
     }
@@ -1448,6 +1624,11 @@ class Memory {
         contentRef: String(summaryText).slice(0, 100)
       });
       this.lastDecayReport = this.engramManager.decayAll(closedWindowNo);
+      // v2.2-a：共激活图谱边权衰减与弱边修剪同刻落盘（幂等收尾与单测直调均覆盖）
+      if (this.isEngramGraphActive) {
+        this.lastGraphDecayReport = this.engramGraph.decayAllEdges(closedWindowNo);
+        this.engramGraph.flush();
+      }
     }
     // v0.9.9 Batch 2: 窗口轮转时刻刷新「底座深处经历地平线」（与 decayAll 同刻更新休眠集；
     // 无记忆动力学时置空，绝不留陈旧地平线）
@@ -1616,8 +1797,11 @@ class Memory {
     if (this.engramManager && this.engramManager.traces && typeof this.engramManager.traces.clear === 'function') {
       this.engramManager.traces.clear();
     }
+    if (this.engramGraph && typeof this.engramGraph.clear === 'function') {
+      this.engramGraph.clear();
+    }
     this.save(true);
   }
 }
 
-module.exports = { Memory, estimateTokens, truncateFadingText };
+module.exports = { Memory, estimateTokens, truncateFadingText, computeCuriosityGain };
