@@ -797,7 +797,7 @@ Public Source-Available Release
 
 ## 13. v1.2 ~ v1.4 数字生命三阶演进与 v1.5+ 综合大成规划
 
-> 详细技术规格与 `v1.2` 专项实施计划见独立正典文档：[`docs/v1.2-UPDATE-PLAN.md`](v1.2-UPDATE-PLAN.md)
+> 详细技术规格与 `v1.2` 专项实施计划见独立正典文档：[`docs/archive/v1.2-UPDATE-PLAN.md`](archive/v1.2-UPDATE-PLAN.md)
 
 ### 13.1 演进总方针：严守仓库纪律，拆版解耦，按「风险收益比与生命纯粹性」分步推进
 

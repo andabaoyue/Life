@@ -79,7 +79,7 @@ check('classify: 历史审计报告被挡住并带非空理由',
 check('classify: scripts/** 被挡住',
   pe.classify(['scripts/build_authentic_chibi.py']).excluded.length === 1);
 check('classify: 白名单内文件被放行',
-  pe.classify(['src/brain.js', 'docs/v1.6-IMPLEMENTATION-ORDER.md', 'test/brain.test.js'])
+  pe.classify(['src/brain.js', 'docs/archive/v1.6-IMPLEMENTATION-ORDER.md', 'test/brain.test.js'])
     .included.length === 3);
 check('classify: 谁都没认领的文件进 unclassified（默认拒绝，不默认放行）',
   (() => {
@@ -103,8 +103,8 @@ check('真实仓库零死规则', rep.deadRules.length === 0,
 check('公开集包含 v1.3~v1.6 的代码、测试与规划文档（防发布回退）',
   ['src/fallback-adapter.js', 'src/power-monitor-source.js',
     'test/v13-perception-channel.test.js', 'test/v14-observer-journal.test.js',
-    'test/v15-provider-fallback.test.js', 'docs/v1.6-IMPLEMENTATION-ORDER.md',
-    '启动初澜.vbs'].every(f => rep.included.indexOf(f) >= 0));
+    'test/v15-provider-fallback.test.js', 'docs/archive/v1.6-IMPLEMENTATION-ORDER.md',
+    '启动Life.vbs'].every(f => rep.included.indexOf(f) >= 0));
 check('公开集不含工具链配置、内部报告与研究脚本',
   !rep.included.some(f => f.indexOf('.pi/') === 0 || f.indexOf('.agents/') === 0
     || f.indexOf('docs/agent/') === 0 || f.indexOf('scripts/') === 0

@@ -142,7 +142,7 @@
 ***Looking good takes art.** The full spec — canvas rules, action sequences, SpriteSheet packing, layer separation — lives here:*
 
 - [`docs/CHULAN-PORTRAIT-REQUIREMENTS.md`](docs/CHULAN-PORTRAIT-REQUIREMENTS.md) — 立绘与动作规范（含第五章「动作序列与 SpriteSheet 规范」）
-- [`ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md) — 生成提示词、抠图、工作流
+- [`docs/ASSET-GENERATION-GUIDE.md`](docs/ASSET-GENERATION-GUIDE.md) — 生成提示词、抠图、工作流
 
 ---
 
@@ -177,6 +177,7 @@ README 只放门面。真正想读细节、改代码、或者核对测试的，�
 
 | 文档 | 内容 |
 | --- | --- |
+| [`docs/README.md`](docs/README.md) | 文档总导航：架构、测试清单、美术规范、软件用途与历史归档 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块地图、记忆模型、缓存不变式、换装数据结构、配置项、路线图 |
 | [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md) | 全部测试套件清单与逐条说明（门禁会核对项数） |
 | [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md) | 每个版本的完整工程记录 |

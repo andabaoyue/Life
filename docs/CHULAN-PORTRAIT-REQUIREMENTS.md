@@ -4,7 +4,7 @@
 > **版本**：v1.0.0 (Release-Ready)  
 > **适用主体**：初澜（Chulan）—— Life 桌面数字生命实验平台本尊  
 > **适用对象**：一切参与初澜立绘绘制、点阵像素雕琢、分层拆件、动作动画制作及美术审查的画师、开发者与 AI Agent。  
-> **关联技术规范**：[`ASSET-GENERATION-GUIDE.md`](../ASSET-GENERATION-GUIDE.md) ｜ [`docs/ROADMAP-AND-PUBLIC-RELEASE-PLAN.md`](ROADMAP-AND-PUBLIC-RELEASE-PLAN.md)
+> **关联技术规范**：[`docs/ASSET-GENERATION-GUIDE.md`](ASSET-GENERATION-GUIDE.md) ｜ [`docs/ROADMAP-AND-PUBLIC-RELEASE-PLAN.md`](ROADMAP-AND-PUBLIC-RELEASE-PLAN.md)
 
 ---
 

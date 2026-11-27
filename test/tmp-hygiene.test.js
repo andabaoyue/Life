@@ -30,7 +30,7 @@ const { spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TMP = os.tmpdir();
 const LOCK = path.join(TMP, '_deskpet_cleanup_running.lock');
-const knownPrefixFile = path.join(ROOT, '.workbuddy', 'cleanup', 'known-prefixes.json');
+const knownPrefixFile = path.join(ROOT, 'tools', 'known-tmp-prefixes.json');
 
 /* 🔴 2026-10-27（P4-1）：本套件的启动时刻。
  *   用途：判断「跑完之后 known-prefixes.json 的 mtime 是否被无谓刷新」。

@@ -38,7 +38,7 @@ function main() {
   console.log('   Life v1.1.0 — 100 轮 24h 连续对话与内稳态潮汐仿真');
   console.log('====================================================\n');
 
-  // 使用 .workbuddy/cleanup/known-prefixes.json 已登记前缀，并在 finally + exit 双保险清理
+  // 使用 tools/known-tmp-prefixes.json 已登记前缀，并在 finally + exit 双保险清理
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ir-sense-'));
   const cleanup = () => {
     try {
