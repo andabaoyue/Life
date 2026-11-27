@@ -9,6 +9,7 @@ const selfNotesStore = require('./memory-self-notes');
 const observeEpochStore = require('./memory-observe-epoch');
 const lexiconStore = require('./memory-lexicon');
 const expectationsStore = require('./memory-expectations');
+const relationalAnchorStore = require('./memory-relational-anchor');
 
 const SCHEMA_VERSION = 1;
 const SELF_NOTE_DYNAMICS_DEFAULTS = selfNotesStore.SELF_NOTE_DYNAMICS_DEFAULTS;
@@ -179,7 +180,7 @@ class Memory {
      */
     this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0,
                   totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch: 0, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [],
-                  lexicon: [], expectations: [], selfNotes: [],
+                  lexicon: [], expectations: [], relationalAnchors: [], selfNotes: [],
                   lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };   // v1.0 §4.7 #3/#4：语言指纹 + 时间矢量（零先验空白）
     // 🔴 D-20：她写过的东西 —— 与 lexicon/expectations 同款（落在 data 里，原子写保护）。
     //   兼容旧实例：schema 里没有本字段时归一为空表（见 load()）。
@@ -209,6 +210,9 @@ class Memory {
     this.epistemicForagingEnabled = opts.epistemicForaging !== undefined
       ? Boolean(opts.epistemicForaging)
       : (opts.experimentModules ? Boolean(opts.experimentModules.epistemicForaging) : false);
+    this.relationalAnchorEnabled = opts.relationalAnchor !== undefined
+      ? Boolean(opts.relationalAnchor)
+      : (opts.experimentModules ? Boolean(opts.experimentModules.relationalAnchor) : false);
     this.engramGraph = (this.memoryDynamicsEnabled && this.engramGraphEnabled)
       ? new EngramGraph(this.dir, { enabled: true })
       : null;
@@ -283,6 +287,18 @@ class Memory {
     return this.epistemicForagingEnabled;
   }
 
+  /** 跨窗热切互惠关系锚定开关 */
+  setRelationalAnchorEnabled(enabled) {
+    this.relationalAnchorEnabled = Boolean(enabled);
+    return this.relationalAnchorEnabled;
+  }
+
+  /** 在关窗边界刷新稳定称呼与互惠事实锚点（未启用时保持空转不污染数据） */
+  refreshRelationalAnchors(closedWindowNo) {
+    if (!this.relationalAnchorEnabled) return [];
+    return relationalAnchorStore.refreshRelationalAnchors(this, closedWindowNo);
+  }
+
   load() {
     let raw;
     try {
@@ -349,10 +365,11 @@ class Memory {
       }
       this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0,
                     windowNo: 1, nextMessageSeq: seq, epoch: 0, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [],
-                    lexicon: [], expectations: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0, ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
+                    lexicon: [], expectations: [], relationalAnchors: [], lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0, ...data, nextMessageSeq: Math.max(seq, data.nextMessageSeq || 0) };
       // v1.0 兼容平移：旧档案缺字段 → 空表；脏数据 → 归一为数组（绝不静默丢历史）
       this.data.lexicon = Array.isArray(this.data.lexicon) ? this.data.lexicon : [];
       this.data.expectations = Array.isArray(this.data.expectations) ? this.data.expectations : [];
+      this.data.relationalAnchors = relationalAnchorStore.normalizeRelationalAnchors(this.data.relationalAnchors);
       this.data.dreamFragments = Array.isArray(this.data.dreamFragments)
         ? this.data.dreamFragments.filter((x) => typeof x === 'string' && x.trim()).slice(-3) : [];
       this.data.pendingDreamFragments = Array.isArray(this.data.pendingDreamFragments)
@@ -1172,6 +1189,11 @@ class Memory {
       s += '\n\n【当前指向未来的约定与预期】心智知晓即可，说不说由你自主决定，绝不做定时提醒：\n'
         + exps.map((x) => '- ' + x.text + (x.dueHint ? '（' + x.dueHint + '）' : '')).join('\n');
     }
+    // v2.2.2: 互惠关系锚定 —— 仅在关窗结算刷新，严格位于 expectations 与 dreamFragments/wardrobe 之间，维持「穿着块是 system 结尾」不变式
+    if (this.relationalAnchorEnabled) {
+      const anchorBlock = relationalAnchorStore.formatRelationalAnchorsBlock(this.data.relationalAnchors);
+      if (anchorBlock) s += '\n\n' + anchorBlock;
+    }
     // v0.9.9 五大方向·①：离线重组碎片块 —— 仅在真实存在归档碎片时注入，
     // 必须带防伪标签（非亲历，不得当亲历引用）；碎片只在窗口轮转时刻更新，窗口内逐字节稳定。
     // 位置必须在穿着块之前 —— 「穿着块是 system 结尾」是被测试钉死的顺序不变式。
@@ -1648,6 +1670,11 @@ class Memory {
     // v1.0.6 词汇动力学静默流转（方案 A1）：扫描本窗活跃消息，共振词升权，久未提及词平滑衰减
     this.refreshLexiconDynamics(snap.activeItems || snap.items, closedWindowNo);
 
+    // v2.2.2: 关窗同步刷新关系锚点（在 brain-window-pipeline 中新词条/预期结算后还会再幂等刷新一次）
+    if (this.relationalAnchorEnabled) {
+      this.refreshRelationalAnchors(closedWindowNo);
+    }
+
     // v2.0-s1（s1-b）：与 engramManager.decayAll(closedWindowNo) 保持同窗节拍，先结算再递增窗口号。
     this.decaySelfNotes(closedWindowNo);
     this.data.windowNo++;
@@ -1804,7 +1831,7 @@ class Memory {
   reset() {
     // epoch++ 让在飞的小结快照作废，不会把新记忆又裁一次
     const epoch = (this.data.epoch || 0) + 1;
-    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], selfNotes: [], observedNotes: [], observeEpoch: {}, lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
+    this.data = { schemaVersion: SCHEMA_VERSION, windows: [], history: [], turnsInWindow: 0, totalTurns: 0, windowNo: 1, nextMessageSeq: 0, epoch, dreamFragments: [], pendingDreamFragments: [], deepHorizon: '', curiosityQueue: [], lexicon: [], expectations: [], relationalAnchors: [], selfNotes: [], observedNotes: [], observeEpoch: {}, lastInvoluntaryAt: 0, lastInvoluntaryWindow: 0 };
     if (this.engramManager && this.engramManager.traces && typeof this.engramManager.traces.clear === 'function') {
       this.engramManager.traces.clear();
     }

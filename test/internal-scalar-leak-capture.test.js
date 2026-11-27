@@ -53,7 +53,8 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     cognitiveLoadProxy: 66.7721,
     interactionDensity: 55.2384,
     epistemicGain: 1.7392,
-    edgeWeight: 2.8461
+    edgeWeight: 2.8461,
+    anchorWeight: 1.9274
   };
 
   const SENTINEL_NUMBERS = Object.values(SENTINEL_VALUES).map(n => n.toString());
@@ -71,7 +72,8 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
     'edgeWeight',
     'epistemicGain',
     'mentionCount',
-    'associativeScore'
+    'associativeScore',
+    'anchorWeight'
   ];
 
   if (brain.internalRegulation) {
@@ -97,6 +99,16 @@ console.log('--- Test Suite: Internal Scalar Boundary Request Capture (F-08) ---
       lastTouchedWindow: 1,
       lastWindowTension: 0.6184,
       epistemicGain: SENTINEL_VALUES.epistemicGain
+    });
+    brain.memory.data.relationalAnchors.push({
+      id: 'anc-nick-阿星',
+      kind: 'nickname',
+      label: '阿星',
+      gloss: '稳定称呼',
+      sourceMessageId: 'm-000001',
+      firstWindowNo: 1,
+      lastConfirmedWindow: 2,
+      anchorWeight: SENTINEL_VALUES.anchorWeight
     });
   }
   if (brain.memory && brain.memory.engramGraph) {

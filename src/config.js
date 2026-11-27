@@ -148,7 +148,8 @@ const DEFAULTS = {
     sleepConsolidation: true,  // v2.0 拍板：真睡眠开梦（baseline 仍关；显式 false 可关）
     allostasisPrior: true,     // v2.1-a：关系节奏先验与异稳态调节（baseline 仍关；显式 false 可关）
     engramGraph: true,         // v2.2-a：共激活记忆联想图谱（baseline 仍关；显式 false 或 memoryDynamics=false 时旁路）
-    epistemicForaging: true    // v2.2-a：精准度加权认知觅食（baseline 仍关；显式 false 时回退原 FIFO）
+    epistemicForaging: true,   // v2.2-a：精准度加权认知觅食（baseline 仍关；显式 false 时回退原 FIFO）
+    relationalAnchor: true     // v2.2.2：互惠关系锚定（稳定称呼与跨窗互惠事实沉淀；baseline 仍关；显式 false 可关）
   }
 };
 
@@ -316,7 +317,8 @@ function sanitize(raw = {}) {
         sleepConsolidation: pick('sleepConsolidation'),
         allostasisPrior: pick('allostasisPrior'),
         engramGraph: pick('engramGraph'),
-        epistemicForaging: pick('epistemicForaging')
+        epistemicForaging: pick('epistemicForaging'),
+        relationalAnchor: pick('relationalAnchor')
       };
 
       return { experimentMode, experimentModules };

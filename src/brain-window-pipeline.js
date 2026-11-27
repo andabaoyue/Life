@@ -548,6 +548,10 @@ class WindowClosingPipeline {
             status: oc && oc.status, messageId: oc && oc.messageId, note: oc && oc.note, windowNo: snap.windowNo
           }, ingestOpts);
         }
+        // v2.2.2: 关窗当轮 addLexicon / resolveExpectation 全部入库后幂等刷新关系锚点，消除滞后一窗问题
+        if (b.memory.relationalAnchorEnabled && typeof b.memory.refreshRelationalAnchors === 'function') {
+          b.memory.refreshRelationalAnchors(snap.windowNo);
+        }
         b.memory.save(true);
         if (b.windowCloseAttempts > 0) {
           b.stats.delayedCloses = (b.stats.delayedCloses || 0) + 1;
@@ -716,6 +720,9 @@ class WindowClosingPipeline {
       }
       if (typeof b.memory.setEpistemicForagingEnabled === 'function') {
         b.memory.setEpistemicForagingEnabled(Boolean(b.currentWindowSnapshot.modules?.epistemicForaging));
+      }
+      if (typeof b.memory.setRelationalAnchorEnabled === 'function') {
+        b.memory.setRelationalAnchorEnabled(Boolean(b.currentWindowSnapshot.modules?.relationalAnchor));
       }
     }
   }

@@ -234,6 +234,7 @@ class Brain {
       memoryDynamics: isBaselineCfg ? false : this.cfg.experimentModules?.memoryDynamics,
       engramGraph: isBaselineCfg ? false : this.cfg.experimentModules?.engramGraph,
       epistemicForaging: isBaselineCfg ? false : this.cfg.experimentModules?.epistemicForaging,
+      relationalAnchor: isBaselineCfg ? false : this.cfg.experimentModules?.relationalAnchor,
       // 🔴 丙（2026-10-07）：把「渐褪」的两个参数透传给记忆动力学。
       //   为什么需要：默认 0.60 的门限恰好等于初始强度(0.50+0.10) ——
       //   过 1 个窗口必跌破 ⇒ 除最新一段外**全部**被截成断句碎片，没有梯度。
@@ -289,6 +290,9 @@ class Brain {
     }
     if (typeof this.memory.setEpistemicForagingEnabled === 'function') {
       this.memory.setEpistemicForagingEnabled(Boolean(this.currentWindowSnapshot.modules?.epistemicForaging));
+    }
+    if (typeof this.memory.setRelationalAnchorEnabled === 'function') {
+      this.memory.setRelationalAnchorEnabled(Boolean(this.currentWindowSnapshot.modules?.relationalAnchor));
     }
 
     this.dreamHistory = [];

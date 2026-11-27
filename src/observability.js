@@ -342,6 +342,27 @@ const OBSERVABILITY_SPECS = Object.freeze([
     })
   },
 
+  {
+    id: 'memory.relationalAnchors',
+    group: 'memory',
+    labelKey: 'obs.memory.relationalAnchors',
+    text: '互惠关系锚点',
+    range: null,
+    read: safeRead((ctx) => {
+      const mem = ctx && ctx.brain && ctx.brain.memory;
+      if (!mem || !mem.relationalAnchorEnabled || !mem.data || !Array.isArray(mem.data.relationalAnchors)) {
+        return null;
+      }
+      const list = mem.data.relationalAnchors;
+      return {
+        enabled: true,
+        total: list.length,
+        nicknameCount: list.filter((x) => x && x.kind === 'nickname').length,
+        reciprocityCount: list.filter((x) => x && x.kind === 'reciprocity').length
+      };
+    })
+  },
+
   /* ---------- curiosity：好奇与愿望 ---------- */
 
   {

@@ -101,7 +101,8 @@ const DEFAULT_EXPERIMENT_MODULES = Object.freeze({
   sleepConsolidation: false,
   allostasisPrior: false,
   engramGraph: false,
-  epistemicForaging: false
+  epistemicForaging: false,
+  relationalAnchor: false
 });
 
 module.exports = {
