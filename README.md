@@ -1,4 +1,4 @@
-# Life v2.1.2
+# Life v2.2.2
 
 <div align="center">
   <img src="docs/images/hero.png" alt="初澜：桌面上的 64×80 像素小人，头顶气泡写着「嗨，我是初澜~」" width="260">
@@ -8,7 +8,7 @@
   <p><sub>Slow and steady — I hope she grows into the one you were hoping for.</sub></p>
 
   <p>
-    <a href="https://github.com/andabaoyue/Life/releases/tag/v2.1.2"><img src="https://img.shields.io/badge/release-v2.1.2-3b5998?style=flat-square" alt="Release v2.1.2"></a>
+    <a href="https://github.com/andabaoyue/Life/releases/tag/v2.2.2"><img src="https://img.shields.io/badge/release-v2.2.2-3b5998?style=flat-square" alt="Release v2.2.2"></a>
     <a href="https://github.com/andabaoyue/Life/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/andabaoyue/Life/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
     <img src="https://img.shields.io/badge/platform-Windows%20x64-475569?style=flat-square" alt="Windows x64">
     <img src="https://img.shields.io/badge/runtime%20deps-0-334155?style=flat-square" alt="Zero Runtime Dependencies">
@@ -66,7 +66,7 @@
 
 ### 普通用户（下载即用，不需要懂代码）
 
-1. 打开 [Releases 页面](https://github.com/andabaoyue/Life/releases/latest)，下载 `Life-2.1.2-win-x64-portable.exe`（免安装便携版）或 `.zip` 压缩包，双击就能直接打开。
+1. 打开 [Releases 页面](https://github.com/andabaoyue/Life/releases/latest)，下载 `Life-2.2.2-win-x64-portable.exe`（免安装便携版）或 `.zip` 压缩包，双击就能直接打开。
 2. 桌面上出现初澜后，**右键点击她 → 设置 → 填入你的 DeepSeek（或 OpenAI 兼容）API Key**，就可以开始聊天了。
 
 ### 开发者（从源码运行）
@@ -102,12 +102,12 @@ npm start
 
 ## 文档与版本记录
 
-想深入了解内部设计、记忆原理、零依赖架构或全部 150 个自动化测试套件，可以从 [**docs/README.md**](docs/README.md) 开始翻阅：
+想深入了解内部设计、记忆原理、零依赖架构或全部 154 个自动化测试套件，可以从 [**docs/README.md**](docs/README.md) 开始翻阅：
 
 | 文档 | 适合谁看 |
 | :--- | :--- |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 开发者：模块地图、记忆与缓存原理、换装结构与配置项 |
-| [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md) | 开发者：全部 150 个测试套件清单与验证说明 |
+| [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md) | 开发者：全部 154 个测试套件清单与验证说明 |
 | [`docs/VERSION-HISTORY.md`](docs/VERSION-HISTORY.md) | 关注演进过程的人：每个版本的详细工程记录 |
 | [`docs/RELEASE-LEDGER.md`](docs/RELEASE-LEDGER.md) | 需要核对安装包安全性的用户：发布账本与 SHA-256 校验值 |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`BRANDING.md`](BRANDING.md) | 变更日志、社区参与方式与名称使用说明 |
@@ -116,6 +116,7 @@ npm start
 
 | 版本 | 日期 | 做了什么 |
 | :--- | :--- | :--- |
+| **v2.2.2** | 2026-11-27 | 落地共激活记忆图谱与认知觅食、能动性表型审计与双尺度历时看板、本地 SLM 离线轻陪伴及互惠关系锚定 |
 | **v2.1.2** | 2026-11-27 | 拆分四大核心大文件为 16 个清晰模块，完成全仓安全、稳定性与性能加固 |
 | **v2.1.1** | 2026-11-26 | 完成二轮全仓深度审计修复，加固归档一致性、密钥安全与渲染边界 |
 | **v2.1.0** | 2026-11-26 | 升级生命动力学（相处节奏感知、认知过载保护、轻量认知张力与回忆再巩固观测） |
@@ -154,7 +155,7 @@ She arrives with no pre-written backstory and no scripted personality. Instead o
 - **Rest, dreams, and bedside notes**: She has no forced 24-hour bedtime; she rests when worn out. Messages you send while she sleeps wait by her pillow until she wakes, and heavy days or long rests can stir fragments into dreams.
 - **Small habits of her own**: Phrases you share end up in her notebook, unanswered questions linger until a quiet moment, and after long silences she may leave a short note in a dedicated folder on your desktop.
 - **Honest expectations**: Text bubbles only (no voice/TTS, no Live2D), bring your own DeepSeek or OpenAI-compatible API key (optimised for prompt-cache savings), unsigned Windows x64 builds only, and no alarms or calendar reminders.
-- **Quick start**: Download `Life-2.1.2-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases/latest), double-click to run, then right-click → Settings → paste your API key. For source builds, run `npm install && npm start` with Node.js 20+ (zero runtime npm dependencies).
+- **Quick start**: Download `Life-2.2.2-win-x64-portable.exe` from [Releases](https://github.com/andabaoyue/Life/releases/latest), double-click to run, then right-click → Settings → paste your API key. For source builds, run `npm install && npm start` with Node.js 20+ (zero runtime npm dependencies).
 - **Docs & License**: Browse [`docs/README.md`](docs/README.md) for architecture, test inventory, and pixel-art specs. Released under the [PolyForm Noncommercial License 1.0.0](LICENSE) (free for personal study, research, and non-commercial modification; commercial use requires written authorization). See [`BRANDING.md`](BRANDING.md) for naming guidelines.
 
 ---

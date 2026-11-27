@@ -5,6 +5,35 @@
 
 ---
 
+## [2.2.2] - 2026-11-27
+
+> **相比 `v2.1.2`**，本版完整收官 `v2.2` 系列四个演进里程碑（`v2.2-a / b / c` 与 `v2.2.2`），围绕共激活联想记忆、认知觅食、能动性表型观测、本地 SLM 离线轻陪伴与互惠关系锚定构建闭环，并保持零运行时依赖与前缀缓存不变式。以下按子里程碑归纳：
+
+### 🧠 共激活记忆图谱与精准度加权认知觅食（v2.2-a）
+
+- **赫布共激活联想图谱（`src/engram-graph.js`）**：实现纯本地共激活记忆图谱，支持记忆激活扩散与联想唤醒；在 `Memory.closeWindow()` 与同刻执行 `decayAllEdges`，并在 `Memory.flush()` / `Memory.reset()` / `syncWindowExperimentSnapshot()` 补全图谱持久化与基线隔离契约，纳入 `src/experiment-types.js` 白名单。
+- **精准度加权认知觅食与防泄露防线**：拆出 `lastMentionedWindow` 专做同窗去重、将 `curiosityQueue` 触及统计移出 `topN <= 0` 守卫、确保 `lastWindowTension` 前移与 peer 确定性排序；`test/internal-scalar-leak-capture.test.js` 补全 `edgeWeight`、`epistemicGain`、`mentionCount`、`associativeScore` 禁词及罕见浮点哨兵实测端到端零泄漏。
+
+### 📊 能动性表型审计与双尺度历时看板（v2.2-b）
+
+- **只读表型观测与轨迹可视化**：`src/research-query.js`、`src/research-service.js`、`src/observability.js` 与 `ui-research.js` 落地只读能动性表型观测指标与短/长双尺度历时轨迹图表；`buildTrendSvg` 调整左边距 `PAD_L = 34` 并以原生 SVG `<text>` 渲染纵轴 `yMax`/`yMin` 与横轴 `W#minW`/`W#maxW` 刻度（全程零 `innerHTML`），同步在 `ui-i18n.js` 补齐中英双语字典。
+
+### 🔌 本地 SLM 原生探活与离线轻陪伴容灾（v2.2-c）
+
+- **双过程容灾隔离（`src/local-probe.js` / `src/brain.js`）**：新增本地模型端点原生探活服务 `src/local-probe.js`，接通离线轻陪伴双过程容灾链路，云端不可用时自动在安全边界内降级轻陪伴且绝不伪造高阶认知演化；`src/brain.js` `growSelf()` 捕获 `LOCAL_FALLBACK_DEFERRED` / `deferredByLocalGuard` 时输出中文暂缓日志并返回 `0` 保持数值契约一致。
+
+### 🤝 互惠关系锚定与文档架构对齐（v2.2.2）
+
+- **互惠关系锚定（`src/memory-relational-anchor.js`）**：从高频稳定称呼（`nicknameCount`）与已结算互惠预期（`reciprocityCount`）沉淀最多 5 条只读关系锚点（`relationalAnchors: []`），`formatRelationalAnchorsBlock` 明确区分 `[兑现事实]`（fulfilled）与 `[偏差事实]`（broken），`note` 为空时省略 `→` 且绝不向模型输出 `anchorWeight`/`id`/`messageId` 等内部字段；历史条目缺失 `outcome.resolvedWindowNo` 时按 `entry.windowNo → closedWindowNo` 兜底。
+- **关窗双点幂等刷新与观测齐备**：在 `Memory.closeWindow()`（紧接 `refreshLexiconDynamics()` 之后）与 `src/brain-window-pipeline.js`（全部 `addLexicon` / `addExpectation` / `resolveExpectation` 结束后、`memory.save(true)` 之前）实施双点幂等刷新；`src/observability.js` 新增只读 `memory.relationalAnchors` 计数，`ui-i18n.js` 同步补全 `obs.memory.relationalAnchors`、`obs.field.nicknameCount` 与 `obs.field.reciprocityCount` 中英词条；`test/internal-scalar-leak-capture.test.js` 补齐 `anchorWeight` 哨兵。
+- **文档架构地图收口**：`docs/ARCHITECTURE.md` 按仓内真实文件名补齐全部模块（含 5 个 `main-*-ipc.js`、拆分后的 `brain-*`/`memory-*`/`ui-*`、`engram-graph.js`、`memory-relational-anchor.js`、`local-probe.js` 等），并为 8 个契约/研究储备模块统一加注 `（契约/研究储备）`。
+
+### 🧪 门禁规模
+
+- 已标项数门禁扩展至 **154 个套件 / 5644 项断言**（`test/docs.test.js` 全量执行 `executed=154` 0 FAIL，含 `ui_test.py` 171/171；详见 [`docs/TEST-INVENTORY.md`](docs/TEST-INVENTORY.md)）。
+
+---
+
 ## [2.1.2] - 2026-11-27
 
 > **相比 `v2.1.1`**，本版完成四大核心大文件的工程化拆分解耦（新增 **16 个内聚模块**），并完成全仓安全边界、热切换状态一致性、核心生命记忆可靠性与高负载 CI 门禁稳定性的系统性收口。以下按模块边界归纳：
